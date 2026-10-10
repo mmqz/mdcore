@@ -480,7 +480,7 @@ impl<'a> Matcher<'a> {
     fn payload_changed(&self, old_node: NodeId, new_node: NodeId) -> bool {
         let o = self.old.node(old_node);
         let n = self.new.node(new_node);
-        o.text.to_string() != n.text.to_string() || o.marks != n.marks || o.attrs != n.attrs
+        o.text != n.text || o.marks != n.marks || o.attrs != n.attrs
     }
 
     // ---- 递归主流程（tier b/c）----
@@ -566,7 +566,7 @@ impl<'a> Matcher<'a> {
                     continue;
                 }
                 let sim = text_similarity(&o_node.text.to_string(), &n_text);
-                if sim >= self.params.similarity_threshold && best.map_or(true, |(_, bs)| sim > bs)
+                if sim >= self.params.similarity_threshold && best.is_none_or(|(_, bs)| sim > bs)
                 {
                     best = Some((i, sim));
                 }
@@ -638,6 +638,9 @@ impl<'a> Matcher<'a> {
 
     /// 连续未配对游程的 1↔k / k↔1 归组（join 相似 ≥ 阈值；对齐 ADR-B1：
     /// split 左保右新 / merge 存者=前）。命中即配游程首对，其余留给 tier e。
+    // 算法内部私有函数：双游程+双占用位图+配对槽，8 参是分层匹配器的自然形状；
+    // 语义由 r23_fingerprint 15 锁背书，非契约面。为风格拆结构体反增间接层。
+    #[allow(clippy::too_many_arguments)]
     fn split_merge_pass(
         &mut self,
         old_mid: &[usize],

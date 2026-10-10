@@ -99,8 +99,8 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
-        if line.starts_with("```") {
-            let lang = line[3..].trim().to_string();
+        if let Some(rest) = line.strip_prefix("```") {
+            let lang = rest.trim().to_string();
             let mut j = i + 1;
             while j < lines.len() && !lines[j].starts_with("```") {
                 j += 1;
@@ -280,10 +280,9 @@ fn list_item_of(line: &str) -> Option<(usize, String, String)> {
             let after_digits = &rest[digits.len()..];
             if let Some(r) = after_digits.strip_prefix(". ") {
                 (format!("{digits}."), r)
-            } else if let Some(r) = after_digits.strip_prefix(") ") {
-                (format!("{digits})"), r)
             } else {
-                return None;
+                let r = after_digits.strip_prefix(") ")?;
+                (format!("{digits})"), r)
             }
         } else {
             return None;

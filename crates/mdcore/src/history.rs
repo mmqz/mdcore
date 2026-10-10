@@ -107,7 +107,7 @@ impl History {
     /// 合并进最后一条：ops 追加，inverses 前插（保持逆序不变量）。
     pub fn coalesce_into_last(&mut self, ops: Vec<Op>, mut inverses: Vec<Op>, at_ms: u64, source: Source) {
         if let Some(e) = self.undo.last_mut() {
-            inverses.extend(e.inverses.drain(..));
+            inverses.append(&mut e.inverses);
             e.inverses = inverses; // 新 inverse 在前
             e.ops.extend(ops);
             e.at_ms = at_ms;

@@ -31,12 +31,7 @@ fn build_big() -> Core {
     Core::from_markdown(&sections.concat())
 }
 
-fn p95(mut v: Vec<f64>) -> f64 {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    v[(v.len() as f64 * 0.95) as usize % v.len().max(1)]
-}
-
-fn pct(v: &mut Vec<f64>, q: f64) -> f64 {
+fn pct(v: &mut [f64], q: f64) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     v[((v.len() as f64 - 1.0) * q) as usize]
 }
@@ -111,7 +106,7 @@ fn gate3_restore_then_editing_and_undo_continue() {
         .unwrap();
     assert_eq!(reopened.history.undo_depth(), depth + 1);
     reopened.undo().unwrap();
-    let lens = top_lens(&reopened);
+    let _lens = top_lens(&reopened);
     assert_eq!(&reopened.tree.node(reopened.tree.resolve(&[1]).unwrap()).text.to_string()[..9], "paragraph", "post-restore 编辑被 undo 撤净");
     reopened.undo().unwrap();
     assert_eq!(

@@ -11,7 +11,7 @@
 //! ⑬ 属性关键位（标题层级）翻转结构指纹但身份保持。
 
 use mdcore::fingerprint::{
-    match_trees, text_similarity, BlockMatchReport, ManifestEntry, MatchParams, TreeFingerprint,
+    match_trees, text_similarity, ManifestEntry, MatchParams, TreeFingerprint,
 };
 use mdcore::id::BlockId;
 use mdcore::markdown::markdown_to_tree;
@@ -35,12 +35,6 @@ fn ids(core: &Core) -> Vec<BlockId> {
 
 fn texts(core: &Core) -> Vec<String> {
     core.tree.top_level().iter().map(|&c| core.tree.node(c).text.to_string()).collect()
-}
-
-/// 双树直接匹配（无 manifest，默认参数）。
-fn match_plain(old: &Core, new_md: &str) -> BlockMatchReport {
-    let new_tree = markdown_to_tree(new_md);
-    match_trees(&old.tree, &new_tree, None, &MatchParams::default())
 }
 
 // 1. 修饰性编辑：结构指纹稳定、内容指纹变化、匹配 edited（身份保持）

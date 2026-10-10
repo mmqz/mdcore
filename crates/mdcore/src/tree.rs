@@ -104,8 +104,7 @@ pub struct BlockTree {
 
 impl BlockTree {
     pub fn new() -> Self {
-        let mut slots: Vec<Option<Node>> = Vec::new();
-        slots.push(Some(Node {
+        let slots: Vec<Option<Node>> = vec![Some(Node {
             id: BlockId(0), // 根节点保留 ID 0；对外不可寻址
             kind: BlockKind::Document,
             text: Rope::new(),
@@ -113,7 +112,7 @@ impl BlockTree {
             marks: Vec::new(),
             parent: None,
             children: Vec::new(),
-        }));
+        })];
         Self {
             slots,
             root: NodeId(0),
@@ -342,22 +341,20 @@ impl BlockTree {
         let mut marks_heap_bytes = 0usize;
         let mut attrs_entries = 0usize;
         let mut attrs_string_bytes = 0usize;
-        for s in &self.slots {
-            if let Some(n) = s {
-                live_nodes += 1;
-                rope_text_bytes += n.text.len_bytes();
-                // 每块独立 Rope：结构体 + 堆内容近似（短文本为主）。
-                rope_est_bytes += std::mem::size_of::<Rope>() + n.text.len_bytes();
-                if n.children.capacity() > 0 {
-                    children_heap_bytes += n.children.capacity() * std::mem::size_of::<NodeId>();
-                }
-                if n.marks.capacity() > 0 {
-                    marks_heap_bytes += n.marks.capacity() * std::mem::size_of::<MarkSpan>();
-                }
-                for (k, v) in &n.attrs {
-                    attrs_entries += 1;
-                    attrs_string_bytes += k.capacity() + v.capacity();
-                }
+        for n in self.slots.iter().flatten() {
+            live_nodes += 1;
+            rope_text_bytes += n.text.len_bytes();
+            // 每块独立 Rope：结构体 + 堆内容近似（短文本为主）。
+            rope_est_bytes += std::mem::size_of::<Rope>() + n.text.len_bytes();
+            if n.children.capacity() > 0 {
+                children_heap_bytes += n.children.capacity() * std::mem::size_of::<NodeId>();
+            }
+            if n.marks.capacity() > 0 {
+                marks_heap_bytes += n.marks.capacity() * std::mem::size_of::<MarkSpan>();
+            }
+            for (k, v) in &n.attrs {
+                attrs_entries += 1;
+                attrs_string_bytes += k.capacity() + v.capacity();
             }
         }
         TreeMemStats {

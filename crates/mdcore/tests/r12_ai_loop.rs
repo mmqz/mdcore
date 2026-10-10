@@ -2,16 +2,16 @@
 //! §11 Revision / §22 十条不变量）。
 //!
 //! 验证闭环：`Human command → Document State ← AI command`，四条验证点：
-//!   1. AI read current state      → `ai_reads_human_edited_state_as_decision_input`
-//!   2. AI 生成 deterministic cmds → `scripted_ai_plan_is_deterministic_and_primitive_only`
-//!                                    + `ai_fills_empty_paragraph_via_command_boundary`
-//!   3. Core execute + revision    → 同上 + `ai_text_command_bumps_own_revision_never_coalesces`
-//!                                    + `ai_batch_is_atomic_on_bad_op`
-//!   4. undo / replay / stale      → `ai_batch_undo_reverts_whole_batch_not_human_edit`
-//!                                    + `ai_stale_transaction_rejected_then_retries_with_fresh_base`
-//!                                    + `ai_inclusive_log_replays_to_identical_state`
-//!                                    + `human_and_ai_alternate_on_one_document_state`
-//!                                    + `ai_entries_survive_save_open_and_undo_whole_batch`
+//! 1. AI read current state → `ai_reads_human_edited_state_as_decision_input`
+//! 2. AI 生成 deterministic cmds → `scripted_ai_plan_is_deterministic_and_primitive_only`
+//!    + `ai_fills_empty_paragraph_via_command_boundary`
+//! 3. Core execute + revision → 同上 + `ai_text_command_bumps_own_revision_never_coalesces`
+//!    + `ai_batch_is_atomic_on_bad_op`
+//! 4. undo / replay / stale → `ai_batch_undo_reverts_whole_batch_not_human_edit`
+//!    + `ai_stale_transaction_rejected_then_retries_with_fresh_base`
+//!    + `ai_inclusive_log_replays_to_identical_state`
+//!    + `human_and_ai_alternate_on_one_document_state`
+//!    + `ai_entries_survive_save_open_and_undo_whole_batch`
 //!
 //! AI 替身 `ScriptedAi`：headless、确定性——只经公开检视面（`blocks_json`，
 //! 辅以 `take_events` 事件流）读状态，只产出 §10.2 原子 op 序列；提交只走
@@ -109,6 +109,7 @@ impl ScriptedAi {
     /// 确定性规则（observed 的纯函数）："摘要助手"——
     ///   1) 第一个空段落 → 填入摘要行并提级为 heading；
     ///   2) 文末追加一个 AI summary 块。
+    ///
     /// 输出全部是 §10.2 原子 op（split/merge/transaction 属命令层组合，
     /// op 层即这 7 种原子）；同一状态永远产出同一 op 序列。
     fn plan_summarize(&self) -> Vec<Op> {
@@ -318,7 +319,7 @@ fn ai_fills_empty_paragraph_via_command_boundary() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[1].meta.source, Source::Ai);
     assert_eq!(events[1].meta.command.as_deref(), Some("ai.summarize"));
-    assert_eq!(events[1].meta.coalesced, false);
+    assert!(!events[1].meta.coalesced);
     assert_eq!(events[1].revision, 2);
     let jsonl = core.log.to_jsonl();
     assert!(jsonl.contains("\"source\":\"ai\""), "AI 进 Revision 日志: {jsonl}");
@@ -387,13 +388,13 @@ fn ai_text_command_bumps_own_revision_never_coalesces() {
     let events = core.take_events();
     assert_eq!(events.len(), 8);
     assert_eq!(events[0].meta.source, Source::View);
-    assert_eq!(events[0].meta.coalesced, false);
-    assert_eq!(events[1].meta.coalesced, true);
-    assert_eq!(events[2].meta.coalesced, true);
+    assert!(!events[0].meta.coalesced);
+    assert!(events[1].meta.coalesced);
+    assert!(events[2].meta.coalesced);
     assert_eq!(events[3].meta.source, Source::Ai);
-    assert_eq!(events[3].meta.coalesced, false, "AI 事件永不标记 coalesced");
+    assert!(!events[3].meta.coalesced, "AI 事件永不标记 coalesced");
     assert_eq!(events[4].meta.source, Source::View);
-    assert_eq!(events[4].meta.coalesced, false);
+    assert!(!events[4].meta.coalesced);
     assert!(events[5..].iter().all(|e| e.meta.source == Source::Undo));
 }
 

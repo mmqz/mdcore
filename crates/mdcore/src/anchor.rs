@@ -5,6 +5,7 @@
 //!   - 目标块被删 → AnchorMissing → reject（绝不静默猜测，§8.4 原则）；
 //!   - 区间越界 → AnchorRange → reject；
 //!   - `expect` 内容不匹配 → ExpectMismatch → reject（乐观并发保护）。
+//!
 //! 偏移平移映射（周围文本变化自动跟移）属 R9 增强，v0 以 expect 保护。
 
 use serde::{Deserialize, Serialize};

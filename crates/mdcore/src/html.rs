@@ -37,14 +37,14 @@
 //! # 已知有损点（§18 Loss Report 覆盖之外的登记）
 //!
 //! 1. 行内空白按 HTML 语义折叠（连续空白→单空格、块缘裁剪）——canonical 内容
-//!   （无连续空白）round-trip 恒等，非规范文本是规范化而非保真。
+//!    （无连续空白）round-trip 恒等，非规范文本是规范化而非保真。
 //! 2. 表格单元格行内 mark 不可承载（Table 文本 = 管道行），导入记 Dropped；
-//!   对齐信息（`:---:`）同样不保留。
+//!    对齐信息（`:---:`）同样不保留。
 //! 3. li 内多段落折叠进条目文本（空格连接）；blockquote/table/pre 等 li 子块保留。
 //! 4. 同层混排 ul/ol 相邻条目共享一个列表标签（按首项 marker 决定）；`*/+` marker
-//!   差异 HTML 不可表达。
+//!    差异 HTML 不可表达。
 //! 5. 导出仅认识 strong/em/code/del/u 五种 mark；其余 kind 不导出（DM→MD 同样
-//!   不写 mark，方向一致）。
+//!    不写 mark，方向一致）。
 //! 6. 同 kind 重叠/交叉的 mark 导出时按活跃集归一化（可能合并相邻 span）。
 //!
 //! # API
@@ -1255,6 +1255,9 @@ fn kind_rank(k: &str) -> usize {
 }
 
 /// 行内导出：转义 + mark 标签化（活跃集归一化，保证标签合法嵌套）。
+// 0..=len 边界扫描：位置 len 是“收尾收口点”（无字符，仅闭标签），i 是位置
+// 索引而非 chars 元素迭代——clippy 的迭代器改写不适配边界语义，保持显式。
+#[allow(clippy::needless_range_loop)]
 fn inline_html(text: &str, marks: &[MarkSpan]) -> String {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();

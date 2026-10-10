@@ -144,15 +144,15 @@ fn spike_b_identity_invariants_matrix() {
 
     // split → 原 ID 留左侧，右侧新 ID
     core.split_block(core.revision(), vec![0usize], 3).unwrap();
-    assert_eq!(core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).id, para_id);
-    let right_id = core.tree.node(core.tree.resolve(&vec![1usize]).unwrap()).id;
+    assert_eq!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id, para_id);
+    let right_id = core.tree.node(core.tree.resolve(&[1usize]).unwrap()).id;
     assert_ne!(right_id, para_id);
     assert_eq!(text_at(&core, &[0]), "Xte");
     assert_eq!(text_at(&core, &[1]), "xt para");
 
     // merge → survivor = 前一个（默认前/目标 ID），右侧 ID 失效
     core.merge_block(core.revision(), vec![1usize]).unwrap();
-    assert_eq!(core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).id, para_id);
+    assert_eq!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id, para_id);
     assert_eq!(core.tree.lookup_id(right_id), None, "被并块 ID 失效");
     assert_eq!(text_at(&core, &[0]), "Xtext para");
 
@@ -164,7 +164,7 @@ fn spike_b_delete_invalidates_copy_reallocates() {
     let mut core = Core::from_markdown(SAMPLE);
 
     // delete → 失效
-    let id = core.tree.node(core.tree.resolve(&vec![1usize]).unwrap()).id;
+    let id = core.tree.node(core.tree.resolve(&[1usize]).unwrap()).id;
     core.delete_block(core.revision(), vec![1usize]).unwrap();
     assert_eq!(core.tree.lookup_id(id), None);
 
@@ -190,7 +190,7 @@ fn spike_b_delete_invalidates_copy_reallocates() {
         "new".into(),
     )
     .unwrap();
-    assert!(core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).id.0 >= wm);
+    assert!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id.0 >= wm);
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ fn spike_c_all_first_stage_primitives() {
     attrs.insert("lang".to_string(), "python".to_string());
     core.set_attrs(core.revision(), vec![5usize], attrs).unwrap();
     assert_eq!(
-        core.tree.node(core.tree.resolve(&vec![5usize]).unwrap())
+        core.tree.node(core.tree.resolve(&[5usize]).unwrap())
             .attrs
             .get("lang")
             .map(String::as_str),
@@ -277,15 +277,15 @@ fn spike_c_all_first_stage_primitives() {
     assert_eq!(core.history.undo_depth(), depth_before + 1, "事务 = 单条历史");
 
     // commit_source（View A 块编辑回解析；单原子块原位改 → ID 保持）
-    let before = core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).id;
+    let before = core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id;
     core.commit_source(core.revision(), vec![0usize], "## committed").unwrap();
     assert_eq!(kind_at(&core, &[0]), BlockKind::Heading);
     assert_eq!(
-        core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).attrs.get("level").map(String::as_str),
+        core.tree.node(core.tree.resolve(&[0usize]).unwrap()).attrs.get("level").map(String::as_str),
         Some("2")
     );
     assert_eq!(text_at(&core, &[0]), "committed");
-    assert_eq!(core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).id, before);
+    assert_eq!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id, before);
 
     // 全程事件在流上
     assert!(core.take_events().len() >= 11);
@@ -342,7 +342,7 @@ fn spike_d_coalescing_window_and_semantic_break() {
 #[test]
 fn spike_d_ai_ops_are_first_class_history() {
     let mut core = Core::from_markdown("hello");
-    let id = core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).id;
+    let id = core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id;
     let before = core.history.undo_depth();
 
     // AI 变更：独立条目（source != View 永不合并）+ 可 undo
@@ -452,8 +452,8 @@ fn spike_d_snapshot_midstream_and_allocator_watermark() {
             "post".into(),
         )
         .unwrap();
-    assert!(core.tree.node(core.tree.resolve(&vec![0usize]).unwrap()).id.0 >= 1);
-    let new_id = restored.tree.node(restored.tree.resolve(&vec![0usize]).unwrap()).id;
+    assert!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id.0 >= 1);
+    let new_id = restored.tree.node(restored.tree.resolve(&[0usize]).unwrap()).id;
     assert!(new_id.0 >= wm);
 }
 
@@ -494,8 +494,8 @@ fn spike_e_structural_stale_must_reject() {
 #[test]
 fn spike_e_anchor_mapping_and_rejects() {
     let mut core = Core::from_markdown("alpha\nbeta\ngamma");
-    let b_beta = core.tree.node(core.tree.resolve(&vec![1usize]).unwrap()).id;
-    let b_gamma = core.tree.node(core.tree.resolve(&vec![2usize]).unwrap()).id;
+    let b_beta = core.tree.node(core.tree.resolve(&[1usize]).unwrap()).id;
+    let b_gamma = core.tree.node(core.tree.resolve(&[2usize]).unwrap()).id;
 
     // ① 移动块之后：锚点仍解析到新路径（ADR-B1 混合式的价值时刻）
     core.move_block(core.revision(), vec![0usize], vec![], 2).unwrap();
@@ -542,7 +542,7 @@ fn spike_e_marks_edit_semantics() {
     let mut core = Core::with_clock(clock_of(&now));
     core.tree = mdcore::markdown::markdown_to_tree("hello world");
     let p = vec![0usize];
-    let mut tick = |now: &Arc<std::sync::Mutex<u64>>| {
+    let tick = |now: &Arc<std::sync::Mutex<u64>>| {
         let mut t = now.lock().unwrap();
         *t += 10_000;
         *t

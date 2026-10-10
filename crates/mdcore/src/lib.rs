@@ -228,16 +228,16 @@ impl Core {
         // 顺序求逆 + 应用；任一失败 → 整体回滚（事务原子性）
         let backup = self.tree.clone();
         let mut inverses_seq: Vec<Op> = Vec::new();
-        for i in 0..ops.len() {
+        for op in ops.iter_mut() {
             // 逐 op 求逆必须基于该 op 之前的现场
-            let inv = match invert_op(&self.tree, &ops[i]) {
+            let inv = match invert_op(&self.tree, op) {
                 Ok(v) => v,
                 Err(e) => {
                     self.tree = backup;
                     return Err(e.into());
                 }
             };
-            if let Err(e) = apply_op(&mut self.tree, &mut ops[i]) {
+            if let Err(e) = apply_op(&mut self.tree, op) {
                 self.tree = backup;
                 return Err(e.into());
             }
@@ -583,6 +583,7 @@ impl Core {
     /// - 旧多新少：按位置从高到低 RemoveBlock（保持低位置路径有效）；
     /// - 新多旧少：从旧长度处起顺序 InsertBlock（id = None，现场分配——
     ///   解析树自造 ID 与现树注册表冲突，绝不可物化进现树）。
+    ///
     /// 空差分 = 无 op = 不 bump revision（apply_ops 早退）。
     pub fn sync_from_markdown(&mut self, md: &str) -> Result<Receipt, Reject> {
         let parsed = markdown::markdown_to_tree(md);
@@ -620,7 +621,7 @@ impl Core {
             if o.attrs != n.attrs {
                 ops.push(Op::SetAttrs { path: path.clone(), attrs: n.attrs.clone() });
             }
-            if o.text.to_string() != n.text.to_string() {
+            if o.text != n.text {
                 ops.push(Op::ReplaceText {
                     path: path.clone(),
                     start: 0,
@@ -856,7 +857,7 @@ mod tests {
         let ev = c.take_events();
         assert_eq!(ev.len(), 2);
         assert_eq!(ev[1].meta.source, Source::System);
-        assert_eq!(ev[1].meta.coalesced, false);
+        assert!(!ev[1].meta.coalesced);
         let last = c.log.records.last().unwrap();
         assert_eq!(last.source, Source::System);
         assert_eq!(last.revision, 2);

@@ -38,7 +38,7 @@ fn main() {
     println!("{}\n", debug::dump_tree(&core.tree));
 
     // AI 命令：独立条目 + 锚点寻址（拿到列表块 ID）
-    let item_id = core.tree.node(core.tree.resolve(&vec![2usize]).unwrap()).id;
+    let item_id = core.tree.node(core.tree.resolve(&[2usize]).unwrap()).id;
     core.apply_ops(
         vec![
             Op::ReplaceText { path: vec![2usize], start: 0, end: 0, insert: "RC".into() },

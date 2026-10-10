@@ -77,7 +77,7 @@ fn bulk_transactions_are_atomic_and_undoable_at_scale() {
     assert_eq!(top_lens(&core).len(), 20_050);
 
     // 非法事务：49 个合法 ReplaceText + 1 个 BadPath → 全回滚（原子性）
-    let lens = top_lens(&core);
+    let _lens = top_lens(&core);
     let mut bad_ops: Vec<Op> = (0..49)
         .map(|k| Op::ReplaceText {
             path: vec![k],

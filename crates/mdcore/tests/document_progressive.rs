@@ -1,18 +1,18 @@
 //! R10-a — 文件层（document_id）+ 渐进打开（extend_from_markdown）语义测试。
 //!
 //! 硬断言清单：
-//! ① one-shot vs K 段 extend：树指纹 + 先序 ID 序列 + to_markdown 三重相等
+//! 1. one-shot vs K 段 extend：树指纹 + 先序 ID 序列 + to_markdown 三重相等
 //!    （1MB 级文档，fence/task/quote/list/table 混合）；
-//! ② R21/ADR-B4：extend 不入 undo 栈（can_undo=false）+ System 边界破组
+//! 2. R21/ADR-B4：extend 不入 undo 栈（can_undo=false）+ System 边界破组
 //!    （View→extend→View 的 undo 只撤后段 View 编辑，ingest 与前段不动）
 //!    + 水位不回退；
-//! ③ extend 的 op 流进事件队列 + revision 前进（Source::System）+ undo 栈
+//! 3. extend 的 op 流进事件队列 + revision 前进（Source::System）+ undo 栈
 //!    零条目（mem_stats undo_entries==0）；
-//! ④ 未闭合 fence chunk 被 Reject::IncompleteChunk 且树零污染；
-//! ⑤ document_id 三路恢复一致（save/open/replay）；
-//! ⑥ 重复 set_document_id：幂等同值、拒绝异值；
-//! ⑦ DocumentId Display/FromStr 往返 + version/variant 位校验；
-//! ⑧ genesis 携带 document_id 的 JSONL 重放恢复 + 旧格式向后兼容。
+//! 4. 未闭合 fence chunk 被 Reject::IncompleteChunk 且树零污染；
+//! 5. document_id 三路恢复一致（save/open/replay）；
+//! 6. 重复 set_document_id：幂等同值、拒绝异值；
+//! 7. DocumentId Display/FromStr 往返 + version/variant 位校验；
+//! 8. genesis 携带 document_id 的 JSONL 重放恢复 + 旧格式向后兼容。
 //!
 //! 分块纪律（测试即分块器参考实现）：section = 自含块组（fence 成对、
 //! table 行连续、quote 组连续、列表组以 depth-1 项开头），chunk 只在
@@ -253,7 +253,7 @@ fn extend_pipeline_events_revision_and_log() {
     assert_eq!(events.len(), 1, "一个 chunk = 一个事务 = 一条事件");
     assert_eq!(events[0].meta.source, Source::System, "核自驱来源");
     assert_eq!(events[0].meta.command.as_deref(), Some("extend_from_markdown"));
-    assert_eq!(events[0].meta.coalesced, false);
+    assert!(!events[0].meta.coalesced);
     assert!(events[0].ops.iter().all(|o| matches!(o, Op::InsertBlock { .. })));
     assert!(
         events[0].ops.iter().any(|o| matches!(o, Op::InsertBlock { id: Some(_), .. })),
@@ -514,7 +514,7 @@ fn document_id_display_parse_validation() {
     );
 
     // variant 顶位 ≠ 10 拒绝（第 19 位 = byte8 高 nibble）
-    for bad_nibble in [b'0', b'c'] {
+    for bad_nibble in *b"0c" {
         let mut m = s.clone().into_bytes();
         m[19] = bad_nibble;
         assert!(
