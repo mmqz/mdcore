@@ -670,3 +670,42 @@ scan.sh 0 命中（scope 扩展后）；clippy 零新增。零新依赖（Cargo.
 （不引入 cargo-deb 依赖）；④ NSIS 的 WebView2 引导用微软官方
 Evergreen bootstrapper；⑤ AppImage 的 WEBKIT_DISABLE_COMPOSITING_MODE
 保守开启，R24-d 实测后按需收敛。
+
+## PDF-a：侦察收口 + 三探针 spike + ADR-P1 选型定谳（2026-10-10）
+
+**背景**：PDF 载体提前为第二载体（用户裁决，主档 §25）；五轮编排
+PDF-a..e（md-line/pdf_carrier_plan.md）。本轮 = 侦察收口，无产品仓代码
+变更（mdc-pdf crate 属 PDF-b）；分析侧交付存 cleanroom-analysis
+md-line/pdf-a/（分区纪律：spike 与策略表 = 分析域）。
+
+**三探针实测**（spike 工程：md-line/pdf-a/spike/；x64 linux 沙箱；
+pdfium=chromium/8086 non-V8 构建 + pdfium-render 0.9.4；lopdf 0.45.0）：
+
+| 探针 | 场景 | 实测 | 判定 |
+|---|---|---|---|
+| 1 打开 | 3 页/500 页 load + 首页文本抽取 | load 0ms（两档）；文本抽取首次 19ms（预热）后 0ms | ✅ 渲染引擎能力面成立 |
+| 2 光栅化 | 1200px 宽 Letter 位图 | 单页 4ms；连渲 5 页 17ms（~3.4ms/页） | ✅（PDF-c 性能门前的强正向信号） |
+| 3 标注写 | lopdf IncrementalDocument 增量写 Highlight | 原 1026B → 1497B（+471B 追加）；**原字节前缀逐位保持**；lopdf 重载 ✓；**pdfium 交叉读回 type=Highlight ✓** | ✅ 增量语义 + 双引擎互通坐实 |
+
+**ADR-P1 定谳**（md-line/pdf-a/ADR-P1-pdf-engine-selection.md）：
+pdfium（渲染/文本/搜索）+ lopdf（标注增量写）双引擎分工；排除 mupdf
+（AGPL 禁入）/ pdfium-v8 构建（安全策略 S1.1：JS 引擎不接——non-V8
+构建 args.gn 实证 pdf_enable_v8=false + pdf_enable_xfa=false）/ 造轮子
+解析器（pdf-line/02 缺口分析）。版本 pin：chromium/8086（SHA256 回填
+闭环）+ pdfium-render 0.9.4 + lopdf 0.45.0（crates.io 最新稳定）。
+取件脚本 fetch-pdfium.sh（版本 pin + SHA256 验证 + non-V8 断言）随
+spike 交付，PDF-b 起并入 mdc-pdf 基建。
+
+**安全策略表 v1**（md-line/pdf-a/SECURITY_POLICY.md）：Acrobat 审计
+R1-R6 + pdf-line/03 方法论（限额五层纵深 L0/L2/L3/L4/L7 + 三行为学
+❶硬拒绝/❷钳制/❸弃置 + JS 沙箱四件套）直接转化为 mdc-pdf 安全规格：
+S1 引擎能力面（non-V8/XFA 不启用/零网络）/ S2 危险对象族打开时检测
+（/OpenAction //AA //Launch //EmbeddedFiles //RichMedia——只读告警
+不执行）/ S3 限额五层 / S4 沙箱与进程边界（渲染工人池 + panic 隔离 +
+增量写/渲染分线程快照隔离）/ S5 加密签名面（仍加密态拒绝增量写——
+lopdf 原生 guard）/ S6 已知缺口诚实登记（AcroForm formfill 模块在
+non-V8 构建中的存在性 = PDF-b 补探针）。
+
+**门禁**：本仓零代码变更（cargo 187/187 基线不动 + scan 0 不变）；
+spike 工程独立于产品 workspace（分析域依赖，不入 SBOM——PDF-b 起
+mdc-pdf 才引入产品面依赖并触发 NOTICES 增量义务）。
