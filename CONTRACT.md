@@ -281,8 +281,10 @@ impl Core {
 
 ### 时间线
 
-- **PDF-c 阅读面**：`DocumentEngine` 实装（pdfium 绑定，non-V8）、异步
-  光栅化 + 页缓存、文本层、导航；性能门（打开 TTI / 翻页 p95）入 gates。
+- **PDF-c 阅读面（已完成 2026-10-10）**：`DocumentEngine` 实装
+  （pdfium 绑定，feature `engine-pdfium`，non-V8）+ LRU 页缓存 +
+  渲染工人（S4 panic 隔离）+ 会话引擎接线 + 文本层；性能门实测入
+  gates.md PDF-c 节（打开 0.18ms / 翻页命中 5µs / p95 渲染 1.1ms）。
 - **PDF-d 标注面**：lopdf 增量写落盘、Acrobat 互通验证、原字节前缀
   语义锁。
 

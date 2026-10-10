@@ -1,16 +1,28 @@
-//! `PdfSession`——PDF 文档会话状态机（PDF-b 骨架轮）。
+//! `PdfSession`——PDF 文档会话状态机（PDF-b 骨架轮；PDF-c 阅读面增
+//! [`PdfSession::attach_engine`] 引擎数据源）。
 //!
 //! 状态机只有**一个形态：已打开**（未打开态在类型层不存在——`open` 是
 //! 唯一构造出口，失败走 [`OpenError`]；协议层的"槽位无会话"由宿主以
 //! [`crate::command::CommandError::NotOpen`] 表达，见 protocol.rs）。
 //!
-//! 引擎数据 v0 由宿主注入：页几何/大纲走 `open` 参数，页文本走
-//! [`PdfSession::set_page_text`]（PDF-c 起由 [`crate::engine::DocumentEngine`]
-//! 的 pdfium 实装替换数据源——会话与命令面结构不变）。时间戳取会话
-//! 时钟（宿主注入——核不取系统时间，对齐 mdcore 时钟注入纪律：wasm32
-//! 无 std 时钟，宿主是唯一时间源）。
+//! 数据源两级（PDF-c）：
+//! - **v0 宿主注入**（无引擎）：页几何/大纲走 `open` 参数，页文本走
+//!   [`PdfSession::set_page_text`]（PDF-b 骨架路径，保留为无引擎环境的
+//!   降级通道）；
+//! - **引擎实装**（[`PdfSession::attach_engine`]）：ExtractText/Search/
+//!   Outline 命令与 `page_geometry` 查询改走 [`crate::engine::DocumentEngine`]
+//!   实数据（pdfium），**命令面/载荷/错误语义零变化**（限额/摘录/截断
+//!   语义单一出口——注入与引擎两路径同锁）。引擎可 [`PdfSession::detach_engine`]
+//!   取出（移交渲染工人）。
+//!
+//! 结构面变更（gates PDF-c 在档）：`Clone` derive 移除（引擎句柄
+//! （pdfium 文档）不可语义复制——克隆会复制“同一 C 文档句柄的双主人”）；
+//! `Debug` 改手写（引擎字段打印在位标记）。时间戳取会话时钟（宿主注入
+//! ——核不取系统时间，对齐 mdcore 时钟注入纪律：wasm32 无 std 时钟，
+//! 宿主是唯一时间源）。
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +30,7 @@ use crate::annotation::{AnnotId, Annotation, AnnotationDraft, AnnotationPatch};
 use crate::command::{
     AnnotationFilter, Command, CommandError, Outcome, SearchHit, SearchOptions, TextTarget,
 };
+use crate::engine::DocumentEngine;
 use crate::outline::{OutlineTarget, OutlineTree};
 use crate::page::{PageCount, PageGeometry, PageIndex, PageSpan};
 use crate::security::{
@@ -49,18 +62,19 @@ pub enum OpenError {
 }
 
 /// PDF 文档会话（打开后单形态；命令的唯一调度入口 = [`PdfSession::execute`]）。
-#[derive(Debug, Clone)]
 pub struct PdfSession {
     meta: DocumentMeta,
     assessment: OpenAssessment,
     limits: Limits,
     pages: Vec<PageGeometry>,
     outline: OutlineTree,
-    /// v0 文本层（宿主注入；PDF-c 换 DocumentEngine::extract_text）。
-    /// BTreeMap = 页号升序确定性。
+    /// v0 文本层（宿主注入；无引擎时的降级通道）。BTreeMap = 页号升序确定性。
     page_text: BTreeMap<u32, String>,
     /// 标注库（id 升序迭代 = BTreeMap 键序，确定性）。
     annotations: BTreeMap<AnnotId, Annotation>,
+    /// 引擎数据源（PDF-c：注入后 ExtractText/Search/Outline/几何走实数据；
+    /// None = v0 宿主注入路径）。
+    engine: Option<Box<dyn DocumentEngine>>,
     /// 下一标注 id（单调；1 起步——0 = 永不签发哨兵）。
     next_annot_id: u64,
     /// 会话时钟（epoch ms，宿主注入）。
@@ -103,6 +117,7 @@ impl PdfSession {
             outline,
             page_text: BTreeMap::new(),
             annotations: BTreeMap::new(),
+            engine: None,
             next_annot_id: 1,
             now_ms: 0,
         })
@@ -123,7 +138,7 @@ impl PdfSession {
                 opts,
                 source: _source,
             } => self.search(query, opts),
-            Command::Outline { source: _source } => Ok(Outcome::Outline(self.outline.clone())),
+            Command::Outline { source: _source } => Ok(self.outline_outcome()?),
             Command::AnnotateAdd {
                 draft,
                 source: _source,
@@ -144,8 +159,8 @@ impl PdfSession {
     // 宿主注入面
     // -----------------------------------------------------------------------
 
-    /// 注入页文本（v0 文本层——宿主/测试面；PDF-c 起由引擎数据源替换，
-    /// 本方法保留为无引擎环境的降级通道）。页界校验即时执行。
+    /// 注入页文本（v0 文本层——宿主/测试面；无引擎环境的降级通道，
+    /// PDF-b 路径保留）。页界校验即时执行。
     pub fn set_page_text(
         &mut self,
         page: PageIndex,
@@ -156,6 +171,30 @@ impl PdfSession {
         }
         self.page_text.insert(page.0, text.into());
         Ok(())
+    }
+
+    /// 注入引擎数据源（PDF-c 阅读面）：ExtractText/Search/Outline 命令与
+    /// [`PdfSession::page_geometry`] 查询改走引擎实数据（pdfium）；
+    /// 命令面/载荷/限额语义零变化（语义锁背书：注入与引擎两路径同锁）。
+    /// 二次注入直接替换在位引擎（旧引擎 drop）。
+    ///
+    /// **调用方合同**（pdf-c-1r 审计登记）：`engine` 的页数语义必须与
+    /// `meta.page_count` 一致——双权威不一致时，引擎页少 → 整命令
+    /// `InvalidPage`（安全侧：显式失败）；引擎页多 → 静默漏搜末尾页。
+    /// 宿主接线层（PDF-d 视图）负责同源构造两者，禁止独立来源拼装。
+    pub fn attach_engine(&mut self, engine: Box<dyn DocumentEngine>) {
+        self.engine = Some(engine);
+    }
+
+    /// 取出引擎（会话回到 v0 宿主注入路径；引擎可移交渲染工人——
+    /// [`crate::worker::RenderWorker`] 以所有权接收 `Rasterizer`）。
+    pub fn detach_engine(&mut self) -> Option<Box<dyn DocumentEngine>> {
+        self.engine.take()
+    }
+
+    /// 引擎在位观测（数据源级别判定：false = 宿主注入路径）。
+    pub fn engine_attached(&self) -> bool {
+        self.engine.is_some()
     }
 
     /// 会话时钟注入（epoch ms）。标注 `created_ms`/`modified_ms` 取自
@@ -181,7 +220,12 @@ impl PdfSession {
     }
 
     /// 单页几何（越界 None——查询面不报错，与命令面的 InvalidPage 分工）。
+    /// 引擎在位时走引擎实数据（引擎错误折叠为 None——查询面不报错纪律
+    /// 保持；引擎面错误经命令面可见）。
     pub fn page_geometry(&self, idx: PageIndex) -> Option<PageGeometry> {
+        if let Some(engine) = self.engine.as_deref() {
+            return engine.page_geometry(idx).ok();
+        }
         self.pages.get(idx.0 as usize).copied()
     }
 
@@ -197,10 +241,16 @@ impl PdfSession {
     // 命令实现
     // -----------------------------------------------------------------------
 
-    /// ExtractText：页集形状先行冻结（v0 文本 = 注入面，未注入页空串；
-    /// 文本载荷 PDF-c 由引擎填充——载荷形状不变）。
+    /// ExtractText：页集形状先行冻结（引擎路径 = 引擎逐页实数据；注入
+    /// 路径 = 注入面，未注入页空串——载荷形状两路径一致）。
     fn extract_text(&self, target: TextTarget) -> Result<Outcome, CommandError> {
         let span = self.resolve_span(target)?;
+        if let Some(engine) = self.engine.as_deref() {
+            // PDF-c 引擎路径：真实文本数据源（命令面/载荷形状不变）。
+            return Ok(Outcome::ExtractedText {
+                pages: engine.extract_text(span)?,
+            });
+        }
         let mut pages = Vec::with_capacity(span.len() as usize);
         for idx in span.iter() {
             let text = self.page_text.get(&idx.0).cloned().unwrap_or_default();
@@ -209,9 +259,9 @@ impl PdfSession {
         Ok(Outcome::ExtractedText { pages })
     }
 
-    /// Search：v0 = 宿主注入文本面的朴素扫描（页号升序；Unicode 简单
-    /// 折叠大小写不敏感；snippet char 边界安全）。PDF-c 换 pdfium 文本
-    /// 引擎检索——命令/载荷形状不变。
+    /// Search：限额/摘录/截断语义单一出口（两路径同锁）；引擎路径逐页
+    /// 抽取后复用同一收集器（find_matches/snippet_around——注入路径的
+    /// 非重叠/Unicode 折叠/char 边界语义逐字保持）。
     fn search(&self, query: String, opts: SearchOptions) -> Result<Outcome, CommandError> {
         if query.is_empty() {
             // S3 ❶硬拒绝：空串无语义，"全匹配"是资源滥用面。
@@ -222,15 +272,13 @@ impl PdfSession {
         let (snippet_chars, _) = self.limits.enforce_snippet_chars(usize::MAX);
         let mut hits: Vec<SearchHit> = Vec::new();
         let mut truncated = false;
-        'pages: for page_no in 0..self.meta.page_count.0 {
-            let Some(text) = self.page_text.get(&page_no) else {
-                continue;
-            };
+        // 收集器：单页命中收集；返回 true = 收满（❷钳制告知，见收满分支）。
+        let mut collect = |page_no: u32, text: &str| -> bool {
             for byte_idx in find_matches(text, &query, opts.case_insensitive) {
                 if hits.len() >= max_hits as usize {
                     // 已收满且仍见新命中 → ❷钳制告知（不静默丢弃）。
                     truncated = true;
-                    break 'pages;
+                    return true;
                 }
                 let snippet = snippet_around(text, byte_idx, snippet_chars);
                 hits.push(SearchHit {
@@ -238,8 +286,44 @@ impl PdfSession {
                     snippet,
                 });
             }
+            false
+        };
+        if let Some(engine) = self.engine.as_deref() {
+            // PDF-c 引擎路径：逐页抽取（流式，不整档驻留文本）。
+            'engine: for page_no in 0..self.meta.page_count.0 {
+                // start == end 单页区间——构造恒非反转（PageSpan 不变量）。
+                let span = PageSpan::new(PageIndex(page_no), PageIndex(page_no))
+                    .expect("单页区间恒非反转");
+                let text = engine
+                    .extract_text(span)?
+                    .into_iter()
+                    .next()
+                    .map(|(_, text)| text)
+                    .unwrap_or_default();
+                if collect(page_no, &text) {
+                    break 'engine;
+                }
+            }
+        } else {
+            'injected: for page_no in 0..self.meta.page_count.0 {
+                let Some(text) = self.page_text.get(&page_no) else {
+                    continue;
+                };
+                if collect(page_no, text) {
+                    break 'injected;
+                }
+            }
         }
         Ok(Outcome::SearchResults { hits, truncated })
+    }
+
+    /// Outline：引擎在位 → 引擎实数据（引擎侧已做页界防御）；否则
+    /// v0 注入树（open 期已校验目标页在档）。
+    fn outline_outcome(&self) -> Result<Outcome, CommandError> {
+        match self.engine.as_deref() {
+            Some(engine) => Ok(Outcome::Outline(engine.outline()?)),
+            None => Ok(Outcome::Outline(self.outline.clone())),
+        }
     }
 
     /// AnnotateAdd：策略门（S5）→ 页界（InvalidPage）→ S3-L7 作者名 ❶ →
@@ -327,7 +411,29 @@ impl PdfSession {
 }
 
 // ---------------------------------------------------------------------------
-// 搜索内部：匹配扫描与摘录（v0 注入文本面；PDF-c 换引擎后本节移除）
+// 手写 Debug（PDF-c）：引擎字段不可推导（Box<dyn DocumentEngine>）——
+// 打印在位标记与计数面；Clone 已移除（结构面变更，gates 在档）。
+// ---------------------------------------------------------------------------
+
+impl fmt::Debug for PdfSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PdfSession")
+            .field("meta", &self.meta)
+            .field("assessment", &self.assessment)
+            .field("limits", &self.limits)
+            .field("pages", &self.pages.len())
+            .field("outline", &self.outline)
+            .field("page_text_pages", &self.page_text.len())
+            .field("annotations", &self.annotations.len())
+            .field("engine_attached", &self.engine.is_some())
+            .field("next_annot_id", &self.next_annot_id)
+            .field("now_ms", &self.now_ms)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 搜索内部：匹配扫描与摘录（注入与引擎两路径共用的单一语义出口）
 // ---------------------------------------------------------------------------
 
 /// 全匹配扫描（返回匹配**首字节偏移**，升序；两模式一致的非重叠语义——

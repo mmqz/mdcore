@@ -798,3 +798,144 @@ scan.sh 0 命中（产品面新源 crates/pdf/src + 清单已入扫描范围）�
 fmt --all` 会重排 30+ 既有文件，本轮按 crate 范围执行以保持 diff 可审，
 全仓格式化归 PDF-e 收口或独立格式化提交裁决）。零新依赖（serde 系复
 用既有版本——Cargo.lock 仅增 mdc-pdf package 条目，无解析变更）。
+
+## PDF-c：阅读面引擎（2026-10-10）
+
+**背景**：pdf_carrier_plan §5 第三轮——阅读面 = 引擎实装（pdfium 绑定
++ 渲染/文本/几何实数据）+ LRU 页缓存 + 渲染工人（panic 隔离）+ 会话
+引擎接线 + 性能门。输入资产：PDF-a spike 绑定范本（bind_to_library）
++ SECURITY_POLICY.md S3-L2/S4 + ADR-P1（pdfium-render =0.9.4 pin）。
+
+**交付**（crates/pdf，feature 纪律 = 默认零引擎依赖不变）：
+
+- `cache.rs`（常开，零依赖）：`PageCache<K>` 字节预算 LRU——HashMap
+  键索引 + arena 槽位双向链表（u32 索引，槽 0 哨兵，free 栈复用），
+  **O(1) get/put**、命中提权、超预算自尾驱逐返回被驱逐键集、重复 put
+  原位更新不重复计费、超大条目自逐（不变量 bytes ≤ 预算恒成立）、
+  零 unsafe；
+- `render.rs`（常开）：`RenderRequest{page, width_px}` /
+  `RenderedPage{width_px, height_px, bgra}`（BGRA 非预乘，缓冲长恒
+  w×h×4）+ `Rasterizer` trait（object-safe，S4 工人以对象形态持有）；
+- `worker.rs`（常开）：`RenderWorker<R>` 专用渲染线程 + mpsc 双通道 +
+  停机令牌（drop 发信号 + join 不悬挂）+ 取消令牌（❸弃置语义：仅作用
+  于未开跑的排队作业，不假装能杀线程）+ **panic 隔离**（S4.2：作业体
+  catch_unwind(AssertUnwindSafe) → `CommandError::RenderPanic`，一坏页
+  不毒全档，工人存活后续作业可用）；回执合同 = 提交序 FIFO + id 关联；
+- `engine_pdfium.rs`（feature `engine-pdfium`）：`PdfiumEngine` 实现
+  `DocumentEngine` + `Rasterizer`——`load_pdf_from_byte_vec` 全内存
+  加载、page_geometry（MediaBox + /Rotate）、extract_text（逐页
+  PdfPageText）、outline（书签树，越界目标丢弃）、rasterize（宽驱动
+  等比 + S3-L2 ❷钳制：单边 8192 / 总像素 64M，超限等比收缩，生效尺寸
+  以 RenderedPage 报告为准）；
+- `document.rs` 增量：`attach_engine(Box<dyn DocumentEngine>)` /
+  `detach_engine`——引擎在场则 ExtractText/Search/Outline/几何查询走
+  实数据（search 引擎路径复用注入路径的收集器 = 限额/摘录/截断语义
+  单一出口）；无引擎 v0 注入路径原样；结构面变更：`Clone` 移除（pdfium
+  文档句柄不可语义复制）+ 手写 `Debug`（在档 minor 增量）；
+- `CommandError` 增 `RenderPanic` / `Engine(String)`（**minor 增量不
+  升版**——错误面仍只序列化不反序列化；`Engine` 受限构造：crate 内经
+  `CommandError::engine` 规整——空串回退 + 512 字符 char 边界钳制）；
+- Cargo.toml：`pdfium-render = { version = "=0.9.4", optional = true,
+  default-features = false, features = ["pdfium_latest", "thread_safe"] }`
+  + `engine-pdfium = ["dep:pdfium-render"]`，default = []。
+
+**实测性能表**（x64 linux 沙箱，debug 测试 profile——pdfium 侧为原生
+C++（release 品质），Rust 侧热路径无逐像素处理，数字对渲染面有代表性；
+large.pdf = 500 页 Letter；pdfium = chromium/8086 non-V8）：
+
+| 指标 | 载荷 | 实测 | 断言阈值（=实测×3 对齐 1/2/5 序列）|
+|---|---|---|---|
+| 打开 TTI（5 次取中位）| 500 页全内存加载 | **0.18ms**（max 3.41ms = 首次装载抖动；断言面 = 中位）| 1ms |
+| 首页渲染（冷工人）| 1000px | **8.2ms** | 25ms |
+| 顺序渲染 50 页 | 800px（Letter 等比 1035px 高）| **p50 0.9ms / p95 1.1ms** | p95 ≤ 5ms |
+| 随机翻页：未命中 | 800px 工人渲染+入缓 | **中位 2.1ms** | —（对照面）|
+| 随机翻页：LRU 命中 | 20 页整预算缓存 | **中位 5.1µs**（≈400× 快于未命中；二次取页 rasterize 调用 = 0）| ≤ 20µs 且 < 未命中/10 |
+| 逐页文本抽取吞吐 | 500 页全量 | **30-37ms（≈14-16k 页/s）** | 100ms |
+| 会话端到端冒烟 | 500 页全档 ExtractText / 定点 Search | 16-43ms / 26-37ms | 无阈值（记录面）|
+
+**决策记录**：
+① **image 取舍——零 image crate**：pdfium-render `default-features =
+false`（默认特性含 `image_latest`，会拖入 image 全家）；渲染走低层
+`PdfBitmap::from_bytes`（调用方缓冲，`FPDFBitmap_CreateEx`）+
+`render_into_bitmap_with_config`（`FPDF_RenderPageBitmap`）+
+`as_raw_bytes` 拷出——BGRA 四字节恒 4 对齐（stride = w×4，无行尾填充），
+`set_reverse_byte_order(false)` 保原生 BGRA（默认 true 会翻成 RGBA）。
+收益 = 依赖面不进 image 系 + Rust 侧无逐像素转换（debug profile 的
+性能担忧面直接消失）；
+② **库定位序**：env `MDC_PDFIUM_LIB` → 编译期候选清单（产品仓
+`bin/lib`（fetch-pdfium.sh 取件位，PDF-e 接线）→ 分析仓 spike
+`bin/lib`（门禁环境）→ crate 本地）→ 系统（bind_to_system_library）；
+绑定失败 = `Engine` 错误**携带全部已尝试路径**（门禁可诊断，不静默
+降级）；进程级单例（pdfium-render 绑定表为全局 OnceCell——本 crate
+`PDFIUM: OnceLock<&'static Pdfium>` + Box::leak；绑定失败不缓存，下次
+重试；并发首个 open 经互斥锁仲裁）；
+③ **线程纪律（S4.1 两层）**：主纪律 = 引擎以**所有权转移**进入专职
+  渲染工人线程（不跨线程共享引用）；兜底 = pdfium-render `thread_safe`
+  特性把每次 FFI 调用经全局互斥串行化（文档线程与渲染线程并存时进程
+  级不并发进 C 库）——互斥是兜底不是许可，`PdfiumEngine: Send` 由该
+  特性背书（语义锁见证）；
+④ **panic 隔离的诚实边界（S4.2）**：catch_unwind 捕获的是 Rust 侧
+  panic（&mut R 跨 unwind 经 AssertUnwindSafe——pdfium 句柄在 C 堆，
+  Rust unwind 不触碰，后续作业继续尝试）；pdfium C++ 侧段错误/abort
+  无法在本层捕获——进程隔离属 PDF-e 后强化面（S6 已知缺口登记同款
+  纪律）；
+⑤ **阈值依据**：阈值 = 实测 × 3 后向上对齐 1/2/5 稳定序列（防沙箱
+  负载抖动误报；×3 下限仍拦数量级回归）；打开面用**中位**断言（首次
+  装载抖动 max 3.4ms 已在档）；性能测试 `#[ignore]` 常驻（手动
+  `--ignored --nocapture` 运行，不进常规门禁的抖动面）。**例外在档**
+  （pdf-c-1r 审计增补）：hit_vs_miss_divisor = 10 而非 ×3——命中/未命中
+  是比值门而非绝对值门（实测 415-549×，阈值 10× 为极宽松下限，
+  意义是"缓存失效即报警"而非精确回归门）；另：命中侧计时不含出缓存
+  后的位图消费成本（get 返回引用可零拷贝消费，设计上成立，已在测试
+  注释明示）；
+⑥ **CommandError minor 增量不升版**：`RenderPanic`/`Engine` 两变体
+  为错误面内部增量（CONTRACT §6 在档；错误面仍 Serialize-only 单向）。
+
+**语义锁**：`tests/pdfc_cache_worker.rs` **17 条**（常开，mock 可测）：
+LRU 提权（get A 后逐 B 非最热页）/ 驱逐序 = LRU→MRU / 字节预算精确
+（bytes ≤ 预算且 = 保留和；非均匀成本按字节逐）/ 重复 put 原位更新
+（len 不变 + 旧成本退出 + 提权）/ miss 与 contains 不提权 / 超大条目
+自逐（自身键在驱逐集末尾）+ 零成本条目不受驱逐 / clear 全量复位 /
+entries 序 = LRU→MRU / 工人顺序回执（id 关联）/ panic 隔离 + 后续作业
+存活 / 取消令牌（零 rasterize 调用）/ 停机不悬挂（含 submit 后立即
+drop 在途路径）/ mock 端到端缓存命中（二次取页零调用）/ Box<dyn
+Rasterizer + Send> 装箱形态 / RenderRequest/RenderedPage serde 往返；
+以及 pdf-c-1r 审计回归两锁：Engine 错误受限构造 512 字符钳制（CJK
+char 边界）/ 重复 put 更新路径超大值自逐（与 put-miss 路径同构）。
+`tests/pdfc_engine.rs` **13 条**（feature，真实 pdfium + spike
+fixtures——定位失败 = panic 打印候选，不静默 skip）：绑定打开（3 页
+基线）/ Letter 几何 612×792 + Deg0 / 越界 → InvalidPage（几何与抽取
+双面）/ 文本抽取非空 + 形状 + 逐页标签 / 无书签 → 空大纲 Ok / 会话
+引擎端到端（占位几何被旁路 + 搜索真实命中）/ 限额语义不变（max_hits
+钳制 → truncated + 空 query 硬拒）/ 位图缓冲长契约 + Letter 等比
+（300→388）/ 渲染落笔（非全零 + 白底主导）/ S3-L2 钳制（0→1px；
+999,999→8000×8000 收敛值锁定）/ 绑定失败与垃圾装载 → Engine（消息
+含路径）/ Send 见证 + 工人真实往返 / 全链路缓存命中零 rasterize（计数
+包裹真实引擎）。`tests/pdfc_perf.rs` **6 项**（feature + `#[ignore]`，
+性能门——上表数字即本套件输出）。
+
+**NOTICES 前瞻（PDF-e SBOM 增量义务）**：`engine-pdfium` 特性引入
+pdfium-render =0.9.4（**MIT OR Apache-2.0**，pin 锁定）+ 其解析依赖
+42 包（chrono/futures/libloading/web-sys 等——**默认构建零编译**，
+仅 lock 解析在档）；pdfium 二进制本体 = chromium/8086 non-V8 构建
+（**BSD-3-Clause**，fetch-pdfium.sh 版本 pin + SHA256 已闭环于 spike，
+PDF-e 入产品仓 bin/ 取件 + licenses/ 全量进 NOTICES）。渲染路径零
+image crate（决策①），依赖面不进 image 系。
+
+**审计轮（pdf-c-1r，独立审查代理）：通过**（0 阻断 0 重要，8 轻微）。
+修复四项：幽灵取消令牌防御（absorb_cancel 增 job_watermark 双侧剪枝
+——id 超过提交水位 = 调用方 bug 令牌直接丢弃，集合上界 = 在飞作业数）/
+attach_engine 页数一致性调用方合同入档（双权威不一致的失败模式显式
+化）/ perf_random_flip 正名为 perf_sequential_flip（两阶段顺序取页，
+名实相符）/ Engine 钳制与 put-更新超大自逐两回归锁（+2）。在档不修
+两项：命中侧计时口径（测试注释已明示）与绑定失败重试路径无直接锁
+（进程单例语义限制，实现读审确认真实）。
+
+**门禁**：cargo --workspace **236/236**（219 + 17 常开缓存/工人锁；
+默认构建零引擎依赖不变，pdfc_engine/perf 退化空目标）；feature 面
+`cargo test -p mdc-pdf --features engine-pdfium` **62/62 + 6 ignored**
+（32 骨架 + 17 常开 + 13 引擎；ignored = 性能 6 项）；性能门
+`--test pdfc_perf -- --ignored` 6/6（上表实测即本轮输出）；wasm32
+check 过；scan.sh 0 命中；clippy 零新增（workspace 面 mdc-wasm 2 条 =
+既有基线；feature 面全绿）；cargo fmt 过（mdc-pdf 范围）。既有 219
+锁断言语义零改动（PDF-b 锁原样全绿）。

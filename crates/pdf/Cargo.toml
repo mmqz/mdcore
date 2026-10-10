@@ -2,12 +2,29 @@
 name = "mdc-pdf"
 version.workspace = true
 edition = "2021"
-description = "第二 Document Model（PDF 面）：页/大纲/标注三层模型 + Command 边界 + 安全策略 + 宿主协议草案；与 mdcore 块核并列互不依赖，引擎（pdfium/lopdf）自 PDF-c 轮接入。"
+description = "第二 Document Model（PDF 面）：页/大纲/标注三层模型 + Command 边界 + 安全策略 + 宿主协议草案 + PDF-c 阅读面（pdfium 引擎/LRU 页缓存/渲染工人/文本层）；与 mdcore 块核并列互不依赖。"
 
-# PDF-b 骨架轮依赖纪律：仅 serde 系（workspace 既有版本，零新增解析面）。
-# pdfium（pdfium-render，non-V8 构建）/ lopdf 属引擎面，PDF-c/d 引入——
-# 骨架轮不耦合原生库，workspace 在无 pdfium 二进制的环境保持全绿
-# （决策记录见 gates.md PDF-b 节）。
+# PDF-c 引擎依赖纪律（决策记录见 gates.md PDF-c 节）：
+# - 默认构建零引擎依赖不变（default = []——跨环境可构建纪律，PDF-b 延续）：
+#   `cargo test --workspace` 在无 pdfium 二进制的环境保持全绿。
+# - `engine-pdfium` 特性引入 pdfium-render =0.9.4（版本 pin，ADR-P1）：
+#   default-features = false——**零 image 依赖**（渲染走 PdfBitmap::from_bytes
+#   调用方缓冲低层路径，不走 as_image/image crate）；pdfium_latest =
+#   pdfium_7881 绑定面（chromium/8086 二进制向后兼容）；thread_safe =
+#   FFI 全局互斥串行化（pdfium 单线程库的进程级兜底——分线程纪律见
+#   engine_pdfium.rs 模块文档）。
+# - lopdf（标注增量写）PDF-d 引入，本轮不进依赖面。
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+pdfium-render = { version = "=0.9.4", optional = true, default-features = false, features = [
+    "pdfium_latest",
+    "thread_safe",
+] }
+
+[features]
+default = []
+# pdfium 引擎实装（engine_pdfium 模块 + 引擎测试面）。库定位序与绑定
+# 纪律见 engine_pdfium.rs；测试环境需 libpdfium.so 在位（env
+# MDC_PDFIUM_LIB / 编译期候选清单含 spike 取件位 / 系统）。
+engine-pdfium = ["dep:pdfium-render"]

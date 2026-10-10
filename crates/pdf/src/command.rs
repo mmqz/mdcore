@@ -142,6 +142,10 @@ pub enum Outcome {
 }
 
 /// 命令错误（typed；只序列化不反序列化——错误面为 Rust → 宿主单向）。
+///
+/// PDF-c 增补（v1.2 内部增量，不升版——CONTRACT §6 在档说明）：
+/// [`CommandError::RenderPanic`]（渲染工人 panic 隔离产物，S4.2）与
+/// [`CommandError::Engine`]（引擎面失败）两变体。既有五变体语义零变化。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum CommandError {
     /// **协议层专用**：命令信封指向无会话的文档槽。会话内不可达——
@@ -157,4 +161,31 @@ pub enum CommandError {
     SecurityDeny { reason: &'static str },
     /// 空查询（S3 ❶硬拒绝：空串无语义，"全匹配"是资源滥用面）。
     EmptyQuery,
+    /// 渲染工人作业 panic（S4.2 隔离产物：页级 typed 错误而非进程崩溃）。
+    ///
+    /// 携带面刻意为空：panic 载荷非结构化（&str/String/任意类型），不进
+    /// 协议面——诊断走工人侧日志与测试捕获输出。
+    RenderPanic,
+    /// 引擎面失败（pdfium 绑定/装载/渲染的引擎侧错误；PDF-c）。
+    ///
+    /// **受限构造**纪律：crate 内部一律经 [`CommandError::engine`] 构造
+    /// （消息规整：空串回退 + 字符数钳制——错误面不得成为内存/日志滥用
+    /// 面，S3 输入层精神）；不透传任意长度字符串。
+    Engine(String),
+}
+
+impl CommandError {
+    /// `Engine` 变体的唯一构造出口（受限构造纪律）：消息规整——空串
+    /// 回退固定描述；512 字符钳制（char 边界安全截断，S3 ❷精神）。
+    pub fn engine(detail: impl std::fmt::Display) -> Self {
+        const MAX_CHARS: usize = 512;
+        let text = detail.to_string();
+        if text.is_empty() {
+            return Self::Engine("pdfium 引擎错误（无细节）".into());
+        }
+        if text.chars().count() <= MAX_CHARS {
+            return Self::Engine(text);
+        }
+        Self::Engine(text.chars().take(MAX_CHARS).collect())
+    }
 }
