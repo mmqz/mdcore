@@ -123,6 +123,13 @@ pub struct Core {
     selection: Option<Selection>,
     events: VecDeque<Event>,
     clock: ClockFn,
+    /// R24-b 脏标记：自上次 `mark_saved` 以来是否有状态变更。粘性语义
+    /// （只增不减，mark_saved 清位）：View/Ai/Undo/Redo 置位；System 装载
+    /// 事务（渐进打开/adopt_external）不置位（缓冲 == 外部内容）；
+    /// undo 回到已存内容仍报脏 = 安全向假阳性（宁可多问一次存盘，
+    /// 不可漏报）。供宿主「关闭前确认」/ 会话驱逐策略 /
+    /// `plan_reload(local_dirty)` 权威取值。
+    dirty: bool,
 }
 
 impl Core {
@@ -140,6 +147,7 @@ impl Core {
             selection: None,
             events: VecDeque::new(),
             clock,
+            dirty: false,
         }
     }
 
@@ -183,7 +191,21 @@ impl Core {
             "history": self.history.mem_stats(),
             "events_pending": self.events.len(),
             "revision": self.revision,
+            "dirty": self.dirty,
         })
+    }
+
+    /// R24-b：自上次 [`mark_saved`] 以来是否有状态变更（脏标记，粘性
+    /// 语义）。新核/重放/快照复原 = clean；View/Ai/Undo/Redo 事务置位；
+    /// System 装载事务不置位；`adopt_external` 成功后清位（缓冲 == 外部
+    /// 磁盘内容）。
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// R24-b：保存落盘成功后由宿主调用（核不碰 fs，写盘成败宿主域）。
+    pub fn mark_saved(&mut self) {
+        self.dirty = false;
     }
 
     pub fn now_ms(&self) -> u64 {
@@ -277,6 +299,8 @@ impl Core {
             self.history.push_entry(entry, meta.source);
             self.push_event(ops, EventMeta { source: meta.source, coalesced: false, command: meta.command });
         }
+        // R24-b：交互事务（View/Ai）置脏——System 分支已在上方早退。
+        self.dirty = true;
         Ok(Receipt { revision: self.revision })
     }
 
@@ -700,6 +724,7 @@ impl Core {
         // 违背“日志自含 + 确定性重放”承诺）。重放侧按普通 op 序列应用。
         self.log.record(rev, &inverses, Source::Undo, Some("undo".into()));
         self.push_event(inverses, EventMeta { source: Source::Undo, coalesced: false, command: Some("undo".into()) });
+        self.dirty = true; // R24-b：状态相对保存点变更（粘性，见字段注）
         Some(Receipt { revision: rev })
     }
 
@@ -713,6 +738,7 @@ impl Core {
         let rev = self.bump_revision();
         self.log.record(rev, &ops, Source::Redo, Some("redo".into()));
         self.push_event(ops, EventMeta { source: Source::Redo, coalesced: false, command: Some("redo".into()) });
+        self.dirty = true; // R24-b：同 undo
         Some(Receipt { revision: rev })
     }
 

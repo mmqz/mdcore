@@ -52,6 +52,29 @@ fn contract_doc_v1_1_settings_face_present() {
     const _: () = assert!(mdshell::settings::SCHEMA_VERSION == 1);
 }
 
+/// R24-b 契约 §5 会话面词面锁（纯宿主面：window 面零新增、
+/// `__contractVersion` 保持 1.1——这一"不升版"事实本身是契约语义，
+/// 与 session 面词面一起锁死，防漂移）。
+#[test]
+fn contract_doc_v1_1_session_face_present() {
+    let doc = std::fs::read_to_string(prototype_root().join("CONTRACT.md"))
+        .expect("CONTRACT.md 必须存在于原型根");
+    assert!(doc.contains("§5 会话面"), "会话面章节必须在");
+    assert!(doc.contains("SessionManager"), "会话管理器契约必须在");
+    assert!(doc.contains("DocumentAlreadyOpen"), "一窗一档错误面必须在");
+    assert!(doc.contains("DEFAULT_MAX_SESSIONS"), "资源上限常量面必须在");
+    assert!(doc.contains("snapshot_record"), "会话持久化（恢复上次打开集）必须在");
+    assert!(doc.contains("session_restore"), "settings 消费联动必须在");
+    assert!(doc.contains("mark_saved"), "Core 脏标记契约必须在");
+    assert!(
+        doc.contains("window 面零新增，`__contractVersion` 保持 1.1"),
+        "不升版裁决必须显式在档（防误升版/漏升版两向漂移）"
+    );
+    // Rust 侧权威实现锚（编译期常量锁）。
+    const _: () = assert!(mdshell::session::DEFAULT_MAX_SESSIONS == 16);
+    const _: () = assert!(mdshell::session::SESSION_RECORD_VERSION == 1);
+}
+
 /// mdshell 契约层签名冻结（编译即锁；此处锁语义形状）。
 #[test]
 fn mdshell_surface_shapes_frozen() {

@@ -582,3 +582,47 @@ R21 System 边界）；fingerprint.rs 确定性契约落实（无 HashMap 迭代
 正确；wasm 桥零宏魔法纪律保持。mdshell::settings 的 save() 无 fsync
 （rename 原子性足够、设置文件非文档数据，与 md+meta sidecar 同款纪律，
 不升级）。
+
+## R24-b：多窗口核侧（2026-10-10）
+
+**交付**（主档 §31 R24-b 机制合同全落地）：
+- `mdshell::session` 模块：`SessionManager`（窗口→会话映射 BTreeMap +
+  MRU 焦点序 + 资源上限 `DEFAULT_MAX_SESSIONS=16`）+ `SessionRecord`
+  （会话持久化纯数据 JSON，schema v1）+ `WindowId`（宿主分配透传）。
+- 机制：一窗一档（同 document_id 二开 → `DocumentAlreadyOpen` 携带持有
+  窗口，宿主 reveal-existing；匿名文档多开不受限）/ 超限显式 Err 不静默
+  驱逐（驱逐 = 宿主 UX，核供 `dirty_windows`/`windows_in_focus_order`
+  决策输入）/ 焦点序确定性（记录按焦点序导出，恢复末位获最终焦点）/
+  未来 schema 记录拒绝（宿主空会话冷启动——可再生缓存，与 settings 的
+  FutureSchema 拒写不同级）/ 无路径会话不入恢复集（v0 无草稿暂存，
+  诚实语义）。
+- **Core 脏标记**（置于核：单一变异入口挂钩）：`is_dirty`/`mark_saved`；
+  粘性语义（View/Ai/Undo/Redo 置位；System 装载不置位；adopt_external
+  成功清位——缓冲==外部磁盘内容；undo 回已存内容仍报脏=安全向假阳性）。
+  `plan_reload(local_dirty)` 自此有权威取值；`mem_stats()` 增 dirty 字段。
+- `DocumentSession` 增 `path: Option<String>`（宿主域透传）+
+  `new().with_path()` 构造器。
+- 契约：CONTRACT.md 新增 **§5 会话面**（纯宿主面 Rust↔Rust——window 面
+  零新增，`__contractVersion` 保持 1.1；这一"不升版"裁决显式在档并由
+  词面锁锁死，防误升版/漏升版两向漂移）；§1 核面增脏标记行；§4
+  `storage.session_restore` 消费联动。contract_freeze.rs 增会话面词面锁
+  （§5/SessionManager/DocumentAlreadyOpen/DEFAULT_MAX_SESSIONS/
+  snapshot_record/mark_saved + 编译期常量双锚）。
+
+**语义锁**：`crates/shell/tests/r24_session.rs` **10 条**——生命周期
+MRU 序（含窗口 id 复用）/ 上限执行与释放 / 重复+未知窗口拒绝 / 一窗一档
+（同 id 二开拒绝→close 后重开→匿名多开）/ 反向映射 / Core 脏标记全路径
+（View/System/undo/adopt 四象限）/ dirty_windows BTreeMap 键序 /
+记录往返+焦点序+pathless 跳过 / 未来 schema+畸形拒绝 / 同态逐字节确定
+性 / open_document→with_path→open 恢复链路集成（含 meta 双源同档拒绝）
++ session.rs 单元 1 条（默认上限常量）。
+
+**门禁**：cargo --workspace **183/183**（171 质量审计终态 + 12 R24-b）；
+wasm32 check 过；scan.sh 0 命中；clippy 零新增（2 条既有基线）。零新依赖
+（serde 复用既有——SBOM/NOTICES 无需再生成）。
+
+**决策记录**：① 一窗一档 v0（放宽为多窗共享属契约级变更走升版纪律）；
+② 会话记录 = 可再生缓存（非用户数据）：未来 schema 拒绝即弃、冷启动，
+不设拒写保护；③ 脏标记粘性语义（假阳性安全向：宁可多问一次存盘）；
+④ adopt_external 清位（缓冲==外部内容），Noop 早退路径不清（无变更
+无采纳，脏态原样交宿主 UX）；⑤ 资源上限不静默驱逐——驱逐策略宿主域。

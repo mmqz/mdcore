@@ -12,6 +12,7 @@
 //! `Host::surface()` 把 dist/ 装进 wry；headless 测试实现验证同一套
 //! 文档状态机。
 
+pub mod session;
 pub mod settings;
 
 use mdcore::document::DocumentId;
@@ -39,6 +40,22 @@ pub trait Host {
 pub struct DocumentSession {
     pub core: Core,
     pub id: Option<DocumentId>,
+    /// 宿主域路径提示（R24-b 会话持久化用；核不碰 fs，纯透传字符串，
+    /// 语义由宿主定义——显示名、完整路径或 URI 均可）。
+    pub path: Option<String>,
+}
+
+impl DocumentSession {
+    /// 新建会话（路径未设 = 匿名/未另存文档，不入恢复集）。
+    pub fn new(core: Core) -> Self {
+        Self { id: core.document_id(), core, path: None }
+    }
+
+    /// 附路径提示（链式；宿主开档后设置）。
+    pub fn with_path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
 }
 
 /// 全量打开（小文档路径）：markdown + 可选 meta JSON（save_document 产物）。
@@ -47,7 +64,7 @@ pub fn open_document(markdown: &str, meta_json: Option<&str>) -> Result<Document
         Some(meta) => Core::open_document(markdown, meta).map_err(|e| format!("{e:?}"))?,
         None => Core::from_markdown(markdown),
     };
-    Ok(DocumentSession { id: core.document_id(), core })
+    Ok(DocumentSession { id: core.document_id(), core, path: None })
 }
 
 /// 渐进打开（大文档路径）：分块追加进核，每步回调进度。
@@ -78,7 +95,7 @@ pub fn open_document_progressive<H: Host>(
         on_progress(OpenProgress::ChunkAppended { chunk_index: i, total_chunks: total });
     }
     on_progress(OpenProgress::Completed { blocks: core.tree.top_level().len() });
-    Ok(DocumentSession { id: core.document_id(), core })
+    Ok(DocumentSession { id: core.document_id(), core, path: None })
 }
 
 /// 保存：markdown 全文 + meta JSON（document_id + 整栈历史）。

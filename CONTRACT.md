@@ -19,6 +19,7 @@
 | 文件层 | `open_document/save_document` + `document_id` 重开复原 | r14/shell tests |
 | 外部重载 | `FileStamp`/`plan_reload`/`adopt_external`（ADR-B7） | r23_external |
 | 结构匹配 | `match_external_markdown`/`fingerprint_manifest`（ADR-B6） | r23_fingerprint |
+| 脏标记 | `Core::is_dirty`/`mark_saved`（§5；plan_reload 权威取值） | r24_session |
 
 宿主契约层（mdshell，Rust）签名（ADR-H1 宿主实现同一 trait）：
 
@@ -135,3 +136,91 @@ window.__contractVersion = 1.1
   （纯增量——启动面/注入面/`__bridge` 面/键位面全部不变）。
 - `__contractVersion`: 1 → 1.1。
 - Rust 侧新增 `mdshell::settings` 模块（不触碰 §1 核冻结面）。
+
+## §5 会话面（v1.1 增补，R24-b）——纯宿主面（Rust↔Rust）
+
+> R24-b 多窗口核侧。**window 面零新增，`__contractVersion` 保持 1.1**
+> （版本常量守卫的是 web window 面；本节全部为 mdshell 宿主面，
+> 消费方 = 原生壳（Rust），不经 web 桥）。破坏性变更同样走本文
+> + 双侧锁（`crates/shell/tests/r24_session.rs` + `contract_freeze.rs`
+> 词面锁）三处同步。
+
+### 机制合同（语义锁背书：r24_session.rs 10 条）
+
+- **一窗一档（v0）**：同一 `document_id` 不得同时开两窗
+  （`SessionError::DocumentAlreadyOpen` 携带持有窗口，宿主 UX 应改为
+  聚焦该窗）；匿名文档（id=None，未另存新档）不受限。
+- **资源上限**：并发会话 ≤ limit（`DEFAULT_MAX_SESSIONS = 16`）；超限
+  `open` 显式 Err，不静默驱逐（驱逐策略 = 宿主 UX，核侧提供
+  `dirty_windows` / `windows_in_focus_order` 决策输入）。
+- **焦点序（MRU）**：`focus` 维护，末位 = 最近聚焦；会话记录按焦点序
+  导出，恢复按序重开、末位获最终焦点。
+- **确定性**：BTreeMap + 显式焦点 Vec，无迭代序歧义；记录 JSON
+  字段序 = 结构序，同态同串。
+
+### Rust 面（mdshell::session；§1 compile 冻结面扩展）
+
+```rust
+const DEFAULT_MAX_SESSIONS: usize = 16;
+const SESSION_RECORD_VERSION: u64 = 1;
+struct WindowId(pub u64);  // 宿主分配，核侧不解释
+enum SessionError { LimitReached{limit}, DuplicateWindow(WindowId),
+                    UnknownWindow(WindowId), DocumentAlreadyOpen{document_id, window} }
+struct SessionManager { /* new_with_limit(limit) / Default */ }
+impl SessionManager {
+    fn open(&mut self, window: WindowId, session: DocumentSession) -> Result<(), SessionError>;
+    fn close(&mut self, window: WindowId) -> Result<DocumentSession, SessionError>;
+    fn focus(&mut self, window: WindowId) -> Result<(), SessionError>;
+    fn focused_window(&self) -> Option<WindowId>;
+    fn windows_in_focus_order(&self) -> Vec<WindowId>;
+    fn window_of_document(&self, id: &DocumentId) -> Option<WindowId>;
+    fn dirty_windows(&self) -> Vec<WindowId>;
+    fn get / get_mut(window) -> Result<&mut DocumentSession, SessionError>;
+    fn snapshot_record(&self) -> SessionRecord;   // 恢复上次打开集（焦点序）
+}
+struct SessionRecord { schema_version: u64, windows: Vec<WindowRecord> }  // to_json/from_json
+struct WindowRecord { window: u64, document_id: Option<String>, path: String }
+```
+
+### Core 脏标记（§1 核面扩展，compile 冻结）
+
+```rust
+impl Core {
+    fn is_dirty(&self) -> bool;    // 粘性：View/Ai/Undo/Redo 置位
+    fn mark_saved(&mut self);      // 宿主落盘成功后调用（核不碰 fs）
+}
+```
+
+- 置位规则：交互事务（View/Ai/Undo/Redo）置位；**System 装载事务
+  不置位**（缓冲 == 外部内容）；`adopt_external` 成功后清位；
+  undo 回到已存内容仍报脏 = 安全向假阳性（宁可多问一次存盘）。
+- `plan_reload(report, local_dirty)` 的 `local_dirty` 权威取值 =
+  `core.is_dirty()`（此前宿主自行估算，无权威源）。
+- `mem_stats()` 增 `dirty` 字段（宿主内存面板同源）。
+
+### 会话持久化（恢复上次打开集）
+
+- 记录 = 纯数据 JSON（可再生缓存，非用户数据）：宿主写盘，消费方为
+  `storage.session_restore`（§4 默认 true）。无路径会话（未另存新档）
+  不入记录（v0 无草稿暂存）。
+- 未来 schema（version > 1）→ `from_json` Err → 宿主空会话冷启动
+  （与 settings 的 FutureSchema 拒写不同级：设置丢了是用户损失，
+  会话记录丢了只少恢复几个窗口）。
+- `DocumentSession` 增 `path: Option<String>`（宿主域透传，核不解释）。
+
+### 宿主接线（R24-d 壳实体轮）
+
+- 启动：`session_restore=true` → 读记录 → 按序 `open_document(md, meta)`
+  → `with_path` → `SessionManager::open`（末位窗口获最终焦点）。
+- 退出/崩溃恢复：定期 + 退出时 `snapshot_record().to_json()` 落盘。
+- 关窗：`close` → 返回会话 `core.is_dirty()` → 宿主「保存确认」UX →
+  保存则 `save_document` + 写盘 + `mark_saved`。
+- 存盘后：`save_document()` 返回值落盘成功 → `core.mark_saved()`。
+
+### v1.1 内变更记录（2026-10-10，R24-b）
+
+- 新增 §5（宿主面文档；window 面零新增，`__contractVersion` 不变）。
+- §1 mdshell 签名增 `SessionManager` / `SessionRecord` / `WindowId`；
+  核面增 `Core::is_dirty` / `mark_saved`；`DocumentSession` 增 `path` 字段
+  （构造函数面兼容：新增字段走 `DocumentSession::new().with_path()`
+  构造器，既有结构字面量构造点 = 唯三公开构造函数，全部同步）。

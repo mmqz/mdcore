@@ -150,6 +150,9 @@ impl Core {
         )?;
         // ADR-B7 §4：take-external 放弃本地未存交互史——undo/redo/合并窗状态全清。
         self.history.clear_interaction();
+        // R24-b：采纳后缓冲 == 外部磁盘内容 → 脏标记清位（Noop 早退路径
+        // 不清：无变更无采纳，脏态原样保留由宿主 UX 决定）。
+        self.mark_saved();
         Ok(AdoptOutcome {
             report,
             carried_ids: carried,
