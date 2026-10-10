@@ -1,4 +1,5 @@
-//! mdshell-native — R10 原生宿主壳（wry + Slint）胶水。
+//! mdshell-native — R10 原生宿主壳（tao + wry + GTK3，ADR-H1 定谳：Slint
+//! 因 GPL 证与 ADR-C1 排除）胶水。
 //!
 //! ⚠️ 状态：**设计定稿、编译待原生环境**（沙箱无 sudo，webkit2gtk-4.1-dev
 //! 不可安装；本 crate 未列入 workspace members，`cargo test` 不会触碰）。
@@ -9,7 +10,7 @@
 //!
 //! ```text
 //! ┌─ tao 事件循环（窗口/文件对话框）─────────────────────┐
-//! │  Slint 面板：标题栏 / 打开按钮 / 进度条（OpenProgress 驱动）│
+//! │  GTK3 原生控件：标题栏 / 打开按钮 / 进度条（OpenProgress 驱动）│
 //! │  wry WebView：加载 dist/index.html（R9/R10 bundle 自包含）   │
 //! │    │ host.surface_load_markdown(md)  ← mdshell::Host 实现    │
 //! │    │   = webview.evaluate_script("window.__inject(md)")      │
@@ -22,7 +23,7 @@
 //! 2. 文本注入：main.ts 增加 `window.__inject(md)` 入口（读取参数或 postMessage
 //!    触发 `new WasmCore(md)` 重建），替代 `?doc=` URL 参数（大文档不宜走 URL）；
 //! 3. 渐进打开进度：mdshell::open_document_progressive 的 on_progress 回调
-//!    → Slint 进度条 + 完成后 surface_load_markdown 注入终态；
+//!    → GTK3 进度条 + 完成后 surface_load_markdown 注入终态；
 //! 4. 保存：Ctrl+S 拦截 → window.__md() 取全文 → mdshell::save_document
 //!    → tao 文件对话框写盘（markdown + meta JSON 两文件或伴随文件）；
 //! 5. document_id 重开匹配：meta JSON 存档后 open_document 走同一身份。
@@ -47,7 +48,7 @@ window.__inject_chunk = (chunk, first) => {
 /// let mut host = WryHost::new(&webview);          // impl mdshell::Host
 /// let session = mdshell::open_document_progressive(
 ///     &chunks, None, &mut host,
-///     |p| slint_progress.update(p),               // 进度条
+///     |p| gtk_progress.update(p),               // GTK3 进度条
 /// )?;
 /// ```
 pub const BLUEPRINT_NOTE: &str = "see module docs; enable deps in Cargo.toml on a native host";

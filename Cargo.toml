@@ -11,5 +11,5 @@ default-members = ["crates/mdcore", "crates/shell", "crates/shell-native"]
 # 序列化边界，tree/op 本身可脱离 serde 编译（见 lib.rs feature 说明）。
 #
 # R10 增补：crates/shell = 宿主契约层（headless 可验证，零 GUI 依赖）；
-# crates/shell-native = wry+Slint 胶水蓝图（随附零依赖可编译/可测试，
+# crates/shell-native = tao+wry+GTK3 胶水蓝图（ADR-H1；随附零依赖可编译/可测试，
 # 原生依赖启用后需 webkit2gtk-4.1 系统库——见该 crate 文档）。

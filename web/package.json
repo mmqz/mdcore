@@ -2,7 +2,7 @@
   "name": "mdcore-web",
   "private": true,
   "version": "0.1.0",
-  "description": "R9: CM6 View <-> mdcore-wasm (Rust core) bridge. Same bundle the R10 Slint/wry host shell loads from dist/.",
+  "description": "R9: CM6 View <-> mdcore-wasm (Rust core) bridge. Same bundle the host shell (tao+wry+GTK3, ADR-H1) loads from dist/.",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",

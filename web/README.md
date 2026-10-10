@@ -3,7 +3,7 @@
 > 状态：✅ W1-W11 冒烟 11/11 绿（Playwright chromium headless，2026-10-08；
 > W7 = R10 渐进打开，1MB TTI 153ms vs 全量 361ms；W11 = R12 Human+AI 闭环）。
 > 单一真理在 Rust 核（主档 §9）；CM6 doc = `core.to_markdown()` 的镜像。
-> 本目录产物（`dist/`）即 R10 Slint/wry 宿主壳的加载物。
+> 本目录产物（`dist/`）即宿主壳（tao+wry+GTK3，ADR-H1）的加载物。
 
 ## 1. 架构
 

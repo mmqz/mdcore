@@ -4,7 +4,7 @@
 //! - 文档生命周期：open（全量 / 渐进 K 段）、save、document_id 匹配重开；
 //! - 打开进度事件（宿主 UI 据此画进度条）；
 //! - **不含** WebView / 窗口管理——原生后端在 crates/shell-native
-//!   （wry + Slint，需 webkit2gtk-4.1 系统库，沙箱不可编译，不入 workspace）。
+//!   （tao + wry + GTK3，ADR-H1 定谳：Slint 因 GPL 证与 ADR-C1 排除；需 webkit2gtk-4.1 系统库，沙箱不可编译，不入 workspace）。
 //!
 //! 契约（`Host` trait）是原生胶水与 headless 测试的公共面：原生壳实现
 //! `Host::surface()` 把 dist/ 装进 wry；headless 测试实现验证同一套
@@ -24,7 +24,7 @@ pub enum OpenProgress {
     Completed { blocks: usize },
 }
 
-/// 宿主面抽象：原生壳（wry/Slint）与 headless 测试实现同一契约。
+/// 宿主面抽象：原生壳（tao+wry/GTK3）与 headless 测试实现同一契约。
 pub trait Host {
     /// 文本注入面（原生 = WebView 导航到 dist/ 后 postMessage；
     /// headless = 直接进核）。返回注入是否成功。
