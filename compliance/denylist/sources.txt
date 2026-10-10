@@ -1,0 +1,42 @@
+# compliance/denylist/sources.txt — 产品面参考对象特征词 denylist
+#
+# 用途：compliance/scan.sh 的输入字集。扫描对象 = 编译进发布产物的源面
+# （crates/*/src + web/src + 清单文件）。命中任何一词 = 门禁 FAIL，
+# 必须人工分诊（删除/改名/书面豁免）后才能合入。
+#
+# 重建声明：本字集由分析仓（typora-re-analysis，私有）四源审计结论重建，
+# 非审计底稿拷贝（底稿按分区铁律只存分析仓）。开发环境 R22-c 原版
+# denylist 合入时以 diff 为准替换，diff 即差异清单。
+#
+# 维护规则：新增参考对象研究启动时增补分节；泛词（如小写 delta）不入集，
+# 由周期性全量审计覆盖（compliance-baseline 分支 COMPLIANCE.md §3 常驻门禁）。
+
+# ---- Typora 源（专有 EULA 禁逆向对象；含其开源渲染器 muya）----
+typora
+Typora
+TYPORA
+muya
+Muya
+MUYA
+
+# ---- Delta 源（分析仓代号对象）----
+# d1_/d2_ 符号族前缀（分析仓 delta 符号清单命名）
+d1_
+d2_
+# 大写词形 Delta（小写 delta 为数值/差量泛词，高误伤不入集，见维护规则）
+Delta
+
+# ---- Zed 源（GPL-3.0 传染对象，ADR-C1 全面禁入）----
+zed
+Zed
+ZED
+gpui
+GPUI
+sum_tree
+SumTree
+language_tree
+
+# ---- Obsidian 源（专有 EULA 对象）----
+obsidian
+Obsidian
+OBSIDIAN
