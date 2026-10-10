@@ -709,3 +709,92 @@ non-V8 构建中的存在性 = PDF-b 补探针）。
 **门禁**：本仓零代码变更（cargo 187/187 基线不动 + scan 0 不变）；
 spike 工程独立于产品 workspace（分析域依赖，不入 SBOM——PDF-b 起
 mdc-pdf 才引入产品面依赖并触发 NOTICES 增量义务）。
+
+## PDF-b：mdc-pdf crate 骨架（2026-10-10）
+
+**背景**：pdf_carrier_plan §5 五轮编排第二轮——mdc-pdf 骨架 = 纯 Rust
+类型 + 命令边界 + 安全策略 + 协议草案 + 语义锁；引擎（pdfium/lopdf）
+PDF-c/d 引入。输入资产：ADR-P1 选型定谳 + SECURITY_POLICY.md v1（数值
+权威）+ pdf_carrier_plan 交付定义。
+
+**交付**（crate `mdc-pdf`，crates/pdf；workspace 第 5 成员）：
+
+- **第二 Document Model**：与 mdcore 块核并列、互不嵌套、**crate 间零
+  path 依赖**——Source 等共享语义 = **镜像**而非复用（serde 名与
+  `mdcore::history::Source` 逐词面一致，`source_mirrors_mdcore_five_values`
+  以文件级读锁对齐 mdcore 源面，手法同 contract_freeze 蓝图锁——零依赖
+  下跨 crate 镜像的可证路径）。
+- 模块八件：`page`（PageIndex/PageCount/PageGeometry/Rotation 归一化
+  effective_*——90/270 交换宽高、0/180 不交换；PageSpan 构造即校验
+  start<=end，页数越界归命令层）/ `outline`（树 + 深度优先前序迭代器，
+  单一排序出口）/ `annotation`（PDF Annot 语义四变体
+  Highlight/Note/FreeText/Ink + Origin Human/Ai + patch 面 kind 不可变）
+  / `command`（六命令全带 source 溯源 + 五类 typed 错误 +
+  SearchOptions/Filter/TextTarget 页粒度）/ `security`（S2 五危险族 +
+  S3 Limits 数值表 + 三行为学 enforce 族 + S5 判定 + 稳定理由码）/
+  `document`（PdfSession 打开后单形态 + execute 单一调度 + 值时钟注入
+  + set_page_text 宿主文本层）/ `protocol`（mdcore://pdf 草案 +
+  mdc-pdf-cmd/event 事件族 + CommandEnvelope 信封）/ `engine`
+  （DocumentEngine trait，object-safe——PDF-c 绑 pdfium non-V8）。
+- 契约：CONTRACT.md 升版 **v1.2** 新增 §6 PDF 面（草案）——window 面
+  零变化，`__contractVersion` 保持 1.1（仿 R24-b §5 先例，防两向漂移）。
+- README：架构图 + mdc-pdf 行 + 测试计数更新。
+
+**决策记录**：① **零引擎依赖延至 PDF-c**（骨架轮不耦合原生库）：本轮
+deps 仅 serde+serde_json（版本对齐既有——Cargo.lock 零解析变更，仅
+新增 package 条目，SBOM/NOTICES 无增量义务）；workspace 在无 pdfium
+二进制的环境保持全绿，引擎面（渲染/文本/增量写）与骨架面解耦演进；
+② v0 引擎数据由宿主注入（open 参数 + set_page_text），PDF-c 换
+DocumentEngine 数据源——会话/命令面结构不变；③ 标注 kind 不可变落
+类型层（AnnotationPatch 无 kind 字段）+ serde 默认忽略未知字段 = 改
+kind 请求退化 no-op（「忽略」语义锁死；PDF /Subtype 语义上不可换装，
+改型 = 删旧加新）；④ 会话**值时钟**注入（核不取系统时间——确定性/
+可测性/wasm32 兼容，对齐 mdcore 时钟纪律）；⑤ S5 写拒**先于存在性
+检查**（策略门最前——不给「库里有没有这条标注」的探测面）；⑥ S3
+限额 ❶ 拒绝以稳定理由码进 `SecurityDeny`（错误面收窄五类，无 per-field
+变体——L7 作者名/文件大小同面）；⑦ 搜索 v0 = 宿主注入文本的朴素扫描
+（Unicode 简单折叠 char 窗对齐——折叠变长字符不致索引错位；snippet
+char 边界安全），PDF-c 换 pdfium 文本引擎，命令/载荷形状不变；⑧ 搜索
+截断语义 = 收满即停 + 见溢出置 truncated（❷收敛继续 + 告知，不静默
+丢弃、不全量扫）；⑨ no-op patch 不推进 modified_ms（时间戳反映内容
+非命令次数）；⑩ **S6 AcroForm 探针**（non-V8 构建是否含 formfill
+模块）登记为 spike 侧任务（分析域 md-line，不阻塞产品面——PDF-c
+渲染轮前完成即可）。
+
+**语义锁**：`crates/pdf/tests/pdfb_skeleton.rs` **32 条**——Rotation
+归一化（90/270 交换 + 0/180 不交换 + from_degrees 四值/非法拒绝）/
+PageSpan 反转构造拒绝 + 命令层越界拒绝 / 大纲深度优先序（3 层
+(depth,title)）+ 空树/单根边界 / Rect 反序拒绝（x/y 两轴 + 退化合法）/
+Quad/Point serde 往返 / Annotation serde 往返（Origin::Ai + 词面冻结）/
+AnnotId 1 起单调 / patch 不改 kind（JSON 恶意改型 = 未知字段忽略）+
+三可变面正例（含 modified_ms 推进）+ 不适用面 no-op（mtime 不动）/
+三维过滤正反例 + id 升序确定性 / max_hits 钳制 → truncated（❶空 query
+硬拒绝）/ 大小写 Unicode 折叠 + snippet 200 字符钳制与 CJK 边界 /
+S5 加密双拒（先于存在性 + 读放行 + 零落库）/ 五危险族 serde 名冻结
+（含斜杠形拒绝）/ Source 五值镜像（serde 名 + mdcore 源面文件级对齐）/
+协议常量词面（SCHEME/FACE/URL 前缀/事件族）/ 版本单源（workspace.package
++ 继承声明，与 r24_packaging 的 mdcore::VERSION 锁合取 = 跨 crate 同值）/
+open 三校验 / 作者名 200 上限（含 CJK 字符计）/ Limits 默认数值 = 策略
+表 + enforce 族行为学 / ExtractText 页集形状（All/区间 + v0 空文本 +
+注入越界）/ 信封往返 + Command JSON tag 面 / DocumentEngine
+object-safe（&dyn 见证 + 三方法签名锚）；以及 pdf-b-1r 审计回归三锁：
+serde 面反转 PageSpan 拒收 / serde 面反序 Rect 拒收（含反序 patch
+JSON 全链路封死）/ 搜索两模式非重叠语义一致。
+
+**审计轮（pdf-b-1r，独立审查代理）**：1 阻断（PageSpan 派生
+Deserialize 绕过构造校验——宿主畸形信封 {"start":3,"end":1} 经
+len() 下溢 panic（debug）/ capacity overflow abort（release，实测复现）；
+修复 = 字段私有 + 自定义 Deserialize + resolve_span 改走 new()）+
+1 重要（Rect 同类绕过：反序矩形可经 patch 静默落库，PDF-d 将产出非法
+/Rect；同法修复）+ 3 轻微（搜索两模式重叠语义不一致→统一非重叠并
+修 while 重写引入的 continue 标签死循环隐患/Source 镜像锁增严：
+rename_all 属性前置断言/enforce_snippet_chars 提出循环）——全部修复，
+每项配回归锁（上述 +3）。
+
+**门禁**：cargo --workspace **219/219**（187 + 29 骨架锁 + 3 审计回归锁）；wasm32 check 过；
+scan.sh 0 命中（产品面新源 crates/pdf/src + 清单已入扫描范围）；clippy
+零新增（mdcore-wasm 2 条 = 既有基线）；cargo fmt 过（mdc-pdf 范围；
+基线注记：本沙箱此前未装 rustfmt，既有源非 rustfmt 1.10 形——`cargo
+fmt --all` 会重排 30+ 既有文件，本轮按 crate 范围执行以保持 diff 可审，
+全仓格式化归 PDF-e 收口或独立格式化提交裁决）。零新依赖（serde 系复
+用既有版本——Cargo.lock 仅增 mdc-pdf package 条目，无解析变更）。

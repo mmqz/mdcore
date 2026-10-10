@@ -1,8 +1,10 @@
-# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1.1）
+# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1.2）
 
 > R23-d 冻结 v1（2026-10-10）；R24-a minor 升版 v1.1（2026-10-10，纯增量：
-> window 面增设置读写项，v1 面零破坏）。目的：消除原型母本与产品仓（mdcore/）
-> 的契约漂移——两侧对同一契约面的实现必须逐签名一致；破坏性变更必须升
+> window 面增设置读写项，v1 面零破坏）；PDF-b minor 升版 v1.2（2026-10-10，
+> 纯增量：新增 §6 PDF 面（草案），window 面零变化，`__contractVersion`
+> 保持 1.1）。目的：消除原型母本与产品仓（mdcore/）的契约漂移——两侧
+> 对同一契约面的实现必须逐签名一致；破坏性变更必须升
 > `__contractVersion` 并更新本文 + 双侧契约锁测试（`web/tests/contract_gate.py` /
 > `crates/shell/tests/contract_freeze.rs`）。命名域：`mdcore` / `mdshell` / `mdc-*`
 >（TRADEMARK_RULES §1）。
@@ -224,3 +226,72 @@ impl Core {
   核面增 `Core::is_dirty` / `mark_saved`；`DocumentSession` 增 `path` 字段
   （构造函数面兼容：新增字段走 `DocumentSession::new().with_path()`
   构造器，既有结构字面量构造点 = 唯三公开构造函数，全部同步）。
+
+## §6 PDF 面（v1.2 增补，PDF-b——草案）
+
+> PDF-b 骨架轮（mdc-pdf crate，crates/pdf；md-line/pdf_carrier_plan §5）。
+> **window 面零新增，`__contractVersion` 保持 1.1**——版本常量守卫的是
+> web window 面；本节全部为独立 crate Rust 面 + 宿主协议草案
+> （`mdcore://pdf` 静态视图层不经 CM6），仿 §5 R24-b 先例并显式在档，
+> 防误升版/漏升版两向漂移。PDF 面协议在 PDF-c 视图层落地时定稿。
+
+### 架构位置
+
+- **mdc-pdf = 第二 Document Model**：与 mdcore 块核**并列、互不嵌套**，
+  crate 间零 path 依赖（Source 等共享语义 = **镜像**而非复用；serde 名
+  与 `mdcore::history::Source` 逐词面一致，语义锁背书）。PDF = 版式
+  文档（页 + 绘制指令 + 对象图），与块结构模型异构；产品边界 =
+  阅读 + 标注，不做内容编辑（主档边界不变）。
+- 标注模型复用 PDF 标准 Annot 对象（v0 四种：Highlight / Note /
+  FreeText / Ink），**不自研锚定层**；Human 与 AI 走同一 Command 路径
+  （PDF Annot `/T` author 字段承载 Human/Ai 溯源）。
+
+### 命令面摘要（mdc-pdf::command；单一调度入口 = PdfSession::execute）
+
+六命令（每命令必带 `source` 溯源）：`ExtractText{target}`（页粒度，
+文本级范围 PDF-c）/ `Search{query,opts}` / `Outline` / `AnnotateAdd{draft}`
+/ `AnnotateEdit{id,patch}`（kind 不可变） / `AnnotateList{filter}`。
+错误面（typed，不 panic、不 String 错误）：`NotOpen`（**协议层专用**——
+会话类型层只有打开后形态）/ `InvalidPage(PageIndex)` /
+`AnnotNotFound(AnnotId)` / `SecurityDeny{reason}`（稳定策略码） /
+`EmptyQuery`（S3 ❶）。
+
+### mdcore://pdf 协议草案（mdc-pdf::protocol）
+
+- scheme `mdcore`、face `pdf`：`mdcore://pdf/<document-slot>/…`——独立
+  轻量视图层（不经 CM6）；路径段与槽位语义 PDF-c 视图层定稿。
+- 事件族（`mdc-*` 命名域）：`mdc-pdf-cmd`（命令信封
+  `CommandEnvelope{id, command}`）/ `mdc-pdf-event`（回执与自发事件）。
+
+### 安全策略摘要（mdc-pdf::security；SECURITY_POLICY.md v1 权威）
+
+- **S1 引擎能力面**：pdfium 只取 non-V8 构建（JS 不接、XFA 不启用）+
+  零网络 + mupdf 禁入（AGPL）——选型即安全决策（ADR-P1）。
+- **S2 危险对象族**：`/OpenAction` `/AA` `/Launch` `/EmbeddedFiles`
+  `/RichMedia` 打开时只读检测告警（`OpenAssessment.warnings`），不执行、
+  不阻断打开。
+- **S3 限额三行为学**：❶硬拒绝（空查询；作者名 > 200 字符；文件
+  > 1 GiB）/ ❷钳制（搜索 `max_hits` ≤ 1000 + `truncated` 告知；摘录
+  ≤ 200 字符）/ ❸弃置（渲染看门狗，PDF-c）。
+- **S4 沙箱与进程边界**：渲染工人池 + 逐页 panic 隔离 + 读写分线程
+  快照（PDF-c/d 接线；trait 面 object-safe 已冻结）。
+- **S5 加密签名面**：仍加密态（`OpenAssessment.encrypted`）拒绝一切
+  写类命令（`SecurityDeny`，先于存在性检查）；增量写保持原字节前缀
+  （签名文档友好，PDF-d 语义锁）。
+
+### 时间线
+
+- **PDF-c 阅读面**：`DocumentEngine` 实装（pdfium 绑定，non-V8）、异步
+  光栅化 + 页缓存、文本层、导航；性能门（打开 TTI / 翻页 p95）入 gates。
+- **PDF-d 标注面**：lopdf 增量写落盘、Acrobat 互通验证、原字节前缀
+  语义锁。
+
+### v1.1 → v1.2 变更记录（2026-10-10，PDF-b）
+
+- 新增 §6（PDF 面草案；纯增量——§1-§5 全部不变）。
+- **`__contractVersion` 保持 1.1**：window 面零变化（版本常量守卫 web
+  window 面；PDF 面为独立 crate Rust 面 + 协议草案，未进 web 桥）。
+  仿 R24-b §5 先例并显式在档，防误升版/漏升版两向漂移。
+- workspace 新增 crates/pdf（package `mdc-pdf`，第二 Document Model；
+  **零引擎依赖**——pdfium/lopdf 自 PDF-c/d 引入，骨架轮不耦合原生库，
+  workspace 在无 pdfium 二进制的环境保持全绿）。

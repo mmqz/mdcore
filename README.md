@@ -11,18 +11,22 @@
 │   文件生命周期：打开（渐进+进度）/ 编辑 / 保存（md+meta）/ 身份复原    │
 ├─ web 桥（web/，CodeMirror 6 + wasm-bindgen）─────────────────────┤
 │   window.__bridge 契约面；UTF-16↔码点单一换算对（ADR-V2）            │
-├─ 编辑核 mdcore（Rust，四 crate workspace）────────────────────────┤
+│   （CM6 只服务 MD 面；PDF 面为独立轻量视图，不经 CM6）              │
+├─ PDF 核 mdc-pdf（Rust，第二 Document Model，PDF-b 骨架）──────────┤
+│   页/大纲/标注三层模型 + Command 边界 + 安全策略（S1-S5）；          │
+│   mdcore://pdf 协议草案（CONTRACT §6）；PDF-c 起接 pdfium/lopdf     │
+├─ 编辑核 mdcore（Rust，五 crate workspace）────────────────────────┤
 │   ropey 树 + op log + undo（ADR-B2/B4/B5）+ 块身份（ADR-B1）        │
 │   revision/anchor（R13/R17 语义锁）+ 渐进打开 + Human+AI 共用状态    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-宿主壳 ↔ web 桥 ↔ 核的接口以 **`CONTRACT.md` v1** 为准（R23-d 冻结，
+宿主壳 ↔ web 桥 ↔ 核的接口以 **`CONTRACT.md` v1.2** 为准（R23-d 冻结 v1；
 破坏性变更走升版纪律：版本常量 + 文档 + 双侧锁测试三处同步）。
 
 ## 分支说明
 
-- **main**：产品代码主体（crates/ 四件 + web/ + CONTRACT.md + compliance/）。
+- **main**：产品代码主体（crates/ 五件 + web/ + CONTRACT.md + compliance/）。
   基线 = R23 终态核侧母本快照（2026-10-10 首推；shell-native 当前为蓝图态，
   R22-a..f 宿主壳实体由开发环境按 CONTRACT.md v1 以后续提交合入）。
 - **compliance-baseline**：合规基线套件——`COMPLIANCE.md`（姿态/审计终态/常驻
@@ -33,7 +37,7 @@
 ## 构建与门禁
 
 ```bash
-cargo test --workspace              # 21 套件语义锁（187 用例；R23-e 148 + R24-a 16 + 质量审计 7 + R24-b 12 + R24-c 4）
+cargo test --workspace              # 22 套件语义锁（219 用例；R23-e 148 + R24-a 16 + 质量审计 7 + R24-b 12 + R24-c 4 + PDF-b 29 + 审计回归 3）
 cargo check --target wasm32-unknown-unknown
 cd web && npm ci && npm run build   # wasm 构建 + CM6 桥
 ./compliance/scan.sh                # 产品面合规门禁（每次提交前，PASS 才可合入）
@@ -64,6 +68,12 @@ v1 面 13 + v1.1 设置面 3）、`crates/mdcore/tests/r23_fingerprint.rs`（15 
   会话面，window 面零变更）；**R24-c 打包基建完成**（CARGO_PKG_VERSION
   单源 + packaging/ 四平台模板 + 分发合规核对单；正式定名 = 用户决策
   前置未决，名称参数化不阻塞）。R24-d 壳实体 = 开发环境轮。
+- PDF 载体进行中（md-line/pdf_carrier_plan 五轮）：**PDF-a 侦察收口完成**
+  （三探针 spike + ADR-P1 双引擎定谳：pdfium non-V8 + lopdf；安全策略表 v1）；
+  **PDF-b 骨架完成**（mdc-pdf 第二 Document Model：页/大纲/标注三层模型 +
+  Command 边界 + 安全策略 S1-S5 + 协议草案；零引擎依赖，pdfium/lopdf 自
+  PDF-c/d 接入；CONTRACT §6 草案，window 面零变化）。PDF-c 阅读面 /
+  PDF-d 标注面 / PDF-e 收口见计划表。
 - 遗留：真机 IME 人工验收（自动化先行已闭环，R23-a 28/28）、定名后商标检索
   （**R24-c 前置阻塞项**）。
 - 研究与审计底稿存于私有分析仓（允许域）；本仓仅存产品代码与合规结论。

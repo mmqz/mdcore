@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/mdcore", "crates/mdcore-wasm", "crates/shell", "crates/shell-native"]
-default-members = ["crates/mdcore", "crates/shell", "crates/shell-native"]
+members = ["crates/mdcore", "crates/mdcore-wasm", "crates/shell", "crates/shell-native", "crates/pdf"]
+default-members = ["crates/mdcore", "crates/shell", "crates/shell-native", "crates/pdf"]
 
 # R24-c 版本单源：全部 crate 经 version.workspace 继承此值（禁止
 # crate 内独立声明版本——r24_packaging.rs 跨 crate 一致性锁背书）。
@@ -20,3 +20,7 @@ version = "0.1.0"
 # R10 增补：crates/shell = 宿主契约层（headless 可验证，零 GUI 依赖）；
 # crates/shell-native = tao+wry+GTK3 胶水蓝图（ADR-H1；随附零依赖可编译/可测试，
 # 原生依赖启用后需 webkit2gtk-4.1 系统库——见该 crate 文档）。
+#
+# PDF-b 增补：crates/pdf（mdc-pdf）= 第二 Document Model 骨架（页/大纲/
+# 标注 + Command 边界 + 安全策略 + 协议草案；与 mdcore 零 path 依赖，
+# 零引擎依赖——pdfium/lopdf 自 PDF-c/d 引入）。
