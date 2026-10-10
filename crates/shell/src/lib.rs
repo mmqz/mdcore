@@ -3,12 +3,16 @@
 //! 职责边界（主档 §9：宿主 = DocumentStore/Clipboard/Settings 最小面）：
 //! - 文档生命周期：open（全量 / 渐进 K 段）、save、document_id 匹配重开；
 //! - 打开进度事件（宿主 UI 据此画进度条）；
+//! - 设置面（R24-a）：`settings` 模块——四层 schema / TOML sidecar /
+//!   默认合并 / 未知键保留 / 版本迁移 / 损坏降级；
 //! - **不含** WebView / 窗口管理——原生后端在 crates/shell-native
 //!   （tao + wry + GTK3，ADR-H1 定谳：Slint 因 GPL 证与 ADR-C1 排除；需 webkit2gtk-4.1 系统库，沙箱不可编译，不入 workspace）。
 //!
 //! 契约（`Host` trait）是原生胶水与 headless 测试的公共面：原生壳实现
 //! `Host::surface()` 把 dist/ 装进 wry；headless 测试实现验证同一套
 //! 文档状态机。
+
+pub mod settings;
 
 use mdcore::document::DocumentId;
 use mdcore::Core;

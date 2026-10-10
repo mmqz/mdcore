@@ -36,6 +36,22 @@ fn contract_doc_frozen_v1_present() {
     assert!(doc.contains("adopt_external"), "外部重载接线（ADR-B7）必须在");
 }
 
+/// R24-a 契约 v1.1 设置面词面锁：设置读写项 + 事件族 + 版本升级记录
+/// （与 web/tests/contract_gate.py 的 settings_* 三检同锚）。
+#[test]
+fn contract_doc_v1_1_settings_face_present() {
+    let doc = std::fs::read_to_string(prototype_root().join("CONTRACT.md"))
+        .expect("CONTRACT.md 必须存在于原型根");
+    assert!(doc.contains("v1.1"), "minor 版本标记必须在");
+    assert!(doc.contains("__settings"), "设置读面必须在");
+    assert!(doc.contains("__setSetting"), "设置写面必须在");
+    assert!(doc.contains("mdc-settings-changed"), "设置事件族必须在（mdc-* 命名域）");
+    assert!(doc.contains("undo_coalesce_ms"), "默认值表必须在（双侧一致锚）");
+    // Rust 侧权威实现锚：mdshell::settings 模块在位（防文档与实现漂移）。
+    // 编译期常量锁（比运行时 assert 更早失败）。
+    const _: () = assert!(mdshell::settings::SCHEMA_VERSION == 1);
+}
+
 /// mdshell 契约层签名冻结（编译即锁；此处锁语义形状）。
 #[test]
 fn mdshell_surface_shapes_frozen() {

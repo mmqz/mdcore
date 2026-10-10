@@ -1210,10 +1210,74 @@ declare global {
     __inject: (md: string) => void;
     /** R23-d：渐进追加入口（first=true 重建核，否则 extend 追加）。 */
     __inject_chunk: (chunk: string, first: boolean) => void;
-    /** R23-d：契约版本（破坏性变更必须升版并更新 CONTRACT.md）。 */
+    /** R24-a：设置快照读取（CONTRACT.md §4，v1.1；返回深拷贝）。 */
+    __settings: () => SettingsSnapshot;
+    /** R24-a：已知键写入（校验过 → 更新快照 + mdc-settings-changed 事件）。 */
+    __setSetting: (path: string, value: number | boolean | string) => boolean;
+    /** 契约版本（变更须升版并三处同步：常量 + CONTRACT.md + 双侧锁测试）。 */
     __contractVersion: number;
     __ready: boolean;
   }
+}
+
+/** R24-a 设置快照（CONTRACT §4 默认值表双侧一致；Rust 权威 = mdshell::settings）。 */
+interface SettingsSnapshot {
+  schema_version: number;
+  editor: { undo_coalesce_ms: number; progressive_open_threshold_bytes: number };
+  ai: { commands_enabled: boolean };
+  storage: {
+    meta_sidecar: boolean;
+    autosave_enabled: boolean;
+    autosave_interval_ms: number;
+    session_restore: boolean;
+  };
+  appearance: { theme: string; font_size_px: number };
+}
+
+/** 默认快照（与 mdshell::settings::Settings::default 同值；contract_gate 锁样例）。 */
+const DEFAULT_SETTINGS: SettingsSnapshot = {
+  schema_version: 1,
+  editor: { undo_coalesce_ms: 1000, progressive_open_threshold_bytes: 1_048_576 },
+  ai: { commands_enabled: true },
+  storage: {
+    meta_sidecar: true,
+    autosave_enabled: false,
+    autosave_interval_ms: 30_000,
+    session_restore: true,
+  },
+  appearance: { theme: 'system', font_size_px: 15 },
+};
+
+/** R24-a：web 侧快照（宿主 R24-d 接线后改为注入宿主权威快照）。 */
+let settingsSnapshot: SettingsSnapshot = structuredClone(DEFAULT_SETTINGS);
+
+/** 已知键封闭集 + 校验器（与 Rust 侧 set() 同表；CONTRACT §4 默认值表为共同锚）。 */
+const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
+  'editor.undo_coalesce_ms': isUintInRange(1, 10_000),
+  'editor.progressive_open_threshold_bytes': isUintInRange(0, 1 << 30),
+  'ai.commands_enabled': isBool,
+  'storage.meta_sidecar': isBool,
+  'storage.autosave_enabled': isBool,
+  'storage.autosave_interval_ms': isUintInRange(1_000, 3_600_000),
+  'storage.session_restore': isBool,
+  'appearance.theme': (v) => v === 'light' || v === 'dark' || v === 'system',
+  'appearance.font_size_px': isUintInRange(8, 48),
+};
+
+function isBool(v: unknown): v is boolean {
+  return typeof v === 'boolean';
+}
+
+function isUintInRange(lo: number, hi: number): (v: unknown) => v is number {
+  return (v: unknown): v is number =>
+    typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+}
+
+/** 点路径写入快照（仅经 __setSetting 校验后的合法值）。 */
+function applySettingToSnapshot(path: string, value: number | boolean | string): void {
+  const [section, key] = path.split('.') as [keyof SettingsSnapshot, string];
+  const target = settingsSnapshot[section] as Record<string, unknown>;
+  target[key] = value;
 }
 
 async function main(): Promise<void> {
@@ -1365,7 +1429,18 @@ async function main(): Promise<void> {
   window.__inject_chunk = (chunk: string, first: boolean): void => {
     window.dispatchEvent(new CustomEvent('mdc-inject-chunk', { detail: { chunk, first } }));
   };
-  window.__contractVersion = 1;
+  // ---- R24-a 设置面（CONTRACT §4，v1.1）----
+  window.__settings = (): SettingsSnapshot => structuredClone(settingsSnapshot);
+  window.__setSetting = (path: string, value: number | boolean | string): boolean => {
+    const validator = SETTING_VALIDATORS[path];
+    if (!validator || !validator(value)) {
+      return false; // 未知路径 / 类型不符 / 越界：快照零触碰，不派事件
+    }
+    applySettingToSnapshot(path, value);
+    window.dispatchEvent(new CustomEvent('mdc-settings-changed', { detail: { path, value } }));
+    return true;
+  };
+  window.__contractVersion = 1.1;
 
   window.__ready = true;
 }

@@ -33,26 +33,31 @@
 ## 构建与门禁
 
 ```bash
-cargo test --workspace              # 16 套件语义锁（148 用例，R23-e 终态）
+cargo test --workspace              # 18 套件语义锁（164 用例；R23-e 148 + R24-a 16）
 cargo check --target wasm32-unknown-unknown
 cd web && npm ci && npm run build   # wasm 构建 + CM6 桥
 ./compliance/scan.sh                # 产品面合规门禁（每次提交前，PASS 才可合入）
 ```
 
 R23 新增测试面：`web/tests/ime_cdp.py`（IME CDP 28 checks，需
-playwright + chromium）、`web/tests/contract_gate.py`（契约门 13 checks）、
-`crates/mdcore/tests/r23_fingerprint.rs`（15 条）/ `r23_external.rs`（14 条）。
+playwright + chromium）、`web/tests/contract_gate.py`（契约门 16 checks：
+v1 面 13 + v1.1 设置面 3）、`crates/mdcore/tests/r23_fingerprint.rs`（15 条）/
+`r23_external.rs`（14 条）。R24-a 新增：`crates/shell/tests/r24_settings.rs`
+（设置面语义锁 14 条）。
 
 ## 收口纪律（自首推起生效）
 
 每轮收口双绿：`bash compliance/scan.sh`（strict 0 / ns 0）+ `cargo test --workspace`
-（16 套件全绿）；依赖变更必须再生成 THIRD-PARTY-NOTICES 并重跑 SBOM。
+（18 套件全绿）；依赖变更必须再生成 THIRD-PARTY-NOTICES 并重跑 SBOM。
 
 ## 状态快照（2026-10-10）
 
 - R15-R21 强化 + R22-a..f（宿主壳实装在开发环境）+ R23-a..e（IME CDP 验收、
   块指纹 ADR-B6、外部修改 ADR-B7、契约冻结、阶段收口）已完成；四路审计全 CLEAN；
   编译产物反编译自检 CLEAN；SBOM 367 项全白名单。
-- 下一阶段：R24 产品化（打包分发 / 多窗口 / 设置面）——编排见分析仓主档增补。
-- 遗留：真机 IME 人工验收（自动化先行已闭环，R23-a 28/28）、定名后商标检索。
+- R24 产品化进行中：**R24-a 设置面核侧完成**（mdshell::settings 四层
+  schema + TOML sidecar + 契约 v1.1：__settings / __setSetting /
+  mdc-settings-changed）；R24-b 多窗口 / R24-c 打包基建待开。
+- 遗留：真机 IME 人工验收（自动化先行已闭环，R23-a 28/28）、定名后商标检索
+  （**R24-c 前置阻塞项**）。
 - 研究与审计底稿存于私有分析仓（允许域）；本仓仅存产品代码与合规结论。

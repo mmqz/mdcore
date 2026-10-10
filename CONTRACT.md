@@ -1,9 +1,11 @@
-# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1）
+# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1.1）
 
-> R23-d 冻结（2026-10-10）。目的：消除原型母本与产品仓（mdcore/）的契约漂移——
-> 两侧对同一契约面的实现必须逐签名一致；破坏性变更必须升 `__contractVersion` 并
-> 更新本文 + 双侧契约锁测试（`web/tests/contract_gate.py` / `crates/shell/tests/
-> contract_freeze.rs`）。命名域：`mdcore` / `mdshell` / `mdc-*`（TRADEMARK_RULES §1）。
+> R23-d 冻结 v1（2026-10-10）；R24-a minor 升版 v1.1（2026-10-10，纯增量：
+> window 面增设置读写项，v1 面零破坏）。目的：消除原型母本与产品仓（mdcore/）
+> 的契约漂移——两侧对同一契约面的实现必须逐签名一致；破坏性变更必须升
+> `__contractVersion` 并更新本文 + 双侧契约锁测试（`web/tests/contract_gate.py` /
+> `crates/shell/tests/contract_freeze.rs`）。命名域：`mdcore` / `mdshell` / `mdc-*`
+>（TRADEMARK_RULES §1）。
 
 ## §1 核（mdcore，Rust）——compile 冻结面
 
@@ -83,3 +85,53 @@ window.__inject_chunk(chunk: string, first: boolean): void
 
 Ctrl+S（宿主存盘）、Ctrl+Z / Ctrl+Shift+Z（`__bridge.undo/redo`）——宿主
 快捷键表变更须升契约版本。
+
+## §4 设置面（v1.1 增补，R24-a）——contract_gate.py 锁
+
+### window 面（冻结 v1.1）
+
+```ts
+window.__settings(): SettingsSnapshot
+// 返回当前设置快照的深拷贝（防外部突变；JSON 形状 = mdshell::settings::Settings
+// serde 面：schema_version + editor/ai/storage/appearance 四层）。
+
+window.__setSetting(path: string, value: number | boolean | string): boolean
+// 已知键 + 类型/值域校验通过 → 更新快照 + dispatch
+//   CustomEvent('mdc-settings-changed', { detail: { path, value } }) → true
+// 未知路径 / 类型不符 / 越界 → false，不派事件（快照零触碰）。
+// 'schema_version' 为保留键，不可经此面写入（迁移框架独占）。
+
+window.__contractVersion = 1.1
+```
+
+### 默认值表（双侧一致；Rust 权威 = `mdshell::settings`，web 快照锁样例）
+
+| 键 | 默认 | 值域 |
+|---|---|---|
+| schema_version | 1 | 保留键（迁移独占） |
+| editor.undo_coalesce_ms | 1000（= mdcore COALESCE_MS） | 1..=10000 |
+| editor.progressive_open_threshold_bytes | 1048576 | 0..=2^30 |
+| ai.commands_enabled | true | bool |
+| storage.meta_sidecar | true | bool |
+| storage.autosave_enabled | false | bool |
+| storage.autosave_interval_ms | 30000 | 1000..=3600000 |
+| storage.session_restore | true | bool（R24-b 消费） |
+| appearance.theme | "system" | light \| dark \| system |
+| appearance.font_size_px | 15 | 8..=48 |
+
+### Rust 侧（mdshell::settings，headless 可验证；非 window 面）
+
+- `SettingsStore`：`load`（文件不存在=Created / IO、解析失败=FileDegraded）/
+  `save`（原子写 tmp+rename；未来 schema 拒写防降写毁数据）/ `set`（已知键
+  封闭集，点路径，类型+值域校验）/ 状态报告（Clean / Created / Migrated /
+  KeyDegraded / FileDegraded / FutureSchema）。
+- 持久化 = TOML sidecar；未知键/注释/排版往返保留（前向兼容）；版本迁移
+  框架（v0 无版本键 → v1 补键）。
+- 宿主接线（快照注入 web 面 + 落盘时机）随 R24-d 壳实体轮落地。
+
+### v1 → v1.1 变更记录（2026-10-10，R24-a）
+
+- window 面新增：`__settings` / `__setSetting` / `mdc-settings-changed` 事件
+  （纯增量——启动面/注入面/`__bridge` 面/键位面全部不变）。
+- `__contractVersion`: 1 → 1.1。
+- Rust 侧新增 `mdshell::settings` 模块（不触碰 §1 核冻结面）。

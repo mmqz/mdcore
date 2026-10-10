@@ -508,3 +508,39 @@ P1-7 ✅ R23-b（ADR-B6）；P1-8 ✅ R23-c 核侧（ADR-B7）。R22 候选 4 �
 **R23 阶段结论**：宿主壳后的产品闭环第一段完成——IME 真实语义背书、外部重载身份
 保持、P1-7/8 定谳、契约面冻结。产品仓（mmqz/mdcore）合流 R23-b/c/d 母本增量后即可
 进入 R24（打包分发 / 多窗口 / 设置面，按主档远期路线）。
+
+## R24-a：设置面核侧（2026-10-10）
+
+**交付**（主档 §31 R24-a 四条机制合同全落地）：
+- `mdshell::settings` 模块：四层 schema（editor/ai/storage/appearance）+
+  TOML sidecar 持久化（原子写 tmp+rename，与 md+meta sidecar 纪律一致）。
+- 机制：默认值合并 / 未知键+注释往返保留（toml_edit 格式保持编辑）/
+  schema 版本迁移框架（v0 无版本键 → v1 补键）/ 损坏降级
+  （文件级 FileDegraded 可修复 / 键级 KeyDegraded 该键回默认 /
+  FutureSchema 拒写保护防降写毁数据）。
+- 契约 v1 → v1.1 minor 升版（三处同步完成）：window 面增
+  `__settings` / `__setSetting` / `mdc-settings-changed` 事件；
+  `__contractVersion` 1 → 1.1；CONTRACT.md §4（默认值表双侧一致锚）；
+  contract_gate.py 13 → 16 检；contract_freeze.rs 增 v1.1 词面锁。
+- 语义锁 `crates/shell/tests/r24_settings.rs` 14 条：默认合并 / 未知键+
+  注释往返 / 损坏降级修复 / 键级降级（类型+值域）/ v0→v1 迁移幂等 /
+  未来 schema 拒写 / set 封闭键集+校验+doc↔快照↔重载三方一致 / 文件面
+  （Created/原子写无 .tmp 残留）/ **跨 crate 常量锁**
+  （settings 默认 undo_coalesce_ms == mdcore::history::COALESCE_MS）/
+  JSON 形状往返（web 面锚）。
+
+**新增依赖**（全 MIT/Apache-2.0 双许可白名单族）：toml_edit 0.25 + 传递
+7 项（indexmap/equivalent/hashbrown/toml_datetime/toml_parser/toml_writer/
+winnow）；serde/serde_json 复用既有（mdcore 已在 SBOM）。NOTICES 草案随
+本轮在 compliance-baseline 分支增补。
+
+**门禁**：cargo --workspace **164/164**（148 R23 终态 + 16 新增：14 语义锁
++ settings 单元 1 + 契约 v1.1 锁 1）；wasm32 check 过；scan.sh 产品面
+0 命中；web 构建 OK；契约门 **16/16**；web smoke **15/15**；IME CDP
+**28/28**（main.ts 改动零回归）。
+
+**决策记录**：① schema_version 为保留键，set 面不可写（迁移框架独占）；
+② 未来 schema 文件 load 全默认 + save 拒写（防降写毁新版本数据）；
+③ 值域校验双侧同表（Rust set()/load 降级与 web 校验器共用 CONTRACT §4
+默认值表）；④ ai 层 v0 仅 commands_enabled（宿主 feature flag），键集
+扩充走 schema 版本迁移；⑤ web 快照 R24-d 接线后由宿主注入权威值。

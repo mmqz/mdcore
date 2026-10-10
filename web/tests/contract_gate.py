@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""R23-d contract gate: serve web/dist, assert the frozen host<->bridge<->core
-contract (CONTRACT.md v1) on a live page — boot surface, host inject path
-(__inject / __inject_chunk / mdc-inject* event family), __bridge inventory,
-undo key-contract, unit-constitution roundtrip. Evidence -> results_contract.json
+"""R23-d contract gate (v1) + R24-a settings face (v1.1): serve web/dist, assert
+the frozen host<->bridge<->core contract (CONTRACT.md v1.1) on a live page —
+boot surface, host inject path (__inject / __inject_chunk / mdc-inject* event
+family), __bridge inventory, undo key-contract, unit-constitution roundtrip,
+settings read/write face (__settings / __setSetting / mdc-settings-changed).
+Evidence -> results_contract.json
 """
 
 import http.server
@@ -53,7 +55,7 @@ def main() -> int:
 
             # ---- §3.1 启动面 ----
             check("ready", page.evaluate("window.__ready === true"))
-            check("contract_version", page.evaluate("window.__contractVersion === 1"))
+            check("contract_version", page.evaluate("window.__contractVersion === 1.1"))
             surf = page.evaluate("""() => ({
                 inject: typeof window.__inject,
                 injectChunk: typeof window.__inject_chunk,
@@ -105,7 +107,7 @@ def main() -> int:
             page.evaluate("window.__bridge.pushRender(undefined, { force: true })")
             check("inject_events_drain_on_render", page.evaluate("window.__mdcoreEvents.length > 0"))
             check("inject_keeps_surface",
-                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1"))
+                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1.1"))
 
             # ---- §3.2 渐进通道 ----
             page.evaluate("window.__inject_chunk('first chunk\\n\\n', true)")
@@ -127,13 +129,49 @@ def main() -> int:
             }""")
             check("unit_constitution", unit["u2c"] == 2 and unit["c2u"] == 3, json.dumps(unit))
 
+            # ---- §4 设置面（v1.1，R24-a）----
+            st = page.evaluate("window.__settings()")
+            check("settings_read_surface",
+                  st.get("schema_version") == 1
+                  and all(k in st for k in ("editor", "ai", "storage", "appearance"))
+                  and st["editor"]["undo_coalesce_ms"] == 1000
+                  and st["appearance"]["theme"] == "system", json.dumps(st))
+
+            page.evaluate("""() => {
+                window.__settingsSpy = [];
+                window.addEventListener('mdc-settings-changed',
+                    (ev) => window.__settingsSpy.push(ev.detail));
+            }""")
+            ok_write = page.evaluate("window.__setSetting('appearance.theme', 'dark')")
+            st2 = page.evaluate("window.__settings()")
+            spy = page.evaluate("window.__settingsSpy")
+            check("settings_write_and_event",
+                  ok_write is True and st2["appearance"]["theme"] == "dark"
+                  and len(spy) == 1 and spy[0]["path"] == "appearance.theme"
+                  and spy[0]["value"] == "dark", json.dumps({"ok": ok_write, "st": st2, "spy": spy}))
+
+            rejected = page.evaluate("""() => ({
+                unknownPath: window.__setSetting('editor.nonexistent', 1),
+                reservedKey: window.__setSetting('schema_version', 2),
+                wrongType: window.__setSetting('appearance.theme', 123),
+                outOfRange: window.__setSetting('appearance.font_size_px', 99),
+                floatNotInt: window.__setSetting('editor.undo_coalesce_ms', 1.5),
+            })""")
+            spy2 = page.evaluate("window.__settingsSpy")
+            st3 = page.evaluate("window.__settings()")
+            check("settings_write_rejects",
+                  all(v is False for v in rejected.values())
+                  and len(spy2) == 1  # 拒绝写入不派事件
+                  and st3["schema_version"] == 1 and st3["appearance"]["theme"] == "dark"
+                  and st3["appearance"]["font_size_px"] == 15, json.dumps(rejected))
+
             browser.close()
         srv.shutdown()
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     failed = [c for c in checks if not c["ok"]]
     OUT.write_text(json.dumps({
-        "meta": {"gate": "R23-d contract v1", "dist": str(WEB / "dist")},
+        "meta": {"gate": "R23-d contract v1 + R24-a settings v1.1", "dist": str(WEB / "dist")},
         "tests": checks,
         "summary": {"total": len(checks), "failed": len(failed), "pass": not failed, "failures": [c["name"] for c in failed]},
     }, ensure_ascii=False, indent=2))
