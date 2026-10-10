@@ -20,7 +20,8 @@ DENYLIST="$ROOT/compliance/denylist/sources.txt"
 MODE="${1:-product}"
 
 # 产品面：编译进产物的源面 + 清单
-PRODUCT_PATHS=(crates/*/src web/src web/index.html Cargo.toml crates/*/Cargo.toml web/package.json)
+# R24-c 增补：packaging/（分发模板——发布面 = 产品面，品牌词门禁恒覆盖）
+PRODUCT_PATHS=(crates/*/src web/src web/index.html Cargo.toml crates/*/Cargo.toml web/package.json packaging)
 # 扩展面：测试与构建脚本（--all 时附加）
 EXTRA_PATHS=(crates/*/tests web/tests web/build.mjs web/build-wasm.sh)
 

@@ -1,6 +1,6 @@
 [package]
 name = "mdcore"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Headless Core v0 (R8): Document/BlockTree + StableID + Rope + Command + Transaction + History + Anchor"
 

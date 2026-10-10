@@ -1,6 +1,6 @@
 [package]
 name = "mdshell-native"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "R10 原生宿主壳（tao + wry + GTK3，ADR-H1 定谳：Slint 因 GPL 证排除）。⚠️ 不在 prototype workspace 编译面内：需要 webkit2gtk-4.1 / GTK3 系统开发库（沙箱无 sudo 不可安装）。在有系统依赖的机器上：cargo check -p mdshell-native --manifest-path .../shell-native/Cargo.toml"
 

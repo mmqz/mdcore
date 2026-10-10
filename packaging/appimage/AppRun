@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# AppImage 运行时入口（R24-c；appimagetool 约定：AppDir 根的 AppRun）
+# 方言：AppImage Type 2 运行时规范。宿主壳 = tao+wry+GTK3（ADR-H1），
+# 运行时库由 linuxdeploy 插件携带；此处只做环境整形。
+set -euo pipefail
+
+HERE="$(dirname "$(readlink -f "${APPIMAGE:-$0}")")"
+
+# GTK/WebKit 资源路径（linuxdeploy-gtk-plugin 布局）
+export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GIO_MODULE_DIR="${HERE}/usr/lib/gio/modules:${GIO_MODULE_DIR:-}"
+
+# 部分 WM/驱动组合下 WebKit 合成模式崩溃（wry 已知问题面）——
+# 先保守开启，R24-d 实测后按需收敛（packaging/README 运行时依赖节）。
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+
+# AppImage 单实例：--appimage-extract-and-run 场景下 %F 参数直传
+exec "${HERE}/usr/bin/{{APP_EXEC}}" "$@"

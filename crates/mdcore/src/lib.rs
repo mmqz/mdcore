@@ -27,6 +27,11 @@ pub mod revision;
 pub mod snapshot;
 pub mod tree;
 
+/// R24-c 版本单源：workspace.package（根 Cargo.toml）→ CARGO_PKG_VERSION
+/// → 本常量。发布产物（打包脚本 / 宿主 --version / 关于页）一律取此值，
+/// 禁止手抄版本号（r24_packaging.rs 跨 crate 一致性锁背书）。
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 

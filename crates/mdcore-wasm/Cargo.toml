@@ -1,6 +1,6 @@
 [package]
 name = "mdcore-wasm"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Headless Core v0 的 WASM 绑定（WebView 内 CM6 View 的对端）"
 

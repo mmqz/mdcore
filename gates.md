@@ -626,3 +626,47 @@ wasm32 check 过；scan.sh 0 命中；clippy 零新增（2 条既有基线）。
 不设拒写保护；③ 脏标记粘性语义（假阳性安全向：宁可多问一次存盘）；
 ④ adopt_external 清位（缓冲==外部内容），Noop 早退路径不清（无变更
 无采纳，脏态原样交宿主 UX）；⑤ 资源上限不静默驱逐——驱逐策略宿主域。
+
+## R24-c：打包分发基建（2026-10-10）
+
+**交付**（主档 §31 R24-c；产物实体验证按计划留 R24-d 开发环境轮）：
+- **CARGO_PKG_VERSION 单源**：根 Cargo.toml 新增 `[workspace.package].version`
+  （唯一手写点），四 crate 全部改 `version.workspace = true`（禁止独立
+  声明）；运行时唯一出口 = `mdcore::VERSION`（env!("CARGO_PKG_VERSION")）。
+  发布产物四处注入（deb control / NSIS / Info.plist / AppImage 元数据）
+  全部从产物 `--version` 读取，禁止手抄。
+- **packaging/ 基建**（名称全参数化，正式定名 = 用户决策 + 商标检索
+  强制门未决，不阻塞基建）：
+  - `README.md`：定名阻塞纪律（TRADEMARK_RULES §4 五步检索 + 复跑品牌
+    词门禁 + 变量表登记三件套）+ 变量表（{{APP_NAME}} 待定名 /
+    {{APP_EXEC}}=mdcore 自研命名域）+ 版本单源机制图。
+  - `checklist.md`：分发合规核对单六节（A 命名商标 / B 版本产物 /
+    C 依赖合规 / D 平台注册面 / E 隐私安全 / F 发布物料），发布前
+    逐项打勾，A4 定名门与 B2 版本单源为硬门。
+  - 四平台模板：`shared/app.desktop.tpl`（.md mime +
+    x-scheme-handler/mdcore scheme 注册 + SingleMainWindow 单实例语义）/
+    `appimage/`（AppRun + build 脚本，WEBKIT 合成模式兼容开关）/
+    `deb/`（control 模板含 webkit2gtk-4.1 依赖声明 + postinst 注册
+    缓存刷新 + 手工布局 dpkg-deb 构建——不引入 cargo-deb，零新增依赖）/
+    `nsis/installer.nsi.tpl`（注册表面 + WebView2 Evergreen 检测引导 +
+    卸载器）/ `macos/Info.plist.tpl`（文档类型 + URL scheme + 无网络面
+    声明）。
+- **合规门禁扩展**：scan.sh PRODUCT_PATHS 纳入 packaging/（发布面 =
+  产品面，品牌词门禁恒覆盖分发模板）。
+
+**语义锁**：`crates/shell/tests/r24_packaging.rs` **4 条**——版本单源
+（workspace.package 与 mdcore::VERSION 一致 + 四 crate 继承声明面 +
+禁独立声明）/ 工件在位与命名域合规（mime/scheme/APPID/webkit2gtk
+依赖四锚）/ 构建脚本版本注入纪律（--version 读取 + 无内嵌版本串）/
+定名阻塞门在档（占位符纪律 + 核对单硬门，定名提交三处一体改写）。
+
+**门禁**：cargo --workspace **187/187**（183 + 4）；wasm32 check 过；
+scan.sh 0 命中（scope 扩展后）；clippy 零新增。零新依赖（Cargo.lock
+零 diff——版本继承不改变解析结果，SBOM/NOTICES 无需再生成）。
+
+**决策记录**：① 版本手写点唯一化于 workspace.package（crate 独立声明
+= 漂移源，锁死）；② 正式名未定不阻塞基建——{{APP_NAME}} 参数化，
+可执行名/包名/scheme 用 mdcore 命名域先行；③ deb 走手工布局 dpkg-deb
+（不引入 cargo-deb 依赖）；④ NSIS 的 WebView2 引导用微软官方
+Evergreen bootstrapper；⑤ AppImage 的 WEBKIT_DISABLE_COMPOSITING_MODE
+保守开启，R24-d 实测后按需收敛。

@@ -3,6 +3,13 @@ resolver = "2"
 members = ["crates/mdcore", "crates/mdcore-wasm", "crates/shell", "crates/shell-native"]
 default-members = ["crates/mdcore", "crates/shell", "crates/shell-native"]
 
+# R24-c 版本单源：全部 crate 经 version.workspace 继承此值（禁止
+# crate 内独立声明版本——r24_packaging.rs 跨 crate 一致性锁背书）。
+# 发布产物（deb control / NSIS / Info.plist / AppImage）由打包脚本
+# 从 mdcore::VERSION（= CARGO_PKG_VERSION，同一源）注入，见 packaging/。
+[workspace.package]
+version = "0.1.0"
+
 # R8 Headless Core v0 — 依赖策略（主档 §9 / tech-stack）:
 #   ropey      = 文本存储实现（指定的技术栈成员）
 #   serde      = JSON 序列化（op 流 / snapshot / history 的最低成本选择）
