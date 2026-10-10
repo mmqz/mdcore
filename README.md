@@ -12,10 +12,10 @@
 ├─ web 桥（web/，CodeMirror 6 + wasm-bindgen）─────────────────────┤
 │   window.__bridge 契约面；UTF-16↔码点单一换算对（ADR-V2）            │
 │   （CM6 只服务 MD 面；PDF 面为独立轻量视图，不经 CM6）              │
-├─ PDF 核 mdc-pdf（Rust，第二 Document Model，PDF-b 骨架 + PDF-c 阅读面）┤
+├─ PDF 核 mdc-pdf（Rust，第二 Document Model，PDF-b/c/d 三轮完成）    ┤
 │   页/大纲/标注三层模型 + Command 边界 + 安全策略（S1-S5） +       │
-│   pdfium 引擎/LRU 页缓存/渲染工人（feature engine-pdfium）；      │
-│   mdcore://pdf 协议草案（CONTRACT §6）                            │
+│   pdfium 引擎/LRU 页缓存/渲染工人（engine-pdfium）+ lopdf 标注    │
+│   增量写（engine-lopdf）；mdcore://pdf 协议草案（CONTRACT §6）      │
 ├─ 编辑核 mdcore（Rust，五 crate workspace）────────────────────────┤
 │   ropey 树 + op log + undo（ADR-B2/B4/B5）+ 块身份（ADR-B1）        │
 │   revision/anchor（R13/R17 语义锁）+ 渐进打开 + Human+AI 共用状态    │
@@ -38,8 +38,9 @@
 ## 构建与门禁
 
 ```bash
-cargo test --workspace              # 23 套件语义锁（236 用例；R23-e 148 + R24-a 16 + 质量审计 7 + R24-b 12 + R24-c 4 + PDF-b 32 + PDF-c 常开 17；默认零引擎依赖，裸环境全绿）
+cargo test --workspace              # 24 套件语义锁（245 用例；R23-e 148 + R24-a 16 + 质量审计 7 + R24-b 12 + R24-c 4 + PDF-b 32 + PDF-c 常开 17 + PDF-d 常开 9；默认零引擎依赖，裸环境全绿）
 cargo test -p mdc-pdf --features engine-pdfium    # +13 引擎锁 + 6 #[ignore] 性能门（需 libpdfium.so，定位序：MDC_PDFIUM_LIB → 候选清单 → 系统）
+cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf    # +17 PDF-d 标注写锁（lopdf 增量写；需 libpdfium.so + spike fixtures）
 cargo test -p mdc-pdf --features engine-pdfium --test pdfc_perf -- --ignored --nocapture    # 性能门实测打印（阈值 = 实测×3）
 cargo check --target wasm32-unknown-unknown
 cd web && npm ci && npm run build   # wasm 构建 + CM6 桥
@@ -78,8 +79,11 @@ v1 面 13 + v1.1 设置面 3）、`crates/mdcore/tests/r23_fingerprint.rs`（15 
   PDF-c/d 接入；CONTRACT §6 草案，window 面零变化）；**PDF-c 阅读面完成**
   （LRU 页缓存 + 渲染工人（panic 隔离）+ pdfium 引擎实装（feature
   `engine-pdfium`，默认零引擎依赖不变）+ 会话引擎接线 + 性能门实测入
-  gates：打开 0.18ms / 翻页命中 5µs / 渲染 p95 1.1ms）。PDF-d 标注面 /
-  PDF-e 收口见计划表。
+  gates：打开 0.18ms / 翻页命中 5µs / 渲染 p95 1.1ms）；**PDF-d 标注面完成**
+  （v0 四标注 lopdf 增量写（engine-lopdf，默认零引擎依赖不变）+ 会话
+  flush（S5 先于一切/脏集精确/幂等）+ Acrobat 互通引擎层预证（lopdf
+  写 → pdfium 读：四 subtype + /T 全对上；GUI Acrobat 人工验证 = 开发
+  环境轮）。PDF-e 收口见计划表。
 - 遗留：真机 IME 人工验收（自动化先行已闭环，R23-a 28/28）、定名后商标检索
   （**R24-c 前置阻塞项**）。
 - 研究与审计底稿存于私有分析仓（允许域）；本仓仅存产品代码与合规结论。

@@ -1,27 +1,40 @@
 //! `PdfSession`——PDF 文档会话状态机（PDF-b 骨架轮；PDF-c 阅读面增
-//! [`PdfSession::attach_engine`] 引擎数据源）。
+//! [`PdfSession::attach_engine`] 引擎数据源；PDF-d 标注面增
+//! [`PdfSession::attach_writer`] 增量写器 + [`PdfSession::flush_annotations`]
+//! 保存事务）。
 //!
 //! 状态机只有**一个形态：已打开**（未打开态在类型层不存在——`open` 是
 //! 唯一构造出口，失败走 [`OpenError`]；协议层的"槽位无会话"由宿主以
 //! [`crate::command::CommandError::NotOpen`] 表达，见 protocol.rs）。
 //!
-//! 数据源两级（PDF-c）：
+//! 数据源三级：
 //! - **v0 宿主注入**（无引擎）：页几何/大纲走 `open` 参数，页文本走
 //!   [`PdfSession::set_page_text`]（PDF-b 骨架路径，保留为无引擎环境的
 //!   降级通道）；
-//! - **引擎实装**（[`PdfSession::attach_engine`]）：ExtractText/Search/
-//!   Outline 命令与 `page_geometry` 查询改走 [`crate::engine::DocumentEngine`]
-//!   实数据（pdfium），**命令面/载荷/错误语义零变化**（限额/摘录/截断
-//!   语义单一出口——注入与引擎两路径同锁）。引擎可 [`PdfSession::detach_engine`]
-//!   取出（移交渲染工人）。
+//! - **引擎实装**（[`PdfSession::attach_engine`]，PDF-c）：ExtractText/
+//!   Search/Outline 命令与 `page_geometry` 查询改走
+//!   [`crate::engine::DocumentEngine`] 实数据（pdfium），**命令面/载荷/
+//!   错误语义零变化**。引擎可 [`PdfSession::detach_engine`] 取出（移交
+//!   渲染工人）；
+//! - **增量写器**（[`PdfSession::attach_writer`]，PDF-d）：标注落盘走
+//!   [`crate::writer::AnnotationWriter`]。**flush 是会话 API 非命令**
+//!   （六命令零变化）：宿主触发的保存事务，不是命令面成员。
+//!
+//! flush 语义（语义锁背书，tests/pdfd_session_flush.rs）：
+//! - **S5 先于一切**（加密态拒——早于写器装配检查与零脏短路）；
+//! - **脏集合精确跟踪**：AnnotateAdd 入脏；AnnotateEdit 仅实际内容变更
+//!   重新标脏（no-op edit 不脏——与 modified_ms 不推进同语义：脏 = 内容
+//!   面变更非命令次数）；flush 成功才清脏；
+//! - **幂等**：零脏 flush 不追加字节（bytes_appended 最小化）；
+//! - **重试安全**：写器幂等合同（同 id 重写 = 原位替换）背书——保存
+//!   失败后 dirty 原样保留，重试不产生重复对象。
 //!
 //! 结构面变更（gates PDF-c 在档）：`Clone` derive 移除（引擎句柄
-//! （pdfium 文档）不可语义复制——克隆会复制“同一 C 文档句柄的双主人”）；
-//! `Debug` 改手写（引擎字段打印在位标记）。时间戳取会话时钟（宿主注入
-//! ——核不取系统时间，对齐 mdcore 时钟注入纪律：wasm32 无 std 时钟，
-//! 宿主是唯一时间源）。
+//! （pdfium 文档）不可语义复制）；`Debug` 改手写（引擎字段打印在位
+//! 标记）。时间戳取会话时钟（宿主注入——核不取系统时间，对齐 mdcore
+//! 时钟注入纪律：wasm32 无 std 时钟，宿主是唯一时间源）。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +49,7 @@ use crate::page::{PageCount, PageGeometry, PageIndex, PageSpan};
 use crate::security::{
     LimitBehavior, Limits, OpenAssessment, REASON_AUTHOR_LENGTH, REASON_ENCRYPTED_WRITE,
 };
+use crate::writer::{AnnotationWriter, IncrementalSave};
 
 /// 文档身份（宿主分配；会话内不解释——跨会话复原属宿主域）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -75,6 +89,13 @@ pub struct PdfSession {
     /// 引擎数据源（PDF-c：注入后 ExtractText/Search/Outline/几何走实数据；
     /// None = v0 宿主注入路径）。
     engine: Option<Box<dyn DocumentEngine>>,
+    /// 标注增量写器（PDF-d：flush 的落盘通道；None = 未装配——零脏时
+    /// flush 幂等返回，有脏时 flush 报 Engine 错（写器装配是保存事务的
+    /// 前置，非打开前置——与引擎独立装配，不互为前提）。
+    annot_writer: Option<Box<dyn AnnotationWriter>>,
+    /// 脏标注集（PDF-d：待落盘标注——Add 入脏 / Edit 实际变更重标 / flush
+    /// 成功清空；升序遍历 = BTreeSet 键序确定性）。
+    dirty_annots: BTreeSet<AnnotId>,
     /// 下一标注 id（单调；1 起步——0 = 永不签发哨兵）。
     next_annot_id: u64,
     /// 会话时钟（epoch ms，宿主注入）。
@@ -118,6 +139,8 @@ impl PdfSession {
             page_text: BTreeMap::new(),
             annotations: BTreeMap::new(),
             engine: None,
+            annot_writer: None,
+            dirty_annots: BTreeSet::new(),
             next_annot_id: 1,
             now_ms: 0,
         })
@@ -197,10 +220,72 @@ impl PdfSession {
         self.engine.is_some()
     }
 
+    /// 注入标注增量写器（PDF-d 标注面）：落盘通道。与引擎装配**独立**
+    /// （无引擎会话可落盘标注；有引擎会话可不装配写器——阅读与落盘
+    /// 两个能力面互不为前提）。二次装配直接替换在位写器（旧写器 drop）。
+    ///
+    /// **调用方合同**（与 `attach_engine` 页数合同同款纪律）：写器字节与
+    /// 会话 `meta.page_count` 必须同源同档——写器文档页少时 flush 以
+    /// `InvalidPage` 显式失败（安全侧：显式失败优于静默错页）。
+    pub fn attach_writer(&mut self, writer: Box<dyn AnnotationWriter>) {
+        self.annot_writer = Some(writer);
+    }
+
+    /// 写器在位观测。
+    pub fn writer_attached(&self) -> bool {
+        self.annot_writer.is_some()
+    }
+
     /// 会话时钟注入（epoch ms）。标注 `created_ms`/`modified_ms` 取自
     /// 会话时钟——核不取系统时间（确定性/可测性/wasm32 兼容）。
     pub fn set_clock_ms(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
+    }
+
+    /// flush：保存事务（会话 API 非命令——六命令面零变化）。语义序：
+    /// ① S5 加密态拒（先于一切——含零脏与写器装配检查，策略门最前）
+    /// → ② 零脏幂等短路（不追加字节）→ ③ 逐条写（脏集升序）→
+    /// ④ save_incremental → 成功才清脏。任一步失败：dirty 原样保留
+    /// （重试经写器幂等合同安全——同 id 重写 = 原位替换）。
+    pub fn flush_annotations(&mut self) -> Result<IncrementalSave, CommandError> {
+        // ① S5 先于一切（与 AnnotateAdd/Edit 同纪律——策略门不因零脏
+        // 或未装配写器而短路漂移）。
+        if self.assessment.denies_writes() {
+            return Err(CommandError::SecurityDeny {
+                reason: REASON_ENCRYPTED_WRITE,
+            });
+        }
+        // ② 零脏幂等：不追加字节。写器在位 → 委托 save_incremental
+        // （写器侧零待保存 = 零追加 + 真产物长度）；无写器且零脏 → 无
+        // 产物面（双 0 常数——未落盘会话的诚实占位，非伪造长度）。
+        if self.dirty_annots.is_empty() {
+            return match self.annot_writer.as_mut() {
+                Some(writer) => writer.save_incremental(),
+                None => Ok(IncrementalSave {
+                    bytes_appended: 0,
+                    prefix_bytes: 0,
+                }),
+            };
+        }
+        let Some(writer) = self.annot_writer.as_mut() else {
+            return Err(CommandError::engine(
+                "标注写器未装配（attach_writer）：有脏标注待落盘",
+            ));
+        };
+        // ③ 逐条写（脏集升序——BTreeSet 键序确定性，与 AnnotateList 的
+        // id 升序纪律同源）。
+        let ids: Vec<AnnotId> = self.dirty_annots.iter().copied().collect();
+        for id in &ids {
+            let annot = self
+                .annotations
+                .get(id)
+                .expect("脏标注必在库（v0 无删除命令——dirty 只经 Add/Edit 产生）");
+            writer.write_annotation(annot.page, annot)?;
+        }
+        // ④ 保存 + 清脏（成功才清：保存失败 → dirty 原样保留，重试安全）。
+        let stats = writer.save_incremental()?;
+        self.dirty_annots.clear();
+        Ok(stats)
     }
 
     // -----------------------------------------------------------------------
@@ -357,6 +442,8 @@ impl PdfSession {
             modified_ms: self.now_ms,
         };
         self.annotations.insert(id, annot.clone());
+        // PDF-d：新增即脏（待落盘集）。
+        self.dirty_annots.insert(id);
         Ok(Outcome::AnnotAdded(annot))
     }
 
@@ -379,6 +466,9 @@ impl PdfSession {
             .ok_or(CommandError::AnnotNotFound(id))?;
         if annot.apply_patch(&patch) {
             annot.modified_ms = self.now_ms;
+            // PDF-d：实际内容变更 → 重新标脏（no-op edit 不脏——与
+            // modified_ms 不推进同语义：脏 = 内容面变更非命令次数）。
+            self.dirty_annots.insert(id);
         }
         Ok(Outcome::AnnotEdited(annot.clone()))
     }
@@ -411,8 +501,8 @@ impl PdfSession {
 }
 
 // ---------------------------------------------------------------------------
-// 手写 Debug（PDF-c）：引擎字段不可推导（Box<dyn DocumentEngine>）——
-// 打印在位标记与计数面；Clone 已移除（结构面变更，gates 在档）。
+// 手写 Debug（PDF-c）：引擎/写器字段不可推导（Box<dyn …>）——打印在位
+// 标记与计数面；Clone 已移除（结构面变更，gates 在档）。
 // ---------------------------------------------------------------------------
 
 impl fmt::Debug for PdfSession {
@@ -426,6 +516,8 @@ impl fmt::Debug for PdfSession {
             .field("page_text_pages", &self.page_text.len())
             .field("annotations", &self.annotations.len())
             .field("engine_attached", &self.engine.is_some())
+            .field("writer_attached", &self.annot_writer.is_some())
+            .field("dirty_annots", &self.dirty_annots.len())
             .field("next_annot_id", &self.next_annot_id)
             .field("now_ms", &self.now_ms)
             .finish()

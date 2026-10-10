@@ -939,3 +939,155 @@ attach_engine 页数一致性调用方合同入档（双权威不一致的失败
 check 过；scan.sh 0 命中；clippy 零新增（workspace 面 mdc-wasm 2 条 =
 既有基线；feature 面全绿）；cargo fmt 过（mdc-pdf 范围）。既有 219
 锁断言语义零改动（PDF-b 锁原样全绿）。
+
+## PDF-d：标注面（2026-10-10）
+
+**背景**：pdf_carrier_plan §5 第四轮——标注面 = v0 四种标注（Highlight/
+Note/FreeText/Ink）的 lopdf 增量写落盘 + 往返语义锁 + Acrobat 互通的
+引擎层预证。输入资产：PDF-a spike 探针 3（IncrementalDocument 增量写
+技术范本——原字节前缀保持 + lopdf 重载 + pdfium 交叉读回）、PDF-b
+annotation.rs 四 kind 模型（含 pdf-b-1r 审计在档的「落盘时由引擎侧
+校验」承诺与 Rect 类型层不变量）、ADR-P1（lopdf 承担标注写）。
+
+**交付**（crates/pdf，feature 纪律 = 默认零引擎依赖不变，default=[]
+不动）：
+
+- `writer.rs`（常开，零依赖）：`IncrementalSave{bytes_appended,
+  prefix_bytes}`（增量语义的证据载荷——幂等 flush 的可断言面）+
+  `trait AnnotationWriter{write_annotation, save_incremental}`（文档级
+  会话面，**非命令面**——六命令零变化）+ `MockWriter`（常开契约可测）+
+  三条 Acrobat 互通纯函数：`encode_author`/`decode_author`（/T origin
+  约定，`ORIGIN_SUFFIX_AI = " [ai]"` 词面冻结）+ `pdf_date_string`
+  （/M 日期串，自实现 civil-from-days——零 chrono，值时钟语义）；
+- `writer_lopdf.rs`（feature `engine-lopdf`）：`LopdfWriter` =
+  `from_bytes`（Document::load_mem；**加密档拒 = S5 引擎侧独立防线**：
+  仍加密（口令不可得，lopdf 以未解密形态装载）与曾加密（空口令可解，
+  文件本体仍是加密档）两形态均 `SecurityDeny{S5-encrypted-write}`）+
+  四 kind → 标准 Annot 对象（**零私有扩展**）：Highlight `/Subtype
+  /Highlight`+`/QuadPoints`（quad 环序 8 数直通）+`/C`（0-1 归一）；
+  Note `/Subtype /Text`+`/Rect`；FreeText `/Subtype /FreeText`+`/Rect`+
+  `/Contents`+`/DA`=`/Helv 12 Tf 0 g`（Acrobat 免 AP 渲染——v0 不生成
+  /AP）；Ink `/Subtype /Ink`+`/InkList`（逐划点序）+`/BS`（`/W 1 /S /S`）。
+  公共字段：`/T` origin 编码（Human 原文 / Ai `"{author} [ai]"`——可逆
+  且 Acrobat 作者栏可读）+ `/M` 日期串 + `/Rect`（Highlight=quad 包络 /
+  Ink=stroke 包络 / Note+FreeText=模型直通；Y 轴用户空间直通无翻转）+
+  `/F 4`（打印位）；文本串编码：ASCII 字面量 / 非 ASCII UTF-16BE+BOM
+  （PDF 32000 7.9.2——Acrobat 系阅读器稳妥形态）。挂载：页对象
+  `opt_clone_object_to_new_document` 入新修订 + `/Annots` 三形态全覆盖
+  （缺省建 / 直接数组追加 / 间接引用先克隆数组对象）+ 引用查重。增量
+  保存：`save_to` 产物**前缀逐位保持断言**（违约 = typed Engine 错误，
+  不产出损坏文件）+ 保存后从产物重建 IncrementalDocument（产物 = 新
+  基线）+ `product_bytes`/`into_bytes` 产物取回；载荷健全性（空
+  quads/空笔划/空笔划点/非有限坐标）写前校验（pdf-b 在档承诺兑现）；
+  `InvalidPage` 页界防御（u32::MAX+1 防御含内）；
+- `document.rs` 增量：`attach_writer(Box<dyn AnnotationWriter>)`（与
+  引擎装配**独立**——attach_writer 不要求 attach_engine）+
+  `flush_annotations()`（会话 API 非命令）：① S5 加密态拒（先于一切
+  ——含零脏短路）→ ② 零脏幂等（写器在位 = 委托 save_incremental 零
+  追加；无写器 = 双 0 诚实占位）→ ③ 逐条写（脏集升序 = BTreeSet 键序
+  确定性）→ ④ save_incremental + **成功才清脏**（失败保留 = 重试经
+  写器幂等合同安全）。脏跟踪：AnnotateAdd 入脏 / AnnotateEdit 仅实际
+  内容变更重标脏（no-op edit 不脏——与 modified_ms 不推进同语义）；
+  有脏 + 无写器 → typed `Engine` 错（错误面零增长——不新增变体）；
+- Cargo.toml：`lopdf = { version = "=0.45.0", optional = true,
+  default-features = false }` + `engine-lopdf = ["dep:lopdf"]`。lopdf
+  0.45 默认特性 = `chrono-clock` + `rayon`——**全关**；解析必需依赖
+  （nom/flate2/md-5/sha2/aes/stringprep 等非可选面）随包引入；image 系
+  （embed_image）保持关闭（与 pdfium-render 面同一零 image 纪律）。
+
+**Acrobat 互通验证记录**（两层，诚实登记不冒认）：
+
+- **引擎层预证（本轮闭环，语义锁 ③/⑮）**：lopdf 写 → pdfium 读——
+  四种 subtype 全对上（Highlight/Text/FreeText/Ink）+ `/T` 经
+  FPDFAnnot（pdfium-render `creator()`）可读（含 Ai `"[ai]"` 后缀与非
+  ASCII UTF-16BE 作者）+ FreeText `/Contents` 可读 + 既有标注（AcroForm
+  widget）共存不破坏。spike 探针 3 同款路径的产品化实证；
+- **GUI Acrobat 人工验证 = 开发环境轮事项（未做，不冒认）**：真
+  Acrobat Reader 打开产物目视四 kind 渲染（/DA 免 AP 路径的实际效果/
+  高亮叠加/墨迹笔宽/注释弹窗）与作者栏显示——属开发环境轮（沙箱无
+  GUI Acrobat），登记为 PDF-e 前置人工验证项。引擎层证据不等于 GUI
+  层证明，两层分开在档。
+
+**决策记录**：
+
+① **/T origin 编码约定**：Human = 原文；Ai = `"{author} [ai]"`——可逆
+（后缀剥离）且 Acrobat 作者栏可读（对比：私有 XMP/隐藏字段的不可读与
+不可逆两侧风险）。已知歧义在档不修：Human 名字面恰以 `" [ai]"` 结尾
+时解码侧误判 Ai——解码仅用于自家回读对账，写侧权威在模型 origin 字段
+（锁 8/④ 钉为文档化行为）；
+② **/M 日期串纯函数 + UTC**：`pdf_date_string(epoch_ms)` 自实现
+civil-from-days（零 chrono——lopdf 特性面 default-features=false 不带
+时钟库；纯函数 = 同值时钟任何环境同一字符串，值时钟语义对齐会话时钟
+注入纪律；UTC 固定偏移 `+00'00'`——无系统时区依赖）。闰日/世纪非闰年
+（2100）均有锁；
+③ **每次 flush = 恰好一个修订（保存后重建）**：save_incremental 后从
+产物重建 IncrementalDocument——修订内容恒为「本轮脏对象」，不重复写
+已落盘对象；代价 = 每次保存一次重解析（**保存路径，非渲染热路径**
+——阅读面性能零影响：pdfium/缓存/工人全不动）。备选「单文档多轮
+追加」被否：lopdf save 会把 new_document 全量对象重复写入第二修订；
+④ **编辑重写 = 同对象号重定义（增量更新标准语义）**：AnnotId→ObjectId
+映射跨 flush 持久——编辑重写在新修订里重定义同号对象（后修订覆盖前
+修订），不产生重复对象/重复挂载（锁 8：重载计数不变 + 新值可见）；
+⑤ **幂等语义双面**：会话零脏短路（flush 不触写器）+ 写器零待保存
+短路（save 不落空修订）——bytes_appended 最小化两级成立；无写器 +
+零脏 = 双 0 诚实占位（不伪造产物长度）；
+⑥ **S5 双防线**：会话层（assessment.encrypted 判定，先于一切）+
+  引擎层（from_bytes 加密档拒）——两层独立可测（锁 ⑥ 各自锁死）；
+  曾加密（空口令可解）也拒：文件本体是加密档，v0 S5 = 加密档零增量写
+  （lopdf 0.45 虽支持解密态重加密追加，策略面不做——复杂度与安全面
+  收益不匹配，PDF-e 后强化面再议）；
+⑦ **错误面零增长**：flush 的无写器/载荷不健全/引擎失败全部走既有
+  `Engine(String)`（PDF-c 受限构造先例——512 字符钳制）；不新增
+  CommandError 变体（错误面 Serialize-only 单向，协议面冻结）；
+⑧ **lopdf/pdfium-render 版本钉住再导出**（feature 门内 `pub use`）：
+  测试/宿主经 mdc-pdf 引用与实装同版本引擎 crate——避免 dev-dependency
+  把引擎带进默认测试构建面（默认零引擎依赖纪律：默认构建不编译
+  lopdf/pdfium-render，cargo tree 实证）。
+
+**语义锁**：`tests/pdfd_session_flush.rs` **9 条**（常开，零依赖）：
+写抽象契约 + mock 统计模型 / flush 逐条写 id 升序 + 幂等 / 脏集精确性
+（新增/实际编辑/未动/no-op 四类） / S5 加密态 flush 拒先于零脏短路 +
+写路径零接触 / 无写器错误面（有脏 Engine + 零脏双 0）/ 保存失败重试
+安全（dirty 保留 + 重写）/ 写器无引擎独立装配 / /T origin 编码往返
+（含空作者 + 文档化歧义）/ /M 日期串已知值（epoch 0/闰日/2100 世纪
+非闰/形状恒定/毫秒截断）。`tests/pdfd_writer.rs` **17 条**（双引擎
+feature 面，spike fixtures + libpdfium 定位序同 pdfc_engine）：①四
+kind 全字段逐位往返（QuadPoints 16 数/InkList 逐划/Rect/Contents/C/F）
+②原字节前缀逐位保持（两轮修订传递性）③pdfium 交叉读回（四 subtype +
+/T + /Contents）④Origin 往返（含非 ASCII = UTF-16BE 路径）⑤/M 日期串
+字面锁定 ⑥加密双防线（from_bytes 拒 + 会话 flush 拒且产物零变化）⑦
+幂等 flush（零追加 + 长度不变）⑧编辑重脏 reflow（同对象号重定义——
+无重复 + 新值可见 + /M 推进）⑨包络 Rect（quad/stroke min-max，含乱序
+输入）⑩垃圾字节四形态 typed 拒 ⑪写器无引擎会话端到端 ⑫二轮修订
+only-dirty（追加量 < 首轮 + 计数精确）⑬FreeText /DA 存在性 + 无 /AP
+⑭百条冒烟（100 混合 kind 单轮 flush + 重载全数对回：页计数/subtype/
+/T 逐槽）⑮既有 /Annots 挂载面（form_probe.pdf AcroForm widget 共存
+不破坏 + pdfium 双条可读）。
+
+**NOTICES 增量（PDF-e SBOM 义务前瞻，与 pdfium-render 面同纪律）**：
+`engine-lopdf` 特性引入 lopdf =0.45.0（**MIT**，pin 锁定）+ 其解析/
+加密依赖 46 包（aes/md-5/sha2/nom/flate2/encoding_rs/chrono 系**不含**
+——default-features=false 后 chrono/rayon/image 均不进图；默认构建
+零编译，仅 lock 解析在档）。`engine-pdfium` 面增量：pdfium-render 再
+导出（`pub use`，零版本变化）。
+
+**审计轮（pdf-d-1r，独立审查代理）：有条件通过**（0 阻断 1 重要 5 轻微）。
+声明 10 条全复跑实证（含叠加一致性——本轮改动由两段代理工作叠加，
+首段超时遗留 + 次段收尾，审查确认无死代码/半成品残留，仅 1 处零消费
+再导出已删）。修复/补齐：**间接 /Annots 形态回归锁**（页 /Annots 5 0 R
+独立数组对象——第三合法形态零覆盖，审计员仓外实证功能正确后补锁 ⑯：
+既有标注存活 + 新增追加 + 前缀逐位保持 + 宿主 /T 零触碰）/「曾加密」
+空口令形态回归锁 ⑰（was_encrypted 分支——装载自动解密仍拒增量写，
+S5 双防线全形态闭环）/ 零消费 pdfium_render 再导出删除（叠加遗留死码）/
+测试 helper 解引用间接 /Annots（结构性覆盖缺口根因）。在档不修：/DA
+字体未挂 /DR（GUI Acrobat 验证轮处理，已在互通记录登记）；年份 >9999
+日期串形状（宿主时钟不可达，文档注记）。
+**门禁**：cargo --workspace **245/245**（236 + 9 常开标注面锁；默认
+构建零引擎依赖不变——cargo tree 实证不编译 lopdf/pdfium-render）；
+feature 面 `cargo test -p mdc-pdf --features engine-pdfium` **71/71 +
+6 ignored**（62 + 9 常开标注面锁）；双引擎面 `--features
+engine-pdfium,engine-lopdf` **88/88 + 6 ignored**（+17 pdfd_writer 锁，含审计回归两锁）；
+wasm32 check 过；scan.sh 0 命中（product + --all 扩展面均 0）；clippy
+零新增（workspace 面 mdc-wasm 2 条 = 既有基线；lopdf 单特性面与双引擎
+面全绿）；cargo fmt 过（mdc-pdf 范围）。既有 236 锁断言语义零改动
+（PDF-b/c 锁原样全绿）。

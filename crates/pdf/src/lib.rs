@@ -1,4 +1,5 @@
-//! mdc-pdf — 第二 Document Model（PDF 面，PDF-b 骨架 + **PDF-c 阅读面**）。
+//! mdc-pdf — 第二 Document Model（PDF 面，PDF-b 骨架 + PDF-c 阅读面 +
+//! **PDF-d 标注面**）。
 //!
 //! 定位（pdf_carrier_plan §1）：与 mdcore 块核**并列**的版式文档模型，
 //! 互不嵌套、互不依赖（crate 间零 path 依赖——Source 等共享语义为
@@ -13,19 +14,26 @@
 //!   渲染线程 + panic 隔离）、[`document::PdfSession::attach_engine`]
 //!   （引擎数据源：文本/搜索/大纲/几何实数据）+ [`engine_pdfium`]
 //!   （pdfium 实装，feature `engine-pdfium`——库定位序/线程纪律/零
-//!   image 渲染路径，决策见 gates.md PDF-c 节）。
+//!   image 渲染路径，决策见 gates.md PDF-c 节）；
+//! - **PDF-d 标注面**（本轮）：[`writer`]（增量写抽象——常开契约层 +
+//!   mock + Acrobat 互通纯函数约定）+ [`writer_lopdf`]（lopdf 增量写
+//!   实装，feature `engine-lopdf`——四 kind 标准 Annot 对象、零私有
+//!   扩展、原字节前缀逐位保持）+ 会话 flush
+//!   （[`document::PdfSession::flush_annotations`]：S5 先于一切 + 脏集合
+//!   精确跟踪 + 幂等语义；命令面六命令零变化）。
 //! - **页模型**（[`page`]）：页号/页数/页几何/`/Rotate` 归一化
 //!   （`effective_*` 按 90/270 交换宽高）/页区间（构造即校验）；
 //! - **大纲**（[`outline`]）：书签树 + 深度优先文档序迭代（单一排序出口）；
 //! - **标注模型**（[`annotation`]）：PDF 标准 Annot 语义四变体
-//!   （v0 内存态，落盘 PDF-d）+ Human/Ai 溯源 + patch 面（kind 不可变）；
+//!   （PDF-d 落盘）+ Human/Ai 溯源 + patch 面（kind 不可变）；
 //! - **命令边界**（[`command`]）：六命令 + typed 错误面（七变体——
 //!   PDF-c 增 RenderPanic/Engine，v1.2 内部增量）；Human 与 AI 走
 //!   同一路径（source 溯源镜像 mdcore 事件源语义）；
 //! - **安全策略**（[`security`]）：S2 危险对象族 / S3 限额三行为学 /
 //!   S5 加密写拒（SECURITY_POLICY.md 的类型层编码，数值权威）；
 //! - **会话**（[`document`]）：`PdfSession` 单一调度入口（`execute`）——
-//!   只有打开后形态；数据源两级（v0 宿主注入 / PDF-c 引擎实装）；
+//!   只有打开后形态；数据源两级（v0 宿主注入 / PDF-c 引擎实装）+ PDF-d
+//!   增量写器 attach；
 //! - **协议草案**（[`protocol`]）：`mdcore://pdf` 面与 `mdc-pdf-*`
 //!   事件族（PDF-c 视图层落地时定稿）；
 //! - **引擎集成点**（[`engine`]）：`DocumentEngine` trait（PDF-c 绑
@@ -44,6 +52,9 @@ pub mod protocol;
 pub mod render;
 pub mod security;
 pub mod worker;
+pub mod writer;
+#[cfg(feature = "engine-lopdf")]
+pub mod writer_lopdf;
 
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
@@ -51,3 +62,4 @@ pub use document::{DocumentMeta, OpenError, PdfDocumentId, PdfSession};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};
+pub use writer::{AnnotationWriter, IncrementalSave, MockWriter};

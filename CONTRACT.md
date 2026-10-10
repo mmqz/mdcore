@@ -285,8 +285,11 @@ impl Core {
   （pdfium 绑定，feature `engine-pdfium`，non-V8）+ LRU 页缓存 +
   渲染工人（S4 panic 隔离）+ 会话引擎接线 + 文本层；性能门实测入
   gates.md PDF-c 节（打开 0.18ms / 翻页命中 5µs / p95 渲染 1.1ms）。
-- **PDF-d 标注面**：lopdf 增量写落盘、Acrobat 互通验证、原字节前缀
-  语义锁。
+- **PDF-d 标注面（已完成 2026-10-10）**：lopdf 增量写落盘（feature
+  `engine-lopdf`，四 kind 标准 Annot 零私有扩展）、Acrobat 互通引擎层
+  预证（lopdf 写 → pdfium 读；GUI 层 = 开发环境轮）、原字节前缀逐位
+  保持语义锁；命令面不变（flush = 会话 API 非命令，六命令零变化）。
+  gates.md PDF-d 节在档。
 
 ### v1.1 → v1.2 变更记录（2026-10-10，PDF-b）
 

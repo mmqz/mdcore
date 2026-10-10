@@ -2,9 +2,9 @@
 name = "mdc-pdf"
 version.workspace = true
 edition = "2021"
-description = "第二 Document Model（PDF 面）：页/大纲/标注三层模型 + Command 边界 + 安全策略 + 宿主协议草案 + PDF-c 阅读面（pdfium 引擎/LRU 页缓存/渲染工人/文本层）；与 mdcore 块核并列互不依赖。"
+description = "第二 Document Model（PDF 面）：页/大纲/标注三层模型 + Command 边界 + 安全策略 + 宿主协议草案 + PDF-c 阅读面（pdfium 引擎/LRU 页缓存/渲染工人/文本层）+ PDF-d 标注面（lopdf 增量写）；与 mdcore 块核并列互不依赖。"
 
-# PDF-c 引擎依赖纪律（决策记录见 gates.md PDF-c 节）：
+# PDF-c/d 引擎依赖纪律（决策记录见 gates.md PDF-c/PDF-d 节）：
 # - 默认构建零引擎依赖不变（default = []——跨环境可构建纪律，PDF-b 延续）：
 #   `cargo test --workspace` 在无 pdfium 二进制的环境保持全绿。
 # - `engine-pdfium` 特性引入 pdfium-render =0.9.4（版本 pin，ADR-P1）：
@@ -13,7 +13,10 @@ description = "第二 Document Model（PDF 面）：页/大纲/标注三层模�
 #   pdfium_7881 绑定面（chromium/8086 二进制向后兼容）；thread_safe =
 #   FFI 全局互斥串行化（pdfium 单线程库的进程级兜底——分线程纪律见
 #   engine_pdfium.rs 模块文档）。
-# - lopdf（标注增量写）PDF-d 引入，本轮不进依赖面。
+# - `engine-lopdf` 特性引入 lopdf =0.45.0（版本 pin，PDF-d 标注增量写）：
+#   default-features = false——默认特性 chrono-clock / rayon 全关；解析必需
+#   依赖（nom / flate2 / md-5 等）为 lopdf 非可选面随包引入；image 系
+#   （embed_image）保持关闭——与 pdfium-render 面同一零 image 纪律。
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -21,6 +24,7 @@ pdfium-render = { version = "=0.9.4", optional = true, default-features = false,
     "pdfium_latest",
     "thread_safe",
 ] }
+lopdf = { version = "=0.45.0", optional = true, default-features = false }
 
 [features]
 default = []
@@ -28,3 +32,7 @@ default = []
 # 纪律见 engine_pdfium.rs；测试环境需 libpdfium.so 在位（env
 # MDC_PDFIUM_LIB / 编译期候选清单含 spike 取件位 / 系统）。
 engine-pdfium = ["dep:pdfium-render"]
+# lopdf 标注增量写实装（writer_lopdf 模块 + 标注面测试面）。增量语义
+# （原字节前缀逐位保持）与标准 Annot 对象纪律见 writer_lopdf.rs；
+# 测试环境需 fixtures（spike 取件位，同 engine-pdfium 面）。
+engine-lopdf = ["dep:lopdf"]
