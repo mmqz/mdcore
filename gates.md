@@ -1,0 +1,510 @@
+# 第一阶段硬 Gate 清单（R14 收口，2026-10-08；R15/R16/R17 主档收口；R18 视口惰性终局；R19 堆口径归因；R20 wasm 内存审计出口；R21 System-undo 语义收口 ADR-B4；R22-a Arc<str> op 文本共享 + 估算撤回；RC 全仓合规化前置节点完成，2026-10-09）
+
+> 主档 §15.3 四条硬 Gate 的量化判定 + §28 P0-3 拆分实测。
+> 证据：`web/tests/results/results.json`（W1-W12 + G1/G2）、
+> `crates/mdcore/tests/r14_gates.rs`（核侧，串行计时）。
+> 原则：**回归套件与门判定分离**——冒烟 checks 保持绿（功能正确性），
+> 预算判定在本文档与各 G 项 `gate_verdict` 字段，GAP 不回避。
+
+## §15.3 四门判定表
+
+| # | Gate（预算） | 实测 | 判定 | 证据 |
+|---|---|---|---|---|
+| 1 | 1MB fixture 可输入 **< 600ms** | 全量打开 349.4ms（W4）；渐进 TTI **156.9ms**（W7，-55%）；10MB 渐进 TTI 362.7ms（G2 参考） | **PASS** | W4/W7/G2 |
+| 2 | 击键→光标响应 **< 16ms** | R15：selection p95 **5.0ms**（PASS）。R18 视口惰性重构后：selection p95 **0.8ms** / max 2.6ms（probe 三连 0.8/2.2/1.1ms）；typing 全路径 p95 **12.9ms**（R14 基线 34.2ms）；核内份额 p95 8.7ms（不变，归因基线） | **PASS（R18）** | G1 |
+| 3 | Document State 完整 **snapshot / restore** | 20k 块（1.2MB）三重恒等（dump_tree / blocks_json / MD 序列化）+ revision 复原 + 跨档 undo 链可用；snapshot 125.2ms / restore 216.2ms | **PASS** | r14_gates |
+| 4 | 中文 / 日文 **IME Gate** | synthetic composition 三轮 + 取消路径零残留（W3/W9，核/视图收敛）；真 IME 需真实输入法环境，人工验收协议已成文 | **PASS（synthetic）**；真机验收 = web/README §6 人工协议（沙箱无真 IME，登记待办） | W3/W9 |
+
+## Gate 2 GAP 归因与 R15 修复（2026-10-09 收口）
+
+R14 三路拆分（G1，1MB / 20448 块）：
+
+```text
+纯光标路径（selection-only dispatch）   p95 23.9ms   ← R14 判门口径，超 16ms
+typing 全路径（changes dispatch）       p95 34.2ms   ← 含核 op + CM6 更新 + 装饰重建
+core-only 旁路（WasmCore 同形 op）      p95  8.7ms / p50 8.5ms  ← 核内份额
+```
+
+**R14 根因（代码级）**：`decoField.update` 对任何带 `selection` 的事务触发
+`buildDecorations(tr.state)` 全量重建（O(doc)）。这是语义必需——
+`revealed(from,to)` 使 mark/hr 的「显示原文 vs 替换为部件」取决于
+**光标是否悬停其上**（Spike S1 光标协商语义），因此纯 selection 事务
+合法地改变装饰集，无法简单跳过。
+
+**R15 修复（已落地，视图层专项）——增量窗口化重算**：
+
+1. decoField 值改为 `{deco, atomic}` 元组：主装饰集与其原子子集
+   （isMarker 且非零长）成对维护，`atomicRanges` facet 改为 O(1) 取缓存
+   （原实现每次 selection 事务对全 doc 重过滤一遍，是第二热点）。
+2. 纯 selection 事务只对「新旧选区覆盖行 ±1 的真并集」（按行区间合并）
+   重算装饰，与全量路径**共享同一单行生成函数**（正则只此一份）；
+   窗口重算结果与旧集逐项（位置 + 装饰值身份）全同时原样返回旧值
+   （CM6 装饰 diff 为空，只剩 CM6 自身选区开销）；有变化才按
+   「旧集 gap 段 + 窗口重算块」用 RangeSetBuilder 有序拼装。
+3. 等价性护栏 W12（冒烟新增）：六步选区序列（marker 内揭示/移开/
+   双光标远距/跨行选区/doc 末尾边界/返回行首）逐步断言
+   **增量产物 ≡ 强制全量重算产物**（deco + atomic 双集逐项对比）。
+   该护栏在收口审核中实际抓出并修复了一处迭代器双 advance 缺陷
+   （`RangeSet.iter()` 经 goto() 已定位在首项，循环初始化再 next()
+   会静默跳过旧集首项——doc-end 场景丢失标题行类点装饰）。
+
+**修复后（G1 复测，1MB / 20448 块）**：光标 p95 **5.0ms** / max 11.3ms
+（预算 16ms，**PASS**；较 R14 的 23.9ms 改善 ~4.8 倍）；typing p95 33.9ms
+（持平，docChanged 仍走全量重建，符合预期）；核内份额 8.7ms 不变
+（selection-only 事务不触核，残余成本为 CM6 选区自身开销，低于核内单 op
+份额）。W1-W12 冒烟 14/14 绿。
+
+## §28 P0-3 量化表（1MB / 10MB）
+
+| 项 | 1MB（20448 块） | 10MB（200576 块） | 预算（§15.1） | 判定 |
+|---|---|---|---|---|
+| 打开 TTI | 全量 349.4ms / 渐进 156.9ms（R14）；R18：渐进 **99.9ms**（同环境全量对照 231.5ms） | 渐进 284.7ms（R16）→ **201.6ms**（R18，16 段） | 1MB <600ms（硬门）；10MB 首屏 <300ms（非门） | 1MB **PASS**；10MB **PASS（R16，R18 再优化）** |
+| 完整 ingest | 657.4ms（8 段） | **4240.7ms**（16 段，R16 后） | 非门 | 记录（-64%） |
+| 击键（全路径 p95） | 34.2ms（R14）→ **12.9ms**（R18） | —（未测，10MB 打字属滚动后场景） | 击键→增量解析 <10ms（非门） | 记录（视口化后剩 hr 索引全扫 ~2-4ms + 核内 ~7ms） |
+| 光标（selection p95） | **5.0ms**（R15）→ **0.8ms**（R18） | — | <16ms（硬门） | **PASS（R18）** |
+| IME（synthetic） | 三轮 + 取消零残留 | — | 硬门 4 | PASS(synthetic) |
+| undo | 全量回写 169.4ms（W4）；批量 127.3ms（W8） | **no-op（R21/ADR-B4：开档后 ingest 不在 undo 栈；桥穿透 0.3ms）**；R16 时代的 1898.5ms 撤段主体已不存在 | 非门 | 记录（语义变更，见 R21 段） |
+| 终态 JS 堆 | 168.8MB（G1，R14 旧口径） | **R22-a 口径：used=483.5MB = JS 58.7MB + wasm 424.8MB**（R21 基线 484.1 = 58.7 + 425.4；R22-a Arc<str> 实测 Δ-0.6MB ≈ 噪音，估算撤回见 R22-a 段） | 1MB <250MB；10MB <600MB（均非门） | 1MB 达标；10MB JS 堆 58.7MB 达标；wasm 509→425→424.8MB，高水位主驱动 = backup 克隆（R22-b 登记治理） |
+| 核侧单 op（旁路） | p50 5.97ms / p95 6.31ms；小文档对照 0.02ms | — | 增量解析 <10ms（非门） | 记录：成本随文档规模增长（300×），p95 在 10ms 内 |
+| 核侧重放 | 256.6ms（1.2MB 日志） | — | 非门 | 记录 |
+| 核侧 genesis | 217.5ms（1.2MB from_markdown） | — | 非门 | 记录 |
+
+## 测量卫生备注
+
+- 核侧计时测试必须**串行**（`gate_lock`）：并行 build_big 互相污染内存带宽时，
+  单 op p95 从 6ms 虚增至 33ms（本轮实测对照，教训入档）。
+- 浏览器数字为 headless chromium 沙箱值，绝对量随机器变化，趋势与比值更可信；
+  结果快照 `web/tests/results/results.json`。
+- **R16 堆测量口径修正**：chromium 须以 `--js-flags=--expose-gc
+  --enable-precise-memory-info` 启动（后者缺省时 usedJSHeapSize 为量化陈旧值，
+  GC 前后多位小数完全不变）；「终态堆」= 开档完成并强制 GC 后的稳态；
+  undo 压测属非常态动作，其重建残留单独透明记录（heap_after_undo_mb），
+  不入判定。10MB 开档稳态实测在 595-655MB 间波动（运行间方差 ~±40MB）。
+
+## 非门登记（§15.3 明示暂不判定）
+
+内存上限（1MB 169MB 达标 / 10MB 803MB 超预算 FLAG）、完整解析时间
+（10MB ingest 11.9s）、60fps 滚动（未测）——均留优化轮，不阻塞第一阶段。
+
+## R15/R16 候选清单（由 R14 数据产生；2/3 已落地）
+
+1. ✅ **Gate 2 视图专项**（R15 落地）：装饰增量窗口化 + 原子集缓存，
+   光标 p95 23.9ms → **5.0ms**（<16ms PASS），W12 等价性护栏入冒烟。
+2. ⚠️→大部分 **10MB 堆优化**（R16）：核侧新增 `blocks_count`/
+   `blocks_json_range` 分片出口 + JS 侧 BlockMap 增量建图 + 渐进批渲染，
+   终态堆 803 → **631.3MB**（-21%，测量口径同步修正）；仍超 600 非门
+   预算 ~31MB，且开档稳态存在 **~500MB 未归因驻留**（JS 侧清单仅解释
+   ~100MB，CDP 采样显示分配大户为 BlockMap.extend ~32MB）——归因调查
+   登记 R17。
+3. ✅ **10MB 渐进首屏**（R16）：渐进 extend 分片建图 + ingest 后一次
+   pushRender（rev 守卫免重复同步），TTI 362.7 → **284.7ms**（<300ms），
+   ingest 11.9s → 4.2s，undo 2.27s → 1.90s。
+
+## R18 视口惰性终局优化（2026-10-09，Gate 2 从 5.0ms → 0.8ms）
+
+**背景与和解**：本会话在未知远端推进的情况下独立完成了另一套 Gate 2 修复
+（视口惰性装饰），rebase 时与远端 R15/R16/R17 三提交链冲突。按 worklog
+Task 13 固化的和解协议处置：**远端三提交为最新基线，本地方案（数据更优）
+在 R17 基础上以 R18 轮次重新实施**，W12 等价性护栏恰好充当重构验证器。
+教训再次强化：开工前必须 `git fetch`（本轮因违反此条造成一次重复施工）。
+
+**方案对比（同机同口径，1MB / 20448 块）**：
+
+| 方案 | 机制 | selection p95 | typing p95 | 10MB 渐进 TTI |
+|---|---|---|---|---|
+| R14 全量 O(doc) | 每次 dispatch 全文档重建 | 23.9ms | 34.2ms | 362.7ms |
+| R15 窗口增量（远端） | selection 窗口 ±1 行增量拼装，无变化零 diff | 5.0ms | 33.9ms | 284.7ms（R16 后） |
+| **R18 视口惰性（本轮）** | ViewPlugin 只构建视口 ±100 行；StateField 收窄为 hr block 专用通道 | **0.8ms** | **12.9ms** | **201.6ms** |
+
+R18 相对 R15 的增量收益来源：① doc 变更路径同样视口化（R15 的 docChanged
+仍是全量重建，1MB 上 ~8ms；R18 为 O(viewport) + hr 索引单扫 2-4ms）；
+② 无增量拼装的窗口比对逻辑，代码面更小（删 incrementalDecorations/
+windowUnchanged/windowIntervals/emitWindow 四方法）；③ 10MB 渐进期间
+装饰构建从全量降到视口（TTI 284.7 → 201.6ms）。
+
+**架构（双源）**：
+- `decoPlugin`（ViewPlugin + PluginSpec.decorations 自动供值）：视口
+  ±DECO_PAD(100) 行的全部非 block 装饰（复用共享单行生成
+  genLineDecorations，语义与全量逐位一致）+ 同窗原子缓存（isHiddenMarker
+  过滤），doc/selection/viewport 任一变化触发重建，每次用事务新状态全算
+  窗口内行（不复用旧集，spike 战役②越界教训天然规避）。
+- `decoField`（StateField）收窄为 **hr block widget 专用通道**：CM6 禁止
+  block decoration 经 plugin 供应（view/dist L2777 throw）；hr 行索引
+  单遍扫描（docChanged / 首次），未 revealed 行整行替换，集合内条目全部
+  即原子装饰 → atomicRanges 对本集 O(1) 直取。打字路径剩余成本 ~2-4ms
+  （hr 全扫），增量维护登记 R19。
+- `atomicRanges` 双源：from(decoField) + facet.of(view.plugin)（勘误
+  记档：Facet.from 只接受 StateField/Facet 源，plugin 源必须
+  facet.of((view) => view.plugin(p)...)，传错运行时崩）。
+- `dumpDecorations`（W12 护栏）适配双源：两源区间不相交（hr 行 hidden
+  只有 field、revealed 只有 plugin），拼接排序即确定性全序。
+
+**验证**：W1-W13 + G1/G2 全绿（15 组，含 W2 双向原子跳过、W12 增量/全量
+等价、W13 UTF-16 单位宪法）；G1 selection p95 冒烟口径 0.8ms、probe 三连
+0.8/2.2/1.1ms（max 2.6ms），预算 16ms 的 5-16%；R16/R17 的 10MB 能力
+（分片建图/增量 BlockMap/单位宪法）零回归。
+
+**已知权衡**（登记 R19）：DECO_PAD=100 行外的程序化跳转（无滚动）处
+marker 暂无原子协商区——键盘命令自带 scrollIntoView，滚动即重建恢复；
+影响面待真机评估，必要时 filterAtomic 光标邻近补算。
+
+## R19 候选清单（R18 收口后登记）
+
+1. **10MB 堆 FLAG 收口**：631.3MB → <600MB（R16 留下，~500MB 未归因
+   驻留调查在 R17 未闭环——继续 CDP 归因）。
+2. **hr 索引增量维护**：docChanged 全量单遍扫描（~2-4ms@1MB，typing
+   12.9ms 中占比最大视图项）按 changes 受影响行区间增量重判。
+3. **视口外原子区缺口**：见 R18 权衡——真机评估影响面，必要时补算。
+4. **真 IME 人工验收**：协议已成文（web/README §6），待真实输入法环境。
+
+## R19 堆口径归因修正 + 视口外原子区补算（2026-10-09）
+
+**堆归因三重测量**（10MB 渐进开档，precise-memory-info + expose-gc）：
+
+| 测量 | 方法 | 结果 |
+|---|---|---|
+| usedJSHeapSize（GC 稳态） | performance.memory（precise） | **568.0MB** |
+| wasm 线性内存 | `__wasmMemory.buffer.byteLength`（Memory 对象实时引用） | **509.2MB** |
+| JS 分配采样（全程） | CDP HeapProfiler.startSampling 128KB | **46.5MB**（BlockMap.extend 32.1MB 为最大户；split/set/rebuild 合计 ~11MB） |
+
+**结论**：① 新版 Chromium 的 usedJSHeapSize **包含 wasm 线性内存**（568 = JS 58.7 + wasm 509.2 自洽）；② **真实 JS 活数据 ~59MB，10MB「堆 FLAG」解除**——R14/R16 的 803/631MB 是口径假象（把核侧 wasm 内存计成 JS 堆）；③ **堆增长的绝对大头在 ingest 阶段**（heapTrace 分阶段采样：ingest 每段 +32MB 稳定增长，final-render 仅 +8MB），即 wasm 侧 ropey/arena/revision 日志随文档规模线性增长——核侧问题，透明记录，优化登记 R20。
+
+**R16 遗留项处置**：R16 注记的「~500MB 未归因驻留」归因闭环——即 wasm 线性内存；R16 的 smoke launch 参数漏加 `--enable-precise-memory-info`（注记说了但代码没加，导致非 precise 模式 usedJSHeapSize 为量化陈旧值），本轮补上。
+
+**产品化观测点**：`window.__heapTrace`（渐进开档分阶段 JS 堆采样：chunks-built/core-created/first-chunk-rendered/ingest-N/final-render）与 `window.__wasmMemory`（Memory 对象实时引用）——wry 宿主内存面板可直接消费。
+
+**视口外原子区补算**（R18 已知缺口修补）：atomicRanges plugin 源增加按需补算——selection 端点行落在 DECO_PAD 窗口外时，补算端点行 ±2 行的原子集（与视口集不重叠，拼接排序合并）；修复 seen 集合初始化 bug（端点行被自身去重排除，目标 marker 永不生成——gap-check 探针抓出）。probe_gate2.py 增加 gap-check 子用例：1MB 文档程序化跳至视口外 heading marker（行 301），ArrowLeft 原子跳过整段标记 ✓；selection p95 0.9ms 无回归。
+
+**验证**：W1-W13 + G1/G2 全绿；G1 selection p95 0.9ms；G2 分离口径 568 = 58.7 + 509.2。
+
+## R20 候选清单（R19 收口后登记）
+
+1. **wasm 线性内存优化**（核侧，509MB@10MB 文档）：arena 块树/ropey 表示/
+   revision 日志的内存布局审计（需核侧 profiler；块均 ~2.5KB 明显偏胖）；
+   大输出（blocks_json 25MB 串）的临时分配峰值治理。
+2. **hr 索引增量维护**：docChanged 全量单遍扫描（typing p95 16.4ms 中视图
+   侧大头）按 changes 受影响行区间增量重判。
+3. **真 IME 人工验收**：协议已成文（web/README §6），待真实输入法环境。
+
+## R20 wasm 内存审计出口与 509MB 定调（2026-10-09）
+
+**审计出口（产品化）**：核侧新增 `Core::mem_stats()`（tree/revision/history 三模块
+各自新增 mem_stats 方法）→ wasm 导出 `core_mem_stats()` → JS 侧
+`window.__memStats()`。零新依赖，host 内存面板与后续优化轮共用。
+
+**10MB 开档的 wasm 509MB 构成定调**（core_mem_stats 实测）：
+
+| 组件 | 实测 | 说明 |
+|---|---|---|
+| tree.slots_capacity | 16.8MB | 20 万 Node × 84B（Option<Node> 槽位数组）|
+| tree.rope_est | 10.6MB | **per-block ropey::Rope**（结构+内容，9.8MB 文本）|
+| tree.id_index | ~13MB | BTreeMap<BlockId,NodeId> 20 万条 |
+| tree.attrs/children/marks | ~3MB | 25 万 attrs 条目 1.6MB 内容 + 头 |
+| log（op 流克隆） | **~47.6MB** | 200576 ops：headers 估 36.1MB + content 11.4MB |
+| history（undo 双份） | **~23.9MB** | **undo_entries=15 = 全部 ingest 段在栈**（undo_ops 375528 双份）|
+| events_pending | 0 | 已出队 |
+| **core 活数据合计** | **~110MB** | |
+| **差值 = 分配器高水位/碎片** | **~400MB** | per-block 微分配（20 万次 Rope/Vec/String）与每段 ingest 临时（chunk 拷贝/parse 中间/op Vec/分片 JSON）交错，释放后不归还 |
+
+**优化路径登记**（每项独立轮次量级，按收益/约束排序）：
+1. **System-undo 语义审查（兼语义疑点）**：undo 栈持有全部 ingest System 事务
+  （用户 undo 可撤 ingest 段）——语义上 System ops 是否应入 undo 栈需 ADR 裁决；
+   若过滤可省 ~24MB 活数据。**审查项，未动**。
+2. **op 文本共享（Arc<str>）**：InsertBlock.text/ReplaceText.insert 的 String →
+   Arc<str>（rope/log/history-inverses 三份合一），估省 20-30MB；serde arc
+   feature + 全构造点改造，中型工程。
+3. **per-block Rope → String（ADR 修订级）**：短文本 Rope 的结构开销
+   （结构 48B + 内部节点）约为 String 两倍；20 万块估省 20-40MB 并显著减少
+   微分配碎片——但违反 R8「per-block Rope」选型（tree.rs 注释），需 ADR 修订。
+4. **分配器治理**：碎片主因，零依赖约束下无可选 allocator（talck/lol_alloc 均
+   为新依赖）——主档红线不动；可评估 ingest 前预分配 hint（slots/log.reserve）
+   降低 realloc 碎片。
+
+**验证**：cargo test 16 套件全绿（mem_stats 为纯只读审计，无行为变更）；
+W1-W13 + G1/G2 全绿；used=567MB 与 R19 基线一致（本轮无回归无恶化）。
+
+## R21 候选清单（R20 收口后登记）
+
+1. **System-undo 语义 ADR**：undo 栈过滤 System source（含 10MB undo 撤段
+   语义疑点审查）+ 若通过省 ~24MB。
+2. **Arc<str> op 文本共享**（中型工程，省 20-30MB）。
+3. **ingest 预分配 hint**（slots/log.reserve，降低碎片）。
+4. **真 IME 人工验收**（协议已成文，待真实输入法环境）。
+
+## R21 System-undo 语义收口（ADR-B4 落地，2026-10-09）
+
+**裁决（decisions/ADR-B4-system-undo.md）**：undo 栈 = 交互编辑史——
+`Source::System` 事务（extend_from_markdown 等核自驱装载）不入 undo 栈；
+合并窗边界破组保留（`note_boundary` 推进 last_at_ms/last_kind/last_source
+= System，System 后第一个 View 击键必开新条目，杜绝跨 ingest 边界错误
+合并）；revision log 与事件流完全不变（replay == live state 保持）；
+sync_from_markdown 保持 View（**边界规则：source = 谁驱动了内容变化，
+而非谁调用了 API**——sync 的 op 内容源于用户 CM6 编辑，必须可 undo）。
+行为锚点：打开文档不可撤销。
+
+**实现**：history.rs `push_entry` 拆分出 `note_boundary`（边界推进与
+入栈解耦，serde 序列化兼容）；lib.rs `apply_ops` 新增 System 分支
+（bump revision + log.record + push_event + note_boundary，仅跳过
+push_entry/coalesce_into_last）。零新依赖，op-first 契约未触碰。
+
+**实测（10MB 渐进开档，G2）**：
+
+| 指标 | R20 基线 | R21 实测 | 变化 |
+|---|---|---|---|
+| history.undo_entries | 15 | **0** | ingest 全部退出 undo 栈 |
+| wasm 线性内存 | 509.2MB | **425.4MB** | **-83.8MB** |
+| usedJSHeapSize（precise） | 567MB | 484.1MB | -83MB |
+| JS 活数据（used - wasm） | 58.7MB | 58.7MB | 不变 |
+
+省出 83MB **远超** R20 估计的 ~24MB 活数据：undo 双份（ops+inverses）
+消失之外，ingest 期不再逐段克隆 history，分配器高水位/碎片（R20 的
+~400MB 分量）同步回落——R20 优化路径 1 的连带收益。
+
+**桥契约勘误（G2 适配时发现）**：`__bridge.undo()` 返回值是 CM6 键位
+契约（恒 true 消费按键——"没有 CM6 history 可退"），**不是撤销是否
+发生**；核侧 no-op 判据 = revision 不前进 + 无 source=undo 事件。
+G2 断言已按此改写（undo_entries==0 + revision 恒常 + 无 undo 事件，
+ok_undo 作键位契约透明记录）。
+
+**验证**：cargo test 16 套件 112 用例全绿（新增
+`system_apply_ops_filtered_from_undo_stack` /
+`extend_not_undoable_and_system_boundary_breaks_group` /
+`history_json_roundtrip_with_system_boundary_state`，重写
+`extend_undo_reverts_only_last_chunk` → ADR-B4 新语义）；
+W1-W13+G1/G2 15 组全绿；W4 typing p95 13.5ms、G2 渐进 TTI 198ms
+（与 R18/R20 基线一致，零回归）。
+
+## R22 候选清单（R21 收口后登记；R22-a 执行后重排）
+
+1. ~~Arc<str> op 文本共享~~ → **已完成（R22-a）**：实现 + 回归证明落地，
+   但 10MB 实测收益仅 Δ-0.6MB（噪音级）——R20 的 20-30MB 估算撤回，
+   根因见 R22-a 段。
+2. **apply 事务 backup 克隆治理**（新登记，升为内存优化主项）：
+   apply_ops 每事务 `tree.clone()` 整树备份是分配器高水位主驱动
+   （10MB 渐进开档 16 次 × 全树 Rope/slots/id_index 克隆）；候选路径：
+   求逆回滚（inverses 已算出）/ 受影响子树范围备份。回滚正确性
+   （部分应用失败时的逆序回放）需 ADR 先行。
+3. **ingest 预分配 hint**（R20 路径 3；降级——高水位主驱动是 2 不是碎片，
+   待 2 落地后复测构成再定）。
+4. **真 IME 人工验收**（协议已成文，待真实输入法环境；能自动化部分
+   先行——CDP Input.imeSetComposition 可试）。
+5. **Slint/wry 宿主壳**（主档 R10 蓝图已在 shell/shell-native crate；
+   ~~合规化改造完成后启动~~ → **✅ 合规化已完成（2026-10-09），宿主壳解除阻塞**。
+   阶段 RC 记录：ADR-C1 闭源最严姿态；四路审计全 CLEAN（GPL 上游/解密
+   专有源/未发布竞品二进制/SBOM+专有 d.ts）；产品代码已迁入独立合规仓库 `mdcore/`
+   （denylist 门禁 `compliance/scan.sh` 与 cargo test 同级双绿，
+   shell-native 事件名 md-inject* → mdc-inject*，113 cargo 用例全绿）。
+   **宿主壳开工时新增门禁：启用 wry/tao/slint 后重跑 SBOM 并更新
+   THIRD-PARTY-NOTICES**（compliance/COMPLIANCE.md §4）。）。
+
+## R22-a：Arc<str> op 文本共享（完成 + 估算撤回）
+
+**变更**：`Op::InsertBlock.text` / `Op::ReplaceText.insert` String → `Arc<str>`
+（`op::OpText` 别名）；serde 增 "rc" feature，JSON 形状不变（旧 JSONL /
+历史 JSON 兼容）；构造点 src 8 处 + tests 10 处；新增回归测试
+`op_text_shared_across_log_events_and_clones`（Arc::ptr_eq 三路共享 +
+JSON 往返）。树层（Node.text = Rope）与 NodeData 不变；SetMark.kind
+（微小字符串）保持 String。
+
+**测量（10MB 渐进开档，G2）**：used=483.5 = JS 58.7 + wasm 424.8
+（R21 基线 484.1 = 58.7 + 425.4，**Δ-0.6MB ≈ 噪音**）；TTI 190ms（基线
+198）；typing p95 14.7ms（基线 13.5，抖动内）；cargo 16 套件 113 用例
+全绿（+1）；W1-W13+G1/G2 15/15。
+
+**估算撤回与根因**：R20 估"省 20-30MB（rope/log/history-inverses 三份
+合一）"的两个前提已失效——① R21/ADR-B4 后 System 事务不入 undo 栈，
+inverses 份消失；② 宿主取走事件后即弃，静止态 log 是文本唯一持有者，
+单份无可共享（共享只在 apply 窗口内瞬时成立：ops + log 克隆 + 事件同
+行）；③ 高水位主驱动是 apply_ops 每事务整树 backup 克隆，与 op 文本
+无关。R20 路径 2 定谳：**架构正确、收益证伪**。
+
+**保留理由（不回退）**：a) 多消费者事件流（多视图/多 Agent，主档 R10
+蓝图）将延长事件持有期，共享语义为未来买单；b) Op 枚举缩小 8B，37 万
+op 的 Vec 与克隆同步受益；c) 零新依赖、113 测试全绿、15/15 无回归，
+回退徒增 churn。
+
+## RC：全仓合规化前置节点（2026-10-09 完成，宿主壳前置门禁清空）
+
+**姿态（ADR-C1，外部设计档案）**：闭源最严——GPL/专有/上游特有命名
+零容忍；行为锚点 + 白名单许可依赖可复用；产品代码与本仓自含 git 历史
+（3312873 审计前原样 import → c1bd5e9 合规清洗+基建，diff 即清洗清单）。
+
+**四路审计全 CLEAN**（denylist 本仓 compliance/denylist/，底稿仓外
+mdcore_audit/）：
+
+| 路 | denylist | 结论 |
+|---|---|---|
+| GPL 上游（实抓上游源建表） | zed.txt（STRICT ~195 + NS 25） | 0 命中 0 提及 |
+| 解密专有源 | typora.txt（298：CSS/标识符/IPC/UI） | 0 violation |
+| 未发布竞品二进制 | delta.txt（302：DDL/符号/crate/串） | 0 violation |
+| SBOM+资产+专有 d.ts | obsidian.txt（136）+ sbom.json | 62 包全白名单、零资产、0 命中 |
+
+**清洗**：shell-native 事件 `md-inject*` → `mdc-inject*`（唯一动码项，
+零行为变更）；denylist 泛词提纯（Workspace/Plugin/Menu/Modal/Notice/
+Setting/base_revision → WATCH 段，分类存档）。
+
+**验证**：cargo 16 套件 113 用例全绿；wasm32 check 通过；
+`bash compliance/scan.sh` strict 0 / ns 0（evidence/scan-latest.txt）。
+**持续门禁**：scan.sh 与 cargo test 每轮收口双绿；宿主壳启用
+wry/tao/slint 后重跑 SBOM + 更新 THIRD-PARTY-NOTICES。
+
+## RC 收口增注（2026-10-10，成果推送）
+
+mdcore 产品仓 remote 已建（github.com/mmqz/mdcore，私有）：compliance-baseline
+分支承载 COMPLIANCE.md + 发布形态三件套；main 待开发环境首推产品代码主体。
+独立复核轮次产出归档 compliance_rounds/（round1+round2）已入分析仓推送。
+真机 IME 人工验收的自动化先行部分转 R23-a（CDP Input.imeSetComposition）。
+
+## R23-a：IME 自动化验收（CDP 真实输入法模拟）（2026-10-10，R22 候选清单第 4 项自动化先行）
+
+**测试面**：`web/tests/ime_cdp.py`（新，28 checks，证据
+`tests/results/results_ime.json`，两次复跑稳定全绿）——Playwright +
+`context.new_cdp_session`，以 CDP `Input.imeSetComposition` /
+`Input.insertText` 经 Chromium InputMethodController 驱动**真浏览器组合流**
+（真实 compositionstart/update/end + beforeinput 事件链 + 原生预编辑 DOM
+变更），覆盖 W3/W9 合成路径不可达的 OS 级事件语义。方法探针
+`tests/probe_ime_cdp.py`（证据 `results/probe_ime.json`，先探后写，
+断言全以实测语义为准）。
+
+**协议要点（chromium-1243 实测）**：`imeSetComposition` 形参为 `text`
+（非旧协议 `compositionText`；playwright protocol.d.ts 证实）；
+`Input.imeCommitComposition` 在本 build 不存在；**提交** = 组合中
+`Input.insertText`（自动 compositionend，data=提交串）；**取消** =
+`imeSetComposition text=""`（compositionupdate('') + compositionend('')，
+零残留）。默认 headless shell 即支持，无需 new headless。
+
+**三阶段语义实测结论**（我方实现 = CM6 原生组合通道 + 桥快路径/兜底；
+main.ts 无组合专用代码，语义由 CM6 MutationObserver 逐次吸收决定）：
+
+| 阶段 | 实测 |
+|---|---|
+| 组合期 | 每个预编辑 update 经 CM6 逐次 dispatch → 桥快路径落 **1 个 replace_text op（无缓冲）**；首 op 开新 undo 条目（coalesced=false），后续 op 1s 合并窗并条（coalesced=true），**合并条目不 bump revision**（revision 持平，apply_ops 合并分支只 log.record(self.revision)） |
+| 提交 | Input.insertText 单次 compositionend，落**单个** replace_text op = 相对预编辑的最小 diff（IC1 "ni"→"你" 全量替换 op；IC2 提交词比预编辑长时仅补差量 ins="世界"） |
+| undo | 整段组合+提交 = **单个 undo 条目**（ADR-B2 合并窗），一次 undo 全回退（view+core 收敛 doc==md）。例外：跨行提交（提交通道带 \n）触发兜底 sync（lastFastBail='newline'），核内解析器按行切块产生结构性 op → 不并条、undo 分次回退（先撤提交回预编辑态、再撤预编辑）——符合 Kind::Structural 破并条语义 |
+| 取消 | 组合中清空 = insert+delete 两 op 并条入同一条目，undo 内容中性；预编辑零残留、composing 清位 |
+| 非 BMP | 🎉 组合 + 🎉🚀 提交 + 紧贴快路径打字：op 偏移全为码点、blocks_json text == doc 行逐码点相等（**W13 单位宪法在真实事件流下成立**）；单条目一次 undo 全回退 |
+
+**与合成路径（W3/W9）差异对照**（证据 = results_ime.json
+`DIFF_baseline_synthetic`（W3 式同页采集）vs IC1 事件链）：
+
+| 维度 | synthetic（手动 dispatch CompositionEvent + execCommand） | CDP 真实路径 |
+|---|---|---|
+| compositionstart | 手动 dispatch，浏览器组合状态由 CM6 侧独立记账 | imeSetComposition 自动触发，先于一切 DOM 变更 |
+| compositionupdate | 手动 dispatch，1 次、data=最终串 | 逐 update 自动触发，data=全量预编辑串（n/ni/你好…） |
+| beforeinput | 实测 0 条（execCommand 不产生） | 每次组合变更 1 条 `inputType=insertCompositionText`；提交步亦然（**非** insertText） |
+| 提交语义 | compositionend 手动 dispatch data=''，无替换语义，DOM 靠 execCommand 先插入 | insertText 自动 compositionend(data=committed)，Chromium 原子替换组合范围，CM6 收最小 diff |
+| 取消 | 手动构造插入+删除再 end（W9 路径） | text='' 原生取消，零残留 |
+| op 流 | 整个合成组合 = 单个 insert op | 每 update 一 op + 提交一 op（1s 合并窗并成单 undo 条目） |
+| 组合中点击/焦点转移 | 未测 | CDP 虚拟组合不受 CDP 鼠标影响（见下行限制） |
+
+**CDP 路径限制（1 条）**：CDP 鼠标/选区事件不触发 blur、不驱动 IME
+线程——组合中点击别处**不会**强制提交（composing 保持、无
+compositionend；显式 Input.insertText 仍可正常收尾无重复）。真实 IME 的
+焦点转移强制提交无法自动化复现，保留人工项。
+
+**门禁（收口全复跑）**：`cargo test --workspace` 16 套件 **113 用例**
+全绿；`web_smoke.py` **15/15**（W1-W13+G1/G2）；`ime_cdp.py` **28/28**
+（两次复跑）。零回归、零代码语义变更（本轮纯测试与文档）。
+
+**剩余人工项（web/README §6 协议不变）**：真机物理输入法（macOS 拼音/
+日文 ROMAJI、Windows 微软拼音、Linux iBus）、候选词翻页期间预编辑下划线
+区、物理 Esc 键取消、方向键/点击别处强制提交、code fence/表格/quote 前
+缀内组词、>30s 长句连打的合并窗体验。真机验收保持登记待办。
+
+## R23-b：块指纹 / 结构匹配（P1-7 定谳，2026-10-10）
+
+**交付**：`crates/mdcore/src/fingerprint.rs`（826 行）+ `tests/r23_fingerprint.rs`（15 条
+语义锁）+ `decisions/ADR-B6-block-fingerprint.md`。核心 = 两层指纹（结构 FNV-1a 0xB7 域：
+kind+attrs+子数+子结构递归；内容 0xC1 域：空白折叠文本逐码点，非 BMP 安全）+ 三级匹配
+（manifest 快路径全有全无核验 → 结构锚 front/back 走查 → 中段 Exact 配对/窗内相似 0.7·8/
+拆并归组 join 核验）+ 五类报告（preserved/moved/edited/added/removed + tier stats，
+R23-c 消费契约：祖先搬移子内 preserved、未配对只报子树根）。
+
+**实现期修正**（子代理初版 4 处测试红 → 根因分诊）：①真 bug：preorder_with_paths 顶层
+路径给 `[]` 与匹配器 `[i]` 约定不一致 → manifest 快路径 moved/edited 归类全部失准（修复
+后快路径重写块 = edited 身份保住）；②测试助手 ids() 只收顶层 → 嵌套场景身份全保断言
+误报（改先序全树）；③窗宽锁测试期望 1/1 违报告语义（未配对根各报 1 条 = 9/9 才对，
+且两端配对是 anchor 层）——期望修正；④perf 测试 `str::replace` 误用（不可变方法未回赋，
+perturbed==doc 导致 edited=0 假失败——回赋 + 双断言防回归）；⑤性能门改 match-only
+（1MB 解析 183ms dev 归 G2 门，匹配 197ms dev ≈13ms release，阈值 400ms 抓 O(n²) 退化）。
+
+**门禁**：cargo --workspace **131 用例全绿**（113 基线 + 15 语义锁 + 3 单元）；wasm32
+check 过；产品面品牌词扫描 0（fingerprint.rs/r23_fingerprint.rs 零 delta 等专名）；警告
+面零新增（2 条既有 wasm-bindgen 宏告警）。确定性契约：无 HashMap 迭代序、平局取最小序位。
+
+**移交 R23-c**：`Core::match_external_markdown(md, manifest)` / `fingerprint_manifest()`
+（存侧车）/ `BlockMatchReport` 五类清单 → 重载冲突状态机（kept/edited/added/removed
+四象限 UX）；局限四条（ADR-B6 §4）决定 UX 文案口径。
+
+## R23-c：外部文件重载（P1-8 核侧，2026-10-10，ADR-B7）
+
+**交付**：`crates/mdcore/src/external.rs`（FileStamp 探针 + plan_reload 三态决策 +
+Core::adopt_external 身份保持采纳）+ `tests/r23_external.rs`（14 条语义锁）+
+`decisions/ADR-B7-external-reload.md` + 两处核面小扩展（`History::clear_interaction`——
+take-external 交互史作废 + 合并窗状态重置；`BlockMatchReport::has_changes`——决策口径
+区分 preserved 与真变化）。
+
+**op 合成定谳**（ADR-B7 §3）：全量重建而非增量 diff-to-ops——RemoveBlock[0]×n + 先序
+InsertBlock 携带映射 id（preserved/moved/edited 旧 id / manifest 可信 added 声明 id /
+其余现场分配），与 undo 复原 build_rebuild_ops 同款物化形状，log 重放不变量保持；
+System 事务（ADR-B4）失败走 ADR-B5 求逆回滚。
+
+**实现期修正**：①manifest 快路径可信 added 计入 stats.manifest 桶（原只计 resolved
+配对，快路径用量被低估）；②重排/嵌套测试的身份断言改集合比较（文档序本就变，先序
+比较误报）；③drains 测试两次击键落 1s 合并窗并条——断言口径改 can_undo。
+
+**宿主流程**（R22-d/e 宿主壳接线用）：stamp 捕获（开档/存档）→ watcher/聚焦比对 →
+stale 读盘 → match_external_markdown 预览 → plan_reload → Noop 忽略 / SilentAdopt
+adopt / OfferChoice 弹冲突（keep-mine 不 adopt；take-external adopt；merge=v1）。
+弹窗文案必须写明 take-external 会放弃未存改动且不可撤销（ADR-B7 §4.2）。
+
+**门禁**：cargo --workspace **145 用例全绿**（131 + 14）；wasm32 check 过（external.rs
+零 std::fs，核不碰文件系统）；产品面品牌词扫描 0。
+
+**登记（不阻塞）**：全量重建 log 内存 ~+1× 文档字节（R20 路径 3 同族杠杆，10MB 高频
+重载场景再议）；merge 与区域级静默合并留 v1。
+
+## R23-d：宿主↔桥↔核契约冻结（2026-10-10，CONTRACT.md v1）
+
+**交付**：`projects/prototype/CONTRACT.md`（冻结 v1：§1 核/mdshell 编译面 + 语义锚点表、
+§2 宿主壳接线（mdcore://app / mdc-inject* / 文件生命周期 / R23-c 外部重载流程）、
+§3 web 桥 window 面逐签名）+ 母本侧契约补齐（main.ts 新增 `__inject`/`__inject_chunk`
+入口 + `mdc-inject*` 监听器 + `__contractVersion=1` + 直启流程补装 `__memStats`——
+契约门逮到的真实面缺口；重建 = 旧 EditorView.destroy() + 全量 window 面重装）+
+shell-native 蓝图事件名 md-inject* → mdc-inject*（对齐产品仓 RC 轮命名域，漂移清零）。
+
+**双侧契约锁**：Rust `crates/shell/tests/contract_freeze.rs` 3 条（蓝图词面锁：mdc-*
+在、md-inject 禁复活；CONTRACT.md 存在性/版本/关键面词面；mdshell OpenProgress 三变体
+进度序列 + 身份复原语义）；web `web/tests/contract_gate.py` 13 checks（启动面类型全谱、
+__bridge 清单、注入面事件族+全量重建+渐进通道、undo 键位契约恒 true（R21 勘误口径）、
+单位宪法换算往返、事件排空时机（构造器首渲消费 ingest 事件=boot 同语义；编辑 op 事件
+渲染同步时到达宿主））。证据 results_contract.json。
+
+**实现期修正**：①渐进通道测试文档自身 2 块误断 1 块；②TCPServer 需 allow_reuse_address
+（web_smoke 同款）；③直启 __memStats 缺失=门禁逮到后补装；④__perf 是 object 非 function
+（类型检查排除表）；⑤事件排空断言改编辑驱动（初始 ingest 事件被构造器消费属正确语义）。
+
+**门禁**：cargo --workspace **148 全绿**（145+3 契约锁）；web smoke **15/15**（main.ts
+变更零回归）；契约门 **13/13**；wasm32 check 过；产品面品牌词 0。
+
+**升版纪律**：契约面任何破坏性变更必须 __contractVersion 升版 + CONTRACT.md 更新 +
+双侧锁测试同步改——三处不同步 = 漂移复活。
+
+## R23-e：阶段收口（2026-10-10）
+
+**门禁终态（全复跑）**：cargo --workspace **148/148**；wasm32 check 过；web smoke
+**15/15**；契约门 **13/13**；IME CDP **28/28**；产品面品牌词 **0**；R23 五轮依赖零增
+（Cargo.lock/package-lock.json 在 e4ed77a..HEAD 零 diff → THIRD-PARTY-NOTICES 与
+R22-c SBOM **无需再生成**，口径交叉一致）。
+
+**销项**：主档 §28 P0 1-3 ✅（obsidian recon / ADR-View-01 / W1-W13+G1/G2 实测）；
+P1-7 ✅ R23-b（ADR-B6）；P1-8 ✅ R23-c 核侧（ADR-B7）。R22 候选 4 自动化先行 ✅ R23-a。
+
+**遗留登记（非本阶段可闭环）**：真机物理输入法/视觉/对话框人工验收（协议已成文，
+待物理环境）；定名后商标检索（TRADEMARK_RULES §4）；R20 路径 3 ingest 预分配（待
+产品仓 R22-b 合流后复测构成）；take-external 全量重建的 log 内存杠杆（10MB 高频
+重载场景再议，ADR-B7 §4）；merge 与区域级静默合并（ADR-B7 v1）。
+
+**R23 阶段结论**：宿主壳后的产品闭环第一段完成——IME 真实语义背书、外部重载身份
+保持、P1-7/8 定谳、契约面冻结。产品仓（mmqz/mdcore）合流 R23-b/c/d 母本增量后即可
+进入 R24（打包分发 / 多窗口 / 设置面，按主档远期路线）。

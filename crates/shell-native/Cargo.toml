@@ -1,0 +1,13 @@
+[package]
+name = "mdshell-native"
+version = "0.1.0"
+edition = "2021"
+description = "R10 原生宿主壳（wry + Slint）。⚠️ 不在 prototype workspace 编译面内：需要 webkit2gtk-4.1 / GTK3 系统开发库（沙箱无 sudo 不可安装）。在有系统依赖的机器上：cargo check -p mdshell-native --manifest-path .../shell-native/Cargo.toml"
+
+# 依赖声明（在可编译环境中取消注释并核对版本）：
+# [dependencies]
+# mdcore = { path = "../mdcore" }
+# mdshell = { path = "../shell" }
+# wry = "0.46"
+# tao = "0.30"
+# slint = "1.8"

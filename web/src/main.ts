@@ -1,0 +1,1377 @@
+// R9 — CM6 View ↔ mdcore-wasm (Rust core) bridge.
+//
+// CM6 doc = core.to_markdown()（单一真理在核，主档 §9）。桥的双向语义：
+//
+//   fast path — 单 change + 整段落在同一行的 body 区间内 + 不含换行
+//               → BlockMap 定位 (blockPath, charOffset) → 一个 ReplaceText op
+//               走 core.apply_ops（1s 合并窗内并条，§11.1 无击键风暴）。
+//               行记录只存行内相对量（prefix/textOffset），doc 增长零维护。
+//   fallback  — 其余一切（碰标记/跨行/多 change/IME 大改）→
+//               core.sync_from_markdown(doc)（核内按位置朴素差分 → apply_ops
+//               管道，与既有 rebuild 行为同款）。空行不入树 = R8 已登记边界。
+//
+// 结构性 Enter（list 续行 / 段落·标题行尾分段）走核驱动 op 组合（与
+// core::split_block 同构），新块 ID 从事件流物化读取（§8.2）后核→view
+// 推送渲染。undo/redo 核驱动（CM6 history 刻意不装），undo 后 doc 回写 =
+// 全量重渲染（取舍见 README）。装饰三机制（replace/mark/widget + 严格
+// 重叠显隐 + StateField 版本化 + atomicRanges）沿 spike/b 原样移植。
+//
+// R15 — Gate 2 视图专项（装饰增量窗口化）：decoField 值改为 {deco, atomic}
+// 元组。纯 selection 事务只对「新旧选区覆盖行 ±1」的行区间并集重算（与
+// 全量共享同一单行生成函数，正则只此一份）；全部窗口与旧集逐项相同则
+// 原样返回旧值（CM6 装饰 diff 为空，光标路径只剩 CM6 自身选区开销）；
+// 有变化才按「旧集 gap 段 + 各窗口重算块」用 RangeSetBuilder 有序拼装。
+// 原子装饰集随主集一起增量拼装，atomicRanges facet 改为 O(1) 取缓存
+//（原先每次 selection 事务对全 doc 过滤一遍是第二热点）。等价性护栏
+// 见 web_smoke.py W12（增量 == 强制全量，deco+atomic 逐项对比）。
+//
+// R16 — 10MB 非门双项（终态堆 <600MB + 渐进 TTI <300ms）：
+// ① blocks_json 分片出口（Rust 核侧 blocks_count/blocks_json_range），
+//   渐进 extend 后 BlockMap 只解析新增先序区间（BlockMap.extend），消除
+//   「每次追加全量 dump+parse 20 万块」的双份大对象（堆主因）；
+// ② 渐进 ingest 批量化：TTI 只需首段渲染，余段 extend + 分片建图后
+//   一次性 pushRender({skipMap})（原先每段全量重渲染 + 全量重建，16 段
+//   = 16 次 O(n) 管线，ingest 与堆 churn 双主因）；
+// ③ 事件出口容量护栏：extend 的 insert_block 明细（≈整段 chunk 文本）
+//   不进 JS 堆，按 {absorbed: N} 聚合登记（op 流证据保留计数+revision）；
+// ④ pushRender 加 revision 守卫（核未变则免 to_markdown/比对/重建）与
+//   force 语义（测量口径仍可强制全量）；流式 buildBigChunks 边生成边
+//   切 chunk，TTI 路径不再物化全量 10MB 字符串 + 三次 split/join 扫描。
+// 等价性护栏：W7 新增「增量建图 ≡ 强制全量重建」逐项比对；W12/R15
+// 增量装饰、W1-W11 语义不变。
+//
+// op 形状 = crates/mdcore/src/op.rs serde（tag="t", snake_case）；偏移单位
+// = char（ropey），CM6 侧 UTF-16 offset 经 code-point 计数换算。
+
+import {
+  EditorSelection,
+  EditorState,
+  RangeSetBuilder,
+  StateField,
+  Text,
+  Transaction,
+} from '@codemirror/state';
+import {
+  cursorCharLeft,
+  cursorCharRight,
+  selectCharLeft,
+  selectCharRight,
+} from '@codemirror/commands';
+import {
+  Decoration,
+  DecorationSet,
+  EditorView,
+  ViewPlugin,
+  ViewUpdate,
+  WidgetType,
+  keymap,
+} from '@codemirror/view';
+import init, { WasmCore } from '../pkg/mdcore_wasm.js';
+
+// ---------------------------------------------------------------------------
+// 核侧数据形状（blocks_json / take_events 的最小面）
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 单位宪法（R17 / 主档 P1-9 / ADR-V2）：核侧（ropey / op / Anchor）= Unicode
+// 码点；CM6 / JS 串 = UTF-16 码元。全桥所有跨单位换算必须经本函数对，
+// 禁止散落手工计数（[...s].length / codePointAt 循环）。语义测试锁：
+// crates/mdcore/tests/r17_utf16_mapping.rs；浏览器端到端：冒烟 W13。
+// ---------------------------------------------------------------------------
+
+/** UTF-16 码元位置（或缺省=全串）→ Unicode 码点数。 */
+function utf16ToCp(s: string, utf16Pos?: number): number {
+  if (utf16Pos === undefined || utf16Pos >= s.length) return [...s].length;
+  let cp = 0;
+  let i = 0;
+  while (i < utf16Pos) {
+    const code = s.codePointAt(i)!;
+    i += code > 0xffff ? 2 : 1;
+    cp++;
+  }
+  return cp;
+}
+
+/** Unicode 码点位置 → UTF-16 码元位置（越界截断到串长）。 */
+function cpToUtf16(s: string, cpPos: number): number {
+  let i = 0;
+  while (cpPos > 0 && i < s.length) {
+    const code = s.codePointAt(i)!;
+    i += code > 0xffff ? 2 : 1;
+    cpPos--;
+  }
+  return i;
+}
+
+type BlockInfo = {
+  id: number;
+  type: string; // BlockKind serde snake_case
+  depth: number;
+  attrs: Record<string, string>;
+  text: string;
+};
+
+type CoreEvent = {
+  ops: { t?: string; id?: number; path?: number[] }[];
+  meta?: { source?: string; coalesced?: boolean; command?: string | null; absorbed?: number };
+  revision?: number;
+};
+
+// ---------------------------------------------------------------------------
+// BlockMap — doc 行 ↔ 核块 映射（从 to_markdown + blocks_json 重建）
+// ---------------------------------------------------------------------------
+
+/** 每行一条记录；hasBody=false 的行（fence 围栏/水平线/核外空行）编辑走兜底。 */
+type LineRec = {
+  hasBody: boolean;
+  /** 行首属于 marker/缩进/quote 前缀的字符数（body 从此起） */
+  prefix: number;
+  /** 该行 body 在块 text 内的 char 起始偏移（多行体：code/table） */
+  textOffset: number;
+  blockId: number;
+  path: number[];
+  kind: string;
+  attrs: Record<string, string>;
+  /** 块体是否单行（Enter 核驱动分段的守卫条件之一） */
+  singleLine: boolean;
+};
+
+type BlockMeta = {
+  path: number[];
+  textChars: number;
+  kind: string;
+  attrs: Record<string, string>;
+};
+
+const EMPTY_REC: LineRec = {
+  hasBody: false, prefix: 0, textOffset: 0, blockId: 0, path: [], kind: '', attrs: {}, singleLine: true,
+};
+
+class BlockMap {
+  lines: LineRec[] = [];
+  byId = new Map<number, BlockMeta>();
+  /** 先序块总数（R16：分片游标基准；rebuild/extend 各自维护）。 */
+  blockCount = 0;
+
+  /** 行记录模型必须与 crates/mdcore/src/markdown.rs::render 逐字段对齐：
+   *  quote 祖先各贡献 "> "，list 祖先各贡献 2 空格，marker = attrs.marker。 */
+  rebuild(docText: string, blocksJson: string): void {
+    const blocks: BlockInfo[] = JSON.parse(blocksJson) as BlockInfo[];
+    const docLines = docText.split('\n');
+    const lines: LineRec[] = docLines.map(() => ({ ...EMPTY_REC }));
+    const byId = new Map<number, BlockMeta>();
+    const cpLen = utf16ToCp; // R17：单位宪法唯一出口（禁止再散落 [...s].length）
+    const nl = (s: string): number => { let n = 0; for (const c of s) if (c === '\n') n++; return n; };
+
+    // 先序平铺 → NodePath 重建（counters/stack 标准先序编号）
+    const counters: number[] = [];
+    const stack: number[] = [];
+    const kindsStack: string[] = [];
+
+    let li = 0; // doc 行游标
+    const setBody = (lineIdx: number, prefix: number, textOffset: number, b: BlockInfo, path: number[], single: boolean): void => {
+      if (lineIdx < 0 || lineIdx >= lines.length) return;
+      lines[lineIdx] = {
+        hasBody: true, prefix, textOffset,
+        blockId: b.id, path, kind: b.type, attrs: b.attrs ?? {},
+        singleLine: single,
+      };
+    };
+
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      // R17 修复（行对齐漂移，W13 抓出）：rebuild 的 docText 在 fallback 后
+      // = 用户格式（块间有空行），而本 walk 逐块推进 li 不数空行——首个
+      // 空行之后全部行记录错位，快路径对后续块失明（恒走兜底）。boot 文档
+      // = to_markdown 规范式（无空行）时跳过循环零次，行为不变。
+      // 空文本块（核内空段）例外：其正文行本身就是 '' 行，不跳。
+      if (b.text !== '') {
+        while (li < docLines.length && docLines[li] === '') li++;
+      }
+      const depth = Math.min(b.depth, stack.length + 1); // 防畸形输入越界
+      stack.length = depth;
+      kindsStack.length = depth;
+      counters.length = depth + 1;
+      const own = counters[depth] ?? 0;
+      counters[depth] = own + 1;
+      const path = [...stack, own];
+      stack.push(own);
+      kindsStack.push(b.type);
+      byId.set(b.id, { path, textChars: cpLen(b.text), kind: b.type, attrs: b.attrs ?? {} });
+
+      let q = 0;
+      let lst = 0;
+      for (let d = 0; d < depth; d++) {
+        if (kindsStack[d] === 'blockquote') q++;
+        else if (kindsStack[d] === 'list_item') lst++;
+      }
+      const base = 2 * q + 2 * lst; // "> " ×q + 缩进 ×lst
+      const single = !b.text.includes('\n');
+      const nLines = 1 + nl(b.text);
+      let textAcc = 0;
+
+      switch (b.type) {
+        case 'heading': {
+          const level = Math.min(6, Math.max(1, Number(b.attrs?.level ?? '1') || 1));
+          setBody(li, base + level + 1, 0, b, path, single);
+          textAcc = Math.max(0, cpLen(docLines[li] ?? '') - (base + level + 1)) + 1;
+          for (let k = 1; k < nLines; k++) { // 防御：heading text 带 \n（现实中不产）
+            setBody(li + k, base, textAcc, b, path, false);
+            textAcc += Math.max(0, cpLen(docLines[li + k] ?? '') - base) + 1;
+          }
+          li += nLines;
+          break;
+        }
+        case 'code_block': {
+          // 行布局：```lang / body×n / ```
+          for (let k = 0; k < nLines; k++) {
+            setBody(li + 1 + k, base, textAcc, b, path, false);
+            textAcc += Math.max(0, cpLen(docLines[li + 1 + k] ?? '') - base) + 1;
+          }
+          li += nLines + 2;
+          break;
+        }
+        case 'thematic_break': {
+          li += 1; // 无 body
+          break;
+        }
+        case 'blockquote': {
+          const hasChildren = i + 1 < blocks.length && blocks[i + 1].depth > b.depth;
+          if (!hasChildren) { // 防御：解析器总给 quote 配子段落
+            for (let k = 0; k < nLines; k++) {
+              setBody(li + k, base, textAcc, b, path, false);
+              textAcc += Math.max(0, cpLen(docLines[li + k] ?? '') - base) + 1;
+            }
+            li += nLines;
+          }
+          break;
+        }
+        case 'list_item': {
+          const marker = b.attrs?.marker ?? '-';
+          const pfx = base + cpLen(marker) + 1;
+          for (let k = 0; k < nLines; k++) {
+            setBody(li + k, pfx, textAcc, b, path, single);
+            textAcc += Math.max(0, cpLen(docLines[li + k] ?? '') - pfx) + 1;
+          }
+          li += nLines;
+          break;
+        }
+        default: { // paragraph / table
+          for (let k = 0; k < nLines; k++) {
+            setBody(li + k, base, textAcc, b, path, single);
+            textAcc += Math.max(0, cpLen(docLines[li + k] ?? '') - base) + 1;
+          }
+          li += nLines;
+        }
+      }
+    }
+    this.lines = lines;
+    this.byId = byId;
+    this.blockCount = blocks.length;
+  }
+
+  /**
+   * R16 增量追加建图：blocksJson = 先序区间 [blockCount, blockCount+added)
+   * 的分片（core.blocks_json_range）。前提：extend_from_markdown 只把
+   * 完整子树追加到文档尾部（crates/mdcore/tests/document_progressive.rs
+   * 的语义），故新块必为一段自洽的先序后缀，walk 以全新 counters/stack
+   * 起步即与全量 rebuild 同构。
+   *
+   * 行模型差异（与 rebuild 唯一分歧点）：rebuild 的 textOffset 从 doc 行
+   * 内容反推（防御 op 造出的畸形行）；本路径从块文本自身正推——
+   * markdown::render 的行前缀规则（quote 祖先 "> "×q、list 祖先 2 空格
+   * ×lst、marker+1）保证解析器产物下行内容 = 前缀 + 块文本行，两路
+   * 逐字段一致（多行 list_item 文本是解析器不可能产物，其防御分支只在
+   * rebuild 全量路径保留）。等价性护栏 = web_smoke.py W7 的
+   * debugMapVsFullRebuild 逐项比对。
+   */
+  extend(blocksJson: string): void {
+    const blocks: BlockInfo[] = JSON.parse(blocksJson) as BlockInfo[];
+    const cpLen = (s: string): number => [...s].length;
+
+    const counters: number[] = [];
+    const stack: number[] = [];
+    const kindsStack: string[] = [];
+
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      const depth = Math.min(b.depth, stack.length + 1); // 防畸形输入越界
+      stack.length = depth;
+      kindsStack.length = depth;
+      counters.length = depth + 1;
+      const own = counters[depth] ?? 0;
+      counters[depth] = own + 1;
+      const path = [...stack, own];
+      stack.push(own);
+      kindsStack.push(b.type);
+      this.byId.set(b.id, { path, textChars: cpLen(b.text), kind: b.type, attrs: b.attrs ?? {} });
+
+      let q = 0;
+      let lst = 0;
+      for (let d = 0; d < depth; d++) {
+        if (kindsStack[d] === 'blockquote') q++;
+        else if (kindsStack[d] === 'list_item') lst++;
+      }
+      const base = 2 * q + 2 * lst; // "> " ×q + 缩进 ×lst
+      const single = !b.text.includes('\n');
+      const textLines = b.text.split('\n');
+      const nLines = textLines.length; // ≡ 1 + nl(text)
+      let textAcc = 0; // textOffset_k = Σ_{j<k}(cpLen(块文本行 j) + 1)
+
+      // 与 rebuild 的 setBody 保持同一键序（W7 等价比对依赖 stringify）。
+      const pushBody = (prefix: number, textOffset: number, sl: boolean): void => {
+        this.lines.push({
+          hasBody: true, prefix, textOffset,
+          blockId: b.id, path, kind: b.type, attrs: b.attrs ?? {},
+          singleLine: sl,
+        });
+      };
+
+      switch (b.type) {
+        case 'heading': {
+          const level = Math.min(6, Math.max(1, Number(b.attrs?.level ?? '1') || 1));
+          pushBody(base + level + 1, 0, single);
+          textAcc = cpLen(textLines[0]) + 1;
+          for (let k = 1; k < nLines; k++) { // 防御：heading text 带 \n（现实中不产）
+            pushBody(base, textAcc, false);
+            textAcc += cpLen(textLines[k]) + 1;
+          }
+          break;
+        }
+        case 'code_block': {
+          // 行布局：```lang / body×n / ```（两行围栏无 body，与 rebuild 同）
+          this.lines.push({ ...EMPTY_REC });
+          for (let k = 0; k < nLines; k++) {
+            pushBody(base, textAcc, false);
+            textAcc += cpLen(textLines[k]) + 1;
+          }
+          this.lines.push({ ...EMPTY_REC });
+          break;
+        }
+        case 'thematic_break': {
+          this.lines.push({ ...EMPTY_REC }); // 无 body（'---' 行）
+          break;
+        }
+        case 'blockquote': {
+          const hasChildren = i + 1 < blocks.length && blocks[i + 1].depth > b.depth;
+          if (!hasChildren) { // 防御：解析器总给 quote 配子段落
+            for (let k = 0; k < nLines; k++) {
+              pushBody(base, textAcc, false);
+              textAcc += cpLen(textLines[k]) + 1;
+            }
+          }
+          break;
+        }
+        case 'list_item': {
+          const marker = b.attrs?.marker ?? '-';
+          const pfx = base + cpLen(marker) + 1;
+          for (let k = 0; k < nLines; k++) { // 续行为解析器不可能产物（见头注释）
+            pushBody(pfx, textAcc, single);
+            textAcc += cpLen(textLines[k]) + 1;
+          }
+          break;
+        }
+        default: { // paragraph / table
+          for (let k = 0; k < nLines; k++) {
+            pushBody(base, textAcc, single);
+            textAcc += cpLen(textLines[k]) + 1;
+          }
+        }
+      }
+    }
+    this.blockCount += blocks.length;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 装饰（spike/b 移植：replace/mark/widget + 严格重叠显隐 + HrWidget）
+// ---------------------------------------------------------------------------
+
+const markInline = Decoration.mark({ class: 'cm-inline-code' });
+const markBold = Decoration.mark({ class: 'cm-bold' });
+const markListMarker = Decoration.mark({ class: 'cm-list-marker' });
+const markQuoteMarker = Decoration.mark({ class: 'cm-quote-marker' });
+const markFence = Decoration.mark({ class: 'cm-fence' });
+const markRevealed = Decoration.mark({ class: 'cm-marker-revealed' });
+const replaceMarker = Decoration.replace({ spec: { isMarker: true } });
+
+class HrWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+  toDOM(): HTMLElement {
+    const d = document.createElement('div');
+    d.className = 'cm-hr';
+    return d;
+  }
+}
+const hrWidget = Decoration.replace({ widget: new HrWidget(), block: true, spec: { isMarker: true } });
+
+/** 隐藏态 marker 装饰 = 原子装饰（isMarker && from!==to 的唯一产生点；
+ *  揭示态 markRevealed 无 isMarker，故非原子——光标可逐字符进入编辑）。 */
+const isHiddenMarker = (d: Decoration): boolean => d === replaceMarker || d === hrWidget;
+
+// 行类装饰为模块级常量（R15：增量路径的「无变化」判定依赖装饰值身份
+// 稳定——窗口重算与旧集做逐项 === 比较，故禁止在生成函数里 new 装饰）。
+const LINE_HEADINGS: readonly Decoration[] = [0, 1, 2, 3, 4, 5, 6].map((lv) =>
+  Decoration.line({ class: lv ? `cm-heading cm-h${lv}` : '' }));
+const LINE_LIST = Decoration.line({ class: 'cm-list-line' });
+const LINE_QUOTE = Decoration.line({ class: 'cm-quote-line' });
+
+type DecoRec = { from: number; to: number; value: Decoration };
+
+/** 行形状（doc.line 的最小结构面，便于测试与复用）。 */
+type DocLine = { from: number; to: number; text: string };
+
+/**
+ * 单行装饰生成——全量与增量窗口两条路径共享的唯一来源（正则只此一份）。
+ * revealed = 选区与 marker 区间严格重叠（Spike S1 光标协商语义，W2 覆盖：
+ * 进入揭示、移开再隐藏、行首相邻不揭示）。marker 区间全部单行内，这一
+ * 不变量是增量拼装正确性（无跨窗口边界 span）的前提。
+ * 隐藏态 marker 同时写入 atomicOut（原子集与主集同源，永不失同步）。
+ */
+function genLineDecorations(
+  line: DocLine,
+  revealed: (from: number, to: number) => boolean,
+  out: DecoRec[],
+  atomicOut: DecoRec[],
+): void {
+  const push = (from: number, to: number, deco: Decoration): void => {
+    out.push({ from, to, value: deco });
+    if (isHiddenMarker(deco)) atomicOut.push({ from, to, value: deco });
+  };
+  const text = line.text;
+
+  const h = /^(#{1,6})\s+/.exec(text);
+  if (h) {
+    const end = line.from + h[0].length;
+    out.push({ from: line.from, to: line.from, value: LINE_HEADINGS[h[1].length] });
+    push(line.from, end, revealed(line.from, end) ? markRevealed : replaceMarker);
+    return;
+  }
+  if (/^(---|\*\*\*|___)\s*$/.test(text)) {
+    // R18：hidden 态 hrWidget 由 decoField（block 专用通道）供应——CM6
+    // 禁止 block decoration 经 ViewPlugin 供应（view/dist L2777 throw），
+    // 而视口惰性主路径是 plugin。此处只补 revealed 态 mark，两源按同一
+    // revealed 判定不重不漏。
+    if (revealed(line.from, line.to)) push(line.from, line.to, markRevealed);
+    return;
+  }
+  const li = /^(\s*)([-*+]|\d+[.)])\s+/.exec(text);
+  if (li) {
+    out.push({ from: line.from, to: line.from, value: LINE_LIST });
+    out.push({ from: line.from, to: line.from + li[0].length, value: markListMarker });
+  }
+  const bq = /^((?:>\s?)+)/.exec(text);
+  if (bq && !li) {
+    out.push({ from: line.from, to: line.from, value: LINE_QUOTE });
+    out.push({ from: line.from, to: line.from + bq[0].length, value: markQuoteMarker });
+  }
+  if (text.startsWith('```')) {
+    out.push({ from: line.from, to: line.to, value: markFence });
+    return;
+  }
+  const inlineRe = /(`[^`]+`)|(\*\*[^*]+\*\*)/g;
+  let mm: RegExpExecArray | null;
+  while ((mm = inlineRe.exec(text))) {
+    const from = line.from + mm.index;
+    const to = from + mm[0].length;
+    if (mm[1]) {
+      push(from, from + 1, revealed(from, from + 1) ? markRevealed : replaceMarker);
+      push(to - 1, to, revealed(to - 1, to) ? markRevealed : replaceMarker);
+      out.push({ from, to, value: markInline });
+    } else {
+      push(from, from + 2, revealed(from, from + 2) ? markRevealed : replaceMarker);
+      push(to - 2, to, revealed(to - 2, to) ? markRevealed : replaceMarker);
+      out.push({ from, to, value: markBold });
+    }
+  }
+}
+
+/** 视口惰性插件的窗口产物：装饰主集 + 原子缓存（isHiddenMarker 过滤，
+ *  同源成对维护，facet O(1) 取用）。 */
+type DecoState = { deco: DecorationSet; atomic: DecorationSet };
+
+/** R18：视口惰性装饰窗口（±DECO_PAD 行）。行级窗口机制由 CM6 viewport
+ *  变化驱动（viewportChanged），取代 R15 的 selection 窗口增量拼装。 */
+const DECO_PAD = 100;
+
+// ---------------------------------------------------------------------------
+// CM6View
+// ---------------------------------------------------------------------------
+
+class CM6View {
+  view: EditorView;
+  /** R17 P1-9：单位宪法唯一换算出口（W13 消费；模块级函数对的身份暴露）。 */
+  readonly unit = { utf16ToCp, cpToUtf16 };
+
+  private core: WasmCore;
+  private blockMap = new BlockMap();
+  private syncing = false;
+  /** 渐进打开 ingestion 窗口内置 true：期间拒绝编辑（fallback 会把未
+   * 渲染的追加块误判为删除）。测试与宿主在 __ready 前不应输入。 */
+  locked = false;
+  private dirty = true;
+  /** R16：上次 doc↔核 同步时的核 revision（revision 是纯单调计数器，
+   *  同值 ⇒ 树未变 ⇒ to_markdown 必同 —— pushRender 守卫的依据）。 */
+  private syncedRev: bigint = 0n;
+  decorations: DecorationSet = Decoration.none;
+
+  /** hr 行索引（1-based；null = 尚未扫描）。R18：block replace 装饰
+   * （hrWidget）禁止经 ViewPlugin 供应（CM6 view/dist L2777 throw），
+   * 仍走 StateField 全量集合；hr 行数 << 总行数，重建廉价。 */
+  private hrIdx: number[] | null = null;
+
+  /** 单遍扫描 hr 行（doc 变更 / 首次构建时调用；打字路径 ~2-4ms@1MB，
+   * R19 候选：按 changes 受影响行区间增量维护）。 */
+  private scanHr(state: EditorState): void {
+    const doc = state.doc;
+    const idx: number[] = [];
+    for (let ln = 1; ln <= doc.lines; ln++) {
+      if (/^(---|\*\*\*|___)\s*$/.test(doc.line(ln).text)) idx.push(ln);
+    }
+    this.hrIdx = idx;
+  }
+
+  /** hr block widget 集合：未被光标揭示的 hr 行整行替换。集合内全部条目
+   * 即原子装饰（isHiddenMarker），故 atomicRanges 对本集 O(1) 直取。 */
+  private buildHrSet(state: EditorState): DecorationSet {
+    const doc = state.doc;
+    const sel = state.selection;
+    const b = new RangeSetBuilder<Decoration>();
+    for (const ln of this.hrIdx ?? []) {
+      const line = doc.line(ln);
+      const hit = sel && sel.ranges.some((r) => r.to > line.from && r.from < line.to);
+      if (!hit) b.add(line.from, line.to, hrWidget);
+    }
+    return b.finish();
+  }
+
+  private decoField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update: (set, tr) => {
+      if (tr.docChanged || this.hrIdx === null) this.scanHr(tr.state);
+      if (tr.docChanged || tr.selection || this.dirty) {
+        this.dirty = false;
+        return this.buildHrSet(tr.state);
+      }
+      return set;
+    },
+  });
+
+  /** R18 视口惰性装饰插件（Gate 2 终局形态）：R15 的 selection 窗口增量
+   * （p95 4.9ms）改为 CM6 官方惰性模式——只在视口 ±DECO_PAD 行内构建
+   * （O(viewport) 亚毫秒级）；doc/selection/viewport 任一变化触发重建，
+   * 每次用事务新状态重算窗口内全部行（不复用旧集，spike 战役②越界
+   * 教训天然规避）；装饰语义与全量版逐位一致（同 genLineDecorations、
+   * 同 revealed 判定）。block 装饰除外（见 decoField）。 */
+  private decoPlugin = ((owner: CM6View) => {
+    class DecoViewPlugin {
+      deco: DecoState;
+      constructor(view: EditorView) {
+        this.deco = owner.buildDecorations(view.state, view.viewport.from, view.viewport.to);
+      }
+      update(u: ViewUpdate): void {
+        if (!owner.dirty && !u.docChanged && !u.selectionSet && !u.viewportChanged) return;
+        owner.dirty = false;
+        this.deco = owner.buildDecorations(u.state, u.view.viewport.from, u.view.viewport.to);
+      }
+    }
+    return ViewPlugin.fromClass<DecoViewPlugin>(DecoViewPlugin, {
+      decorations: (v) => v.deco.deco,
+    });
+  })(this);
+
+  constructor(core: WasmCore, parent: HTMLElement) {
+    this.core = core;
+    const initialText = core.to_markdown();
+    this.blockMap.rebuild(initialText, core.blocks_json());
+    const owner = this;
+
+    this.view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: initialText,
+        extensions: [
+          this.decoField,
+          // 装饰入 DOM 的必需接线（R9 审查教训）：decoField（hr block
+          // widget 专用通道，值内全部条目即原子装饰）必须显式 from 进
+          // 渲染 facet。R18：其余视口惰性装饰由 decoPlugin 经
+          // PluginSpec.decorations 自动供入 decorations facet；原子协商
+          // 双源——decoField（全量 hr）+ facet.of（plugin 视口原子缓存），
+          // 保持 Spike S1 光标协商语义不变。勘误记档：Facet.from 只接受
+          // StateField/Facet 源，传 ViewPlugin 会运行时崩，plugin 源必须
+          // 走 facet.of((view) => ...)。
+          this.decoPlugin,
+          EditorView.decorations.from(this.decoField),
+          EditorView.atomicRanges.from(this.decoField, (set) => () => set),
+          EditorView.atomicRanges.of((view) => {
+            const pv = view.plugin(owner.decoPlugin);
+            const base = pv ? pv.deco.atomic : Decoration.none;
+            // R19 缺口补算：DECO_PAD 外的程序化跳转（无滚动）处 marker 暂无
+            // 原子协商区——键盘协商发生在 scrollIntoView 之前。按需补算各
+            // selection 端点行 ±2 行的原子集（只补窗口外端点，O(端点数)，
+            // 与视口集区间不重叠，拼接排序后合并）。窗口内端点不补（与
+            // base 重叠，语义不变）。
+            const st = view.state;
+            const doc = st.doc;
+            const vp = view.viewport;
+            const vpFromLine = doc.lineAt(vp.from).number;
+            const vpToLine = doc.lineAt(vp.to).number;
+            const outLines: number[] = [];
+            for (const r of st.selection.ranges) {
+              const l1 = doc.lineAt(r.from).number;
+              const l2 = doc.lineAt(r.to).number;
+              if (l1 < vpFromLine - DECO_PAD || l1 > vpToLine + DECO_PAD) outLines.push(l1);
+              if (l2 !== l1 && (l2 < vpFromLine - DECO_PAD || l2 > vpToLine + DECO_PAD)) outLines.push(l2);
+            }
+            if (!outLines.length) return base;
+            const revealed = (from: number, to: number): boolean =>
+              st.selection.ranges.some((r) => r.to > from && r.from < to);
+            const recs: DecoRec[] = [];
+            for (let cur = base.iter();; cur.next()) {
+              const d = cur.value;
+              if (d === null) break;
+              recs.push({ from: cur.from, to: cur.to, value: d });
+            }
+            // 各端点行 ±2 行窗口补算（seen 只做跨端点窗口去重——端点行本身
+            // 必须参与补算，否则目标 marker 永不生成）。
+            const seen = new Set<number>();
+            for (const ln of outLines) {
+              for (let k = Math.max(1, ln - 2); k <= Math.min(doc.lines, ln + 2); k++) {
+                if (!seen.has(k)) {
+                  seen.add(k);
+                  genLineDecorations(doc.line(k), revealed, [], recs);
+                }
+              }
+            }
+            return Decoration.set(recs, true);
+          }),
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) owner.onDocChanged(u);
+          }),
+          keymap.of([
+            { key: 'Enter', run: () => owner.handleEnter() },
+            { key: 'Backspace', run: () => owner.handleBackspace() },
+            { key: 'Mod-z', preventDefault: true, run: () => owner.undo() },
+            // Shift+字母的 event.key 是大写（w3c-keyname 归一化保留大小写），
+            // 两种绑定都收：真实键盘与合成事件均命中（R9 审查发现 spike/b
+            // 的 'Mod-Shift-z' 从未真实生效过）。
+            { key: 'Mod-Shift-z', preventDefault: true, run: () => owner.redo() },
+            { key: 'Mod-Shift-Z', preventDefault: true, run: () => owner.redo() },
+            { key: 'ArrowLeft', run: cursorCharLeft },
+            { key: 'ArrowRight', run: cursorCharRight },
+            { key: 'Shift-ArrowLeft', run: selectCharLeft },
+            { key: 'Shift-ArrowRight', run: selectCharRight },
+          ]),
+          EditorView.lineWrapping,
+        ],
+      }),
+    });
+    this.dirty = true;
+    this.computeDecorations();
+    this.syncedRev = core.revision();
+  }
+
+  // ---------- 装饰 ----------
+
+  /** R17：委托单位宪法唯一出口（保留方法形态以便类内调用点稳定）。 */
+  private cpLen(s: string): number {
+    return utf16ToCp(s);
+  }
+
+  computeDecorations(): number {
+    const t0 = performance.now();
+    this.dirty = true;
+    this.view.dispatch({});
+    return performance.now() - t0;
+  }
+
+  /** R15 等价性护栏（W12）：当前装饰集快照（deco + atomic，iter 全序
+   *  字符串化——与内部 layer 分布无关，增量/全量产物可比）。R18：装饰
+   *  分两源（decoField hr block + plugin 视口），两源区间不相交（hr 行
+   *  hidden 只有 field、revealed 只有 plugin），拼接后排序即确定性全序。 */
+  dumpDecorations(): { deco: string[]; atomic: string[] } {
+    const val = this.view.state.field(this.decoField);
+    const pv = this.view.plugin(this.decoPlugin);
+    const dump = (set: DecorationSet): string[] => {
+      const out: string[] = [];
+      for (let cur = set.iter();; cur.next()) {
+        const d = cur.value;
+        if (d === null) break;
+        const sp = d.spec as {
+          class?: string;
+          spec?: { isMarker?: boolean };
+          widget?: unknown;
+          block?: boolean;
+        } | undefined;
+        out.push(
+          `${cur.from},${cur.to},${sp?.class ?? ''},${sp?.spec?.isMarker ? 1 : 0},${sp?.widget ? 1 : 0},${sp?.block ? 1 : 0}`,
+        );
+      }
+      return out;
+    };
+    const hrDump = dump(val);
+    return {
+      deco: [...hrDump, ...(pv ? dump(pv.deco.deco) : [])].sort(),
+      atomic: [...hrDump, ...(pv ? dump(pv.deco.atomic) : [])].sort(),
+    };
+  }
+
+  /** R15 等价性护栏（W12）：多光标 selection-only 注入（range 自动排序；
+   *  兼容 {anchor,head} 对象与 [anchor,head] 数组对两种形状，非法位
+   *  置在此处直接拒绝，避免进入 CM6 后才在 lineAt 越界炸开）。 */
+  setSelections(list: ({ anchor: number; head: number } | [number, number])[]): void {
+    if (!list.length) return;
+    const pts = list.map((r) => (Array.isArray(r) ? { anchor: r[0], head: r[1] } : r));
+    for (const p of pts) {
+      if (!Number.isInteger(p.anchor) || !Number.isInteger(p.head) ||
+          p.anchor < 0 || p.head < 0) {
+        throw new RangeError(`setSelections: invalid point ${JSON.stringify(p)}`);
+      }
+    }
+    const ranges = pts
+      .map((r) => EditorSelection.range(r.anchor, r.head))
+      .sort((x, y) => x.from - y.from || x.to - y.to);
+    this.view.dispatch({ selection: EditorSelection.create(ranges) });
+  }
+
+  /**
+   * 视口窗口内装饰构建（R18：签名收窄为 [vpFrom, vpTo] ±DECO_PAD 行，
+   * 消除 O(doc) 全量重扫——R14 归因均值 16.25ms/次@20448 行，R15 窗口
+   * 增量后仍 4.9ms，视口化实测 0.8ms）。每次调用都用事务的**新**状态
+   * 重算窗口内全部行（spike 战役②教训：旧装饰集跨 dispatch 复用会越界
+   * ——本实现不复用旧集，天然规避）。严格重叠 = 光标紧邻不揭示。
+   * 共享单行生成 genLineDecorations 保证与全量版逐位一致；hr 的 hidden
+   * 态 block widget 由 decoField 全量供应，此处只产出 revealed 态 mark。
+   */
+  private buildDecorations(state: EditorState, vpFrom: number, vpTo: number): DecoState {
+    const doc = state.doc;
+    const sel = state.selection;
+    const revealed = (from: number, to: number): boolean =>
+      sel.ranges.some((r) => r.to > from && r.from < to);
+    const recs: DecoRec[] = [];
+    const atomicRecs: DecoRec[] = [];
+    const startLine = Math.max(1, doc.lineAt(vpFrom).number - DECO_PAD);
+    const endLine = Math.min(doc.lines, doc.lineAt(vpTo).number + DECO_PAD);
+    for (let ln = startLine; ln <= endLine; ln++) {
+      genLineDecorations(doc.line(ln), revealed, recs, atomicRecs);
+    }
+    const deco = Decoration.set(recs, true);
+    const atomic = Decoration.set(atomicRecs, true);
+    this.decorations = deco;
+    return { deco, atomic };
+  }
+
+  // ---------- 核变异封装：时钟注入 + 事件出口 ----------
+
+  /** wasm32 无 SystemTime：每次变异前注入 Date.now()（1s 合并窗依赖此）。 */
+  private mutate<T>(f: () => T): T {
+    this.core.set_clock_ms(BigInt(Math.max(1, Date.now())));
+    try {
+      return f();
+    } finally {
+      this.drainEvents();
+    }
+  }
+
+  /** 事件出口：冒烟测试与未来 AI 侧共用的 op 流证据。 */
+  private drainEvents(): CoreEvent[] {
+    try {
+      const events = JSON.parse(this.core.take_events()) as CoreEvent[];
+      if (events.length) (window.__mdcoreEvents as CoreEvent[]).push(...events);
+      return events;
+    } catch {
+      return [];
+    }
+  }
+
+  private debugLine(): void {
+    const el = document.getElementById('debug');
+    if (el) {
+      el.textContent =
+        `rev=${Number(this.core.revision())} blocks=${this.blockMap.byId.size} events=${(window.__mdcoreEvents as CoreEvent[]).length}`;
+    }
+  }
+
+  // ---------- 桥：CM6 → core ----------
+
+  private onDocChanged(u: ViewUpdate): void {
+    if (this.syncing || this.locked) return;
+    this.syncing = true;
+    this.dirty = true;
+    try {
+      const changes: [number, number, number, number, string][] = [];
+      u.changes.iterChanges((fromA, toA, _fB, _tB, inserted) =>
+        changes.push([fromA, toA, _fB, _tB, inserted.toString()]));
+      let fast = false;
+      if (changes.length === 1) {
+        try {
+          fast = this.tryFastPath(u.startState, changes[0]);
+        } catch {
+          fast = false; // 核 reject（BadRange/BadPath）→ 兜底修复
+        }
+      }
+      if (!fast) this.fullResync(u.state.doc.toString());
+    } finally {
+      this.syncing = false;
+      this.debugLine();
+    }
+  }
+
+  /**
+   * 快路径：单 change + 整段落在同一行 body 内 + 无换行。
+   * 行记录只存行内相对量 → doc 增长无需重建；结构不变 → 不碰 blocks_json。
+   * 核 reject 时抛错由调用方转兜底（view/core 仍收敛）。
+   */
+  /** R17 诊断：最近一次快路径放弃原因（'ok'=走了快路径；兜底探测用）。 */
+  lastFastBail = 'ok';
+
+  private tryFastPath(startState: EditorState, ch: [number, number, number, number, string]): boolean {
+    const [fromA, toA, , , inserted] = ch;
+    this.lastFastBail = 'ok';
+    if (inserted.includes('\n')) { this.lastFastBail = 'newline'; return false; }
+    const doc = startState.doc;
+    const line = doc.lineAt(fromA);
+    if (toA > line.to) { this.lastFastBail = 'crossline'; return false; }
+    const rec = this.blockMap.lines[line.number - 1];
+    if (!rec || !rec.hasBody) { this.lastFastBail = `rec@${line.number}`; return false; }
+    if (fromA < line.from + rec.prefix) { this.lastFastBail = 'prefix'; return false; }
+    const colA = fromA - line.from;
+    const colB = toA - line.from;
+    const start = rec.textOffset + this.cpLen(line.text.slice(rec.prefix, colA));
+    const end = rec.textOffset + this.cpLen(line.text.slice(rec.prefix, colB));
+    const op = { t: 'replace_text', path: rec.path, start, end, insert: inserted };
+    this.mutate(() => {
+      this.core.apply_ops(JSON.stringify([op]), 'view', 'replace_text');
+    });
+    // 多行体（code/table）后续行的块内偏移平移（罕见；单行体块零维护）
+    if (!rec.singleLine) {
+      const delta = this.cpLen(inserted) - (end - start);
+      if (delta !== 0) {
+        for (let k = line.number; k < this.blockMap.lines.length; k++) {
+          const r = this.blockMap.lines[k];
+          if (r.hasBody && r.blockId === rec.blockId) r.textOffset += delta;
+        }
+      }
+    }
+    return true;
+  }
+
+  /** 兜底：整篇交核差分（核内最小 op 序列），然后重建 BlockMap。 */
+  private fullResync(docText: string): void {
+    this.mutate(() => {
+      try {
+        this.core.sync_from_markdown(docText);
+      } catch (e) {
+        console.error('sync_from_markdown rejected:', e);
+      }
+    });
+    this.rebuildMap(docText);
+    this.syncedRev = this.core.revision(); // R16：doc 与核已同步
+  }
+
+  private rebuildMap(docText: string): void {
+    this.blockMap.rebuild(docText, this.core.blocks_json());
+  }
+
+  // ---------- 桥：core → CM6 ----------
+
+  /**
+   * R16 渐进 ingest 专用：core.extend_from_markdown(chunk) 之后的增量建图。
+   * ① 事件出口容量护栏：extend 的 insert_block 明细（≈整段 chunk 文本，
+   *    10MB 文档计 20 万 op）不进 JS 堆，按 {absorbed: N} 聚合登记——
+   *    op 流证据保留 source/command/revision/计数，仍可审计；
+   * ② 分片建图：blocks_count 游标 + blocks_json_range 取新增先序区间
+   *    → BlockMap.extend 追加（不再全量 dump + parse）；
+   * ③ 不触碰 CM6 doc / 装饰：ingest 结束后一次性 pushRender({skipMap})
+   *    统一同步（原先每段全量重渲染 + 全量重建，16 段 = 16 次 O(n)）。
+   */
+  ingestExtend(): void {
+    try {
+      const events = JSON.parse(this.core.take_events()) as CoreEvent[];
+      for (const ev of events) {
+        (window.__mdcoreEvents as CoreEvent[]).push({
+          ops: [],
+          meta: { ...ev.meta, absorbed: ev.ops?.length ?? 0 },
+          revision: ev.revision,
+        });
+      }
+    } catch {
+      return; // 同 drainEvents：坏事件 JSON 忽略（图也不再追）
+    }
+    const total = this.core.blocks_count();
+    const prev = this.blockMap.blockCount;
+    if (total > prev) {
+      this.blockMap.extend(this.core.blocks_json_range(prev, total - prev));
+    }
+  }
+
+  /**
+   * R16 等价性护栏（W7）：增量建图（extend 链产物）与强制全量重建
+   * 逐项比对（lines + byId 字符串化）。全量重建后 map 即权威态，
+   * 返回 ok = 比对前快照 === 重建后快照。
+   */
+  debugMapVsFullRebuild(): { ok: boolean; lines: number; blocks: number; detail: string } {
+    const snap = (): string =>
+      JSON.stringify({ lines: this.blockMap.lines, byId: [...this.blockMap.byId] });
+    const before = snap();
+    const beforeCount = this.blockMap.blockCount;
+    this.rebuildMap(this.view.state.doc.toString());
+    const after = snap();
+    const detail =
+      before.length === after.length && before === after
+        ? 'identical'
+        : `len ${before.length}->${after.length} blocks ${beforeCount}->${this.blockMap.blockCount}`;
+    return { ok: before === after, lines: this.blockMap.lines.length, blocks: this.blockMap.blockCount, detail };
+  }
+
+  /**
+   * 核→view 全量重渲染（undo/redo/核驱动结构命令后）。
+   * 取舍（README §undo）：选"事件驱动重渲染"这条简单可靠的路——
+   * 代价是 view 独有状态（核无法表示的末尾空行）被吸收、选区仅钳制保活。
+   *
+   * R16 两项增强：
+   * - revision 守卫：核 revision 与上次同步同值 ⇒ 树未变 ⇒ 免
+   *   to_markdown / 字符串比对 / 重建（10MB 下三者均 O(n) 大对象）；
+   * - opts.skipMap：调用方已用增量路径维护 BlockMap（渐进 ingest），
+   *   只做 doc 文本同步；opts.force：跳过守卫强制全量（测量口径）。
+   */
+  pushRender(anchor?: number, opts?: { skipMap?: boolean; force?: boolean }): void {
+    const rev = this.core.revision();
+    if (rev !== this.syncedRev || opts?.force) {
+      const newText = this.core.to_markdown();
+      this.syncedRev = rev;
+      this.syncing = true;
+      try {
+        if (newText !== this.view.state.doc.toString()) {
+          this.dirty = true;
+          const len = this.view.state.doc.length;
+          this.view.dispatch({ changes: { from: 0, to: len, insert: newText } });
+        }
+        if (!opts?.skipMap) this.rebuildMap(newText);
+      } finally {
+        this.syncing = false;
+      }
+    }
+    const sel = this.view.state.selection.main;
+    const target = Math.min(anchor ?? sel.anchor, this.view.state.doc.length);
+    if (sel.anchor !== target || sel.head !== target) {
+      this.view.dispatch({ selection: { anchor: target, head: target } });
+    }
+    this.debugLine();
+  }
+
+  // ---------- undo/redo（核驱动；CM6 history 刻意不装） ----------
+
+  undo(): boolean {
+    const ok = this.mutate(() => this.core.undo() !== undefined);
+    if (ok) this.pushRender();
+    return true; // 永远消费按键：没有 CM6 history 可退
+  }
+
+  redo(): boolean {
+    const ok = this.mutate(() => this.core.redo() !== undefined);
+    if (ok) this.pushRender();
+    return true;
+  }
+
+  // ---------- 核驱动结构命令 ----------
+
+  /**
+   * Enter 分段守卫：
+   * - list_item 任意位置 → 核驱动（marker/depth 继承，浏览器原生换行做不出
+   *   新 item——空行不入树）；
+   * - 段落/标题**行尾** → 核驱动（尾部空段核内可表示；标题尾降级 paragraph，
+   *   与 core::split_block §8.2 同规则；纯 view 的 \n 会被解析器丢弃）；
+   * - 其余（段落行中、code fence 内、无 body 行）→ false，浏览器原生换行，
+   *   随后的 tx 走兜底 sync（fence 吸收 \n / 解析拆块，天然收敛）。
+   */
+  private handleEnter(): boolean {
+    const sel = this.view.state.selection.main;
+    if (!sel.empty) return false;
+    const doc = this.view.state.doc;
+    const line = doc.lineAt(sel.anchor);
+    const rec = this.blockMap.lines[line.number - 1];
+    if (!rec || !rec.hasBody || !rec.singleLine) return false;
+    const col = sel.anchor - line.from;
+    if (col < rec.prefix) return false;
+    const isItem = rec.kind === 'list_item';
+    if (!isItem && sel.anchor < line.to) return false; // 段落行中 → 原生 + 兜底
+
+    const meta = this.blockMap.byId.get(rec.blockId);
+    if (!meta) return false;
+    const charOff = rec.textOffset + this.cpLen(line.text.slice(rec.prefix, col));
+    const tailText = line.text.slice(col);
+    const tailAttrs: Record<string, string> = {};
+    if (isItem) {
+      if (rec.attrs.marker) tailAttrs.marker = rec.attrs.marker;
+      if (rec.attrs.depth) tailAttrs.depth = rec.attrs.depth;
+    }
+    const ops = [
+      { t: 'replace_text', path: rec.path, start: charOff, end: meta.textChars, insert: '' },
+      {
+        t: 'insert_block',
+        parent: rec.path.slice(0, -1),
+        index: rec.path[rec.path.length - 1] + 1,
+        kind: isItem ? 'list_item' : 'paragraph',
+        attrs: tailAttrs,
+        text: tailText,
+      },
+    ];
+    const oldAnchor = sel.anchor;
+    let threw = false;
+    let events: CoreEvent[] = [];
+    this.core.set_clock_ms(BigInt(Math.max(1, Date.now())));
+    try {
+      this.core.apply_ops(JSON.stringify(ops), 'view', 'split_block');
+    } catch (e) {
+      threw = true;
+      console.error('split ops rejected:', e);
+    } finally {
+      events = this.drainEvents();
+    }
+    if (threw) return false; // 核未变 → 放行原生行为，下个 tx 走兜底收敛
+
+    // 新块 ID 从事件流物化读取（§8.2：InsertBlock.id 回写）
+    let newId = 0;
+    for (const ev of events) {
+      for (const op of ev.ops ?? []) {
+        if (op.t === 'insert_block' && typeof op.id === 'number') newId = op.id;
+      }
+    }
+    this.pushRender();
+    let cursor = Math.min(oldAnchor + 1, this.view.state.doc.length);
+    if (newId) {
+      const idx = this.blockMap.lines.findIndex((r) => r.hasBody && r.blockId === newId);
+      if (idx >= 0) cursor = this.view.state.doc.line(idx + 1).from + this.blockMap.lines[idx].prefix;
+    }
+    this.view.dispatch({ selection: { anchor: cursor } });
+    return true;
+  }
+
+  /** 退格 = 单字符删除 dispatch，删除的是换行时自然落兜底（解析合并）。 */
+  private handleBackspace(): boolean {
+    const sel = this.view.state.selection.main;
+    if (!sel.empty) return false;
+    if (sel.anchor === 0) return true;
+    this.view.dispatch({
+      changes: { from: sel.anchor - 1, to: sel.anchor },
+      userEvent: 'delete.backward',
+    });
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 样例文档 / 大文档生成 / 启动
+// ---------------------------------------------------------------------------
+
+const SAMPLE_MD = [
+  '# Bridge Demo',
+  '',
+  'Plain paragraph with **bold** and `inline code` inside.',
+  '',
+  '---',
+  '',
+  '- first item',
+  '- second item',
+  '',
+  '> quoted line',
+  '',
+  '```js',
+  'let x = 1;',
+  '```',
+  '',
+  'Final paragraph for typing.',
+].join('\n');
+
+function buildBigDoc(targetBytes: number): string {
+  const parts: string[] = [];
+  let size = 0;
+  for (let i = 0; size < targetBytes; i++) {
+    const sec =
+      `# Section ${i}\n\n` +
+      `Paragraph ${i} carries **bold** spans and \`inline code\` spans plus filler ` +
+      `text so the document reaches its byte budget without identical repeated lines.\n\n` +
+      `- item alpha ${i}\n- item beta ${i}\n\n`;
+    parts.push(sec);
+    size += sec.length;
+  }
+  return parts.join('').replace(/\n+$/, '');
+}
+
+/**
+ * R16 流式大文档分块器：与 buildBigDoc 同一生成器，但边生成 section 边
+ * 切 chunk——不再物化全量 10MB 字符串 + split('\n') 三次全量扫描，TTI
+ * 路径少几十 ms 级大字符串处理与内存峰值。切点 = section 边界（空行
+ * 收尾 = 块边界，与 splitChunks 的空行切点同语义，fence 不存在于此
+ * 生成器）；恰好 k 段（末段承接余量），firstDiv>1 时首段预算缩水
+ * （TTI 调参旋钮：首段越小 TTI 越低，余段相应变大）。终态树与
+ * buildBigDoc+splitChunks 路径一致（section 边界切分 ≡ 一次性解析，
+ * crates/mdcore/tests/document_progressive.rs ①已证同规则等价）。
+ */
+function buildBigChunks(targetBytes: number, k: number, firstDiv = 1): string[] {
+  const firstBudget = targetBytes / Math.max(1, k) / firstDiv;
+  const restBudget = (targetBytes - firstBudget) / Math.max(1, k - 1);
+  const chunks: string[] = [];
+  let cur = '';
+  let curSize = 0;
+  let total = 0;
+  for (let i = 0; total < targetBytes; i++) {
+    const sec =
+      `# Section ${i}\n\n` +
+      `Paragraph ${i} carries **bold** spans and \`inline code\` spans plus filler ` +
+      `text so the document reaches its byte budget without identical repeated lines.\n\n` +
+      `- item alpha ${i}\n- item beta ${i}\n\n`;
+    cur += sec;
+    curSize += sec.length;
+    total += sec.length;
+    const budget = chunks.length === 0 ? firstBudget : restBudget;
+    if (curSize >= budget && chunks.length < k - 1) {
+      chunks.push(cur);
+      cur = '';
+      curSize = 0;
+    }
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+/**
+ * R10 渐进打开分块器：仅在空行边界切（fence 内不切），再把块组均匀并成
+ * K 段。buildBigDoc 的每个节均自含闭合 fence，空行边界是天然安全切点。
+ */
+function splitChunks(md: string, k: number): string[] {
+  const lines = md.split('\n');
+  const groups: string[] = [];
+  let cur: string[] = [];
+  let inFence = false;
+  for (const ln of lines) {
+    if (ln.startsWith('```')) inFence = !inFence;
+    cur.push(ln);
+    if (!inFence && ln === '') {
+      groups.push(cur.join('\n'));
+      cur = [];
+    }
+  }
+  if (cur.length) groups.push(cur.join('\n'));
+  const per = Math.ceil(groups.length / Math.max(1, k));
+  const chunks: string[] = [];
+  for (let i = 0; i < groups.length; i += per) {
+    chunks.push(groups.slice(i, i + per).join('\n'));
+  }
+  return chunks;
+}
+
+declare global {
+  interface Window {
+    __core: WasmCore;
+    __view: EditorView;
+    /** R11：桥实例（pushRender/locked/fallback 驱动面，供宿主与测试） */
+    __bridge: {
+      pushRender: (anchor?: number, opts?: { skipMap?: boolean; force?: boolean }) => void;
+      locked: boolean;
+      undo: () => boolean;
+      redo: () => boolean;
+      /** R15：强制走全量重建路径（W12 等价性护栏的基线） */
+      computeDecorations: () => number;
+      /** R15：装饰集快照（W12 增量↔全量逐项对比） */
+      dumpDecorations: () => { deco: string[]; atomic: string[] };
+      /** R15：多光标 selection-only 注入（W12 窗口并集覆盖） */
+      setSelections: (list: ({ anchor: number; head: number } | [number, number])[]) => void;
+      /** R16：增量建图 ≡ 强制全量重建 逐项比对（W7 等价性护栏） */
+      debugMapVsFullRebuild: () => { ok: boolean; lines: number; blocks: number; detail: string };
+      /** R17 P1-9：单位宪法唯一换算出口（W13 消费；字符串直传） */
+      unit: {
+        utf16ToCp: (s: string, utf16Pos?: number) => number;
+        cpToUtf16: (s: string, cpPos: number) => number;
+      };
+    };
+    __blocks: () => BlockInfo[];
+    /** R16：先序块总数（分片出口计数；免全量 dump+parse） */
+    __blockCount: () => number;
+    __md: () => string;
+    __mdcoreEvents: CoreEvent[];
+    __perf: {
+      loadMs: number;
+      typeMs: number[];
+      fallbackSyncMs: number | null;
+      undoMs: number | null;
+      progressive: { ttiMs: number; ingestMs: number; finalRenderMs: number; chunks: number } | null;
+    };
+    /** R19 堆归因采样曲线（渐进开档各阶段 JS 堆用量；宿主/测试共用）。 */
+    __heapTrace: { label: string; usedMb: number; totalMb: number }[];
+    /** R19：wasm Memory 对象引用（grow 后 buffer 更新，实时读现值）。 */
+    __wasmMemory: WebAssembly.Memory;
+    /** R20：核侧组件级内存审计（tree/log/history 逐项字节估计）。 */
+    __memStats: () => Record<string, unknown>;
+    /** R23-d 宿主注入契约（CONTRACT.md §3，冻结 v1）：全量重建入口。 */
+    __inject: (md: string) => void;
+    /** R23-d：渐进追加入口（first=true 重建核，否则 extend 追加）。 */
+    __inject_chunk: (chunk: string, first: boolean) => void;
+    /** R23-d：契约版本（破坏性变更必须升版并更新 CONTRACT.md）。 */
+    __contractVersion: number;
+    __ready: boolean;
+  }
+}
+
+async function main(): Promise<void> {
+  const t0 = performance.now();
+  const initP = init(); // R16：wasm 实例化与大文档生成并行（TTI）
+  const params = new URLSearchParams(location.search);
+  const big = params.get('doc') === 'big';
+  const kb = Number(params.get('kb') ?? '1024');
+  const nChunks = Number(params.get('chunks') ?? '1');
+
+  if (nChunks > 1) {
+    // ---- R10 渐进打开 / R16 批量化：首段即渲染（TTI）；余段 extend
+    //      追加 + 分片增量建图，ingest 结束后一次性 pushRender 同步 ----
+    // R19 堆归因：分阶段采样 JS 堆（performance.memory，需
+    // --enable-precise-memory-info；GC 稳态由测试侧在 __ready 后补采）。
+    const heapTrace: { label: string; usedMb: number; totalMb: number }[] = [];
+    window.__heapTrace = heapTrace;
+    const heapMark = (label: string): void => {
+      const m = (performance as unknown as {
+        memory?: { usedJSHeapSize: number; totalJSHeapSize: number };
+      }).memory;
+      heapTrace.push({
+        label,
+        usedMb: m ? Math.round(m.usedJSHeapSize / 1048576) : -1,
+        totalMb: m ? Math.round(m.totalJSHeapSize / 1048576) : -1,
+      });
+    };
+    const chunks = big ? buildBigChunks(kb * 1024, nChunks) : splitChunks(SAMPLE_MD, nChunks);
+    heapMark('chunks-built');
+    const wasmOut = await initP;
+    // R19 堆归因：wasm 线性内存单独暴露（performance.memory 语义验证——
+    // 稳态 usedJSHeapSize 与 JS 分配采样（~46MB）的巨差是否即 wasm memory）。
+    // 存 Memory 对象引用（grow 后 buffer 更新，实时读现值）。
+    window.__wasmMemory = wasmOut.memory;
+    const core = new WasmCore(chunks[0]);
+    heapMark('core-created');
+    const view = new CM6View(core, document.getElementById('editor') as HTMLElement);
+    const ttiMs = performance.now() - t0; // 首段可见可交互
+    heapMark('first-chunk-rendered');
+    window.__core = core;
+    window.__view = view.view;
+    window.__bridge = view;
+    window.__blocks = (): BlockInfo[] => JSON.parse(core.blocks_json()) as BlockInfo[];
+    window.__blockCount = (): number => core.blocks_count();
+    window.__md = (): string => core.to_markdown();
+    window.__memStats = (): Record<string, unknown> => JSON.parse(core.core_mem_stats());
+    window.__mdcoreEvents = [];
+    window.__perf = { loadMs: ttiMs, typeMs: [], fallbackSyncMs: null, undoMs: null, progressive: null };
+
+    view.locked = true; // ingestion 窗口拒绝编辑（半开状态防破坏）
+    const t1 = performance.now();
+    let ci = 1;
+    for (const c of chunks.slice(1)) {
+      core.set_clock_ms(BigInt(Math.max(1, Date.now())));
+      core.extend_from_markdown(c); // 追加式：不碰已有块（Rust 侧已测三重相等）
+      view.ingestExtend(); // R16：分片建图 + 事件聚合（免全量 dump/render）
+      if (ci % 4 === 0 || ci === chunks.length - 1) heapMark(`ingest-${ci}/${chunks.length - 1}`);
+      ci++;
+    }
+    const t2 = performance.now();
+    view.pushRender(undefined, { skipMap: true }); // R16：一次全量重渲染替代每段一次
+    heapMark('final-render');
+    view.locked = false;
+    const ingestMs = performance.now() - t1;
+    window.__perf.progressive = { ttiMs, ingestMs, finalRenderMs: performance.now() - t2, chunks: chunks.length };
+  } else {
+    const md = big ? buildBigDoc(kb * 1024) : SAMPLE_MD;
+    await initP;
+    const core = new WasmCore(md);
+    const view = new CM6View(core, document.getElementById('editor') as HTMLElement);
+    const loadMs = performance.now() - t0;
+    window.__core = core;
+    window.__view = view.view;
+    window.__bridge = view;
+    window.__blocks = (): BlockInfo[] => JSON.parse(core.blocks_json()) as BlockInfo[];
+    window.__blockCount = (): number => core.blocks_count();
+    window.__md = (): string => core.to_markdown();
+    window.__memStats = (): Record<string, unknown> => JSON.parse(core.core_mem_stats());
+    window.__mdcoreEvents = [];
+    window.__perf = { loadMs, typeMs: [], fallbackSyncMs: null, undoMs: null, progressive: null };
+
+    if (big) {
+      // W4：10 次快路径打字 + 1 次兜底 sync 压测 + 1 次 undo 全量回写
+      const v = view.view;
+      v.dispatch({ selection: { anchor: v.state.doc.length } });
+      for (let i = 0; i < 10; i++) {
+        const t1 = performance.now();
+        v.dispatch({ changes: { from: v.state.doc.length, insert: 'x' } });
+        window.__perf.typeMs.push(performance.now() - t1);
+      }
+      let t2 = performance.now();
+      v.dispatch({ changes: { from: Math.floor(v.state.doc.length / 2), insert: '\n' } });
+      window.__perf.fallbackSyncMs = performance.now() - t2;
+      t2 = performance.now();
+      view.undo();
+      window.__perf.undoMs = performance.now() - t2;
+    }
+  }
+  // ---- R23-d 宿主注入契约（CONTRACT.md §3；冻结 v1）----
+  // 宿主（wry evaluate_script / mdcore://app 注入桥）只触碰 window.__inject /
+  // __inject_chunk 两个入口；内部经 mdc-inject* 事件族（TRADEMARK_RULES §1
+  // 命名域）解耦模块作用域。语义：
+  //   __inject(md)            → 整体重建核（宿主全量打开路径）
+  //   __inject_chunk(c,true)  → 重建核（渐进首段，TTI 时刻）
+  //   __inject_chunk(c,false) → extend_from_markdown 追加 + 全量重渲染
+  // 重建 = 旧 EditorView.destroy() + 新 WasmCore/CM6View + window 面全量重装
+  // （__mdcoreEvents 清零 = 新核事件流起点；__perf 保留 loadMs 便于归因）。
+  const installNewCore = (md: string): void => {
+    (window.__view as EditorView | undefined)?.destroy();
+    const parent = document.getElementById('editor') as HTMLElement;
+    parent.innerHTML = '';
+    const core = new WasmCore(md);
+    const view = new CM6View(core, parent);
+    window.__core = core;
+    window.__view = view.view;
+    window.__bridge = view;
+    window.__blocks = (): BlockInfo[] => JSON.parse(core.blocks_json()) as BlockInfo[];
+    window.__blockCount = (): number => core.blocks_count();
+    window.__md = (): string => core.to_markdown();
+    window.__memStats = (): Record<string, unknown> => JSON.parse(core.core_mem_stats());
+    window.__mdcoreEvents = [];
+    window.__perf = {
+      loadMs: window.__perf?.loadMs ?? 0,
+      typeMs: [],
+      fallbackSyncMs: null,
+      undoMs: null,
+      progressive: null,
+    };
+  };
+  window.addEventListener('mdc-inject', (ev) => {
+    installNewCore((ev as CustomEvent<string>).detail);
+    window.__ready = true;
+  });
+  window.addEventListener('mdc-inject-chunk', (ev) => {
+    const { chunk, first } = (ev as CustomEvent<{ chunk: string; first: boolean }>).detail;
+    if (first) {
+      installNewCore(chunk);
+    } else {
+      const core = window.__core;
+      core.set_clock_ms(BigInt(Math.max(1, Date.now())));
+      core.extend_from_markdown(chunk);
+      window.__bridge.pushRender(undefined, { skipMap: true });
+    }
+    window.__ready = true;
+  });
+  window.__inject = (md: string): void => {
+    window.dispatchEvent(new CustomEvent('mdc-inject', { detail: md }));
+  };
+  window.__inject_chunk = (chunk: string, first: boolean): void => {
+    window.dispatchEvent(new CustomEvent('mdc-inject-chunk', { detail: { chunk, first } }));
+  };
+  window.__contractVersion = 1;
+
+  window.__ready = true;
+}
+
+main().catch((e: unknown) => {
+  const el = document.getElementById('debug');
+  if (el) el.textContent = `boot failed: ${String(e)}`;
+  throw e;
+});

@@ -1,0 +1,26 @@
+{
+  "name": "mdcore-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "R9: CM6 View <-> mdcore-wasm (Rust core) bridge. Same bundle the R10 Slint/wry host shell loads from dist/.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:wasm": "./build-wasm.sh",
+    "serve": "python3 -m http.server 8123 --directory dist",
+    "typecheck": "tsc --noEmit",
+    "test": "python3 tests/web_smoke.py"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.36.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}

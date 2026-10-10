@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/mdcore", "crates/mdcore-wasm", "crates/shell", "crates/shell-native"]
+default-members = ["crates/mdcore", "crates/shell", "crates/shell-native"]
+
+# R8 Headless Core v0 — 依赖策略（主档 §9 / tech-stack）:
+#   ropey      = 文本存储实现（指定的技术栈成员）
+#   serde      = JSON 序列化（op 流 / snapshot / history 的最低成本选择）
+#   wasm-bindgen = 仅 mdcore-wasm 使用（宿主绑定层）
+# 其余零依赖：无运行时、无框架。Core 语义不依赖任何一项——serde 仅出现在
+# 序列化边界，tree/op 本身可脱离 serde 编译（见 lib.rs feature 说明）。
+#
+# R10 增补：crates/shell = 宿主契约层（headless 可验证，零 GUI 依赖）；
+# crates/shell-native = wry+Slint 胶水蓝图（随附零依赖可编译/可测试，
+# 原生依赖启用后需 webkit2gtk-4.1 系统库——见该 crate 文档）。
