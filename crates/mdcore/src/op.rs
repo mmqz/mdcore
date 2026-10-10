@@ -141,6 +141,9 @@ pub fn apply_op(tree: &mut BlockTree, op: &mut Op) -> Result<(), OpError> {
         Op::SetMark { path, start, end, kind, add } => {
             let id = tree.resolve(path).ok_or(TreeError::BadPath)?;
             let node = tree.node_mut(id);
+            if *start > *end || *end > node.text.len_chars() {
+                return Err(OpError::BadRange);
+            }
             let span = MarkSpan { start: *start, end: *end, kind: kind.clone() };
             if *add {
                 if !node.marks.contains(&span) {
@@ -237,13 +240,28 @@ pub fn invert_op(tree_before: &BlockTree, op: &Op) -> Result<Vec<Op>, OpError> {
             }])
         }
         Op::SetMark { path, start, end, kind, add } => {
-            // no-op（span 已存在/不存在）的逆 = 自身 no-op；有效变更的逆 = 反向操作
+            // R24-a2 修复（求逆不对称，探针 probe_setmark_inverse 抓出）：
+            // 逆的方向由 **state-before 的 span 存在性**决定——
+            // - no-op（add=true 且 span 已在 / add=false 且 span 不在）→
+            //   逆 = **同向**（再应用仍是 no-op，undo 恢复同态）；
+            // - 有效变更 → 逆 = 反向。
+            // 此前无条件翻转 add：重复加粗（no-op）后一次 undo 会把 mark
+            // 删掉、移除不存在 mark（no-op）后 undo 凭空造 mark——违反
+            // 「undo 精确恢复前态」不变量。
+            let id = tree_before.resolve(path).ok_or(TreeError::BadPath)?;
+            let node = tree_before.node(id);
+            if *start > *end || *end > node.text.len_chars() {
+                return Err(OpError::BadRange);
+            }
+            let span = MarkSpan { start: *start, end: *end, kind: kind.clone() };
+            let exists = node.marks.contains(&span);
+            let inv_add = if exists == *add { *add } else { !*add };
             Ok(vec![Op::SetMark {
                 path: path.clone(),
                 start: *start,
                 end: *end,
                 kind: kind.clone(),
-                add: !*add,
+                add: inv_add,
             }])
         }
         Op::MoveBlock { from, to_parent, to_index } => {

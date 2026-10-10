@@ -33,7 +33,7 @@
 ## 构建与门禁
 
 ```bash
-cargo test --workspace              # 18 套件语义锁（164 用例；R23-e 148 + R24-a 16）
+cargo test --workspace              # 19 套件语义锁（171 用例；R23-e 148 + R24-a 16 + 质量审计 7）
 cargo check --target wasm32-unknown-unknown
 cd web && npm ci && npm run build   # wasm 构建 + CM6 桥
 ./compliance/scan.sh                # 产品面合规门禁（每次提交前，PASS 才可合入）
@@ -57,7 +57,9 @@ v1 面 13 + v1.1 设置面 3）、`crates/mdcore/tests/r23_fingerprint.rs`（15 
   编译产物反编译自检 CLEAN；SBOM 367 项全白名单。
 - R24 产品化进行中：**R24-a 设置面核侧完成**（mdshell::settings 四层
   schema + TOML sidecar + 契约 v1.1：__settings / __setSetting /
-  mdc-settings-changed）；R24-b 多窗口 / R24-c 打包基建待开。
+  mdc-settings-changed）；**质量审计轮完成**（R24-a1 settings 写读形态
+  不对称修复 + R24-a2 SetMark 求逆不对称修复，cargo 171/171，见
+  gates.md「R24 质量审计轮」节）；R24-b 多窗口 / R24-c 打包基建待开。
 - 遗留：真机 IME 人工验收（自动化先行已闭环，R23-a 28/28）、定名后商标检索
   （**R24-c 前置阻塞项**）。
 - 研究与审计底稿存于私有分析仓（允许域）；本仓仅存产品代码与合规结论。

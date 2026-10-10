@@ -18,6 +18,11 @@
 //! 契约：window 面读写项（`__settings` / `__setSetting` /
 //! `mdc-settings-changed`）见 CONTRACT.md §4（v1.1）。默认值表与值域
 //! 约束双侧一致（CONTRACT §4 默认值表为共同锚），Rust 侧为本表权威。
+//!
+//! R24-a1 修复（2026-10-10，质量审计轮）：`set()` 的写侧规范化
+//! （`ensure_section`：节缺失/inline 形态 → 标准表，值保留）+ 读侧容错
+//! （`item_of` 用 `as_table_like` 认 inline 节）——修复「节缺失时 set
+//! 产出 inline 表、load 读不回 → 设置静默丢失」的写读形态不对称。
 
 use std::path::{Path, PathBuf};
 
@@ -171,7 +176,35 @@ fn as_str(item: &Item) -> Option<String> {
 }
 
 fn item_of<'a>(doc: &'a DocumentMut, section: &str, key: &str) -> Option<&'a Item> {
-    doc.get(section)?.as_table()?.get(key)
+    // as_table_like（非 as_table）：读侧容错——手写/旧版本 inline 节
+    // （`editor = { ... }`）同样可读（TableLike 覆盖 Table + InlineTable）。
+    doc.get(section)?.as_table_like()?.get(key)
+}
+
+/// 保证 `section` 是**标准表**（`[section]` 表头形态）并返回可变引用：
+/// - 已是标准表 → 原样返回；
+/// - inline 节（`section = { ... }`，手写或旧版本产物）→ **值保留升格**
+///   为标准表（未知键随迁，前向兼容不丢字节）；
+/// - 缺失/其它异形（标量/数组）→ 新建空标准表。
+///
+/// R24-a1 修复：直接 `doc[section][key] = ...` 在节缺失时，toml_edit 的
+/// IndexMut 把 `Item::None` 自动升格为 **InlineTable**（index.rs 的
+/// `if let Item::None = *v` 分支），产出 `section = { key = ... }`；
+/// 而读侧 `as_table()` 只认标准表 → 写入值在下次 load 静默丢失
+/// （探针 probe_settings_edge 抓出：set 后 save → load 回默认）。
+/// 本函数保证**写入形态 = 读取形态**（写侧规范化）。
+fn ensure_section<'a>(doc: &'a mut DocumentMut, section: &str) -> &'a mut toml_edit::Table {
+    if doc.get(section).is_some_and(Item::is_table) {
+        return doc.get_mut(section).and_then(Item::as_table_mut).expect("is_table checked above");
+    }
+    let mut promoted = toml_edit::Table::new();
+    if let Some(like) = doc.get(section).and_then(Item::as_table_like) {
+        for (k, v) in like.iter() {
+            promoted.insert(k, v.clone());
+        }
+    }
+    doc.insert(section, Item::Table(promoted));
+    doc.get_mut(section).and_then(Item::as_table_mut).expect("just inserted a Table")
 }
 
 fn read_file_version(doc: &DocumentMut) -> u64 {
@@ -464,39 +497,39 @@ impl SettingsStore {
             ("editor", "undo_coalesce_ms") => {
                 let v = as_uint(path, &value)?;
                 ensure_range(path, v, bounds::UNDO_COALESCE_MS)?;
-                self.doc[section][key] = toml_edit::value(v as i64);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
                 self.settings.editor.undo_coalesce_ms = v;
             }
             ("editor", "progressive_open_threshold_bytes") => {
                 let v = as_uint(path, &value)?;
                 ensure_range(path, v, bounds::PROGRESSIVE_THRESHOLD_BYTES)?;
-                self.doc[section][key] = toml_edit::value(v as i64);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
                 self.settings.editor.progressive_open_threshold_bytes = v;
             }
             ("ai", "commands_enabled") => {
                 let v = as_bool_val(path, &value)?;
-                self.doc[section][key] = toml_edit::value(v);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v);
                 self.settings.ai.commands_enabled = v;
             }
             ("storage", "meta_sidecar") => {
                 let v = as_bool_val(path, &value)?;
-                self.doc[section][key] = toml_edit::value(v);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v);
                 self.settings.storage.meta_sidecar = v;
             }
             ("storage", "autosave_enabled") => {
                 let v = as_bool_val(path, &value)?;
-                self.doc[section][key] = toml_edit::value(v);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v);
                 self.settings.storage.autosave_enabled = v;
             }
             ("storage", "autosave_interval_ms") => {
                 let v = as_uint(path, &value)?;
                 ensure_range(path, v, bounds::AUTOSAVE_INTERVAL_MS)?;
-                self.doc[section][key] = toml_edit::value(v as i64);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
                 self.settings.storage.autosave_interval_ms = v;
             }
             ("storage", "session_restore") => {
                 let v = as_bool_val(path, &value)?;
-                self.doc[section][key] = toml_edit::value(v);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v);
                 self.settings.storage.session_restore = v;
             }
             ("appearance", "theme") => {
@@ -510,13 +543,13 @@ impl SettingsStore {
                         detail: "theme must be light | dark | system".into(),
                     });
                 }
-                self.doc[section][key] = toml_edit::value(v.as_str());
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v.as_str());
                 self.settings.appearance.theme = v;
             }
             ("appearance", "font_size_px") => {
                 let v = as_uint(path, &value)?;
                 ensure_range(path, v, bounds::FONT_SIZE_PX)?;
-                self.doc[section][key] = toml_edit::value(v as i64);
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
                 self.settings.appearance.font_size_px = v as u16;
             }
             // schema_version 为保留键：不可经 set 面（迁移框架独占）。

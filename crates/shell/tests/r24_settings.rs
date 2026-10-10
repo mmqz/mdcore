@@ -9,7 +9,9 @@
 //! 6. 未来 schema：全默认 + save 拒写（防降写毁数据）；
 //! 7. set 面：已知键封闭集 + 类型/值域校验 + doc↔快照同步 + 重载往返；
 //! 8. 文件面：不存在=Created / 原子写往返 / 与核心常量对齐（COALESCE_MS）；
-//! 9. JSON 形状：serde 往返稳定（web `__settings()` 面的 Rust 侧锚）。
+//! 9. JSON 形状：serde 往返稳定（web `__settings()` 面的 Rust 侧锚）；
+//! 10. R24-a1 修复锁：写读形态对称——节缺失 set 产出标准表（非 inline
+//!     表）且重载存活；inline 节升格保值；读侧容错认 inline 节。
 
 use std::path::PathBuf;
 
@@ -321,4 +323,79 @@ fn settings_json_shape_roundtrips() {
     for section in ["editor", "ai", "storage", "appearance"] {
         assert!(v.get(section).is_some(), "{section} 层必须在 JSON 面");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 10. R24-a1 修复锁：写读形态对称（set 在节缺失/inline 形态上的落盘形态）
+// ---------------------------------------------------------------------------
+
+/// R24-a1 主锁（bug 复现路径）：sidecar 的 `[editor]` 整节缺失（缺键 =
+/// 默认是设计行为）→ `set()` 已知键 → 落盘必须是**标准表头**形态，且
+/// 重载读回写入值。修复前：toml_edit 的 IndexMut 把缺失节自动升格为
+/// **inline 表**（`editor = { undo_coalesce_ms = 500 }`），而读侧
+/// `as_table()` 只认标准表 → 值落盘但下次 load 静默回默认（设置丢失）。
+#[test]
+fn set_on_missing_section_writes_standard_table_and_survives_reload() {
+    let text = "schema_version = 1\n\n[appearance]\ntheme = \"dark\"\n";
+    let mut store = SettingsStore::from_content(text);
+    assert!(matches!(store.status(), LoadStatus::Clean), "缺节=默认合并");
+
+    store
+        .set("editor.undo_coalesce_ms", SettingValue::Uint(500))
+        .expect("节缺失时 set 必须成功（默认合并语义下节按需创建）");
+    let out = store.to_toml().expect("序列化");
+
+    assert!(out.contains("[editor]"), "写入形态必须是标准表头，不得是 inline 表");
+    assert!(!out.contains("editor = {"), "inline 形态 = 读不回 = 静默丢设置（R24-a1 修复点）");
+    assert!(out.contains("undo_coalesce_ms = 500"));
+
+    // 往返闭环：load 必须读回写入值（修复前此处回默认 1000）。
+    let (s2, st2) = parse_settings(&out);
+    assert_eq!(st2, LoadStatus::Clean);
+    assert_eq!(s2.editor.undo_coalesce_ms, 500, "写入值必须在重载后存活");
+    // 其余键不受影响
+    assert_eq!(s2.appearance.theme, "dark");
+    assert_eq!(
+        s2.storage, Settings::default().storage,
+        "未触碰的缺失节照常默认合并"
+    );
+}
+
+/// R24-a1 升格锁：文件中已存在 inline 节（手写 / 旧版本产物）→ `set()`
+/// 该节键 → 节**升格**为标准表且**值保留**（含未知键——前向兼容不丢字节）。
+#[test]
+fn set_promotes_inline_section_preserving_values() {
+    let text = concat!(
+        "schema_version = 1\n",
+        "editor = { undo_coalesce_ms = 700, future_knob = \"keep\" }\n"
+    );
+    let mut store = SettingsStore::from_content(text);
+    store
+        .set("editor.progressive_open_threshold_bytes", SettingValue::Uint(2048))
+        .expect("inline 节上的 set 必须成功");
+
+    let out = store.to_toml().expect("序列化");
+    assert!(out.contains("[editor]"), "inline 节升格为标准表");
+    assert!(out.contains("undo_coalesce_ms = 700"), "既有值保留");
+    assert!(out.contains("future_knob = \"keep\""), "未知键随升格保留（前向兼容）");
+    assert!(out.contains("progressive_open_threshold_bytes = 2048"));
+
+    // 升格后的往返：全部值读回。
+    let (s2, st2) = parse_settings(&out);
+    assert_eq!(st2, LoadStatus::Clean);
+    assert_eq!(s2.editor.undo_coalesce_ms, 700);
+    assert_eq!(s2.editor.progressive_open_threshold_bytes, 2048);
+}
+
+/// R24-a1 读侧容错锁：手写 inline 节（未经 set 改写）也必须能读——
+/// `item_of` 用 `as_table_like`（TableLike 覆盖 Table + InlineTable）。
+#[test]
+fn load_accepts_handwritten_inline_section() {
+    let text = "schema_version = 1\nstorage = { autosave_enabled = true, autosave_interval_ms = 1500 }\n";
+    let (s, status) = parse_settings(text);
+    assert_eq!(status, LoadStatus::Clean, "inline 节是合法 TOML，读侧不得丢");
+    assert!(s.storage.autosave_enabled, "inline 节键值必须读回");
+    assert_eq!(s.storage.autosave_interval_ms, 1500);
+    // 未涉及的层照常默认
+    assert_eq!(s.appearance, Settings::default().appearance);
 }

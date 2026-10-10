@@ -544,3 +544,41 @@ winnow）；serde/serde_json 复用既有（mdcore 已在 SBOM）。NOTICES 草�
 ③ 值域校验双侧同表（Rust set()/load 降级与 web 校验器共用 CONTRACT §4
 默认值表）；④ ai 层 v0 仅 commands_enabled（宿主 feature flag），键集
 扩充走 schema 版本迁移；⑤ web 快照 R24-d 接线后由宿主注入权威值。
+
+## R24 质量审计轮（2026-10-10，用户裁决开工序第一项）
+
+**方法**：双绿门禁复跑（基线确认）→ 逐模块代码勘察（lib/tree/op/history/
+settings/external/fingerprint/wasm 桥/mdshell）→ 边界探针（先探后写，
+复现后修复，探针升级为语义锁）。门禁基线：cargo 164/164 + scan 0
+（与 R24-a 收口一致）；审计后：**cargo 171/171**（+7 锁）+ scan 0 +
+wasm32 check 过 + clippy 零新增告警（2 条既有 wasm-bindgen 宏告警）。
+
+**R24-a1 修复（settings 写读形态不对称——P1 级静默丢设置）**：
+`set()` 直写 `doc[section][key]` 在节整段缺失时（缺键=默认是设计行为），
+toml_edit 的 IndexMut 把 `Item::None` 自动升格为 **InlineTable**
+（toml_edit index.rs `if let Item::None = *v` 分支），产出
+`editor = { undo_coalesce_ms = 500 }`；而读侧 `as_table()` 只认标准表
+→ **值落盘但下次 load 静默回默认**（用户设置丢失，运行时内存值与
+磁盘态分叉直到重启）。修复双面：写侧 `ensure_section`（缺失→标准表；
+inline→值保留升格；异形→空表重建）+ 读侧 `item_of` 改 `as_table_like`
+（TableLike 覆盖 Table+InlineTable，手写 inline 节容错可读）。
+锁 ×3（r24_settings.rs §10）：节缺失 set 产标准表+重载存活 / inline
+升格保值（含未知键）/ 读侧 inline 容错。
+
+**R24-a2 修复（SetMark 求逆不对称——undo 破坏「精确恢复前态」不变量）**：
+`invert_op` 对 SetMark 无条件翻转 `add`，与注释承诺（"no-op 的逆 =
+自身 no-op"）不符：独立条目中的冗余 add（apply no-op）undo 会删掉既有
+mark；移除不存在的 span（apply no-op）undo 会凭空造出 mark。修复：逆的
+方向由 **state-before 的 span 存在性**决定（no-op → 同向幂等；有效变更
+→ 反向）。合并窗内连击 add+add 并条后的单次 undo 撤整组（组前状态）
+是正确语义，作为对照锁固化。附带加固：SetMark 区间校验（start>end /
+end>len → Reject，与 ReplaceText 同款），Reject 后树零污染。
+锁 ×4（r24_quality_fixes.rs，新套件）。
+
+**审计结论（未动码项）**：lib.rs 事务管线/回滚/ADR 引用完备；tree.rs
+arena+环检查纪律清晰；history.rs 合并窗边界语义自洽（R12 双端 View +
+R21 System 边界）；fingerprint.rs 确定性契约落实（无 HashMap 迭代序、
+最小序位破平局）；external.rs adopt 失败回滚 + clear_interaction 时序
+正确；wasm 桥零宏魔法纪律保持。mdshell::settings 的 save() 无 fsync
+（rename 原子性足够、设置文件非文档数据，与 md+meta sidecar 同款纪律，
+不升级）。
