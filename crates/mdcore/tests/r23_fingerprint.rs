@@ -34,7 +34,11 @@ fn ids(core: &Core) -> Vec<BlockId> {
 }
 
 fn texts(core: &Core) -> Vec<String> {
-    core.tree.top_level().iter().map(|&c| core.tree.node(c).text.to_string()).collect()
+    core.tree
+        .top_level()
+        .iter()
+        .map(|&c| core.tree.node(c).text.to_string())
+        .collect()
 }
 
 // 1. 修饰性编辑：结构指纹稳定、内容指纹变化、匹配 edited（身份保持）
@@ -46,7 +50,10 @@ fn decorative_edit_keeps_structure_changes_content() {
     let mut fn_ = TreeFingerprint::new(&new);
     let fo0 = fo.block_fingerprint(old.top_level()[0]);
     let fn0 = fn_.block_fingerprint(new.top_level()[0]);
-    assert_eq!(fo0.structural, fn0.structural, "同型叶子段落结构指纹必须稳定");
+    assert_eq!(
+        fo0.structural, fn0.structural,
+        "同型叶子段落结构指纹必须稳定"
+    );
     assert_ne!(fo0.content, fn0.content, "改字必须翻内容指纹");
 
     let core = Core::from_markdown("hello world");
@@ -67,15 +74,21 @@ fn block_reorder_reports_moved() {
     let core = Core::from_markdown("a\nb\nc\nd");
     let before = ids(&core);
     let report = core.match_external_markdown("d\na\nb\nc", None);
-    assert!(report.added.is_empty() && report.removed.is_empty(), "重排不得误报增删");
+    assert!(
+        report.added.is_empty() && report.removed.is_empty(),
+        "重排不得误报增删"
+    );
     assert_eq!(report.moved.len(), 4);
     assert_eq!(report.kept_ids(), before, "四块身份全保");
     for m in &report.moved {
         assert!(!m.content_changed);
     }
     // 路径对照：d 3→0，a 0→1，b 1→2，c 2→3（按旧路径排序）。
-    let pairs: Vec<(usize, usize)> =
-        report.moved.iter().map(|m| (m.old_path[0], m.new_path[0])).collect();
+    let pairs: Vec<(usize, usize)> = report
+        .moved
+        .iter()
+        .map(|m| (m.old_path[0], m.new_path[0]))
+        .collect();
     assert_eq!(pairs, vec![(0, 1), (1, 2), (2, 3), (3, 0)]);
     assert_eq!(report.stats.exact, 4, "中段精确指纹配对");
 }
@@ -179,7 +192,10 @@ fn empty_document_and_full_delete() {
     assert_eq!(r.removed.len(), 2);
     assert_eq!(r.removed[0].subtree_size, 1);
     assert_eq!(r.removed.iter().map(|x| x.id).collect::<Vec<_>>(), all);
-    assert!(r.added.is_empty() && r.kept_ids().is_empty(), "全删 = 身份全灭");
+    assert!(
+        r.added.is_empty() && r.kept_ids().is_empty(),
+        "全删 = 身份全灭"
+    );
 
     let both = Core::new();
     let r = both.match_external_markdown("", None);
@@ -203,7 +219,10 @@ fn non_bmp_fingerprint_is_codepoint_semantics() {
     let d = f4.block_fingerprint(t4.top_level()[0]);
     assert_eq!(a, b, "同输入恒同指纹（跨解析会话）");
     assert_ne!(a.content, c.content, "不同增补平面字符必须不同指纹");
-    assert_ne!(a.content, d.content, "单 🎉 与双 🎉 不同（码点计数进入哈希）");
+    assert_ne!(
+        a.content, d.content,
+        "单 🎉 与双 🎉 不同（码点计数进入哈希）"
+    );
     assert_eq!(a.structural, d.structural, "同为叶子段落，结构指纹相同");
 
     let core = Core::from_markdown("🎉 hello");
@@ -236,7 +255,11 @@ fn manifest_fast_path_preserves_identity_through_rewrite() {
         .zip(all.iter())
         .map(|(&n, &id)| {
             let f = fnew.block_fingerprint(n);
-            ManifestEntry { id, structural: f.structural, content: f.content }
+            ManifestEntry {
+                id,
+                structural: f.structural,
+                content: f.content,
+            }
         })
         .collect();
     let fast = core.match_external_markdown(new_md, Some(&manifest));
@@ -270,7 +293,11 @@ fn manifest_verification_failure_falls_back() {
         .zip(all.iter())
         .map(|(&n, &id)| {
             let f = fnew.block_fingerprint(n);
-            ManifestEntry { id, structural: f.structural, content: f.content }
+            ManifestEntry {
+                id,
+                structural: f.structural,
+                content: f.content,
+            }
         })
         .collect();
     manifest[1].content = manifest[1].content.rotate_left(13);
@@ -298,7 +325,10 @@ fn similarity_threshold_semantics_locked() {
         &old_tree,
         &new_tree,
         None,
-        &MatchParams { similarity_threshold: 0.2, edit_window: 8 },
+        &MatchParams {
+            similarity_threshold: 0.2,
+            edit_window: 8,
+        },
     );
     assert_eq!(loose.edited.len(), 1, "0.25 ≥ 0.2 → 配对");
     // 阈值收到 0.99：高相似对照（hello world → hello brave world，containment 1.0）仍配对
@@ -306,15 +336,27 @@ fn similarity_threshold_semantics_locked() {
         &markdown_to_tree("hello world"),
         &markdown_to_tree("hello brave world"),
         None,
-        &MatchParams { similarity_threshold: 0.99, edit_window: 8 },
+        &MatchParams {
+            similarity_threshold: 0.99,
+            edit_window: 8,
+        },
     );
-    assert_eq!(strict.edited.len(), 1, "containment 满分对照在严阈值下仍配对");
+    assert_eq!(
+        strict.edited.len(),
+        1,
+        "containment 满分对照在严阈值下仍配对"
+    );
     // 窗宽锁：同型相似但相对位偏差超窗 → 不配对
     let far = match_trees(
-        &markdown_to_tree("alpha\nkeep0\nkeep1\nkeep2\nkeep3\nkeep4\nkeep5\nkeep6\nkeep7\nkeep8\nomega"),
+        &markdown_to_tree(
+            "alpha\nkeep0\nkeep1\nkeep2\nkeep3\nkeep4\nkeep5\nkeep6\nkeep7\nkeep8\nomega",
+        ),
         &markdown_to_tree("alpha\nins0\nins1\nins2\nins3\nins4\nins5\nins6\nins7\nins8\nomega"),
         None,
-        &MatchParams { similarity_threshold: 0.7, edit_window: 2 },
+        &MatchParams {
+            similarity_threshold: 0.7,
+            edit_window: 2,
+        },
     );
     assert!(
         far.removed.len() == 9
@@ -331,15 +373,23 @@ fn similarity_threshold_semantics_locked() {
 #[test]
 fn determinism_across_runs() {
     let build = || {
-        let core = Core::from_markdown("head\n- item one\n  - sub\n- item two\n| a | b |\n```\ncode\n```\ntail");
-        core.match_external_markdown("tail\n| a | b |\n```\ncode\n```\n- item two\n  - sub\n- item one\nhead", None)
+        let core = Core::from_markdown(
+            "head\n- item one\n  - sub\n- item two\n| a | b |\n```\ncode\n```\ntail",
+        );
+        core.match_external_markdown(
+            "tail\n| a | b |\n```\ncode\n```\n- item two\n  - sub\n- item one\nhead",
+            None,
+        )
     };
     let r1 = build();
     let r2 = build();
     assert_eq!(r1, r2, "报告（含 stats）必须逐字段相等");
     assert!(!r1.moved.is_empty());
     // 序列化形状也确定
-    assert_eq!(serde_json::to_string(&r1).unwrap(), serde_json::to_string(&r2).unwrap());
+    assert_eq!(
+        serde_json::to_string(&r1).unwrap(),
+        serde_json::to_string(&r2).unwrap()
+    );
     // 指纹值确定
     let t = markdown_to_tree("🎉 a\nb");
     let mut f1 = TreeFingerprint::new(&t);
@@ -361,7 +411,11 @@ fn perf_1mb_smoke() {
     };
     let n = 6300; // ≈ 163 B × 6300 ≈ 1.03 MB
     let doc: String = (0..n).map(|i| line(i, "")).collect::<Vec<_>>().join("\n");
-    assert!(doc.len() > 900_000 && doc.len() < 1_400_000, "规模口径 ≈1MB: {} B", doc.len());
+    assert!(
+        doc.len() > 900_000 && doc.len() < 1_400_000,
+        "规模口径 ≈1MB: {} B",
+        doc.len()
+    );
     let mut perturbed = doc.clone();
     let target = line(3000, "");
     let replaced = line(3000, "EDITED");
@@ -399,8 +453,14 @@ fn perf_1mb_smoke() {
         "R23-b perf (debug build): parse 1MB = {parse_ms} ms; match-only identical = {identical_ms} ms; match-only single-edit = {edited_ms} ms"
     );
     // debug 构建常数大（release 实测 ≈1/15）；门职责 = 抓 O(n²) 级退化而非绝对毫秒
-    assert!(identical_ms < 400, "identical {identical_ms} ms ≥ 400ms (match-only, debug)");
-    assert!(edited_ms < 400, "single-edit {edited_ms} ms ≥ 400ms (match-only, debug)");
+    assert!(
+        identical_ms < 400,
+        "identical {identical_ms} ms ≥ 400ms (match-only, debug)"
+    );
+    assert!(
+        edited_ms < 400,
+        "single-edit {edited_ms} ms ≥ 400ms (match-only, debug)"
+    );
 }
 
 // 14. 匹配只读：revision / 事件 / 树全部零触碰
@@ -433,12 +493,19 @@ fn heading_level_change_flips_structural_keeps_identity() {
     let mut fn_ = TreeFingerprint::new(&new);
     let fo0 = fo.block_fingerprint(old.top_level()[0]);
     let fn0 = fn_.block_fingerprint(new.top_level()[0]);
-    assert_ne!(fo0.structural, fn0.structural, "层级在属性关键位 → 结构指纹必变");
+    assert_ne!(
+        fo0.structural, fn0.structural,
+        "层级在属性关键位 → 结构指纹必变"
+    );
     assert_eq!(fo0.content, fn0.content, "标题文本未动 → 内容指纹不变");
 
     let core = Core::from_markdown("## Title");
     let report = core.match_external_markdown("### Title", None);
-    assert_eq!(report.edited.len(), 1, "层级改动 = edited（attrs 进 payload 比较）");
+    assert_eq!(
+        report.edited.len(),
+        1,
+        "层级改动 = edited（attrs 进 payload 比较）"
+    );
     assert_eq!(report.edited[0].id, ids(&core)[0]);
     assert!(report.edited[0].content_changed);
     assert_eq!(report.stats.similar, 1);

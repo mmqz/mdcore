@@ -75,6 +75,23 @@ pub enum OpenError {
     OutlineTargetOutOfRange(PageIndex),
 }
 
+/// 引擎装配失败（typed——宿主接线错误 fail-fast，不静默降级；与
+/// [`OpenError`] 同款纪律：装配期校验优于执行期静默错果）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachEngineError {
+    /// 引擎页数与会话元数据页数不符（双侧数值携带——T1 审计 O3 项：
+    /// Search/ExtractText 以 `meta.page_count` 为上界，双权威不一致的
+    /// 两条静默失败路径（引擎页多 → 漏末尾页 / 页少 → 整命令
+    /// `InvalidPage`）在装配面收口为单一显式拒绝）。拒绝时引擎 drop
+    /// （与 `open` 消耗参数的失败语义一致），会话保持 v0 注入路径。
+    PageCountMismatch {
+        /// 会话元数据页数（`meta.page_count`——打开期冻结的权威）。
+        expected: u32,
+        /// 引擎侧页数（[`DocumentEngine::page_count`]）。
+        engine: u32,
+    },
+}
+
 /// PDF 文档会话（打开后单形态；命令的唯一调度入口 = [`PdfSession::execute`]）。
 pub struct PdfSession {
     meta: DocumentMeta,
@@ -201,12 +218,27 @@ impl PdfSession {
     /// 命令面/载荷/限额语义零变化（语义锁背书：注入与引擎两路径同锁）。
     /// 二次注入直接替换在位引擎（旧引擎 drop）。
     ///
-    /// **调用方合同**（pdf-c-1r 审计登记）：`engine` 的页数语义必须与
-    /// `meta.page_count` 一致——双权威不一致时，引擎页少 → 整命令
-    /// `InvalidPage`（安全侧：显式失败）；引擎页多 → 静默漏搜末尾页。
-    /// 宿主接线层（PDF-d 视图）负责同源构造两者，禁止独立来源拼装。
-    pub fn attach_engine(&mut self, engine: Box<dyn DocumentEngine>) {
+    /// **装配期一致性校验**（T1 审计 O3 项，替代旧调用方合同）：引擎
+    /// 页数（[`DocumentEngine::page_count`]）≠ `meta.page_count` 时
+    /// typed 拒绝（[`AttachEngineError::PageCountMismatch`，双侧数值
+    /// 携带）——Search/ExtractText 以 `meta.page_count` 为上界，双权威
+    /// 不一致的两条静默失败路径（引擎页多 → 静默漏末尾页；引擎页少 →
+    /// 整命令 `InvalidPage`）在装配面收口为单一显式失败。拒绝时引擎
+    /// drop（与 `open` 消耗参数的失败语义一致），会话保持 v0 注入路径；
+    /// 宿主接线层仍应同源构造两者（校验是防线非许可）。
+    pub fn attach_engine(
+        &mut self,
+        engine: Box<dyn DocumentEngine>,
+    ) -> Result<(), AttachEngineError> {
+        let engine_pages = engine.page_count();
+        if engine_pages != self.meta.page_count.0 {
+            return Err(AttachEngineError::PageCountMismatch {
+                expected: self.meta.page_count.0,
+                engine: engine_pages,
+            });
+        }
         self.engine = Some(engine);
+        Ok(())
     }
 
     /// 取出引擎（会话回到 v0 宿主注入路径；引擎可移交渲染工人——

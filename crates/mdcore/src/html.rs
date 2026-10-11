@@ -112,12 +112,20 @@ pub fn html_to_tree(html: &str) -> BlockTree {
 /// HTML → BlockTree + 结构化 Loss Report。
 pub fn import_html(html: &str) -> HtmlImport {
     let toks = tokenize(html);
-    let mut p = Parser { toks: &toks, pos: 0, losses: Vec::new(), depth: 0 };
+    let mut p = Parser {
+        toks: &toks,
+        pos: 0,
+        losses: Vec::new(),
+        depth: 0,
+    };
     let nodes = p.parse_blocks(&[], 0);
     let mut tree = BlockTree::new();
     let root = tree.root();
     materialize(nodes, &mut tree, root);
-    HtmlImport { tree, losses: p.losses }
+    HtmlImport {
+        tree,
+        losses: p.losses,
+    }
 }
 
 /// BlockTree → 语义 HTML fragment（不含 `<html>`/`<head>`；全文本转义）。
@@ -134,9 +142,20 @@ pub fn tree_to_html(tree: &BlockTree) -> String {
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
     /// 原始文本（未实体解码；start = 输入 char offset）。
-    Text { raw: String, start: usize },
-    Open { name: String, attrs: Vec<(String, String)>, self_close: bool, start: usize },
-    Close { name: String, start: usize },
+    Text {
+        raw: String,
+        start: usize,
+    },
+    Open {
+        name: String,
+        attrs: Vec<(String, String)>,
+        self_close: bool,
+        start: usize,
+    },
+    Close {
+        name: String,
+        start: usize,
+    },
 }
 
 const VOID: &[&str] = &[
@@ -160,7 +179,10 @@ fn tokenize(input: &str) -> Vec<Tok> {
     let flush = |toks: &mut Vec<Tok>, tstart: &mut Option<usize>, end: usize, coff: usize| {
         if let Some(s) = *tstart {
             if end > s {
-                toks.push(Tok::Text { raw: input[s..end].to_string(), start: coff - input[s..end].chars().count() });
+                toks.push(Tok::Text {
+                    raw: input[s..end].to_string(),
+                    start: coff - input[s..end].chars().count(),
+                });
             }
             *tstart = None;
         }
@@ -285,7 +307,12 @@ fn tokenize(input: &str) -> Vec<Tok> {
                 }
             }
             let tag_end = j;
-            toks.push(Tok::Open { name: name.clone(), attrs, self_close, start: coff });
+            toks.push(Tok::Open {
+                name: name.clone(),
+                attrs,
+                self_close,
+                start: coff,
+            });
             coff += input[i..tag_end].chars().count();
             i = tag_end;
             if raw_text_element(&name) {
@@ -295,7 +322,10 @@ fn tokenize(input: &str) -> Vec<Tok> {
                 match close {
                     Some(abs) => {
                         if abs > i {
-                            toks.push(Tok::Text { raw: input[i..abs].to_string(), start: coff });
+                            toks.push(Tok::Text {
+                                raw: input[i..abs].to_string(),
+                                start: coff,
+                            });
                             coff += input[i..abs].chars().count();
                         }
                         let end = match bytes[abs..].iter().position(|&b| b == b'>') {
@@ -308,7 +338,10 @@ fn tokenize(input: &str) -> Vec<Tok> {
                     }
                     None => {
                         if len > i {
-                            toks.push(Tok::Text { raw: input[i..len].to_string(), start: coff });
+                            toks.push(Tok::Text {
+                                raw: input[i..len].to_string(),
+                                start: coff,
+                            });
                             coff += input[i..len].chars().count();
                         }
                         toks.push(Tok::Close { name, start: coff });
@@ -355,8 +388,9 @@ fn decode_entities(s: &str) -> String {
                     "apos" => Some('\''),
                     "nbsp" => Some('\u{a0}'),
                     other => {
-                        let num = if let Some(hex) =
-                            other.strip_prefix("#x").or_else(|| other.strip_prefix("#X"))
+                        let num = if let Some(hex) = other
+                            .strip_prefix("#x")
+                            .or_else(|| other.strip_prefix("#X"))
                         {
                             u32::from_str_radix(hex, 16).ok()
                         } else {
@@ -420,8 +454,26 @@ fn escape_html(s: &str) -> String {
 
 /// 结构化解析的块标签。
 const HANDLED: &[&str] = &[
-    "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "table", "hr",
-    "thead", "tbody", "tfoot", "tr", "th", "td",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "blockquote",
+    "pre",
+    "table",
+    "hr",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "th",
+    "td",
 ];
 
 /// 嵌入/脚本/元数据：整体跳过（Dropped）。
@@ -437,13 +489,36 @@ const SCAFFOLD: &[&str] = &["html", "body", "head"];
 const VOID_DROP: &[&str] = &["meta", "link", "input"];
 
 /// 表单控件：整体跳过（Dropped）。
-const FORM_SKIP: &[&str] = &["button", "select", "option", "textarea", "datalist", "output"];
+const FORM_SKIP: &[&str] = &[
+    "button", "select", "option", "textarea", "datalist", "output",
+];
 
 /// 未知/分节容器：透明穿轴（DemotedToParagraph）。
 const TRANSPARENT: &[&str] = &[
-    "div", "main", "section", "article", "aside", "nav", "header", "footer", "figure",
-    "figcaption", "center", "address", "dialog", "details", "summary", "dl", "dt", "dd", "form",
-    "fieldset", "legend", "hgroup", "search", "menu",
+    "div",
+    "main",
+    "section",
+    "article",
+    "aside",
+    "nav",
+    "header",
+    "footer",
+    "figure",
+    "figcaption",
+    "center",
+    "address",
+    "dialog",
+    "details",
+    "summary",
+    "dl",
+    "dt",
+    "dd",
+    "form",
+    "fieldset",
+    "legend",
+    "hgroup",
+    "search",
+    "menu",
 ];
 
 /// 行内 mark 标签 → kind。
@@ -481,7 +556,13 @@ struct BNode {
 
 impl BNode {
     fn leaf(kind: BlockKind, text: String, marks: Vec<MarkSpan>, attrs: Attrs) -> Self {
-        BNode { kind, attrs, text, marks, children: Vec::new() }
+        BNode {
+            kind,
+            attrs,
+            text,
+            marks,
+            children: Vec::new(),
+        }
     }
 }
 
@@ -493,13 +574,26 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn loss(&mut self, offset: usize, original: String, d: LossDisposition, note: impl Into<String>) {
-        self.losses.push(Loss { offset, original, disposition: d, note: note.into() });
+    fn loss(
+        &mut self,
+        offset: usize,
+        original: String,
+        d: LossDisposition,
+        note: impl Into<String>,
+    ) {
+        self.losses.push(Loss {
+            offset,
+            original,
+            disposition: d,
+            note: note.into(),
+        });
     }
 
     fn tok_start(&self) -> usize {
         match self.toks.get(self.pos) {
-            Some(Tok::Text { start, .. }) | Some(Tok::Open { start, .. }) | Some(Tok::Close { start, .. }) => *start,
+            Some(Tok::Text { start, .. })
+            | Some(Tok::Open { start, .. })
+            | Some(Tok::Close { start, .. }) => *start,
             None => 0,
         }
     }
@@ -519,7 +613,9 @@ impl<'a> Parser<'a> {
     /// 跳过当前元素（Open 已在 pos）：按同名标签配平；void 元素不配平。
     fn skip_element(&mut self) {
         let name = match self.toks.get(self.pos) {
-            Some(Tok::Open { name, self_close, .. }) => {
+            Some(Tok::Open {
+                name, self_close, ..
+            }) => {
                 let n = name.clone();
                 self.pos += 1;
                 if *self_close || VOID.contains(&n.as_str()) {
@@ -532,7 +628,11 @@ impl<'a> Parser<'a> {
         let mut depth = 1usize;
         while let Some(t) = self.toks.get(self.pos) {
             match t {
-                Tok::Open { name: n, self_close, .. } => {
+                Tok::Open {
+                    name: n,
+                    self_close,
+                    ..
+                } => {
                     self.pos += 1;
                     if n == &name && !*self_close && !VOID.contains(&n.as_str()) {
                         depth += 1;
@@ -575,28 +675,44 @@ impl<'a> Parser<'a> {
                         let off = self.tok_start();
                         let desc = self.describe_open();
                         self.skip_element();
-                        self.loss(off, desc, LossDisposition::Dropped,
-                            "嵌入/脚本类元素：DM v0 无对应块型，整体丢弃");
+                        self.loss(
+                            off,
+                            desc,
+                            LossDisposition::Dropped,
+                            "嵌入/脚本类元素：DM v0 无对应块型，整体丢弃",
+                        );
                     } else if SCAFFOLD.contains(&name.as_str()) {
                         self.pos += 1;
                     } else if VOID_DROP.contains(&name.as_str()) {
                         let off = self.tok_start();
                         let desc = self.describe_open();
                         self.pos += 1;
-                        self.loss(off, desc, LossDisposition::Dropped,
-                            "void 元数据/控件标签：无内容价值，跳过");
+                        self.loss(
+                            off,
+                            desc,
+                            LossDisposition::Dropped,
+                            "void 元数据/控件标签：无内容价值，跳过",
+                        );
                     } else if FORM_SKIP.contains(&name.as_str()) {
                         let off = self.tok_start();
                         let desc = self.describe_open();
                         self.skip_element();
-                        self.loss(off, desc, LossDisposition::Dropped,
-                            "表单控件：非文档内容，整体丢弃");
+                        self.loss(
+                            off,
+                            desc,
+                            LossDisposition::Dropped,
+                            "表单控件：非文档内容，整体丢弃",
+                        );
                     } else if TRANSPARENT.contains(&name.as_str()) {
                         let off = self.tok_start();
                         let desc = self.describe_open();
                         self.pos += 1;
-                        self.loss(off, desc, LossDisposition::DemotedToParagraph,
-                            "未知/分节容器：透明穿轴，子内容按块解析保留");
+                        self.loss(
+                            off,
+                            desc,
+                            LossDisposition::DemotedToParagraph,
+                            "未知/分节容器：透明穿轴，子内容按块解析保留",
+                        );
                     } else {
                         // 行内标签 / 未知标签出现在块层：收集为段落
                         let (text, marks) = self.parse_inline();
@@ -622,8 +738,12 @@ impl<'a> Parser<'a> {
             let off = self.tok_start();
             let desc = self.describe_open();
             self.skip_element();
-            self.loss(off, desc, LossDisposition::RawBlock,
-                format!("嵌套深度超过 {MAX_DEPTH} 层，跳过该子树"));
+            self.loss(
+                off,
+                desc,
+                LossDisposition::RawBlock,
+                format!("嵌套深度超过 {MAX_DEPTH} 层，跳过该子树"),
+            );
             return Vec::new();
         }
         match name {
@@ -644,7 +764,12 @@ impl<'a> Parser<'a> {
             }
             "hr" => {
                 self.pos += 1;
-                vec![BNode::leaf(BlockKind::ThematicBreak, String::new(), Vec::new(), Attrs::new())]
+                vec![BNode::leaf(
+                    BlockKind::ThematicBreak,
+                    String::new(),
+                    Vec::new(),
+                    Attrs::new(),
+                )]
             }
             "ul" | "ol" => self.parse_list(name, list_depth),
             "blockquote" => {
@@ -670,8 +795,12 @@ impl<'a> Parser<'a> {
                 self.depth += 1;
                 let kids = self.parse_blocks(&[name], list_depth);
                 self.depth -= 1;
-                self.loss(off, desc, LossDisposition::DemotedToParagraph,
-                    "游离的表格/列表子元素（缺少父容器）：内容解包保留");
+                self.loss(
+                    off,
+                    desc,
+                    LossDisposition::DemotedToParagraph,
+                    "游离的表格/列表子元素（缺少父容器）：内容解包保留",
+                );
                 kids
             }
         }
@@ -688,7 +817,10 @@ impl<'a> Parser<'a> {
     fn parse_list(&mut self, tag: &str, list_depth: usize) -> Vec<BNode> {
         let start_num = if tag == "ol" {
             if let Some(Tok::Open { attrs, .. }) = self.toks.get(self.pos) {
-                attr_of(attrs, "start").and_then(|s| s.trim().parse::<u32>().ok()).filter(|&n| n >= 1).unwrap_or(1)
+                attr_of(attrs, "start")
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .filter(|&n| n >= 1)
+                    .unwrap_or(1)
             } else {
                 1
             }
@@ -714,16 +846,24 @@ impl<'a> Parser<'a> {
                     let off = self.tok_start();
                     let desc = self.describe_open();
                     self.skip_element();
-                    self.loss(off, desc, LossDisposition::Dropped,
-                        "列表直接子元素非 <li>：无法挂载，丢弃");
+                    self.loss(
+                        off,
+                        desc,
+                        LossDisposition::Dropped,
+                        "列表直接子元素非 <li>：无法挂载，丢弃",
+                    );
                 }
                 Some(Tok::Text { raw, .. }) => {
                     let t = collapse_ws(&decode_entities(raw));
                     let off = self.tok_start();
                     self.pos += 1;
                     if !t.trim().is_empty() {
-                        self.loss(off, format!("<{tag}>") , LossDisposition::Dropped,
-                            "游离于 <li> 之外的文本：丢弃");
+                        self.loss(
+                            off,
+                            format!("<{tag}>"),
+                            LossDisposition::Dropped,
+                            "游离于 <li> 之外的文本：丢弃",
+                        );
                     }
                 }
             }
@@ -750,10 +890,16 @@ impl<'a> Parser<'a> {
         let mut children = Vec::new();
         for b in blocks {
             match b.kind {
-                BlockKind::Paragraph => fold_inline(&mut text, &mut blen, &mut marks, b.text, b.marks),
+                BlockKind::Paragraph => {
+                    fold_inline(&mut text, &mut blen, &mut marks, b.text, b.marks)
+                }
                 BlockKind::Heading => {
-                    self.loss(li_off, "heading".into(), LossDisposition::DemotedToParagraph,
-                        "<li> 内的标题块：文本并入条目（DM/MD 无此结构）");
+                    self.loss(
+                        li_off,
+                        "heading".into(),
+                        LossDisposition::DemotedToParagraph,
+                        "<li> 内的标题块：文本并入条目（DM/MD 无此结构）",
+                    );
                     fold_inline(&mut text, &mut blen, &mut marks, b.text, b.marks);
                 }
                 _ => children.push(b),
@@ -768,7 +914,13 @@ impl<'a> Parser<'a> {
         // depth 与 markdown.rs 对齐：1 起始（顶层 li = 1，嵌套逐层 +1；
         // markdown 侧 = 缩进/2 + 1，见 markdown.rs list_item_of）。
         attrs.insert("depth".into(), (list_depth + 1).to_string());
-        BNode { kind: BlockKind::ListItem, attrs, text, marks, children }
+        BNode {
+            kind: BlockKind::ListItem,
+            attrs,
+            text,
+            marks,
+            children,
+        }
     }
 
     fn parse_pre(&mut self) -> BNode {
@@ -804,8 +956,12 @@ impl<'a> Parser<'a> {
                     if !logged_markup {
                         logged_markup = true;
                         let off = self.tok_start();
-                        self.loss(off, "pre 内行内标签".into(), LossDisposition::Dropped,
-                            "<pre> 内的行内标签（高亮 span 等）：丢弃，文本保留");
+                        self.loss(
+                            off,
+                            "pre 内行内标签".into(),
+                            LossDisposition::Dropped,
+                            "<pre> 内的行内标签（高亮 span 等）：丢弃，文本保留",
+                        );
                     }
                     self.pos += 1;
                 }
@@ -869,8 +1025,12 @@ impl<'a> Parser<'a> {
                             Some(Tok::Open { name, .. }) if name == "table" => {
                                 let off = self.tok_start();
                                 self.skip_element();
-                                self.loss(off, "<table>".into(), LossDisposition::Dropped,
-                                    "嵌套表格：DM v0 不支持，丢弃");
+                                self.loss(
+                                    off,
+                                    "<table>".into(),
+                                    LossDisposition::Dropped,
+                                    "嵌套表格：DM v0 不支持，丢弃",
+                                );
                             }
                             Some(Tok::Open { .. }) => self.pos += 1,
                             Some(Tok::Text { .. }) => self.pos += 1,
@@ -878,14 +1038,21 @@ impl<'a> Parser<'a> {
                     }
                     rows.push(row);
                 }
-                Some(Tok::Open { name, .. }) if name == "thead" || name == "tbody" || name == "tfoot" => {
+                Some(Tok::Open { name, .. })
+                    if name == "thead" || name == "tbody" || name == "tfoot" =>
+                {
                     self.pos += 1;
                 }
                 Some(Tok::Open { name, .. }) if name == "caption" => {
                     let off = self.tok_start();
                     let desc = self.describe_open();
                     self.skip_element();
-                    self.loss(off, desc, LossDisposition::Dropped, "表格标题 caption：丢弃");
+                    self.loss(
+                        off,
+                        desc,
+                        LossDisposition::Dropped,
+                        "表格标题 caption：丢弃",
+                    );
                 }
                 Some(Tok::Open { name, .. }) if name == "colgroup" => {
                     self.skip_element();
@@ -907,8 +1074,12 @@ impl<'a> Parser<'a> {
                     let off = self.tok_start();
                     let desc = self.describe_open();
                     self.skip_element();
-                    self.loss(off, desc, LossDisposition::Dropped,
-                        "表格内的非结构元素：丢弃");
+                    self.loss(
+                        off,
+                        desc,
+                        LossDisposition::Dropped,
+                        "表格内的非结构元素：丢弃",
+                    );
                 }
                 Some(Tok::Text { raw, .. }) => {
                     let t = collapse_ws(&decode_entities(raw));
@@ -922,11 +1093,20 @@ impl<'a> Parser<'a> {
         let col = rows.iter().map(|r| r.len()).max().unwrap_or(0);
         if col == 0 {
             let off = self.tok_start();
-            self.loss(off, "<table>".into(), LossDisposition::RawBlock,
-                "表格无可解析单元格：可见文本降级为段落");
+            self.loss(
+                off,
+                "<table>".into(),
+                LossDisposition::RawBlock,
+                "表格无可解析单元格：可见文本降级为段落",
+            );
             let mut out = Vec::new();
             if !raw_text.is_empty() {
-                out.push(BNode::leaf(BlockKind::Paragraph, raw_text, Vec::new(), Attrs::new()));
+                out.push(BNode::leaf(
+                    BlockKind::Paragraph,
+                    raw_text,
+                    Vec::new(),
+                    Attrs::new(),
+                ));
             }
             return out;
         }
@@ -937,10 +1117,19 @@ impl<'a> Parser<'a> {
         let text = canonical_table_text(&header, &rows);
         if any_cell_marks {
             let off = self.tok_start();
-            self.loss(off, "<td>".into(), LossDisposition::Dropped,
-                "表格单元格内的行内 mark：管道行文本不可承载，丢弃（样式存于文本）");
+            self.loss(
+                off,
+                "<td>".into(),
+                LossDisposition::Dropped,
+                "表格单元格内的行内 mark：管道行文本不可承载，丢弃（样式存于文本）",
+            );
         }
-        vec![BNode::leaf(BlockKind::Table, text, Vec::new(), Attrs::new())]
+        vec![BNode::leaf(
+            BlockKind::Table,
+            text,
+            Vec::new(),
+            Attrs::new(),
+        )]
     }
 
     // ---- 行内 ----
@@ -972,7 +1161,12 @@ impl<'a> Parser<'a> {
                     blen += t.chars().count();
                     last_nl = false;
                 }
-                Some(Tok::Open { name, attrs, self_close, .. }) => {
+                Some(Tok::Open {
+                    name,
+                    attrs,
+                    self_close,
+                    ..
+                }) => {
                     let name = name.clone();
                     let sc = *self_close;
                     match name.as_str() {
@@ -999,8 +1193,12 @@ impl<'a> Parser<'a> {
                                 })
                                 .unwrap_or_default();
                             self.pos += 1;
-                            self.loss(off, "<img>".into(), LossDisposition::Dropped,
-                                format!("图片：DM v0 无图片块型，丢弃（alt: {:?}）", alt));
+                            self.loss(
+                                off,
+                                "<img>".into(),
+                                LossDisposition::Dropped,
+                                format!("图片：DM v0 无图片块型，丢弃（alt: {:?}）", alt),
+                            );
                         }
                         "wbr" | "source" | "track" | "param" | "area" | "base" | "col" => {
                             self.pos += 1;
@@ -1020,8 +1218,12 @@ impl<'a> Parser<'a> {
                             if !attrs.is_empty() {
                                 let off = self.tok_start();
                                 let desc = self.describe_open();
-                                self.loss(off, desc, LossDisposition::Dropped,
-                                    "行内样式/链接标签：文本保留，属性丢弃");
+                                self.loss(
+                                    off,
+                                    desc,
+                                    LossDisposition::Dropped,
+                                    "行内样式/链接标签：文本保留，属性丢弃",
+                                );
                             }
                             self.pos += 1;
                             if !sc {
@@ -1040,7 +1242,11 @@ impl<'a> Parser<'a> {
                             Some(idx) => {
                                 let (_, _, s) = open_marks.remove(idx);
                                 if blen > s {
-                                    marks.push(MarkSpan { start: s, end: blen, kind: kind.to_string() });
+                                    marks.push(MarkSpan {
+                                        start: s,
+                                        end: blen,
+                                        kind: kind.to_string(),
+                                    });
                                 }
                                 self.pos += 1;
                             }
@@ -1055,7 +1261,11 @@ impl<'a> Parser<'a> {
         // 未闭合 mark 就地收口（恢复，不 panic）
         for (_, kind, s) in open_marks.into_iter().rev() {
             if blen > s {
-                marks.push(MarkSpan { start: s, end: blen, kind: kind.to_string() });
+                marks.push(MarkSpan {
+                    start: s,
+                    end: blen,
+                    kind: kind.to_string(),
+                });
             }
         }
         let (text, mut marks) = trim_inline(&buf, marks);
@@ -1086,7 +1296,13 @@ fn lang_from_class(attrs: &[(String, String)]) -> String {
 }
 
 /// 段落折叠进 li 条目文本：空格连接 + mark 平移。
-fn fold_inline(text: &mut String, blen: &mut usize, marks: &mut Vec<MarkSpan>, add: String, add_marks: Vec<MarkSpan>) {
+fn fold_inline(
+    text: &mut String,
+    blen: &mut usize,
+    marks: &mut Vec<MarkSpan>,
+    add: String,
+    add_marks: Vec<MarkSpan>,
+) {
     if add.is_empty() {
         return;
     }
@@ -1095,7 +1311,11 @@ fn fold_inline(text: &mut String, blen: &mut usize, marks: &mut Vec<MarkSpan>, a
         *blen += 1;
     }
     for m in add_marks {
-        marks.push(MarkSpan { start: m.start + *blen, end: m.end + *blen, kind: m.kind });
+        marks.push(MarkSpan {
+            start: m.start + *blen,
+            end: m.end + *blen,
+            kind: m.kind,
+        });
     }
     text.push_str(&add);
     *blen += add.chars().count();
@@ -1104,8 +1324,15 @@ fn fold_inline(text: &mut String, blen: &mut usize, marks: &mut Vec<MarkSpan>, a
 /// 块缘裁剪（首尾空白），mark 区间同步平移/裁剪。
 fn trim_inline(buf: &str, marks: Vec<MarkSpan>) -> (String, Vec<MarkSpan>) {
     let chars: Vec<char> = buf.chars().collect();
-    let start = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(chars.len());
-    let end = chars.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(start);
+    let start = chars
+        .iter()
+        .position(|c| !c.is_whitespace())
+        .unwrap_or(chars.len());
+    let end = chars
+        .iter()
+        .rposition(|c| !c.is_whitespace())
+        .map(|i| i + 1)
+        .unwrap_or(start);
     let text: String = chars[start..end].iter().collect();
     let total = end - start;
     let out = marks
@@ -1114,7 +1341,11 @@ fn trim_inline(buf: &str, marks: Vec<MarkSpan>) -> (String, Vec<MarkSpan>) {
             let s = m.start.saturating_sub(start).min(total);
             let e = m.end.saturating_sub(start).min(total);
             if e > s {
-                Some(MarkSpan { start: s, end: e, kind: m.kind })
+                Some(MarkSpan {
+                    start: s,
+                    end: e,
+                    kind: m.kind,
+                })
             } else {
                 None
             }
@@ -1150,7 +1381,11 @@ fn unescape_cell(s: &str) -> String {
 fn canonical_table_text(header: &[String], body: &[Vec<String>]) -> String {
     let col = header.len();
     let line = |cells: &[String]| -> String {
-        let inner: Vec<String> = cells.iter().take(col).map(|c| format!(" {} ", escape_cell(c))).collect();
+        let inner: Vec<String> = cells
+            .iter()
+            .take(col)
+            .map(|c| format!(" {} ", escape_cell(c)))
+            .collect();
         format!("|{}|", inner.join("|"))
     };
     let mut lines = vec![line(header)];
@@ -1169,7 +1404,9 @@ fn is_separator_row(cells: &[String]) -> bool {
     !cells.is_empty()
         && cells.iter().all(|c| {
             let t = c.trim();
-            !t.is_empty() && t.chars().all(|ch| ch == ':' || ch == '-' || ch == ' ') && t.contains('-')
+            !t.is_empty()
+                && t.chars().all(|ch| ch == ':' || ch == '-' || ch == ' ')
+                && t.contains('-')
         })
 }
 
@@ -1218,7 +1455,9 @@ fn parse_table_text(text: &str) -> Option<(Vec<String>, Vec<Vec<String>>)> {
         return None;
     }
     let header = rows.remove(0);
-    let col = header.len().max(rows.iter().map(|r| r.len()).max().unwrap_or(0));
+    let col = header
+        .len()
+        .max(rows.iter().map(|r| r.len()).max().unwrap_or(0));
     if col == 0 {
         return None;
     }
@@ -1251,7 +1490,10 @@ fn materialize(nodes: Vec<BNode>, tree: &mut BlockTree, parent: NodeId) {
 const INLINE_KINDS: [&str; 5] = ["strong", "em", "code", "del", "u"];
 
 fn kind_rank(k: &str) -> usize {
-    INLINE_KINDS.iter().position(|&x| x == k).unwrap_or(usize::MAX)
+    INLINE_KINDS
+        .iter()
+        .position(|&x| x == k)
+        .unwrap_or(usize::MAX)
 }
 
 /// 行内导出：转义 + mark 标签化（活跃集归一化，保证标签合法嵌套）。
@@ -1261,7 +1503,10 @@ fn kind_rank(k: &str) -> usize {
 fn inline_html(text: &str, marks: &[MarkSpan]) -> String {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
-    let known: Vec<&MarkSpan> = marks.iter().filter(|m| INLINE_KINDS.contains(&m.kind.as_str())).collect();
+    let known: Vec<&MarkSpan> = marks
+        .iter()
+        .filter(|m| INLINE_KINDS.contains(&m.kind.as_str()))
+        .collect();
     let mut open: Vec<String> = Vec::new();
     let mut out = String::new();
     for i in 0..=len {
@@ -1286,8 +1531,8 @@ fn inline_html(text: &str, marks: &[MarkSpan]) -> String {
             out.push_str(&format!("</{}>", top));
         }
         // 栈不是期望集的前缀（交叉 mark）→ 全收口重开
-        let prefix_ok = open.len() <= desired.len()
-            && open.iter().zip(desired.iter()).all(|(a, b)| a == b);
+        let prefix_ok =
+            open.len() <= desired.len() && open.iter().zip(desired.iter()).all(|(a, b)| a == b);
         if !prefix_ok {
             while let Some(top) = open.pop() {
                 out.push_str(&format!("</{}>", top));
@@ -1354,7 +1599,10 @@ fn render_block(tree: &BlockTree, id: NodeId, out: &mut String) {
             if lang.is_empty() {
                 out.push_str("<pre><code>");
             } else {
-                out.push_str(&format!("<pre><code class=\"language-{}\">", escape_html(&lang)));
+                out.push_str(&format!(
+                    "<pre><code class=\"language-{}\">",
+                    escape_html(&lang)
+                ));
             }
             out.push_str(&escape_html(&node.text.to_string()));
             out.push_str("</code></pre>\n");
@@ -1402,7 +1650,11 @@ fn render_block(tree: &BlockTree, id: NodeId, out: &mut String) {
 /// 连续 ListItem 兄弟 → `<ul>`/`<ol>`；ordered 由首项 marker 决定（已知有损点 4）。
 fn render_list(tree: &BlockTree, items: &[NodeId], out: &mut String) {
     let first = tree.node(items[0]);
-    let marker = first.attrs.get("marker").cloned().unwrap_or_else(|| "-".into());
+    let marker = first
+        .attrs
+        .get("marker")
+        .cloned()
+        .unwrap_or_else(|| "-".into());
     let digits: String = marker.chars().take_while(|c| c.is_ascii_digit()).collect();
     let ordered = !digits.is_empty();
     if ordered {

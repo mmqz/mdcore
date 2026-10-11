@@ -102,14 +102,19 @@ impl Default for Settings {
                 undo_coalesce_ms: mdcore::history::COALESCE_MS,
                 progressive_open_threshold_bytes: 1_048_576,
             },
-            ai: AiSettings { commands_enabled: true },
+            ai: AiSettings {
+                commands_enabled: true,
+            },
             storage: StorageSettings {
                 meta_sidecar: true,
                 autosave_enabled: false,
                 autosave_interval_ms: 30_000,
                 session_restore: true,
             },
-            appearance: AppearanceSettings { theme: "system".into(), font_size_px: 15 },
+            appearance: AppearanceSettings {
+                theme: "system".into(),
+                font_size_px: 15,
+            },
         }
     }
 }
@@ -128,7 +133,10 @@ pub enum SettingError {
     /// 未知路径（保留给未来 schema 版本；本构建只写已知键）。
     UnknownPath(String),
     /// 类型不符。
-    WrongType { path: String, expected: &'static str },
+    WrongType {
+        path: String,
+        expected: &'static str,
+    },
     /// 越界/非法枚举。
     OutOfRange { path: String, detail: String },
 }
@@ -137,7 +145,10 @@ pub enum SettingError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SaveError {
     /// 未来 schema 文件：本构建不得降写（防毁新版本数据）。
-    FutureSchema { found: u64, current: u64 },
+    FutureSchema {
+        found: u64,
+        current: u64,
+    },
     Io(String),
 }
 
@@ -195,7 +206,10 @@ fn item_of<'a>(doc: &'a DocumentMut, section: &str, key: &str) -> Option<&'a Ite
 /// 本函数保证**写入形态 = 读取形态**（写侧规范化）。
 fn ensure_section<'a>(doc: &'a mut DocumentMut, section: &str) -> &'a mut toml_edit::Table {
     if doc.get(section).is_some_and(Item::is_table) {
-        return doc.get_mut(section).and_then(Item::as_table_mut).expect("is_table checked above");
+        return doc
+            .get_mut(section)
+            .and_then(Item::as_table_mut)
+            .expect("is_table checked above");
     }
     let mut promoted = toml_edit::Table::new();
     if let Some(like) = doc.get(section).and_then(Item::as_table_like) {
@@ -204,7 +218,9 @@ fn ensure_section<'a>(doc: &'a mut DocumentMut, section: &str) -> &'a mut toml_e
         }
     }
     doc.insert(section, Item::Table(promoted));
-    doc.get_mut(section).and_then(Item::as_table_mut).expect("just inserted a Table")
+    doc.get_mut(section)
+        .and_then(Item::as_table_mut)
+        .expect("just inserted a Table")
 }
 
 fn read_file_version(doc: &DocumentMut) -> u64 {
@@ -231,7 +247,9 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
             return (
                 default_document(),
                 Settings::default(),
-                LoadStatus::FileDegraded { reason: e.to_string() },
+                LoadStatus::FileDegraded {
+                    reason: e.to_string(),
+                },
             );
         }
     };
@@ -249,7 +267,9 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
             return (
                 default_document(),
                 Settings::default(),
-                LoadStatus::FileDegraded { reason: format!("no migration path from schema version {found}") },
+                LoadStatus::FileDegraded {
+                    reason: format!("no migration path from schema version {found}"),
+                },
             );
         }
         migrate_v0_v1(&mut doc);
@@ -265,13 +285,21 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
     if let Some(item) = item_of(&doc, "editor", "undo_coalesce_ms") {
         match as_u64(item) {
             Some(v) => s.editor.undo_coalesce_ms = v,
-            None => degrade(&mut degraded, "editor.undo_coalesce_ms", "expected unsigned integer"),
+            None => degrade(
+                &mut degraded,
+                "editor.undo_coalesce_ms",
+                "expected unsigned integer",
+            ),
         }
     }
     if let Some(item) = item_of(&doc, "editor", "progressive_open_threshold_bytes") {
         match as_u64(item) {
             Some(v) => s.editor.progressive_open_threshold_bytes = v,
-            None => degrade(&mut degraded, "editor.progressive_open_threshold_bytes", "expected unsigned integer"),
+            None => degrade(
+                &mut degraded,
+                "editor.progressive_open_threshold_bytes",
+                "expected unsigned integer",
+            ),
         }
     }
     if let Some(item) = item_of(&doc, "ai", "commands_enabled") {
@@ -289,13 +317,21 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
     if let Some(item) = item_of(&doc, "storage", "autosave_enabled") {
         match as_bool(item) {
             Some(v) => s.storage.autosave_enabled = v,
-            None => degrade(&mut degraded, "storage.autosave_enabled", "expected boolean"),
+            None => degrade(
+                &mut degraded,
+                "storage.autosave_enabled",
+                "expected boolean",
+            ),
         }
     }
     if let Some(item) = item_of(&doc, "storage", "autosave_interval_ms") {
         match as_u64(item) {
             Some(v) => s.storage.autosave_interval_ms = v,
-            None => degrade(&mut degraded, "storage.autosave_interval_ms", "expected unsigned integer"),
+            None => degrade(
+                &mut degraded,
+                "storage.autosave_interval_ms",
+                "expected unsigned integer",
+            ),
         }
     }
     if let Some(item) = item_of(&doc, "storage", "session_restore") {
@@ -313,30 +349,58 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
     if let Some(item) = item_of(&doc, "appearance", "font_size_px") {
         match as_u64(item).and_then(|v| u16::try_from(v).ok()) {
             Some(v) => s.appearance.font_size_px = v,
-            None => degrade(&mut degraded, "appearance.font_size_px", "expected integer in u16 range"),
+            None => degrade(
+                &mut degraded,
+                "appearance.font_size_px",
+                "expected integer in u16 range",
+            ),
         }
     }
 
     // ---- 值域校验（与 set() 同表：越界键回默认，理由与类型降级一致）----
     if !in_range(s.editor.undo_coalesce_ms, bounds::UNDO_COALESCE_MS) {
         s.editor.undo_coalesce_ms = Settings::default().editor.undo_coalesce_ms;
-        degrade(&mut degraded, "editor.undo_coalesce_ms", "value out of range");
+        degrade(
+            &mut degraded,
+            "editor.undo_coalesce_ms",
+            "value out of range",
+        );
     }
-    if !in_range(s.editor.progressive_open_threshold_bytes, bounds::PROGRESSIVE_THRESHOLD_BYTES) {
-        s.editor.progressive_open_threshold_bytes = Settings::default().editor.progressive_open_threshold_bytes;
-        degrade(&mut degraded, "editor.progressive_open_threshold_bytes", "value out of range");
+    if !in_range(
+        s.editor.progressive_open_threshold_bytes,
+        bounds::PROGRESSIVE_THRESHOLD_BYTES,
+    ) {
+        s.editor.progressive_open_threshold_bytes =
+            Settings::default().editor.progressive_open_threshold_bytes;
+        degrade(
+            &mut degraded,
+            "editor.progressive_open_threshold_bytes",
+            "value out of range",
+        );
     }
     if !in_range(s.storage.autosave_interval_ms, bounds::AUTOSAVE_INTERVAL_MS) {
         s.storage.autosave_interval_ms = Settings::default().storage.autosave_interval_ms;
-        degrade(&mut degraded, "storage.autosave_interval_ms", "value out of range");
+        degrade(
+            &mut degraded,
+            "storage.autosave_interval_ms",
+            "value out of range",
+        );
     }
     if !bounds::THEMES.contains(&s.appearance.theme.as_str()) {
         s.appearance.theme = Settings::default().appearance.theme;
-        degrade(&mut degraded, "appearance.theme", "not in light|dark|system");
+        degrade(
+            &mut degraded,
+            "appearance.theme",
+            "not in light|dark|system",
+        );
     }
     if !in_range(s.appearance.font_size_px as u64, bounds::FONT_SIZE_PX) {
         s.appearance.font_size_px = Settings::default().appearance.font_size_px;
-        degrade(&mut degraded, "appearance.font_size_px", "value out of range");
+        degrade(
+            &mut degraded,
+            "appearance.font_size_px",
+            "value out of range",
+        );
     }
 
     match degraded {
@@ -346,7 +410,10 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
 }
 
 fn key_degraded(path: &str, reason: &str) -> LoadStatus {
-    LoadStatus::KeyDegraded { path: path.to_string(), reason: reason.to_string() }
+    LoadStatus::KeyDegraded {
+        path: path.to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 /// 记录首个键级降级（后续键降级不覆盖首个报告）。
@@ -377,7 +444,8 @@ pub fn default_document() -> DocumentMut {
 
     let mut editor = toml_edit::Table::new();
     editor["undo_coalesce_ms"] = toml_edit::value(d.editor.undo_coalesce_ms as i64);
-    editor["progressive_open_threshold_bytes"] = toml_edit::value(d.editor.progressive_open_threshold_bytes as i64);
+    editor["progressive_open_threshold_bytes"] =
+        toml_edit::value(d.editor.progressive_open_threshold_bytes as i64);
     doc["editor"] = Item::Table(editor);
 
     let mut ai = toml_edit::Table::new();
@@ -429,7 +497,12 @@ impl SettingsStore {
                 status,
                 future_schema: None,
             },
-            (doc, settings, status) => Self { doc, settings, status, future_schema: None },
+            (doc, settings, status) => Self {
+                doc,
+                settings,
+                status,
+                future_schema: None,
+            },
         }
     }
 
@@ -451,7 +524,9 @@ impl SettingsStore {
             Err(e) => Self {
                 doc: default_document(),
                 settings: Settings::default(),
-                status: LoadStatus::FileDegraded { reason: e.to_string() },
+                status: LoadStatus::FileDegraded {
+                    reason: e.to_string(),
+                },
                 future_schema: None,
             },
         }
@@ -468,7 +543,10 @@ impl SettingsStore {
     /// 序列化（保留未知键/注释/排版；未来 schema 拒绝）。
     pub fn to_toml(&self) -> Result<String, SaveError> {
         if let Some(found) = self.future_schema {
-            return Err(SaveError::FutureSchema { found, current: SCHEMA_VERSION });
+            return Err(SaveError::FutureSchema {
+                found,
+                current: SCHEMA_VERSION,
+            });
         }
         Ok(self.doc.to_string())
     }
@@ -488,9 +566,13 @@ impl SettingsStore {
     /// 未知路径/类型不符/越界 → Err（文档零触碰）。
     pub fn set(&mut self, path: &str, value: SettingValue) -> Result<(), SettingError> {
         if self.future_schema.is_some() {
-            return Err(SettingError::UnknownPath(format!("{path} (future-schema file is read-only)")));
+            return Err(SettingError::UnknownPath(format!(
+                "{path} (future-schema file is read-only)"
+            )));
         }
-        let (section, key) = path.split_once('.').ok_or_else(|| SettingError::UnknownPath(path.to_string()))?;
+        let (section, key) = path
+            .split_once('.')
+            .ok_or_else(|| SettingError::UnknownPath(path.to_string()))?;
 
         // 逐键显式分派（已知键封闭集；类型/值域与 load 降级同一张表）。
         match (section, key) {
@@ -535,7 +617,12 @@ impl SettingsStore {
             ("appearance", "theme") => {
                 let v = match &value {
                     SettingValue::Str(v) => v.clone(),
-                    _ => return Err(SettingError::WrongType { path: path.to_string(), expected: "string" }),
+                    _ => {
+                        return Err(SettingError::WrongType {
+                            path: path.to_string(),
+                            expected: "string",
+                        })
+                    }
                 };
                 if !bounds::THEMES.contains(&v.as_str()) {
                     return Err(SettingError::OutOfRange {
@@ -558,7 +645,10 @@ impl SettingsStore {
 
         // 写入成功后状态归一（用户显式写 = 不再是 Created/Migrated 语义；
         // 降级状态保留——降级键仍待 save 修复）。
-        if matches!(self.status, LoadStatus::Created | LoadStatus::Migrated { .. }) {
+        if matches!(
+            self.status,
+            LoadStatus::Created | LoadStatus::Migrated { .. }
+        ) {
             self.status = LoadStatus::Clean;
         }
         Ok(())
@@ -568,14 +658,20 @@ impl SettingsStore {
 fn as_uint(path: &str, value: &SettingValue) -> Result<u64, SettingError> {
     match value {
         SettingValue::Uint(v) => Ok(*v),
-        _ => Err(SettingError::WrongType { path: path.to_string(), expected: "uint" }),
+        _ => Err(SettingError::WrongType {
+            path: path.to_string(),
+            expected: "uint",
+        }),
     }
 }
 
 fn as_bool_val(path: &str, value: &SettingValue) -> Result<bool, SettingError> {
     match value {
         SettingValue::Bool(v) => Ok(*v),
-        _ => Err(SettingError::WrongType { path: path.to_string(), expected: "bool" }),
+        _ => Err(SettingError::WrongType {
+            path: path.to_string(),
+            expected: "bool",
+        }),
     }
 }
 

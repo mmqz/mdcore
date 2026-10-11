@@ -76,6 +76,17 @@ pub struct HistoryMemStats {
     pub headers_est_bytes: usize,
 }
 
+/// T1-fix F10：合并窗边界快照。pop_undo/pop_redo 除了出栈还推进边界
+///（last_at_ms / last_kind=None），undo/redo 应用失败时若不拨回，
+/// 调用后的状态就不再是「与调用前完全一致」（边界漂移会改变后续
+/// 击键的合并分组）。undo/redo 在 pop 前取快照，失败路径拨回。
+#[derive(Clone, Copy, Debug)]
+pub struct BoundarySnapshot {
+    at_ms: u64,
+    kind: Option<Kind>,
+    source: Option<Source>,
+}
+
 impl History {
     pub fn should_coalesce(&self, now_ms: u64, kind: Kind, source: Source) -> bool {
         kind == Kind::Text
@@ -105,7 +116,13 @@ impl History {
     }
 
     /// 合并进最后一条：ops 追加，inverses 前插（保持逆序不变量）。
-    pub fn coalesce_into_last(&mut self, ops: Vec<Op>, mut inverses: Vec<Op>, at_ms: u64, source: Source) {
+    pub fn coalesce_into_last(
+        &mut self,
+        ops: Vec<Op>,
+        mut inverses: Vec<Op>,
+        at_ms: u64,
+        source: Source,
+    ) {
         if let Some(e) = self.undo.last_mut() {
             inverses.append(&mut e.inverses);
             e.inverses = inverses; // 新 inverse 在前
@@ -121,6 +138,23 @@ impl History {
         self.last_at_ms = e.at_ms;
         self.last_kind = None; // undo 边界破组
         Some(e)
+    }
+
+    /// 当前合并窗边界快照（undo/redo 尝试前取）。
+    pub fn boundary(&self) -> BoundarySnapshot {
+        BoundarySnapshot {
+            at_ms: self.last_at_ms,
+            kind: self.last_kind,
+            source: self.last_source,
+        }
+    }
+
+    /// 拨回边界快照（T1-fix F10 失败路径专用；与条目压回原栈配套，
+    /// 调用后 History 与 pop 前完全一致）。
+    pub fn restore_boundary(&mut self, b: BoundarySnapshot) {
+        self.last_at_ms = b.at_ms;
+        self.last_kind = b.kind;
+        self.last_source = b.source;
     }
 
     pub fn push_redo(&mut self, entry: Entry) {
@@ -171,7 +205,12 @@ impl History {
                 headers += e.ops.len() + e.inverses.len() + 3;
                 for o in e.ops.iter().chain(e.inverses.iter()) {
                     match o {
-                        Op::InsertBlock { parent, attrs, text, .. } => {
+                        Op::InsertBlock {
+                            parent,
+                            attrs,
+                            text,
+                            ..
+                        } => {
                             content += text.len();
                             headers += parent.len() / 4 + attrs.len();
                         }
@@ -253,6 +292,9 @@ mod tests {
 
         // 序列化兼容：last_source=System 随整栈 JSON 恢复（S6 无损语义）
         let back = History::from_json(&h.to_json()).unwrap();
-        assert!(!back.should_coalesce(2_500, Kind::Text, Source::View), "边界元数据必须随 JSON 恢复");
+        assert!(
+            !back.should_coalesce(2_500, Kind::Text, Source::View),
+            "边界元数据必须随 JSON 恢复"
+        );
     }
 }

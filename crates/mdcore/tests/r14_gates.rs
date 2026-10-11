@@ -9,16 +9,18 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use mdcore::debug;
+use mdcore::history::Source;
 use mdcore::markdown::{markdown_to_tree, tree_to_markdown};
 use mdcore::op::Op;
-use mdcore::history::Source;
 use mdcore::{ApplyMeta, Core};
 
 /// 计时测试串行化：并行 build_big 会互相污染内存带宽，p95 不可信
 /// （实测：并行时单 op p95 33ms，串行后 6ms）。
 fn gate_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 fn para(i: usize) -> String {
@@ -62,7 +64,11 @@ fn gate3_snapshot_restore_identity_at_1mb() {
     let restored = Core::restore(mdcore::snapshot::Snapshot::from_json(&snap).unwrap());
     let restore_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
-    assert_eq!(debug::dump_tree(&restored.tree), debug::dump_tree(&core.tree), "逐块恒等（含身份）");
+    assert_eq!(
+        debug::dump_tree(&restored.tree),
+        debug::dump_tree(&core.tree),
+        "逐块恒等（含身份）"
+    );
     assert_eq!(
         debug::blocks_json(&restored.tree),
         debug::blocks_json(&core.tree),
@@ -83,8 +89,16 @@ fn gate3_restore_then_editing_and_undo_continue() {
     // 固定时钟：pre-save 编辑 last_at_ms=1000，确保与重开后编辑隔窗（确定性分组）。
     core.set_clock(Arc::new(|| 1_000));
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0], start: 0, end: 9, insert: "EDITED".into() }],
-        ApplyMeta { source: Source::View, command: Some("pre-save".into()) },
+        vec![Op::ReplaceText {
+            path: vec![0],
+            start: 0,
+            end: 9,
+            insert: "EDITED".into(),
+        }],
+        ApplyMeta {
+            source: Source::View,
+            command: Some("pre-save".into()),
+        },
     )
     .unwrap();
     let snap = core.snapshot().to_json();
@@ -100,17 +114,37 @@ fn gate3_restore_then_editing_and_undo_continue() {
     // 重开后继续编辑 + undo 链跨存档边界工作
     reopened
         .apply_ops(
-            vec![Op::ReplaceText { path: vec![1], start: 0, end: 9, insert: "AFTER".into() }],
-            ApplyMeta { source: Source::View, command: Some("post-restore".into()) },
+            vec![Op::ReplaceText {
+                path: vec![1],
+                start: 0,
+                end: 9,
+                insert: "AFTER".into(),
+            }],
+            ApplyMeta {
+                source: Source::View,
+                command: Some("post-restore".into()),
+            },
         )
         .unwrap();
     assert_eq!(reopened.history.undo_depth(), depth + 1);
     reopened.undo().unwrap();
     let _lens = top_lens(&reopened);
-    assert_eq!(&reopened.tree.node(reopened.tree.resolve(&[1]).unwrap()).text.to_string()[..9], "paragraph", "post-restore 编辑被 undo 撤净");
+    assert_eq!(
+        &reopened
+            .tree
+            .node(reopened.tree.resolve(&[1]).unwrap())
+            .text
+            .to_string()[..9],
+        "paragraph",
+        "post-restore 编辑被 undo 撤净"
+    );
     reopened.undo().unwrap();
     assert_eq!(
-        &reopened.tree.node(reopened.tree.resolve(&[0]).unwrap()).text.to_string()[..9],
+        &reopened
+            .tree
+            .node(reopened.tree.resolve(&[0]).unwrap())
+            .text
+            .to_string()[..9],
         "paragraph",
         "跨存档边界的 pre-save 编辑也被撤净"
     );
@@ -138,7 +172,10 @@ fn gate2_core_op_latency_at_1mb() {
                 end: lens[k * 11 % 20_000].min(4),
                 insert: format!("E{k:03}").into(),
             }],
-            ApplyMeta { source: Source::View, command: Some("g2-typing".into()) },
+            ApplyMeta {
+                source: Source::View,
+                command: Some("g2-typing".into()),
+            },
         )
         .unwrap();
         singles.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -155,7 +192,14 @@ fn gate2_core_op_latency_at_1mb() {
         })
         .collect();
     let t = Instant::now();
-    core.apply_ops(ops, ApplyMeta { source: Source::Ai, command: Some("g2-batch".into()) }).unwrap();
+    core.apply_ops(
+        ops,
+        ApplyMeta {
+            source: Source::Ai,
+            command: Some("g2-batch".into()),
+        },
+    )
+    .unwrap();
     let batch_ms = t.elapsed().as_secs_f64() * 1000.0;
     let t = Instant::now();
     core.undo().unwrap();
@@ -176,11 +220,20 @@ fn gate2_core_op_latency_at_1mb() {
     let mut smalls = Vec::new();
     for k in 0..100 {
         let t = Instant::now();
-        small.apply_ops(
-            vec![Op::ReplaceText { path: vec![k % 10], start: 0, end: 4, insert: format!("S{k:03}").into() }],
-            ApplyMeta { source: Source::View, command: Some("g2-small".into()) },
-        )
-        .unwrap();
+        small
+            .apply_ops(
+                vec![Op::ReplaceText {
+                    path: vec![k % 10],
+                    start: 0,
+                    end: 4,
+                    insert: format!("S{k:03}").into(),
+                }],
+                ApplyMeta {
+                    source: Source::View,
+                    command: Some("g2-small".into()),
+                },
+            )
+            .unwrap();
         smalls.push(t.elapsed().as_secs_f64() * 1000.0);
     }
     println!(
@@ -199,7 +252,11 @@ fn gate1_core_ingest_and_replay_at_1mb() {
     let _g = gate_lock();
     let sections: Vec<String> = (0..20_000).map(para).collect();
     let src = sections.concat();
-    assert!(src.len() > 1_000_000, "fixture 应 ≥1MB: {} bytes", src.len());
+    assert!(
+        src.len() > 1_000_000,
+        "fixture 应 ≥1MB: {} bytes",
+        src.len()
+    );
 
     let t0 = Instant::now();
     let mut core = Core::from_markdown(&src);
@@ -207,8 +264,16 @@ fn gate1_core_ingest_and_replay_at_1mb() {
 
     // 追加一轮编辑让日志携带非 genesis 记录
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0], start: 0, end: 9, insert: "EDITED".into() }],
-        ApplyMeta { source: Source::View, command: Some("g1".into()) },
+        vec![Op::ReplaceText {
+            path: vec![0],
+            start: 0,
+            end: 9,
+            insert: "EDITED".into(),
+        }],
+        ApplyMeta {
+            source: Source::View,
+            command: Some("g1".into()),
+        },
     )
     .unwrap();
     let jsonl = core.log.to_jsonl();
@@ -241,6 +306,9 @@ fn gate3_tree_build_and_snapshot_chain() {
     let snap = mdcore::snapshot::Snapshot::capture(&tree, 0).to_json();
     let snap_ms = t1.elapsed().as_secs_f64() * 1000.0;
     let restored = Core::restore(mdcore::snapshot::Snapshot::from_json(&snap).unwrap());
-    assert_eq!(debug::blocks_json(&restored.tree), debug::blocks_json(&tree));
+    assert_eq!(
+        debug::blocks_json(&restored.tree),
+        debug::blocks_json(&tree)
+    );
     println!("[gate3] markdown_to_tree {build_ms:.1}ms / snapshot-to-json {snap_ms:.1}ms / snap bytes {}", snap.len());
 }

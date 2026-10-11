@@ -16,8 +16,8 @@
 use std::path::PathBuf;
 
 use mdshell::settings::{
-    default_document, parse_settings, LoadStatus, SaveError, SettingError, SettingValue,
-    Settings, SettingsStore, SCHEMA_VERSION,
+    default_document, parse_settings, LoadStatus, SaveError, SettingError, SettingValue, Settings,
+    SettingsStore, SCHEMA_VERSION,
 };
 
 fn tmp_dir(tag: &str) -> PathBuf {
@@ -40,10 +40,19 @@ fn partial_file_merges_defaults_clean() {
     assert_eq!(s.editor.undo_coalesce_ms, 2500, "显式键保留");
     assert_eq!(s.appearance.theme, "dark");
     // 缺键全部落默认
-    assert_eq!(s.editor.progressive_open_threshold_bytes, Settings::default().editor.progressive_open_threshold_bytes);
-    assert_eq!(s.ai.commands_enabled, Settings::default().ai.commands_enabled);
+    assert_eq!(
+        s.editor.progressive_open_threshold_bytes,
+        Settings::default().editor.progressive_open_threshold_bytes
+    );
+    assert_eq!(
+        s.ai.commands_enabled,
+        Settings::default().ai.commands_enabled
+    );
     assert_eq!(s.storage, Settings::default().storage);
-    assert_eq!(s.appearance.font_size_px, Settings::default().appearance.font_size_px);
+    assert_eq!(
+        s.appearance.font_size_px,
+        Settings::default().appearance.font_size_px
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -69,13 +78,22 @@ fn unknown_keys_and_comments_survive_roundtrip() {
         .set("appearance.theme", SettingValue::Str("light".into()))
         .expect("set known key");
     let out = store.to_toml().expect("serialize");
-    assert!(out.contains("unknown_top_level = \"keep me\""), "顶层未知键保留");
-    assert!(out.contains("future_editor_knob = 42"), "已知节内未知键保留");
+    assert!(
+        out.contains("unknown_top_level = \"keep me\""),
+        "顶层未知键保留"
+    );
+    assert!(
+        out.contains("future_editor_knob = 42"),
+        "已知节内未知键保留"
+    );
     assert!(out.contains("[future_section]"), "未来节保留");
     assert!(out.contains("rocket = \"moon\""), "未来节键值保留");
     assert!(out.contains("# user header comment"), "头部注释保留");
     assert!(out.contains("# inline comment"), "行内注释保留");
-    assert!(out.contains("undo_coalesce_ms = 1800"), "未触碰的已知键原样");
+    assert!(
+        out.contains("undo_coalesce_ms = 1800"),
+        "未触碰的已知键原样"
+    );
     assert!(out.contains("theme = \"light\""), "set 写入生效");
 }
 
@@ -117,8 +135,15 @@ fn wrong_typed_key_degrades_that_key_only() {
         LoadStatus::KeyDegraded { ref path, .. } => assert_eq!(path, "editor.undo_coalesce_ms"),
         other => panic!("expected KeyDegraded, got {other:?}"),
     }
-    assert_eq!(s.editor.undo_coalesce_ms, Settings::default().editor.undo_coalesce_ms, "坏键回默认");
-    assert_eq!(s.editor.progressive_open_threshold_bytes, 2097152, "其余键不受影响");
+    assert_eq!(
+        s.editor.undo_coalesce_ms,
+        Settings::default().editor.undo_coalesce_ms,
+        "坏键回默认"
+    );
+    assert_eq!(
+        s.editor.progressive_open_threshold_bytes, 2097152,
+        "其余键不受影响"
+    );
 }
 
 #[test]
@@ -129,7 +154,10 @@ fn out_of_range_value_degrades_that_key_only() {
         LoadStatus::KeyDegraded { ref path, .. } => assert_eq!(path, "appearance.font_size_px"),
         other => panic!("expected KeyDegraded, got {other:?}"),
     }
-    assert_eq!(s.appearance.font_size_px, Settings::default().appearance.font_size_px);
+    assert_eq!(
+        s.appearance.font_size_px,
+        Settings::default().appearance.font_size_px
+    );
     assert_eq!(s.appearance.theme, "dark");
 }
 
@@ -137,7 +165,10 @@ fn out_of_range_value_degrades_that_key_only() {
 fn invalid_theme_enum_degrades_to_system() {
     let text = "schema_version = 1\n\n[appearance]\ntheme = \"blue\"\n";
     let (s, status) = parse_settings(text);
-    assert!(matches!(status, LoadStatus::KeyDegraded { .. }), "非法枚举=键级降级");
+    assert!(
+        matches!(status, LoadStatus::KeyDegraded { .. }),
+        "非法枚举=键级降级"
+    );
     assert_eq!(s.appearance.theme, "system");
 }
 
@@ -150,7 +181,11 @@ fn v0_file_without_version_key_migrates_to_v1() {
     // v0 = 首版 rollout 文件形态：无 schema_version 键，其余合法。
     let text = "[editor]\nundo_coalesce_ms = 3200\n";
     let store = SettingsStore::from_content(text);
-    assert_eq!(*store.status(), LoadStatus::Migrated { from: 0 }, "v0→v1 迁移");
+    assert_eq!(
+        *store.status(),
+        LoadStatus::Migrated { from: 0 },
+        "v0→v1 迁移"
+    );
 
     let out = store.to_toml().expect("serialize migrated");
     assert!(out.contains("schema_version = 1"), "重写补版本键");
@@ -175,7 +210,11 @@ fn future_schema_loads_defaults_and_refuses_save() {
 
     let mut store = SettingsStore::load(&path);
     assert_eq!(*store.status(), LoadStatus::FutureSchema { found: 99 });
-    assert_eq!(*store.settings(), Settings::default(), "未来版本不解释任何键");
+    assert_eq!(
+        *store.settings(),
+        Settings::default(),
+        "未来版本不解释任何键"
+    );
 
     match store.save(&path) {
         Err(SaveError::FutureSchema { found: 99, current }) => assert_eq!(current, SCHEMA_VERSION),
@@ -197,12 +236,24 @@ fn future_schema_loads_defaults_and_refuses_save() {
 #[test]
 fn set_updates_doc_snapshot_and_survives_reload() {
     let mut store = SettingsStore::new_default();
-    store.set("editor.undo_coalesce_ms", SettingValue::Uint(4000)).unwrap();
-    store.set("storage.autosave_enabled", SettingValue::Bool(true)).unwrap();
-    store.set("storage.autosave_interval_ms", SettingValue::Uint(120_000)).unwrap();
-    store.set("appearance.theme", SettingValue::Str("dark".into())).unwrap();
-    store.set("appearance.font_size_px", SettingValue::Uint(18)).unwrap();
-    store.set("ai.commands_enabled", SettingValue::Bool(false)).unwrap();
+    store
+        .set("editor.undo_coalesce_ms", SettingValue::Uint(4000))
+        .unwrap();
+    store
+        .set("storage.autosave_enabled", SettingValue::Bool(true))
+        .unwrap();
+    store
+        .set("storage.autosave_interval_ms", SettingValue::Uint(120_000))
+        .unwrap();
+    store
+        .set("appearance.theme", SettingValue::Str("dark".into()))
+        .unwrap();
+    store
+        .set("appearance.font_size_px", SettingValue::Uint(18))
+        .unwrap();
+    store
+        .set("ai.commands_enabled", SettingValue::Bool(false))
+        .unwrap();
 
     // 快照即时同步。
     assert_eq!(store.settings().editor.undo_coalesce_ms, 4000);
@@ -212,7 +263,11 @@ fn set_updates_doc_snapshot_and_survives_reload() {
     // 序列化 → 重载 → 值保持（doc 与快照无漂移）。
     let out = store.to_toml().unwrap();
     let reloaded = SettingsStore::from_content(&out);
-    assert_eq!(*reloaded.settings(), *store.settings(), "doc↔快照↔重载三方一致");
+    assert_eq!(
+        *reloaded.settings(),
+        *store.settings(),
+        "doc↔快照↔重载三方一致"
+    );
     assert_eq!(*reloaded.status(), LoadStatus::Clean);
 }
 
@@ -266,7 +321,11 @@ fn set_rejects_wrong_types_and_out_of_range() {
         store.set("appearance.theme", SettingValue::Str("blue".into())),
         Err(SettingError::OutOfRange { .. }) // 枚举外
     ));
-    assert_eq!(store.to_toml().unwrap(), default_document().to_string(), "全部拒绝=零触碰");
+    assert_eq!(
+        store.to_toml().unwrap(),
+        default_document().to_string(),
+        "全部拒绝=零触碰"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +361,10 @@ fn missing_file_is_created_status_and_save_persists_full_defaults() {
 #[test]
 fn defaults_align_with_core_constants() {
     // 跨 crate 常量锁：settings 默认 = 核合并窗常量（防双侧漂移）。
-    assert_eq!(Settings::default().editor.undo_coalesce_ms, mdcore::history::COALESCE_MS);
+    assert_eq!(
+        Settings::default().editor.undo_coalesce_ms,
+        mdcore::history::COALESCE_MS
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +376,10 @@ fn settings_json_shape_roundtrips() {
     let s = Settings::default();
     let json = serde_json::to_string(&s).expect("serialize");
     assert!(json.contains("\"schema_version\":1"), "版本键在 JSON 面");
-    assert!(json.contains("\"undo_coalesce_ms\":1000"), "COALESCE_MS 默认值进 JSON");
+    assert!(
+        json.contains("\"undo_coalesce_ms\":1000"),
+        "COALESCE_MS 默认值进 JSON"
+    );
     let back: Settings = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(back, s);
 
@@ -345,8 +410,14 @@ fn set_on_missing_section_writes_standard_table_and_survives_reload() {
         .expect("节缺失时 set 必须成功（默认合并语义下节按需创建）");
     let out = store.to_toml().expect("序列化");
 
-    assert!(out.contains("[editor]"), "写入形态必须是标准表头，不得是 inline 表");
-    assert!(!out.contains("editor = {"), "inline 形态 = 读不回 = 静默丢设置（R24-a1 修复点）");
+    assert!(
+        out.contains("[editor]"),
+        "写入形态必须是标准表头，不得是 inline 表"
+    );
+    assert!(
+        !out.contains("editor = {"),
+        "inline 形态 = 读不回 = 静默丢设置（R24-a1 修复点）"
+    );
     assert!(out.contains("undo_coalesce_ms = 500"));
 
     // 往返闭环：load 必须读回写入值（修复前此处回默认 1000）。
@@ -356,7 +427,8 @@ fn set_on_missing_section_writes_standard_table_and_survives_reload() {
     // 其余键不受影响
     assert_eq!(s2.appearance.theme, "dark");
     assert_eq!(
-        s2.storage, Settings::default().storage,
+        s2.storage,
+        Settings::default().storage,
         "未触碰的缺失节照常默认合并"
     );
 }
@@ -371,13 +443,19 @@ fn set_promotes_inline_section_preserving_values() {
     );
     let mut store = SettingsStore::from_content(text);
     store
-        .set("editor.progressive_open_threshold_bytes", SettingValue::Uint(2048))
+        .set(
+            "editor.progressive_open_threshold_bytes",
+            SettingValue::Uint(2048),
+        )
         .expect("inline 节上的 set 必须成功");
 
     let out = store.to_toml().expect("序列化");
     assert!(out.contains("[editor]"), "inline 节升格为标准表");
     assert!(out.contains("undo_coalesce_ms = 700"), "既有值保留");
-    assert!(out.contains("future_knob = \"keep\""), "未知键随升格保留（前向兼容）");
+    assert!(
+        out.contains("future_knob = \"keep\""),
+        "未知键随升格保留（前向兼容）"
+    );
     assert!(out.contains("progressive_open_threshold_bytes = 2048"));
 
     // 升格后的往返：全部值读回。
@@ -391,9 +469,14 @@ fn set_promotes_inline_section_preserving_values() {
 /// `item_of` 用 `as_table_like`（TableLike 覆盖 Table + InlineTable）。
 #[test]
 fn load_accepts_handwritten_inline_section() {
-    let text = "schema_version = 1\nstorage = { autosave_enabled = true, autosave_interval_ms = 1500 }\n";
+    let text =
+        "schema_version = 1\nstorage = { autosave_enabled = true, autosave_interval_ms = 1500 }\n";
     let (s, status) = parse_settings(text);
-    assert_eq!(status, LoadStatus::Clean, "inline 节是合法 TOML，读侧不得丢");
+    assert_eq!(
+        status,
+        LoadStatus::Clean,
+        "inline 节是合法 TOML，读侧不得丢"
+    );
     assert!(s.storage.autosave_enabled, "inline 节键值必须读回");
     assert_eq!(s.storage.autosave_interval_ms, 1500);
     // 未涉及的层照常默认

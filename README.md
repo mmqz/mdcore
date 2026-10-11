@@ -38,7 +38,7 @@
 ## 构建与门禁
 
 ```bash
-cargo test --workspace              # 24 套件语义锁（245 用例；R23-e 148 + R24-a 16 + 质量审计 7 + R24-b 12 + R24-c 4 + PDF-b 32 + PDF-c 常开 17 + PDF-d 常开 9；默认零引擎依赖，裸环境全绿）
+cargo test --workspace              # 25 套件语义锁（252 用例；R23-e 148 + R24-a 16 + 质量审计 7 + R24-b 12 + R24-c 4 + T1-fix-a 5 + PDF-b 33 + PDF-c 常开 18 + PDF-d 常开 9；2026-10-10 实跑复核 = 245 旧基线 + T1-fix-a 5 mdcore 质量锁 + T1-fix-b 2 pdf 锁 [pdfb_skeleton 32→33 / pdfc_cache_worker 17→18]；默认零引擎依赖，裸环境全绿）
 cargo test -p mdc-pdf --features engine-pdfium    # +13 引擎锁 + 6 #[ignore] 性能门（需 libpdfium.so，定位序：MDC_PDFIUM_LIB → 候选清单 → 系统）
 cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf    # +17 PDF-d 标注写锁（lopdf 增量写；需 libpdfium.so + spike fixtures）
 cargo test -p mdc-pdf --features engine-pdfium --test pdfc_perf -- --ignored --nocapture    # 性能门实测打印（阈值 = 实测×3）
@@ -56,7 +56,7 @@ v1 面 13 + v1.1 设置面 3）、`crates/mdcore/tests/r23_fingerprint.rs`（15 
 ## 收口纪律（自首推起生效）
 
 每轮收口双绿：`bash compliance/scan.sh`（strict 0 / ns 0）+ `cargo test --workspace`
-（18 套件全绿）；依赖变更必须再生成 THIRD-PARTY-NOTICES 并重跑 SBOM。
+（25 套件全绿）；依赖变更必须再生成 THIRD-PARTY-NOTICES 并重跑 SBOM。
 
 ## 状态快照（2026-10-10）
 

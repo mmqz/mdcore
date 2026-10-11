@@ -65,7 +65,11 @@ fn top_texts(core: &Core) -> Vec<String> {
 }
 
 fn top_ids(core: &Core) -> Vec<BlockId> {
-    core.tree.top_level().iter().map(|&c| core.tree.node(c).id).collect()
+    core.tree
+        .top_level()
+        .iter()
+        .map(|&c| core.tree.node(c).id)
+        .collect()
 }
 
 fn node_text(core: &Core, path: &[usize]) -> String {
@@ -116,7 +120,10 @@ fn fixture_units_sanity() {
 fn roundtrip_identity_non_bmp() {
     let core = Core::from_markdown(FIXTURE);
     let md = tree_to_markdown(&core.tree);
-    assert_eq!(md, FIXTURE, "parse → serialize 逐字符恒等（无空行 canonical 输入）");
+    assert_eq!(
+        md, FIXTURE,
+        "parse → serialize 逐字符恒等（无空行 canonical 输入）"
+    );
     // 二次 parse → serialize 幂等（序列化产物仍是 canonical 输入）
     let core2 = Core::from_markdown(&md);
     assert_eq!(tree_to_markdown(&core2.tree), FIXTURE);
@@ -161,13 +168,20 @@ fn heading_and_marker_prefix_offsets_are_code_points() {
     let text = core.tree.node(slot).text.to_string();
     assert_eq!(core.tree.node(slot).text.len_chars(), text.chars().count());
     assert_eq!(core.tree.node(slot).text.len_chars(), 6);
-    assert_eq!(text.encode_utf16().count(), 7, "UTF-16 码元数 ≠ 码点数（代理对在块文本内）");
+    assert_eq!(
+        text.encode_utf16().count(),
+        7,
+        "UTF-16 码元数 ≠ 码点数（代理对在块文本内）"
+    );
     assert_eq!(text.len(), 17);
 
     // list marker "-" 是 ASCII：marker 长度在两单位系下恒等（桥 prefix 不变量的依据）
     let li = Core::from_markdown("- 𠮷");
     let slot = li.tree.resolve(&[0]).unwrap();
-    assert_eq!(li.tree.node(slot).attrs.get("marker"), Some(&"-".to_string()));
+    assert_eq!(
+        li.tree.node(slot).attrs.get("marker"),
+        Some(&"-".to_string())
+    );
     assert_eq!(li.tree.node(slot).text.to_string(), "𠮷");
 }
 
@@ -183,7 +197,12 @@ fn replace_text_offsets_are_code_points() {
 
     // 在码点 [1,2)（'a'）替换为 7 码点的 ZWJ 家族：偏移按码点计
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0], start: 1, end: 2, insert: ZWJ_FAMILY.into() }],
+        vec![Op::ReplaceText {
+            path: vec![0],
+            start: 1,
+            end: 2,
+            insert: ZWJ_FAMILY.into(),
+        }],
         ApplyMeta::view("test"),
     )
     .unwrap();
@@ -198,7 +217,12 @@ fn replace_text_offsets_are_code_points() {
 
     // 跨非 BMP 边界的删除：[0,1) 恰好吞掉整个 𠮷（码点边界，不产生孤代理对）
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0], start: 0, end: 1, insert: "許".into() }],
+        vec![Op::ReplaceText {
+            path: vec![0],
+            start: 0,
+            end: 1,
+            insert: "許".into(),
+        }],
         ApplyMeta::view("test"),
     )
     .unwrap();
@@ -210,10 +234,18 @@ fn replace_text_offsets_are_code_points() {
     // 若错按 UTF-16 码元口径（19 码元）判定，end=11 反而会「合法」——本断言
     // 同时锁死「单位不许是码元」
     let err = core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0], start: 0, end: 11, insert: "x".into() }],
+        vec![Op::ReplaceText {
+            path: vec![0],
+            start: 0,
+            end: 11,
+            insert: "x".into(),
+        }],
         ApplyMeta::view("test"),
     );
-    assert!(matches!(err, Err(mdcore::Reject::Invalid(_))), "BadRange 以码点判定: {err:?}");
+    assert!(
+        matches!(err, Err(mdcore::Reject::Invalid(_))),
+        "BadRange 以码点判定: {err:?}"
+    );
 }
 
 #[test]
@@ -222,7 +254,8 @@ fn replace_text_via_json_boundary_keeps_cp_offsets() {
     let mut core = Core::from_markdown("𠮷a🙂b");
     let json = r#"[{"t":"replace_text","path":[0],"start":1,"end":2,"insert":"👨‍👩‍👧‍👦"}]"#;
     let ops: Vec<Op> = serde_json::from_str(json).expect("serde parse");
-    core.apply_ops(ops, ApplyMeta::view("json-boundary")).unwrap();
+    core.apply_ops(ops, ApplyMeta::view("json-boundary"))
+        .unwrap();
     assert_eq!(node_text(&core, &[0]), format!("𠮷{ZWJ_FAMILY}🙂b"));
 
     // 事件流出回的 op 与入参一致（op 流即审计语言）
@@ -230,7 +263,12 @@ fn replace_text_via_json_boundary_keeps_cp_offsets() {
     let last = events.last().unwrap();
     assert_eq!(
         last.ops[0],
-        Op::ReplaceText { path: vec![0], start: 1, end: 2, insert: ZWJ_FAMILY.into() }
+        Op::ReplaceText {
+            path: vec![0],
+            start: 1,
+            end: 2,
+            insert: ZWJ_FAMILY.into()
+        }
     );
 }
 
@@ -279,13 +317,27 @@ fn split_list_item_non_bmp_inherits_marker_and_depth() {
     assert_eq!(node_text(&core, &[0, 0]), "nested ");
     assert_eq!(node_text(&core, &[0, 1]), "🙂 β");
     let tail = &core.tree.node(core.tree.resolve(&[0, 1]).unwrap());
-    assert_eq!(tail.attrs.get("marker"), Some(&"-".to_string()), "marker 继承");
-    assert_eq!(tail.attrs.get("depth"), Some(&"2".to_string()), "depth 继承");
-    assert!(tail.id.0 >= watermark_before, "tail 为新分配 ID（≥ 分配器水位）");
+    assert_eq!(
+        tail.attrs.get("marker"),
+        Some(&"-".to_string()),
+        "marker 继承"
+    );
+    assert_eq!(
+        tail.attrs.get("depth"),
+        Some(&"2".to_string()),
+        "depth 继承"
+    );
+    assert!(
+        tail.id.0 >= watermark_before,
+        "tail 为新分配 ID（≥ 分配器水位）"
+    );
     // 既有 item ID 不变（顶层 item 与被切分的嵌套 item 均保持原身份）
     assert_eq!(top_ids(&core)[0], ids[0]);
     assert_eq!(node_id(&core, &[0, 0]), nested_id);
-    assert_eq!(tree_to_markdown(&core.tree), "- item 𠮷 α\n  - nested \n  - 🙂 β");
+    assert_eq!(
+        tree_to_markdown(&core.tree),
+        "- item 𠮷 α\n  - nested \n  - 🙂 β"
+    );
 }
 
 #[test]
@@ -295,14 +347,24 @@ fn code_block_multiline_non_bmp_text_offsets() {
     assert_eq!(node_text(&core, &[0]), "𠮷 = 1;\n🙂 = 2;");
     // "𠮷 = 1;" = 6 码点，"\n" 计 1 → 第二行行首（🙂）在码点 7
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0], start: 7, end: 8, insert: "犬".into() }],
+        vec![Op::ReplaceText {
+            path: vec![0],
+            start: 7,
+            end: 8,
+            insert: "犬".into(),
+        }],
         ApplyMeta::view("test"),
     )
     .unwrap();
     assert_eq!(node_text(&core, &[0]), "𠮷 = 1;\n犬 = 2;");
     // 行界编辑：跨 \n 替换 [5,8) = ";" + "\n" + "犬"
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0], start: 5, end: 8, insert: "; //😀\n𠮷".into() }],
+        vec![Op::ReplaceText {
+            path: vec![0],
+            start: 5,
+            end: 8,
+            insert: "; //😀\n𠮷".into(),
+        }],
         ApplyMeta::view("test"),
     )
     .unwrap();
@@ -323,7 +385,12 @@ fn anchor_resolution_non_bmp() {
 
     // ByAnchor + expect：码点 [1,2) = "🙂"（若按 UTF-16 计则是半个代理对）
     core.replace_text(
-        TextTarget::ByAnchor { block: id, start: 1, end: 2, expect: Some("🙂".into()) },
+        TextTarget::ByAnchor {
+            block: id,
+            start: 1,
+            end: 2,
+            expect: Some("🙂".into()),
+        },
         "γ".into(),
     )
     .unwrap();
@@ -331,7 +398,12 @@ fn anchor_resolution_non_bmp() {
 
     // OutOfRange 的 len 以码点报告（3），不是 UTF-16 码元（5）
     let err = core.replace_text(
-        TextTarget::ByAnchor { block: id, start: 1, end: 6, expect: None },
+        TextTarget::ByAnchor {
+            block: id,
+            start: 1,
+            end: 6,
+            expect: None,
+        },
         "x".into(),
     );
     match err {
@@ -344,7 +416,12 @@ fn anchor_resolution_non_bmp() {
 
     // expect 内容保护按码点切取比较
     let err = core.replace_text(
-        TextTarget::ByAnchor { block: id, start: 1, end: 2, expect: Some("✗".into()) },
+        TextTarget::ByAnchor {
+            block: id,
+            start: 1,
+            end: 2,
+            expect: Some("✗".into()),
+        },
         "x".into(),
     );
     assert!(matches!(
@@ -353,9 +430,17 @@ fn anchor_resolution_non_bmp() {
     ));
 
     // resolve_anchor：offset == len 合法（块尾）；超出 → OutOfRange
-    assert!(core.resolve_anchor(&Anchor { block: id, offset: 3 }).is_ok());
+    assert!(core
+        .resolve_anchor(&Anchor {
+            block: id,
+            offset: 3
+        })
+        .is_ok());
     assert!(matches!(
-        core.resolve_anchor(&Anchor { block: id, offset: 4 }),
+        core.resolve_anchor(&Anchor {
+            block: id,
+            offset: 4
+        }),
         Err(AnchorError::OutOfRange { len: 3, .. })
     ));
 }
@@ -409,8 +494,12 @@ fn xorshift(state: &mut u64) -> u64 {
 fn property_mixed_scripts_edits_undo_redo_identity() {
     // 60 段 × 4 类字母系（ASCII / CJK+扩展B / emoji+ZWJ / 混合），全部以
     // "para N " 开头避免被解析成其他块型
-    let alphabets: [&str; 4] =
-        ["lorem ipsum dolor", "中文𠮷日本語", "😀🙂🦊👨‍👩‍👧‍👦🚀", "a𠮷b😀c中文d🙂"];
+    let alphabets: [&str; 4] = [
+        "lorem ipsum dolor",
+        "中文𠮷日本語",
+        "😀🙂🦊👨‍👩‍👧‍👦🚀",
+        "a𠮷b😀c中文d🙂",
+    ];
     let mut mirror: Vec<String> = Vec::new();
     let mut src = String::new();
     for i in 0..60 {
@@ -445,13 +534,22 @@ fn property_mixed_scripts_edits_undo_redo_identity() {
         let start = (xorshift(&mut rng) as usize) % (len + 1);
         let end = start + (xorshift(&mut rng) as usize) % (len - start + 1);
         core.apply_ops(
-            vec![Op::ReplaceText { path: vec![idx], start, end, insert: insert.into() }],
+            vec![Op::ReplaceText {
+                path: vec![idx],
+                start,
+                end,
+                insert: insert.into(),
+            }],
             ApplyMeta::view("property"),
         )
         .unwrap();
         mirror[idx] = cp_replace(&mirror[idx], start, end, insert);
     }
-    assert_eq!(tree_to_markdown(&core.tree), mirror.join("\n"), "编辑后核文本 = 逐码点镜像");
+    assert_eq!(
+        tree_to_markdown(&core.tree),
+        mirror.join("\n"),
+        "编辑后核文本 = 逐码点镜像"
+    );
 
     // 全量 undo：文本与 ID 恒等（undo 粒度不受合并窗影响——时钟已隔离）
     let mut undos = 0;

@@ -1,0 +1,13 @@
+# 工具链钉住（T1 审计 F5）：rustfmt 行为随工具链版本漂移——rustfmt
+# 1.10.0（rustc 1.99.0）与更早工具链对同一源码给出不同重排，曾致
+# `cargo fmt --all -- --check` 在本仓 459 diff / 32 文件的全仓「门禁红」
+# 事故（crates/pdf 当时已是新格式故干净，其余 crate 为旧工具链格式）。
+# 钉住 channel 后 fmt 门禁跨环境可复现。升级工具链 = 显式修改本文件
+# channel + 全仓复跑门禁（`cargo fmt --all` 清扫 → `cargo test
+# --workspace` / clippy / wasm32 check 全绿）后才可收口。
+# targets/components 一并声明：rustup 按 rust-toolchain.toml 自动补装
+# 门禁所需组件（wasm32 check 目标 + fmt/clippy 门禁），净环境开箱即用。
+[toolchain]
+channel = "1.99.0"
+targets = ["wasm32-unknown-unknown"]
+components = ["rustfmt", "clippy"]

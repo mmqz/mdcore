@@ -27,9 +27,26 @@
 ## 3. 常驻门禁（每轮收口必须双绿）
 
 1. `bash compliance/scan.sh`（denylist 门禁：品牌词/上游特有词扫描，strict 0 / ns 0）
-2. `cargo test --workspace`（16 套件语义锁全绿）
+2. `cargo test --workspace`（25 套件语义锁全绿，252 用例——2026-10-10
+   T1 修复轮实跑口径：245 旧基线 + 5 mdcore 质量锁 [T1-fix-a] +
+   2 pdf 锁 [T1-fix-b]；套件数 = 非空语义锁套件实跑统计）
 3. 启用新系统依赖（wry/tao/GTK 系）后：重跑 SBOM 并更新
    `compliance_release/THIRD-PARTY-NOTICES`（LGPL 系统库动态链接政策）。
+
+### feature 面前置 bootstrap（T1-F12，2026-10-10 成文）
+
+`cargo test -p mdc-pdf --features engine-pdfium[,engine-lopdf]` 的测试
+载荷（libpdfium.so + fixtures）**非净克隆自带**，需先在分析仓 spike
+（`cleanroom-analysis/md-line/pdf-a/spike/`）三步生成：
+① `./fetch-pdfium.sh`（版本 pin chromium/8086 non-V8 + SHA256 验证
+取库）→ ② `cargo run --release`（small / large / small_annotated
+fixtures）→ ③ `cargo run --bin formfill_probe --release`
+（form_probe.pdf 表单探针）。载荷定位序（libpdfium.so：env
+`MDC_PDFIUM_LIB` → 编译期候选清单 → 系统；fixtures：env
+`MDC_PDF_TEST_FIXTURES` → 编译期候选，crate 本地
+`crates/pdf/fixtures/` 优先、仓外 spike 位兜底）与完整纪律见
+gates.md「T1 卫生修复轮 · feature 面前置 bootstrap」。默认面常驻
+门禁（上述第 2 条）不受影响——零引擎依赖，裸环境全绿。
 
 ## 4. 发布形态套件（compliance-baseline 分支 compliance_release/）
 

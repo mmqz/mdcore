@@ -33,12 +33,7 @@ type Fp = (u64, mdcore::tree::BlockKind, String, String);
 fn preorder_fingerprint(core: &Core) -> Vec<Fp> {
     fn walk(tree: &mdcore::tree::BlockTree, id: mdcore::tree::NodeId, out: &mut Vec<Fp>) {
         let n = tree.node(id);
-        out.push((
-            n.id.0,
-            n.kind,
-            n.text.to_string(),
-            format!("{:?}", n.attrs),
-        ));
+        out.push((n.id.0, n.kind, n.text.to_string(), format!("{:?}", n.attrs)));
         for &c in &n.children {
             walk(tree, c, out);
         }
@@ -82,9 +77,7 @@ fn build_sections(target_bytes: usize) -> Vec<String> {
             2 => format!(
                 "```rust\nfn block_{i}() {{\n    let x = {i}; // filler\n    println(x);\n}}\n```\n"
             ),
-            3 => format!(
-                "| col a {i} | col b | col c |\n| v1 | v2 | v3 |\n| v4 | v5 | v6 |\n"
-            ),
+            3 => format!("| col a {i} | col b | col c |\n| v1 | v2 | v3 |\n| v4 | v5 | v6 |\n"),
             4 => "---\n".to_string(),
             _ => format!(
                 "- task todo {i} unchecked\n\
@@ -103,10 +96,7 @@ fn build_sections(target_bytes: usize) -> Vec<String> {
 
 /// 参考分块器：只在 section 边界切（每 chunk 约 `per` 个 section）。
 fn chunk_sections(sections: &[String], per: usize) -> Vec<String> {
-    sections
-        .chunks(per)
-        .map(|group| group.concat())
-        .collect()
+    sections.chunks(per).map(|group| group.concat()).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +107,11 @@ fn chunk_sections(sections: &[String], per: usize) -> Vec<String> {
 fn oneshot_vs_chunked_extend_triple_equality() {
     let sections = build_sections(1_000_000);
     let full: String = sections.concat();
-    assert!(full.len() >= 1_000_000, "必须覆盖 1MB 级文档，实际 {}", full.len());
+    assert!(
+        full.len() >= 1_000_000,
+        "必须覆盖 1MB 级文档，实际 {}",
+        full.len()
+    );
 
     let one_shot = Core::from_markdown(&full);
 
@@ -125,9 +119,9 @@ fn oneshot_vs_chunked_extend_triple_equality() {
     let mut chunked = Core::new();
     for (k, chunk) in chunks.iter().enumerate() {
         assert!(mdcore::markdown::is_complete_chunk(chunk), "chunk {k} 悬挂");
-        chunked.extend_from_markdown(chunk).unwrap_or_else(|r| {
-            panic!("chunk {k} 被拒: {r:?}")
-        });
+        chunked
+            .extend_from_markdown(chunk)
+            .unwrap_or_else(|r| panic!("chunk {k} 被拒: {r:?}"));
     }
 
     // 三重相等：树指纹（kind/text/attrs，先序含嵌套）+ 先序 ID 序列 + to_markdown
@@ -167,7 +161,11 @@ fn extend_not_undoable_and_system_boundary_breaks_group() {
 
     // 前段 View 编辑（历史条目 1）
     core.replace_text(
-        TextTarget::ByPath { path: vec![0usize, 0], start: 0, end: 6 },
+        TextTarget::ByPath {
+            path: vec![0usize, 0],
+            start: 0,
+            end: 6,
+        },
         "QUOTED".into(),
     )
     .unwrap();
@@ -177,17 +175,29 @@ fn extend_not_undoable_and_system_boundary_breaks_group() {
     // 边界必须推进为 System
     core.extend_from_markdown(&sections[2..4].concat()).unwrap();
     core.extend_from_markdown(&sections[4..6].concat()).unwrap();
-    assert_eq!(core.history.undo_depth(), 1, "System 边界不入栈，前段 View 条目不受影响");
+    assert_eq!(
+        core.history.undo_depth(),
+        1,
+        "System 边界不入栈，前段 View 条目不受影响"
+    );
     let before_view_b = preorder_fingerprint(&core); // = edit A + 全部 ingest 段
 
     // 后段 View 编辑：last_source == System → 必开新条目（边界破组），
     // 不得吸进前段 View 条目（错误合并 = 一次 undo 连 ingest 前的人手编辑一起吞）
     core.replace_text(
-        TextTarget::ByPath { path: vec![0usize, 0], start: 0, end: 6 },
+        TextTarget::ByPath {
+            path: vec![0usize, 0],
+            start: 0,
+            end: 6,
+        },
         "EDITED".into(),
     )
     .unwrap();
-    assert_eq!(core.history.undo_depth(), 2, "System 边界破组：后段 View 击键必开新条目");
+    assert_eq!(
+        core.history.undo_depth(),
+        2,
+        "System 边界破组：后段 View 击键必开新条目"
+    );
 
     // undo 只撤后段 View 编辑：ingest 段与前段编辑原样
     core.undo().unwrap();
@@ -208,7 +218,10 @@ fn extend_not_undoable_and_system_boundary_breaks_group() {
         .iter()
         .filter(|r| r.source == Source::System)
         .count();
-    assert_eq!(system_records, 3, "三段 ingest 全在 revision log（ADR-B4 只过滤 undo 栈）");
+    assert_eq!(
+        system_records, 3,
+        "三段 ingest 全在 revision log（ADR-B4 只过滤 undo 栈）"
+    );
     assert!(
         core.log
             .records
@@ -228,7 +241,11 @@ fn extend_not_undoable_and_system_boundary_breaks_group() {
     assert_eq!(system_events, 3, "三段 ingest 全部发出事件");
 
     // undo 后再 extend：新 ID 继续抬升水位（§8.2 永不回收/复用）
-    let max_id_ever = preorder_fingerprint(&core).iter().map(|f| f.0).max().unwrap();
+    let max_id_ever = preorder_fingerprint(&core)
+        .iter()
+        .map(|f| f.0)
+        .max()
+        .unwrap();
     core.extend_from_markdown(&sections[6..7].concat()).unwrap();
     assert!(!core.history.can_undo(), "extend 后栈仍空");
     let fp = preorder_fingerprint(&core);
@@ -252,11 +269,20 @@ fn extend_pipeline_events_revision_and_log() {
     let events = core.take_events();
     assert_eq!(events.len(), 1, "一个 chunk = 一个事务 = 一条事件");
     assert_eq!(events[0].meta.source, Source::System, "核自驱来源");
-    assert_eq!(events[0].meta.command.as_deref(), Some("extend_from_markdown"));
+    assert_eq!(
+        events[0].meta.command.as_deref(),
+        Some("extend_from_markdown")
+    );
     assert!(!events[0].meta.coalesced);
-    assert!(events[0].ops.iter().all(|o| matches!(o, Op::InsertBlock { .. })));
+    assert!(events[0]
+        .ops
+        .iter()
+        .all(|o| matches!(o, Op::InsertBlock { .. })));
     assert!(
-        events[0].ops.iter().any(|o| matches!(o, Op::InsertBlock { id: Some(_), .. })),
+        events[0]
+            .ops
+            .iter()
+            .any(|o| matches!(o, Op::InsertBlock { id: Some(_), .. })),
         "op 内 ID 已物化（事件/历史/日志同源）"
     );
 
@@ -265,7 +291,13 @@ fn extend_pipeline_events_revision_and_log() {
     nested.extend_from_markdown("> a\n> b\n").unwrap();
     let ops = &nested.take_events()[0].ops;
     assert_eq!(ops.len(), 3);
-    assert!(matches!(&ops[0], Op::InsertBlock { kind: mdcore::tree::BlockKind::Blockquote, .. }));
+    assert!(matches!(
+        &ops[0],
+        Op::InsertBlock {
+            kind: mdcore::tree::BlockKind::Blockquote,
+            ..
+        }
+    ));
     assert!(matches!(&ops[1], Op::InsertBlock { parent, .. } if parent == &vec![0usize]));
 
     // System 不进合并窗且不入 undo 栈（R21/ADR-B4）：同钟两次 extend
@@ -273,7 +305,11 @@ fn extend_pipeline_events_revision_and_log() {
     let mut fixed = Core::with_clock(Arc::new(|| 42_000));
     fixed.extend_from_markdown("one\n").unwrap();
     fixed.extend_from_markdown("two\n").unwrap();
-    assert_eq!(fixed.history.undo_depth(), 0, "ADR-B4：System 事务不入 undo 栈");
+    assert_eq!(
+        fixed.history.undo_depth(),
+        0,
+        "ADR-B4：System 事务不入 undo 栈"
+    );
     assert!(!fixed.history.can_undo());
     assert_eq!(fixed.revision(), 2);
 
@@ -310,12 +346,19 @@ fn history_json_roundtrip_with_system_boundary_state() {
         hj_system.contains("\"last_source\":\"system\""),
         "边界状态必须随 JSON 落盘（ADR-B4 无损前提）: {hj_system}"
     );
-    assert!(hj_system.contains("\"undo\":[]"), "System 事务不入栈: {hj_system}");
+    assert!(
+        hj_system.contains("\"undo\":[]"),
+        "System 事务不入栈: {hj_system}"
+    );
 
     // System 后的 View 编辑：新条目 + 边界推进为 View（栈上有一条交互编辑）
     core.set_clock(Arc::new(|| 5_000_000));
     core.replace_text(
-        TextTarget::ByPath { path: vec![0usize], start: 0, end: 4 },
+        TextTarget::ByPath {
+            path: vec![0usize],
+            start: 0,
+            end: 4,
+        },
         "SEED".into(),
     )
     .unwrap();
@@ -325,7 +368,11 @@ fn history_json_roundtrip_with_system_boundary_state() {
     // 往返 ①：纯 System 边界态逐字节无损
     let mut a = Core::from_markdown("seed\ningested tail\n");
     a.set_history_json(&hj_system).unwrap();
-    assert_eq!(a.history_json(), hj_system, "System 边界态 roundtrip 必须无损");
+    assert_eq!(
+        a.history_json(),
+        hj_system,
+        "System 边界态 roundtrip 必须无损"
+    );
     assert_eq!(a.history.undo_depth(), 0);
     assert!(!a.history.can_undo());
 
@@ -334,17 +381,29 @@ fn history_json_roundtrip_with_system_boundary_state() {
     b.set_history_json(&hj_full).unwrap();
     assert_eq!(b.history_json(), hj_full, "混合态 roundtrip 必须无损");
     b.undo().unwrap();
-    assert_eq!(top_texts(&b), vec!["seed", "ingested tail"], "重开后 undo 撤掉存档前 View 编辑");
+    assert_eq!(
+        top_texts(&b),
+        vec!["seed", "ingested tail"],
+        "重开后 undo 撤掉存档前 View 编辑"
+    );
 
     // 往返 ③：恢复出的 System 边界状态下交互照常——View 击键开新条目
     // （边界字段随 JSON 复原、分组不跨档错误合并；时钟任意取值）
     a.set_clock(Arc::new(|| 42_000));
     a.replace_text(
-        TextTarget::ByPath { path: vec![0usize], start: 0, end: 4 },
+        TextTarget::ByPath {
+            path: vec![0usize],
+            start: 0,
+            end: 4,
+        },
         "SEED".into(),
     )
     .unwrap();
-    assert_eq!(a.history.undo_depth(), 1, "恢复的 System 边界态下 View 击键开新条目，undo 链可用");
+    assert_eq!(
+        a.history.undo_depth(),
+        1,
+        "恢复的 System 边界态下 View 击键开新条目，undo 链可用"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -358,10 +417,10 @@ fn extend_rejects_incomplete_fence_without_pollution() {
     let before_rev = core.revision();
 
     let bad_chunks = [
-        "```rust\nlet x = 1;\n",          // fence 开在 EOF
-        "```\n",                          // 孤立开栏
-        "ok line\n```js\ninner\n",        // 先完整后悬挂
-        "> q\n```python\nprint(1)\n",     // quote 段之后悬挂
+        "```rust\nlet x = 1;\n",      // fence 开在 EOF
+        "```\n",                      // 孤立开栏
+        "ok line\n```js\ninner\n",    // 先完整后悬挂
+        "> q\n```python\nprint(1)\n", // quote 段之后悬挂
     ];
     for bad in bad_chunks {
         let err = core.extend_from_markdown(bad).unwrap_err();
@@ -425,7 +484,11 @@ fn save_open_roundtrip_restores_all_state() {
     core.set_document_id(Some(DocumentId::generate(1_700_000_000_000)))
         .unwrap();
     core.replace_text(
-        TextTarget::ByPath { path: vec![1usize], start: 0, end: 4 },
+        TextTarget::ByPath {
+            path: vec![1usize],
+            start: 0,
+            end: 4,
+        },
         "BETA".into(),
     )
     .unwrap();
@@ -444,7 +507,10 @@ fn save_open_roundtrip_restores_all_state() {
     // meta 畸形显式失败（不静默错配身份）
     assert!(Core::open_document(&md, "not json").is_err());
     assert!(Core::open_document(&md, "{\"document_id\":\"not-an-uuid\"}").is_err());
-    assert!(Core::open_document(&md, "{\"history\":{}}").is_err(), "坏历史 JSON 拒绝");
+    assert!(
+        Core::open_document(&md, "{\"history\":{}}").is_err(),
+        "坏历史 JSON 拒绝"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +536,10 @@ fn set_document_id_idempotent_conflict_rejected() {
     // None = 用注入时钟现场生成
     let mut fresh = Core::with_clock(Arc::new(|| 1_700_000_000_000));
     fresh.set_document_id(None).unwrap();
-    assert_eq!(fresh.document_id().unwrap().timestamp_ms(), 1_700_000_000_000);
+    assert_eq!(
+        fresh.document_id().unwrap().timestamp_ms(),
+        1_700_000_000_000
+    );
     // 已持有身份后再生成 = 异值 = 拒绝
     assert!(fresh.set_document_id(None).is_err());
     assert!(fresh.set_document_id(Some(a)).is_err());
@@ -519,7 +588,8 @@ fn document_id_display_parse_validation() {
         m[19] = bad_nibble;
         assert!(
             String::from_utf8(m).unwrap().parse::<DocumentId>().is_err(),
-            "variant 非法形状必须拒绝: {}", bad_nibble as char
+            "variant 非法形状必须拒绝: {}",
+            bad_nibble as char
         );
     }
 
@@ -572,7 +642,9 @@ fn genesis_carries_document_id_and_replay_restores() {
         .unwrap();
     let other_line = other.log.to_jsonl().lines().next().unwrap().to_string();
     let conflict = format!("{first_line}\n{other_line}\n");
-    let err = Core::replay_jsonl(&conflict).err().expect("replay 必须拒绝冲突 document_id");
+    let err = Core::replay_jsonl(&conflict)
+        .err()
+        .expect("replay 必须拒绝冲突 document_id");
     assert!(err.contains("conflicting document_id"), "err = {err}");
 }
 

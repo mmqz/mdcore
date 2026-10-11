@@ -119,7 +119,12 @@ impl Core {
         // 身份映射：新树路径 → 携带 id。BTreeMap（确定性，平局不可能——
         // 路径唯一）。preserved/moved/edited 的 new_path 即新树先序位。
         let mut carry: std::collections::BTreeMap<NodePath, u64> = Default::default();
-        for m in report.preserved.iter().chain(&report.moved).chain(&report.edited) {
+        for m in report
+            .preserved
+            .iter()
+            .chain(&report.moved)
+            .chain(&report.edited)
+        {
             carry.insert(m.new_path.clone(), m.id.0);
         }
         for a in &report.added {
@@ -146,7 +151,10 @@ impl Core {
 
         let receipt = self.apply_ops(
             ops,
-            ApplyMeta { source: Source::System, command: Some("external_reload".into()) },
+            ApplyMeta {
+                source: Source::System,
+                command: Some("external_reload".into()),
+            },
         )?;
         // ADR-B7 §4：take-external 放弃本地未存交互史——undo/redo/合并窗状态全清。
         self.history.clear_interaction();

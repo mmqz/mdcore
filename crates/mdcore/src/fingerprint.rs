@@ -101,7 +101,11 @@ pub struct TreeFingerprint<'a> {
 impl<'a> TreeFingerprint<'a> {
     pub fn new(tree: &'a BlockTree) -> Self {
         let n = tree.node_count() + 1; // 含虚根槽位
-        Self { tree, structural: vec![None; n], content: vec![None; n] }
+        Self {
+            tree,
+            structural: vec![None; n],
+            content: vec![None; n],
+        }
     }
 
     /// 单块双指纹（memo 化）。
@@ -144,8 +148,9 @@ impl<'a> TreeFingerprint<'a> {
         if let Some(v) = self.content[id.0] {
             return v;
         }
-        let chars: Vec<char> =
-            normalize_text(&self.tree.node(id).text.to_string()).chars().collect();
+        let chars: Vec<char> = normalize_text(&self.tree.node(id).text.to_string())
+            .chars()
+            .collect();
         let mut h = Hasher::new(0xC1);
         h.write_u64(chars.len() as u64);
         for &c in &chars {
@@ -358,7 +363,10 @@ pub struct MatchParams {
 
 impl Default for MatchParams {
     fn default() -> Self {
-        Self { similarity_threshold: 0.7, edit_window: 8 }
+        Self {
+            similarity_threshold: 0.7,
+            edit_window: 8,
+        }
     }
 }
 
@@ -521,16 +529,25 @@ impl<'a> Matcher<'a> {
             bj -= 1;
         }
         // 中段未配对区间（front/back 之间；全被吃满则为空）。
-        let old_mid: Vec<usize> =
-            if bi >= fi as isize { (fi..=bi as usize).collect() } else { Vec::new() };
-        let new_mid: Vec<usize> =
-            if bj >= fj as isize { (fj..=bj as usize).collect() } else { Vec::new() };
+        let old_mid: Vec<usize> = if bi >= fi as isize {
+            (fi..=bi as usize).collect()
+        } else {
+            Vec::new()
+        };
+        let new_mid: Vec<usize> = if bj >= fj as isize {
+            (fj..=bj as usize).collect()
+        } else {
+            Vec::new()
+        };
 
         // --- tier c1：精确指纹全局配对（移动检测；最小序位平局）---
         let mut buckets: std::collections::BTreeMap<(u64, u64), Vec<usize>> = Default::default();
         for &i in &old_mid {
             let fp = self.fp_old.block_fingerprint(old_kids[i]);
-            buckets.entry((fp.structural, fp.content)).or_default().push(i);
+            buckets
+                .entry((fp.structural, fp.content))
+                .or_default()
+                .push(i);
         }
         for &j in &new_mid {
             let fp = self.fp_new.block_fingerprint(new_kids[j]);
@@ -566,8 +583,7 @@ impl<'a> Matcher<'a> {
                     continue;
                 }
                 let sim = text_similarity(&o_node.text.to_string(), &n_text);
-                if sim >= self.params.similarity_threshold && best.is_none_or(|(_, bs)| sim > bs)
-                {
+                if sim >= self.params.similarity_threshold && best.is_none_or(|(_, bs)| sim > bs) {
                     best = Some((i, sim));
                 }
             }
@@ -579,7 +595,15 @@ impl<'a> Matcher<'a> {
         }
 
         // --- tier d：拆块/并块归组（连续未配对游程；join 相似核验）---
-        self.split_merge_pass(&old_mid, &new_mid, &mut old_taken, &mut new_taken, &mut pairs, &old_kids, &new_kids);
+        self.split_merge_pass(
+            &old_mid,
+            &new_mid,
+            &mut old_taken,
+            &mut new_taken,
+            &mut pairs,
+            &old_kids,
+            &new_kids,
+        );
 
         // --- 归类 + 子树递归 ---
         for (i, j, tier) in pairs {
@@ -708,9 +732,15 @@ impl<'a> Matcher<'a> {
     }
 
     fn sort_lists(&mut self) {
-        self.report.preserved.sort_by(|a, b| a.old_path.cmp(&b.old_path));
-        self.report.moved.sort_by(|a, b| a.old_path.cmp(&b.old_path));
-        self.report.edited.sort_by(|a, b| a.old_path.cmp(&b.old_path));
+        self.report
+            .preserved
+            .sort_by(|a, b| a.old_path.cmp(&b.old_path));
+        self.report
+            .moved
+            .sort_by(|a, b| a.old_path.cmp(&b.old_path));
+        self.report
+            .edited
+            .sort_by(|a, b| a.old_path.cmp(&b.old_path));
         self.report.added.sort_by(|a, b| a.path.cmp(&b.path));
         self.report.removed.sort_by(|a, b| a.path.cmp(&b.path));
     }
@@ -753,7 +783,10 @@ fn consecutive_runs(mid: &[usize], taken: &[bool]) -> Vec<(usize, usize)> {
 
 /// 游程文本 join（单空格）——拆/并归组的核验输入。
 fn join_run(tree: &BlockTree, run: &[usize], kids: &[NodeId]) -> String {
-    run.iter().map(|&m| tree.node(kids[m]).text.to_string()).collect::<Vec<_>>().join(" ")
+    run.iter()
+        .map(|&m| tree.node(kids[m]).text.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// 先序平铺（含路径），manifest 快路径与 Core 指纹清单共用。
@@ -838,6 +871,9 @@ mod tests {
         assert_eq!(text_similarity("one", "ONE"), 1.0, "大小写不敏感");
         assert!(text_similarity("a  b", "a b") > 0.999, "空白折叠后全等");
         assert!(text_similarity("beta", "gamma") < 0.3, "不相干文本低分");
-        assert!(text_similarity("alpha", "alpha edited") > 0.999, "containment 语义");
+        assert!(
+            text_similarity("alpha", "alpha edited") > 0.999,
+            "containment 语义"
+        );
     }
 }

@@ -7,7 +7,11 @@
 use std::path::Path;
 
 fn prototype_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
 }
 
 /// 蓝图注入脚本词面锁：事件族 = mdc-inject*（RC 轮统一命名域），
@@ -16,10 +20,19 @@ fn prototype_root() -> &'static Path {
 fn shell_native_blueprint_uses_frozen_event_family() {
     let src = include_str!("../../shell-native/src/lib.rs");
     assert!(src.contains("'mdc-inject'"), "mdc-inject 事件名必须在蓝图");
-    assert!(src.contains("'mdc-inject-chunk'"), "mdc-inject-chunk 事件名必须在蓝图");
+    assert!(
+        src.contains("'mdc-inject-chunk'"),
+        "mdc-inject-chunk 事件名必须在蓝图"
+    );
     assert!(src.contains("__inject_chunk"), "渐进入口必须在蓝图");
-    assert!(!src.contains("'md-inject'"), "旧事件名 md-inject 禁止复活（CONTRACT.md §2）");
-    assert!(!src.contains("'md-inject-chunk'"), "旧事件名 md-inject-chunk 禁止复活");
+    assert!(
+        !src.contains("'md-inject'"),
+        "旧事件名 md-inject 禁止复活（CONTRACT.md §2）"
+    );
+    assert!(
+        !src.contains("'md-inject-chunk'"),
+        "旧事件名 md-inject-chunk 禁止复活"
+    );
 }
 
 /// 契约文档存在 + 版本标记 + 关键面词面（双侧锁的共同锚）。
@@ -28,12 +41,24 @@ fn contract_doc_frozen_v1_present() {
     let doc = std::fs::read_to_string(prototype_root().join("CONTRACT.md"))
         .expect("CONTRACT.md 必须存在于原型根");
     assert!(doc.contains("冻结 v1"), "版本标记必须在");
-    assert!(doc.contains("__inject") && doc.contains("__inject_chunk"), "注入面必须在");
+    assert!(
+        doc.contains("__inject") && doc.contains("__inject_chunk"),
+        "注入面必须在"
+    );
     assert!(doc.contains("mdc-inject"), "事件族必须在");
     assert!(doc.contains("__contractVersion"), "版本常量必须在");
-    assert!(doc.contains("surface_load_markdown"), "mdshell Host 契约必须在");
-    assert!(doc.contains("FirstChunkInteractive"), "OpenProgress 契约必须在");
-    assert!(doc.contains("adopt_external"), "外部重载接线（ADR-B7）必须在");
+    assert!(
+        doc.contains("surface_load_markdown"),
+        "mdshell Host 契约必须在"
+    );
+    assert!(
+        doc.contains("FirstChunkInteractive"),
+        "OpenProgress 契约必须在"
+    );
+    assert!(
+        doc.contains("adopt_external"),
+        "外部重载接线（ADR-B7）必须在"
+    );
 }
 
 /// R24-a 契约 v1.1 设置面词面锁：设置读写项 + 事件族 + 版本升级记录
@@ -45,8 +70,14 @@ fn contract_doc_v1_1_settings_face_present() {
     assert!(doc.contains("v1.1"), "minor 版本标记必须在");
     assert!(doc.contains("__settings"), "设置读面必须在");
     assert!(doc.contains("__setSetting"), "设置写面必须在");
-    assert!(doc.contains("mdc-settings-changed"), "设置事件族必须在（mdc-* 命名域）");
-    assert!(doc.contains("undo_coalesce_ms"), "默认值表必须在（双侧一致锚）");
+    assert!(
+        doc.contains("mdc-settings-changed"),
+        "设置事件族必须在（mdc-* 命名域）"
+    );
+    assert!(
+        doc.contains("undo_coalesce_ms"),
+        "默认值表必须在（双侧一致锚）"
+    );
     // Rust 侧权威实现锚：mdshell::settings 模块在位（防文档与实现漂移）。
     // 编译期常量锁（比运行时 assert 更早失败）。
     const _: () = assert!(mdshell::settings::SCHEMA_VERSION == 1);
@@ -63,7 +94,10 @@ fn contract_doc_v1_1_session_face_present() {
     assert!(doc.contains("SessionManager"), "会话管理器契约必须在");
     assert!(doc.contains("DocumentAlreadyOpen"), "一窗一档错误面必须在");
     assert!(doc.contains("DEFAULT_MAX_SESSIONS"), "资源上限常量面必须在");
-    assert!(doc.contains("snapshot_record"), "会话持久化（恢复上次打开集）必须在");
+    assert!(
+        doc.contains("snapshot_record"),
+        "会话持久化（恢复上次打开集）必须在"
+    );
     assert!(doc.contains("session_restore"), "settings 消费联动必须在");
     assert!(doc.contains("mark_saved"), "Core 脏标记契约必须在");
     assert!(

@@ -58,7 +58,7 @@ pub mod writer_lopdf;
 
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
-pub use document::{DocumentMeta, OpenError, PdfDocumentId, PdfSession};
+pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};

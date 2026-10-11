@@ -225,7 +225,12 @@ impl BlockTree {
     // ---- 结构原语（op 层使用；全部保持 §8.2 ID 不变量） ----
 
     /// 挂载：把 `node` 插为 `parent` 的第 `index` 个孩子（index <= len）。
-    pub fn insert_child(&mut self, parent: NodeId, index: usize, node: NodeId) -> Result<(), TreeError> {
+    pub fn insert_child(
+        &mut self,
+        parent: NodeId,
+        index: usize,
+        node: NodeId,
+    ) -> Result<(), TreeError> {
         let p = self.node_mut(parent);
         if index > p.children.len() {
             return Err(TreeError::BadIndex);
@@ -252,7 +257,11 @@ impl BlockTree {
             text: n.text.to_string(),
             attrs: n.attrs.clone(),
             marks: n.marks.clone(),
-            children: n.children.iter().map(|&c| self.collect_subtree(c)).collect(),
+            children: n
+                .children
+                .iter()
+                .map(|&c| self.collect_subtree(c))
+                .collect(),
         }
     }
 

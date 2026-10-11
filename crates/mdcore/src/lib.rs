@@ -54,10 +54,16 @@ pub struct ApplyMeta {
 
 impl ApplyMeta {
     pub fn view(command: &str) -> Self {
-        Self { source: Source::View, command: Some(command.to_string()) }
+        Self {
+            source: Source::View,
+            command: Some(command.to_string()),
+        }
     }
     pub fn ai(command: &str) -> Self {
-        Self { source: Source::Ai, command: Some(command.to_string()) }
+        Self {
+            source: Source::Ai,
+            command: Some(command.to_string()),
+        }
     }
 }
 
@@ -84,7 +90,9 @@ pub struct Receipt {
 /// 命令拒绝（§11.2/§11.3：结构性 stale 必须 reject，不做静默 rebase）。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Reject {
-    Stale { current: u64 },
+    Stale {
+        current: u64,
+    },
     Anchor(AnchorError),
     Invalid(String),
     /// 渐进打开（R10-a）：chunk 悬挂在未完结的块构造上（如未闭合 fence
@@ -170,7 +178,8 @@ impl Core {
         for (i, &t) in core.tree.top_level().iter().enumerate() {
             push_subtree_ops(&core.tree, t, &root_path, i, &mut ops, true);
         }
-        core.log.record(0, &ops, Source::View, Some("genesis".into()));
+        core.log
+            .record(0, &ops, Source::View, Some("genesis".into()));
         core
     }
 
@@ -243,7 +252,9 @@ impl Core {
     /// 通道不记录。判定边界规则见 ADR-B4：source = 谁驱动了内容变化。
     pub fn apply_ops(&mut self, mut ops: Vec<Op>, meta: ApplyMeta) -> Result<Receipt, Reject> {
         if ops.is_empty() {
-            return Ok(Receipt { revision: self.revision });
+            return Ok(Receipt {
+                revision: self.revision,
+            });
         }
         let kind = if ops.iter().any(|o| !o.is_text_class()) {
             Kind::Structural
@@ -275,21 +286,36 @@ impl Core {
         if meta.source == Source::System {
             // ADR-B4：装载级事务——log + 事件 + 边界照常，历史栈跳过。
             let rev = self.bump_revision();
-            self.log.record(rev, &ops, meta.source, meta.command.clone());
+            self.log
+                .record(rev, &ops, meta.source, meta.command.clone());
             self.history.note_boundary(now, kind, meta.source);
-            self.push_event(ops, EventMeta { source: meta.source, coalesced: false, command: meta.command });
+            self.push_event(
+                ops,
+                EventMeta {
+                    source: meta.source,
+                    coalesced: false,
+                    command: meta.command,
+                },
+            );
             return Ok(Receipt { revision: rev });
         }
 
-        let coalesce = self
-            .history
-            .should_coalesce(now, kind, meta.source)
-            && self.history.redo_depth() == 0;
+        let coalesce =
+            self.history.should_coalesce(now, kind, meta.source) && self.history.redo_depth() == 0;
 
         if coalesce {
-            self.history.coalesce_into_last(ops.clone(), inverses_seq, now, meta.source);
-            self.log.record(self.revision, &ops, meta.source, meta.command.clone());
-            self.push_event(ops, EventMeta { source: meta.source, coalesced: true, command: meta.command });
+            self.history
+                .coalesce_into_last(ops.clone(), inverses_seq, now, meta.source);
+            self.log
+                .record(self.revision, &ops, meta.source, meta.command.clone());
+            self.push_event(
+                ops,
+                EventMeta {
+                    source: meta.source,
+                    coalesced: true,
+                    command: meta.command,
+                },
+            );
         } else {
             let entry = Entry {
                 revision: self.bump_revision(),
@@ -300,13 +326,23 @@ impl Core {
                 at_ms: now,
                 kind,
             };
-            self.log.record(entry.revision, &ops, meta.source, meta.command.clone());
+            self.log
+                .record(entry.revision, &ops, meta.source, meta.command.clone());
             self.history.push_entry(entry, meta.source);
-            self.push_event(ops, EventMeta { source: meta.source, coalesced: false, command: meta.command });
+            self.push_event(
+                ops,
+                EventMeta {
+                    source: meta.source,
+                    coalesced: false,
+                    command: meta.command,
+                },
+            );
         }
         // R24-b：交互事务（View/Ai）置脏——System 分支已在上方早退。
         self.dirty = true;
-        Ok(Receipt { revision: self.revision })
+        Ok(Receipt {
+            revision: self.revision,
+        })
     }
 
     /// undo/redo 与重放使用的原始应用（不进历史；备份回滚仍然生效）。
@@ -327,7 +363,11 @@ impl Core {
     }
 
     fn push_event(&mut self, ops: Vec<Op>, meta: EventMeta) {
-        self.events.push_back(Event { ops, meta, revision: self.revision });
+        self.events.push_back(Event {
+            ops,
+            meta,
+            revision: self.revision,
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -337,7 +377,9 @@ impl Core {
     /// §11.2 结构命令的 base_revision 硬门禁：不等即 reject，不 rebase。
     fn gate(&self, base_revision: u64) -> Result<(), Reject> {
         if base_revision != self.revision {
-            return Err(Reject::Stale { current: self.revision });
+            return Err(Reject::Stale {
+                current: self.revision,
+            });
         }
         Ok(())
     }
@@ -353,17 +395,32 @@ impl Core {
     ) -> Result<Receipt, Reject> {
         self.gate(base)?;
         self.apply_ops(
-            vec![Op::InsertBlock { parent, index, kind, attrs, text: text.into(), id: None }],
+            vec![Op::InsertBlock {
+                parent,
+                index,
+                kind,
+                attrs,
+                text: text.into(),
+                id: None,
+            }],
             ApplyMeta::view("insert_block"),
         )
     }
 
     pub fn delete_block(&mut self, base: u64, path: NodePath) -> Result<Receipt, Reject> {
         self.gate(base)?;
-        self.apply_ops(vec![Op::RemoveBlock { path }], ApplyMeta::view("delete_block"))
+        self.apply_ops(
+            vec![Op::RemoveBlock { path }],
+            ApplyMeta::view("delete_block"),
+        )
     }
 
-    pub fn set_block_type(&mut self, base: u64, path: NodePath, kind: BlockKind) -> Result<Receipt, Reject> {
+    pub fn set_block_type(
+        &mut self,
+        base: u64,
+        path: NodePath,
+        kind: BlockKind,
+    ) -> Result<Receipt, Reject> {
         self.gate(base)?;
         self.apply_ops(
             vec![Op::SetBlockType { path, kind }],
@@ -371,9 +428,17 @@ impl Core {
         )
     }
 
-    pub fn set_attrs(&mut self, base: u64, path: NodePath, attrs: Attrs) -> Result<Receipt, Reject> {
+    pub fn set_attrs(
+        &mut self,
+        base: u64,
+        path: NodePath,
+        attrs: Attrs,
+    ) -> Result<Receipt, Reject> {
         self.gate(base)?;
-        self.apply_ops(vec![Op::SetAttrs { path, attrs }], ApplyMeta::view("set_attrs"))
+        self.apply_ops(
+            vec![Op::SetAttrs { path, attrs }],
+            ApplyMeta::view("set_attrs"),
+        )
     }
 
     pub fn move_block(
@@ -385,14 +450,23 @@ impl Core {
     ) -> Result<Receipt, Reject> {
         self.gate(base)?;
         self.apply_ops(
-            vec![Op::MoveBlock { from, to_parent, to_index }],
+            vec![Op::MoveBlock {
+                from,
+                to_parent,
+                to_index,
+            }],
             ApplyMeta::view("move_block"),
         )
     }
 
     /// §8.2 split：原 ID 留左侧，右侧新 ID。code_block/table/heading 的
     /// 尾部降级为 paragraph（TS spike 同规则）；list/quote 尾部继承 marker/depth。
-    pub fn split_block(&mut self, base: u64, path: NodePath, offset: usize) -> Result<Receipt, Reject> {
+    pub fn split_block(
+        &mut self,
+        base: u64,
+        path: NodePath,
+        offset: usize,
+    ) -> Result<Receipt, Reject> {
         self.gate(base)?;
         let node = self
             .tree
@@ -405,38 +479,39 @@ impl Core {
         }
         let tail_text = n.text.slice(offset..len).to_string();
         let (tail_kind, tail_attrs) = match n.kind {
-            BlockKind::ListItem => (
-                BlockKind::ListItem,
-                {
-                    let mut a = Attrs::new();
-                    if let Some(m) = n.attrs.get("marker") {
-                        a.insert("marker".into(), m.clone());
-                    }
-                    if let Some(d) = n.attrs.get("depth") {
-                        a.insert("depth".into(), d.clone());
-                    }
-                    a
-                },
-            ),
-            BlockKind::Blockquote => (
-                BlockKind::Blockquote,
-                {
-                    let mut a = Attrs::new();
-                    if let Some(d) = n.attrs.get("depth") {
-                        a.insert("depth".into(), d.clone());
-                    }
-                    a
-                },
-            ),
+            BlockKind::ListItem => (BlockKind::ListItem, {
+                let mut a = Attrs::new();
+                if let Some(m) = n.attrs.get("marker") {
+                    a.insert("marker".into(), m.clone());
+                }
+                if let Some(d) = n.attrs.get("depth") {
+                    a.insert("depth".into(), d.clone());
+                }
+                a
+            }),
+            BlockKind::Blockquote => (BlockKind::Blockquote, {
+                let mut a = Attrs::new();
+                if let Some(d) = n.attrs.get("depth") {
+                    a.insert("depth".into(), d.clone());
+                }
+                a
+            }),
             BlockKind::CodeBlock | BlockKind::Table | BlockKind::Heading => {
                 (BlockKind::Paragraph, Attrs::new())
             }
             other => (other, Attrs::new()),
         };
         let parent = path[..path.len() - 1].to_vec();
-        let index = *path.last().ok_or_else(|| Reject::Invalid("split: root".into()))?;
+        let index = *path
+            .last()
+            .ok_or_else(|| Reject::Invalid("split: root".into()))?;
         let ops = vec![
-            Op::ReplaceText { path: path.clone(), start: offset, end: len, insert: "".into() },
+            Op::ReplaceText {
+                path: path.clone(),
+                start: offset,
+                end: len,
+                insert: "".into(),
+            },
             Op::InsertBlock {
                 parent,
                 index: index + 1,
@@ -452,7 +527,9 @@ impl Core {
     /// §8.2 merge：survivor 明确 = 前一个兄弟（默认前/目标 ID），不得自作主张。
     pub fn merge_block(&mut self, base: u64, path: NodePath) -> Result<Receipt, Reject> {
         self.gate(base)?;
-        let index = *path.last().ok_or_else(|| Reject::Invalid("merge: root".into()))?;
+        let index = *path
+            .last()
+            .ok_or_else(|| Reject::Invalid("merge: root".into()))?;
         if index == 0 {
             return Err(Reject::Invalid("merge: no previous sibling".into()));
         }
@@ -472,7 +549,12 @@ impl Core {
             .ok_or_else(|| Reject::Invalid("merge: no previous sibling".into()))?;
         let prev_len = self.tree.node(prev).text.len_chars();
         let ops = vec![
-            Op::ReplaceText { path: prev_path, start: prev_len, end: prev_len, insert: text.into() },
+            Op::ReplaceText {
+                path: prev_path,
+                start: prev_len,
+                end: prev_len,
+                insert: text.into(),
+            },
             Op::RemoveBlock { path },
         ];
         self.apply_ops(ops, ApplyMeta::view("merge_block"))
@@ -484,14 +566,31 @@ impl Core {
         self.apply_ops(vec![op], ApplyMeta::view("replace_text"))
     }
 
-    pub fn set_mark(&mut self, target: TextTarget, kind: String, add: bool) -> Result<Receipt, Reject> {
+    pub fn set_mark(
+        &mut self,
+        target: TextTarget,
+        kind: String,
+        add: bool,
+    ) -> Result<Receipt, Reject> {
         let op = match target {
-            TextTarget::ByPath { path, start, end } => {
-                Op::SetMark { path, start, end, kind, add }
-            }
-            TextTarget::ByAnchor { block, start, end, .. } => {
+            TextTarget::ByPath { path, start, end } => Op::SetMark {
+                path,
+                start,
+                end,
+                kind,
+                add,
+            },
+            TextTarget::ByAnchor {
+                block, start, end, ..
+            } => {
                 let path = self.anchor_path(block)?;
-                Op::SetMark { path, start, end, kind, add }
+                Op::SetMark {
+                    path,
+                    start,
+                    end,
+                    kind,
+                    add,
+                }
             }
         };
         self.apply_ops(vec![op], ApplyMeta::view("set_mark"))
@@ -520,7 +619,12 @@ impl Core {
 
     /// 源码态提交（View A 块编辑回解析）：单原子块原位改（ID 保持）；
     /// 容器/多块结果则移除重建（新 ID——§8.3 匹配失败宁可新 ID）。
-    pub fn commit_source(&mut self, base: u64, path: NodePath, source: &str) -> Result<Receipt, Reject> {
+    pub fn commit_source(
+        &mut self,
+        base: u64,
+        path: NodePath,
+        source: &str,
+    ) -> Result<Receipt, Reject> {
         self.gate(base)?;
         let parsed = markdown::markdown_to_tree(source);
         let top: Vec<_> = parsed.top_level().to_vec();
@@ -532,9 +636,20 @@ impl Core {
                 .ok_or_else(|| Reject::Invalid("commit_source: bad path".into()))?;
             let len = self.tree.node(node).text.len_chars();
             let ops = vec![
-                Op::SetBlockType { path: path.clone(), kind: data.kind },
-                Op::SetAttrs { path: path.clone(), attrs: data.attrs.clone() },
-                Op::ReplaceText { path, start: 0, end: len, insert: data.text.into() },
+                Op::SetBlockType {
+                    path: path.clone(),
+                    kind: data.kind,
+                },
+                Op::SetAttrs {
+                    path: path.clone(),
+                    attrs: data.attrs.clone(),
+                },
+                Op::ReplaceText {
+                    path,
+                    start: 0,
+                    end: len,
+                    insert: data.text.into(),
+                },
             ];
             return self.apply_ops(ops, ApplyMeta::view("commit_source"));
         }
@@ -542,7 +657,9 @@ impl Core {
         // R9 修复：id 一律 None（现场分配新 ID）。此前携带解析树自造的 ID
         // （从 1 起号），与现存注册表冲突会覆盖 BlockId→槽位映射（§8.2）。
         let parent = path[..path.len() - 1].to_vec();
-        let index = *path.last().ok_or_else(|| Reject::Invalid("commit_source: root".into()))?;
+        let index = *path
+            .last()
+            .ok_or_else(|| Reject::Invalid("commit_source: root".into()))?;
         let mut ops = vec![Op::RemoveBlock { path: path.clone() }];
         for (i, &t) in top.iter().enumerate() {
             push_subtree_ops(&parsed, t, &parent, index + i, &mut ops, false);
@@ -557,10 +674,16 @@ impl Core {
             .tree
             .lookup_id(anchor.block)
             .ok_or(AnchorError::Missing(anchor.block))?;
-        let path = self.tree.path_of(slot).ok_or(AnchorError::Missing(anchor.block))?;
+        let path = self
+            .tree
+            .path_of(slot)
+            .ok_or(AnchorError::Missing(anchor.block))?;
         let len = self.tree.node(slot).text.len_chars();
         if anchor.offset > len {
-            return Err(AnchorError::OutOfRange { block: anchor.block, len });
+            return Err(AnchorError::OutOfRange {
+                block: anchor.block,
+                len,
+            });
         }
         Ok((path, anchor.offset))
     }
@@ -574,12 +697,32 @@ impl Core {
 
     fn resolve_text_target(&self, target: TextTarget, insert: String) -> Result<Op, Reject> {
         match target {
-            TextTarget::ByPath { path, start, end } => {
-                Ok(Op::ReplaceText { path, start, end, insert: insert.into() })
-            }
-            TextTarget::ByAnchor { block, start, end, expect } => {
+            TextTarget::ByPath { path, start, end } => Ok(Op::ReplaceText {
+                path,
+                start,
+                end,
+                insert: insert.into(),
+            }),
+            TextTarget::ByAnchor {
+                block,
+                start,
+                end,
+                expect,
+            } => {
+                // T1-fix F2：反转区间（start > end）在锚点解析、切片与 op
+                // 构造之前拒绝。修复前仅校验 start ≤ len / end ≤ len：
+                // expect=Some 时下方 `slice(start..end)` 在反转区间直接
+                // panic（ropey 1.6 明示，wasm replace_text_at_anchor 公开
+                // 可达）；expect=None 虽经 op 层 BadRange 安全拒绝，但两
+                // 路径应统一入口防线（§11.3 承诺 typed-reject）。
+                if start > end {
+                    return Err(Reject::Anchor(AnchorError::Inverted { block, start, end }));
+                }
                 let (path, _) = self
-                    .resolve_anchor(&Anchor { block, offset: start })
+                    .resolve_anchor(&Anchor {
+                        block,
+                        offset: start,
+                    })
                     .map_err(Reject::Anchor)?;
                 let slot = self.tree.lookup_id(block).expect("resolved above");
                 let len = self.tree.node(slot).text.len_chars();
@@ -592,7 +735,12 @@ impl Core {
                         return Err(Reject::Anchor(AnchorError::ExpectMismatch { block }));
                     }
                 }
-                Ok(Op::ReplaceText { path, start, end, insert: insert.into() })
+                Ok(Op::ReplaceText {
+                    path,
+                    start,
+                    end,
+                    insert: insert.into(),
+                })
             }
         }
     }
@@ -620,7 +768,9 @@ impl Core {
         let new_top: Vec<tree::NodeId> = parsed.top_level().to_vec();
         let mut ops = Vec::new();
         let root_path: NodePath = Vec::new();
-        Self::diff_forest(&self.tree, &old_top, &parsed, &new_top, &root_path, &mut ops);
+        Self::diff_forest(
+            &self.tree, &old_top, &parsed, &new_top, &root_path, &mut ops,
+        );
         self.apply_ops(
             ops,
             ApplyMeta {
@@ -645,10 +795,16 @@ impl Core {
             let mut path = parent.to_vec();
             path.push(i);
             if o.kind != n.kind {
-                ops.push(Op::SetBlockType { path: path.clone(), kind: n.kind });
+                ops.push(Op::SetBlockType {
+                    path: path.clone(),
+                    kind: n.kind,
+                });
             }
             if o.attrs != n.attrs {
-                ops.push(Op::SetAttrs { path: path.clone(), attrs: n.attrs.clone() });
+                ops.push(Op::SetAttrs {
+                    path: path.clone(),
+                    attrs: n.attrs.clone(),
+                });
             }
             if o.text != n.text {
                 ops.push(Op::ReplaceText {
@@ -717,32 +873,60 @@ impl Core {
     // -----------------------------------------------------------------------
 
     pub fn undo(&mut self) -> Option<Receipt> {
+        let boundary = self.history.boundary();
         let entry = self.history.pop_undo()?;
         let inverses = entry.inverses.clone();
         if self.apply_raw_batch(inverses.clone()).is_err() {
-            // 不变量被破坏（理论上不可能）：回滚已由 apply_raw_batch 完成
+            // T1-fix F10：失败不再静默丢历史。可达面：set_history_json /
+            // open_document 可载入与当前树不一致的历史（invert/apply 走
+            // BadPath/BadRange）。条目压回 undo 栈 + 合并窗边界拨回调用前；
+            // 树由 apply_raw_batch 的既有 backup 恢复——失败后状态与
+            // 调用前完全一致。
+            self.history.push_back_undo(entry);
+            self.history.restore_boundary(boundary);
             return None;
         }
         self.history.push_redo(entry);
         let rev = self.bump_revision();
         // R11 审查修正：undo 记入日志（此前不记 → 重放与实时状态分叉，
         // 违背“日志自含 + 确定性重放”承诺）。重放侧按普通 op 序列应用。
-        self.log.record(rev, &inverses, Source::Undo, Some("undo".into()));
-        self.push_event(inverses, EventMeta { source: Source::Undo, coalesced: false, command: Some("undo".into()) });
+        self.log
+            .record(rev, &inverses, Source::Undo, Some("undo".into()));
+        self.push_event(
+            inverses,
+            EventMeta {
+                source: Source::Undo,
+                coalesced: false,
+                command: Some("undo".into()),
+            },
+        );
         self.dirty = true; // R24-b：状态相对保存点变更（粘性，见字段注）
         Some(Receipt { revision: rev })
     }
 
     pub fn redo(&mut self) -> Option<Receipt> {
+        let boundary = self.history.boundary();
         let entry = self.history.pop_redo()?;
         let ops = entry.ops.clone();
         if self.apply_raw_batch(ops.clone()).is_err() {
+            // T1-fix F10：同 undo——条目压回 redo 栈 + 边界拨回，树由既有
+            // backup 恢复，失败后状态与调用前完全一致。
+            self.history.push_redo(entry);
+            self.history.restore_boundary(boundary);
             return None;
         }
         self.history.push_back_undo(entry);
         let rev = self.bump_revision();
-        self.log.record(rev, &ops, Source::Redo, Some("redo".into()));
-        self.push_event(ops, EventMeta { source: Source::Redo, coalesced: false, command: Some("redo".into()) });
+        self.log
+            .record(rev, &ops, Source::Redo, Some("redo".into()));
+        self.push_event(
+            ops,
+            EventMeta {
+                source: Source::Redo,
+                coalesced: false,
+                command: Some("redo".into()),
+            },
+        );
         self.dirty = true; // R24-b：同 undo
         Some(Receipt { revision: rev })
     }
@@ -764,6 +948,10 @@ impl Core {
         snapshot::Snapshot::capture(&self.tree, self.revision)
     }
 
+    /// 由 snapshot 重建核。`from_json` 产物已过 [`snapshot::Snapshot::validate`]
+    /// 不变量校验（T1-fix O4：损坏/恶意 JSON 在反序列化边界拒收，树不经
+    /// build 零污染）；`capture` 产物恒合法（活树不变量 + 分配器单调性）。
+    /// 程序化构造 snapshot 的宿主请先自行 `validate()`。
     pub fn restore(snap: snapshot::Snapshot) -> Self {
         let (tree, revision) = snap.into_tree();
         let mut core = Self::new();
@@ -866,8 +1054,16 @@ mod tests {
         let mut c = Core::from_markdown("alpha\nbeta");
         // View 击键 → 条目 1（边界 = Text/View）
         c.apply_ops(
-            vec![Op::ReplaceText { path: vec![0], start: 0, end: 5, insert: "ALPHA".into() }],
-            ApplyMeta { source: Source::View, command: Some("type".into()) },
+            vec![Op::ReplaceText {
+                path: vec![0],
+                start: 0,
+                end: 5,
+                insert: "ALPHA".into(),
+            }],
+            ApplyMeta {
+                source: Source::View,
+                command: Some("type".into()),
+            },
         )
         .unwrap();
         assert_eq!(c.history.undo_depth(), 1);
@@ -876,12 +1072,21 @@ mod tests {
         // 不 push_entry / 不 coalesce——栈深度不变；revision/log/事件照常
         c.set_clock(Arc::new(|| 42_000));
         c.apply_ops(
-            vec![Op::ReplaceText { path: vec![1], start: 0, end: 4, insert: "BETA".into() }],
-            ApplyMeta { source: Source::System, command: Some("programmatic".into()) },
+            vec![Op::ReplaceText {
+                path: vec![1],
+                start: 0,
+                end: 4,
+                insert: "BETA".into(),
+            }],
+            ApplyMeta {
+                source: Source::System,
+                command: Some("programmatic".into()),
+            },
         )
         .unwrap();
         assert_eq!(
-            c.history.undo_depth(), 1,
+            c.history.undo_depth(),
+            1,
             "System 事务不入栈：栈上仍是前一条 View 条目"
         );
         assert_eq!(c.revision(), 2, "System 事务照常 bump revision");
@@ -896,11 +1101,23 @@ mod tests {
         // 同钟 View 击键必开新条目（last_source=System 破组；kind 同为
         // Text、时间同窗——若边界未推进会被吸进条目 1）
         c.apply_ops(
-            vec![Op::ReplaceText { path: vec![1], start: 0, end: 4, insert: "GAMMA".into() }],
-            ApplyMeta { source: Source::View, command: Some("type2".into()) },
+            vec![Op::ReplaceText {
+                path: vec![1],
+                start: 0,
+                end: 4,
+                insert: "GAMMA".into(),
+            }],
+            ApplyMeta {
+                source: Source::View,
+                command: Some("type2".into()),
+            },
         )
         .unwrap();
-        assert_eq!(c.history.undo_depth(), 2, "System 边界破组：View 击键开新条目");
+        assert_eq!(
+            c.history.undo_depth(),
+            2,
+            "System 边界破组：View 击键开新条目"
+        );
 
         // undo 撤 edit2（GAMMA→BETA）：System 的 BETA 与条目 1 的 ALPHA 均不动
         c.undo().unwrap();
@@ -927,7 +1144,10 @@ mod tests {
         }];
         c.apply_ops(
             ops.clone(),
-            ApplyMeta { source: Source::System, command: Some("extend".into()) },
+            ApplyMeta {
+                source: Source::System,
+                command: Some("extend".into()),
+            },
         )
         .unwrap();
 

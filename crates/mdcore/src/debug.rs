@@ -124,7 +124,11 @@ fn dump_node(tree: &BlockTree, id: NodeId, depth: usize, pos: &str, out: &mut St
     let indent = "  ".repeat(depth);
     let text: String = n.text.to_string();
     let preview: String = text.chars().take(TEXT_PREVIEW).collect();
-    let ellipsis = if text.chars().count() > TEXT_PREVIEW { "…" } else { "" };
+    let ellipsis = if text.chars().count() > TEXT_PREVIEW {
+        "…"
+    } else {
+        ""
+    };
     out.push_str(&format!(
         "{indent}{pos} {} {:?} attrs={:?} marks={} text={:?}{}\n",
         n.id.debug_label(),

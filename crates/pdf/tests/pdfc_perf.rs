@@ -75,9 +75,10 @@ const THRESHOLDS: Thresholds = Thresholds {
 
 fn fixture_candidates() -> Vec<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // crate 本地优先 / spike 兜底（顺序依据见 pdfc_engine.rs——T1 审计 F12）。
     vec![
-        manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/fixtures"),
         manifest.join("fixtures"),
+        manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/fixtures"),
     ]
 }
 
@@ -442,7 +443,9 @@ fn perf_session_e2e_smoke() {
         OutlineTree::new(),
     )
     .expect("会话（占位几何与页数自洽）");
-    session.attach_engine(Box::new(engine));
+    session
+        .attach_engine(Box::new(engine))
+        .expect("引擎页数与元数据一致（同源构造——T1 审计 O3 装配期校验）");
 
     let t = Instant::now();
     let outcome = session

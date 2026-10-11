@@ -32,7 +32,10 @@ fn clock_of(cell: &Arc<std::sync::Mutex<u64>>) -> Arc<dyn Fn() -> u64 + Send + S
 }
 
 fn text_at(core: &Core, path: &[usize]) -> String {
-    core.tree.node(core.tree.resolve(path).unwrap()).text.to_string()
+    core.tree
+        .node(core.tree.resolve(path).unwrap())
+        .text
+        .to_string()
 }
 
 fn kind_at(core: &Core, path: &[usize]) -> BlockKind {
@@ -69,7 +72,9 @@ struct ScriptedAi {
 
 impl ScriptedAi {
     fn new() -> Self {
-        Self { observed: Vec::new() }
+        Self {
+            observed: Vec::new(),
+        }
     }
 
     /// 验证点 1 的读通道：blocks_json（机器可读块树平铺）。AI 不 touch 树，
@@ -134,7 +139,10 @@ impl ScriptedAi {
                 end: 0,
                 insert: summary.clone().into(),
             });
-            ops.push(Op::SetBlockType { path: empty.path.clone(), kind: BlockKind::Heading });
+            ops.push(Op::SetBlockType {
+                path: empty.path.clone(),
+                kind: BlockKind::Heading,
+            });
         }
         ops.push(Op::InsertBlock {
             parent: vec![],
@@ -157,7 +165,10 @@ impl ScriptedAi {
         let receipt = core.commit_transaction_as(
             base,
             ops,
-            ApplyMeta { source: Source::Ai, command: Some("ai.summarize".into()) },
+            ApplyMeta {
+                source: Source::Ai,
+                command: Some("ai.summarize".into()),
+            },
         )?;
         Ok(receipt.revision)
     }
@@ -173,13 +184,21 @@ fn ai_reads_human_edited_state_as_decision_input() {
 
     // Human 编辑（三条命令，经同一 Command Boundary）
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![0], start: 5, end: 5 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![0],
+            start: 5,
+            end: 5,
+        },
         " (week 3)".into(),
     )
     .unwrap();
     core.delete_block(core.revision(), vec![2]).unwrap();
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![2, 0], start: 6, end: 6 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![2, 0],
+            start: 6,
+            end: 6,
+        },
         " care".into(),
     )
     .unwrap();
@@ -188,17 +207,32 @@ fn ai_reads_human_edited_state_as_decision_input() {
     let mut ai = ScriptedAi::new();
     ai.observe(&core);
     let obs = &ai.observed;
-    assert_eq!(obs.len(), 4, "先序含子块：heading + intro + item two + nested");
+    assert_eq!(
+        obs.len(),
+        4,
+        "先序含子块：heading + intro + item two + nested"
+    );
     assert_eq!(obs[0].kind, "heading");
     assert_eq!(obs[0].text, "Notes (week 3)", "Human 文本编辑对 AI 可见");
     assert_eq!(obs[0].path, vec![0usize]);
     assert_eq!(obs[1].text, "intro text");
-    assert_eq!(obs[2].text, "item two", "Human 删除的 item one 已不在 AI 视野");
-    assert_eq!(obs[3].path, vec![2usize, 0], "嵌套块路径由 stack-by-depth 复原");
+    assert_eq!(
+        obs[2].text, "item two",
+        "Human 删除的 item one 已不在 AI 视野"
+    );
+    assert_eq!(
+        obs[3].path,
+        vec![2usize, 0],
+        "嵌套块路径由 stack-by-depth 复原"
+    );
     assert_eq!(obs[3].depth, 1);
     assert_eq!(obs[3].text, "nested care");
     for b in obs {
-        assert_eq!(b.id, id_at(&core, &b.path), "AI 读到的 id 与核内按路径解析一致");
+        assert_eq!(
+            b.id,
+            id_at(&core, &b.path),
+            "AI 读到的 id 与核内按路径解析一致"
+        );
     }
 
     // 第二读通道：事件流（View 与 AI 的共同 op 流，§22 不变量 1）
@@ -214,7 +248,12 @@ fn ai_reads_human_edited_state_as_decision_input() {
     // 决策输入闭环：计划摘要行引用的正是读到的现场
     let plan = ai.plan_summarize();
     match &plan[0] {
-        Op::InsertBlock { text, index, parent, .. } => {
+        Op::InsertBlock {
+            text,
+            index,
+            parent,
+            ..
+        } => {
             assert_eq!(*index, 3);
             assert!(parent.is_empty());
             assert_eq!(
@@ -279,7 +318,10 @@ fn scripted_ai_plan_is_deterministic_and_primitive_only() {
         "move_block",
     ];
     for op in &plan_a1 {
-        let tag = serde_json::to_value(op).unwrap()["t"].as_str().unwrap().to_string();
+        let tag = serde_json::to_value(op).unwrap()["t"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(PRIMITIVES.contains(&tag.as_str()), "非原语 op: {tag}");
     }
 
@@ -311,7 +353,10 @@ fn ai_fills_empty_paragraph_via_command_boundary() {
         "空段落被确定性填充"
     );
     assert_eq!(kind_at(&core, &[2]), BlockKind::Heading, "提级为 heading");
-    assert_eq!(text_at(&core, &[3]), "AI summary: 3 top-level blocks; first: meeting notes");
+    assert_eq!(
+        text_at(&core, &[3]),
+        "AI summary: 3 top-level blocks; first: meeting notes"
+    );
     assert_eq!(core.history.undo_depth(), 2, "Human split 一条 + AI 批一条");
 
     // 事件与日志溯源（Source::Ai 全程留痕）
@@ -322,7 +367,10 @@ fn ai_fills_empty_paragraph_via_command_boundary() {
     assert!(!events[1].meta.coalesced);
     assert_eq!(events[1].revision, 2);
     let jsonl = core.log.to_jsonl();
-    assert!(jsonl.contains("\"source\":\"ai\""), "AI 进 Revision 日志: {jsonl}");
+    assert!(
+        jsonl.contains("\"source\":\"ai\""),
+        "AI 进 Revision 日志: {jsonl}"
+    );
     assert!(jsonl.contains("\"command\":\"ai.summarize\""));
 }
 
@@ -340,7 +388,11 @@ fn ai_text_command_bumps_own_revision_never_coalesces() {
     for t in [0u64, 100, 200] {
         *now.lock().unwrap() = t;
         core.replace_text(
-            mdcore::anchor::TextTarget::ByPath { path: vec![0], start: 4, end: 4 },
+            mdcore::anchor::TextTarget::ByPath {
+                path: vec![0],
+                start: 4,
+                end: 4,
+            },
             "x".into(),
         )
         .unwrap();
@@ -360,7 +412,10 @@ fn ai_text_command_bumps_own_revision_never_coalesces() {
                 end: 7,
                 insert: " [AI]".into(),
             }],
-            ApplyMeta { source: Source::Ai, command: Some("ai.rephrase".into()) },
+            ApplyMeta {
+                source: Source::Ai,
+                command: Some("ai.rephrase".into()),
+            },
         )
         .unwrap();
     assert_eq!(r.revision, 2, "AI 命令各自 bump，不并入 Human 合并窗");
@@ -369,7 +424,11 @@ fn ai_text_command_bumps_own_revision_never_coalesces() {
     // R12 收紧：AI 条目之后的 Human 击键开新条目（不吸进 AI 批）
     *now.lock().unwrap() = 500;
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![0], start: 12, end: 12 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![0],
+            start: 12,
+            end: 12,
+        },
         "!".into(),
     )
     .unwrap();
@@ -408,7 +467,11 @@ fn ai_batch_undo_reverts_whole_batch_not_human_edit() {
 
     // Human 编辑（先）：文本一笔 + 插入空段落一笔
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![1], start: 5, end: 9 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![1],
+            start: 5,
+            end: 9,
+        },
         "EDITED".into(),
     )
     .unwrap();
@@ -428,7 +491,11 @@ fn ai_batch_undo_reverts_whole_batch_not_human_edit() {
     // AI 批量事务（fill + 提级 + 追加 = 3 op 一条历史条目）
     let mut ai = ScriptedAi::new();
     let ai_rev = ai.run_summarize_turn(&mut core).unwrap();
-    assert_eq!(core.history.undo_depth(), human_entries + 1, "多 op 批 = 单条目");
+    assert_eq!(
+        core.history.undo_depth(),
+        human_entries + 1,
+        "多 op 批 = 单条目"
+    );
     let ai_state = md(&core);
     assert_ne!(ai_state, after_human);
     let ai_block_id = id_at(&core, &[3]);
@@ -458,7 +525,11 @@ fn ai_batch_undo_reverts_whole_batch_not_human_edit() {
 fn ai_entries_survive_save_open_and_undo_whole_batch() {
     let mut core = Core::from_markdown("persist me");
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![0], start: 10, end: 10 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![0],
+            start: 10,
+            end: 10,
+        },
         " please".into(),
     )
     .unwrap();
@@ -474,7 +545,11 @@ fn ai_entries_survive_save_open_and_undo_whole_batch() {
     assert_eq!(reopened.history.undo_depth(), 2);
 
     reopened.undo().unwrap();
-    assert_eq!(text_at(&reopened, &[0]), "persist me please", "重开后 undo 仍不吞 Human 编辑");
+    assert_eq!(
+        text_at(&reopened, &[0]),
+        "persist me please",
+        "重开后 undo 仍不吞 Human 编辑"
+    );
     assert_eq!(reopened.history.undo_depth(), 1);
     reopened.redo().unwrap();
     assert_eq!(md(&reopened), after_ai, "重开后 AI 整批可单条 redo");
@@ -507,7 +582,11 @@ fn ai_stale_transaction_rejected_then_retries_with_fresh_base() {
 
     // Human 在 AI 提交前抢先填掉了那个空段落（真实并发时序）
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![1], start: 0, end: 0 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![1],
+            start: 0,
+            end: 0,
+        },
         "human note".into(),
     )
     .unwrap();
@@ -521,7 +600,10 @@ fn ai_stale_transaction_rejected_then_retries_with_fresh_base() {
     let rejected = core.commit_transaction_as(
         stale_base,
         stale_plan.clone(),
-        ApplyMeta { source: Source::Ai, command: Some("ai.summarize".into()) },
+        ApplyMeta {
+            source: Source::Ai,
+            command: Some("ai.summarize".into()),
+        },
     );
     assert_eq!(
         rejected,
@@ -542,7 +624,10 @@ fn ai_stale_transaction_rejected_then_retries_with_fresh_base() {
         .commit_transaction_as(
             core.revision(),
             fresh_plan,
-            ApplyMeta { source: Source::Ai, command: Some("ai.summarize".into()) },
+            ApplyMeta {
+                source: Source::Ai,
+                command: Some("ai.summarize".into()),
+            },
         )
         .unwrap();
     assert_eq!(r.revision, current + 1);
@@ -565,17 +650,32 @@ fn ai_batch_is_atomic_on_bad_op() {
     ai.observe(&core);
     let mut plan = ai.plan_summarize();
     // 故障注入：计划尾部混入一个坏路径 op（AI 侧 bug 的替身）
-    plan.push(Op::ReplaceText { path: vec![99], start: 0, end: 0, insert: "nope".into() });
+    plan.push(Op::ReplaceText {
+        path: vec![99],
+        start: 0,
+        end: 0,
+        insert: "nope".into(),
+    });
 
     let tree_before = debug::dump_tree(&core.tree);
     let base = core.revision();
     let rejected = core.commit_transaction_as(
         base,
         plan,
-        ApplyMeta { source: Source::Ai, command: Some("ai.summarize".into()) },
+        ApplyMeta {
+            source: Source::Ai,
+            command: Some("ai.summarize".into()),
+        },
     );
-    assert!(matches!(rejected, Err(Reject::Invalid(_))), "坏 op 必须 reject: {rejected:?}");
-    assert_eq!(debug::dump_tree(&core.tree), tree_before, "整批原子回滚，零污染");
+    assert!(
+        matches!(rejected, Err(Reject::Invalid(_))),
+        "坏 op 必须 reject: {rejected:?}"
+    );
+    assert_eq!(
+        debug::dump_tree(&core.tree),
+        tree_before,
+        "整批原子回滚，零污染"
+    );
     assert_eq!(core.revision(), base);
     assert_eq!(core.history.undo_depth(), 0);
     assert!(core.take_events().is_empty());
@@ -597,7 +697,11 @@ fn human_and_ai_alternate_on_one_document_state() {
 
     // Round 1：Human 续写 → AI 追加摘要
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![0], start: 7, end: 7 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![0],
+            start: 7,
+            end: 7,
+        },
         " doc".into(),
     )
     .unwrap();
@@ -617,7 +721,11 @@ fn human_and_ai_alternate_on_one_document_state() {
 
     // Round 3：Human 改写标题
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![0], start: 0, end: 7 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![0],
+            start: 0,
+            end: 7,
+        },
         "FINAL".into(),
     )
     .unwrap();
@@ -625,14 +733,25 @@ fn human_and_ai_alternate_on_one_document_state() {
     // 终态：Human 与 AI 的改动共存于同一 Document State（§22 不变量 1）
     assert_eq!(text_at(&core, &[0]), "FINAL doc");
     assert_eq!(kind_at(&core, &[1]), BlockKind::Heading);
-    assert_eq!(text_at(&core, &[1]), "AI summary: 3 top-level blocks; first: kickoff doc");
-    assert_eq!(text_at(&core, &[2]), "AI summary: 1 top-level blocks; first: kickoff doc");
-    assert_eq!(text_at(&core, &[3]), "AI summary: 3 top-level blocks; first: kickoff doc");
+    assert_eq!(
+        text_at(&core, &[1]),
+        "AI summary: 3 top-level blocks; first: kickoff doc"
+    );
+    assert_eq!(
+        text_at(&core, &[2]),
+        "AI summary: 1 top-level blocks; first: kickoff doc"
+    );
+    assert_eq!(
+        text_at(&core, &[3]),
+        "AI summary: 3 top-level blocks; first: kickoff doc"
+    );
 
     // 同一事件流，时序完整：View/Ai 交替，command 各自署名
     let events = core.take_events();
-    let seq: Vec<(Source, Option<&str>)> =
-        events.iter().map(|e| (e.meta.source, e.meta.command.as_deref())).collect();
+    let seq: Vec<(Source, Option<&str>)> = events
+        .iter()
+        .map(|e| (e.meta.source, e.meta.command.as_deref()))
+        .collect();
     assert_eq!(
         seq,
         vec![
@@ -670,7 +789,11 @@ fn ai_inclusive_log_replays_to_identical_state() {
 
     // Human
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![1], start: 4, end: 4 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![1],
+            start: 4,
+            end: 4,
+        },
         " v2".into(),
     )
     .unwrap();
@@ -684,14 +807,21 @@ fn ai_inclusive_log_replays_to_identical_state() {
     ai.run_summarize_turn(&mut core).unwrap();
     // Human 收尾
     core.replace_text(
-        mdcore::anchor::TextTarget::ByPath { path: vec![0], start: 0, end: 5 },
+        mdcore::anchor::TextTarget::ByPath {
+            path: vec![0],
+            start: 0,
+            end: 5,
+        },
         "alpha final".into(),
     )
     .unwrap();
 
     let jsonl = core.log.to_jsonl();
     assert!(jsonl.contains("\"source\":\"ai\""), "日志含 AI 记录");
-    assert!(jsonl.contains("\"source\":\"undo\""), "日志含 undo 记录（R11 修复面）");
+    assert!(
+        jsonl.contains("\"source\":\"undo\""),
+        "日志含 undo 记录（R11 修复面）"
+    );
     assert!(jsonl.contains("\"source\":\"redo\""));
 
     // R11 硬断言风格：重放 = 实时状态（块树/序列化/块 JSON/revision 逐一相等）

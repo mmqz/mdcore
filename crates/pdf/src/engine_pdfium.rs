@@ -109,11 +109,6 @@ impl PdfiumEngine {
         Ok(Self { document })
     }
 
-    /// 文档页数（`FPDF_GetPageCount`；宿主构造 `DocumentMeta` 用）。
-    pub fn page_count(&self) -> u32 {
-        self.document.pages().len() as u32
-    }
-
     /// 库定位候选清单（编译期 `CARGO_MANIFEST_DIR` 相对——观测/诊断面，
     /// 绑定按序尝试）：
     ///
@@ -161,6 +156,13 @@ impl std::fmt::Debug for PdfiumEngine {
 // ---------------------------------------------------------------------------
 
 impl DocumentEngine for PdfiumEngine {
+    /// 文档页数（`FPDF_GetPageCount`；原 inherent 方法升入 trait——
+    /// attach_engine 装配期一致性校验的引擎侧权威，宿主构造
+    /// `DocumentMeta` 同源用）。
+    fn page_count(&self) -> u32 {
+        self.document.pages().len() as u32
+    }
+
     /// 单页几何：原始 MediaBox（`FPDFPage_GetMediaBox`）+ `/Rotate`
     /// （`FPDFPage_GetRotation`）——`/Rotate` 归一化取
     /// [`PageGeometry::effective_width`] 消费（消费方不自行处理旋转）。

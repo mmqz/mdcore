@@ -2,10 +2,10 @@
 name = "mdshell"
 version.workspace = true
 edition = "2021"
-description = "R10 宿主契约层：文档生命周期（open/progressive-open/save/document_id）的 headless 可验证实现。原生 WebView 后端见 shell-native（不在本 workspace 编译面内）。"
+description = "R10 宿主契约层：文档生命周期（open/progressive-open/save/document_id）的 headless 可验证实现。原生 WebView 后端见 shell-native（蓝图态随 workspace 编译，实体编译待原生环境）。"
 
 [dependencies]
 mdcore = { path = "../mdcore" }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 toml_edit = "0.25.17"

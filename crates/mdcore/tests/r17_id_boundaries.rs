@@ -40,11 +40,19 @@ fn top_texts(core: &Core) -> Vec<String> {
 }
 
 fn top_kinds(core: &Core) -> Vec<BlockKind> {
-    core.tree.top_level().iter().map(|&c| core.tree.node(c).kind).collect()
+    core.tree
+        .top_level()
+        .iter()
+        .map(|&c| core.tree.node(c).kind)
+        .collect()
 }
 
 fn top_ids(core: &Core) -> Vec<BlockId> {
-    core.tree.top_level().iter().map(|&c| core.tree.node(c).id).collect()
+    core.tree
+        .top_level()
+        .iter()
+        .map(|&c| core.tree.node(c).id)
+        .collect()
 }
 
 fn node_id(core: &Core, path: &[usize]) -> BlockId {
@@ -65,7 +73,10 @@ fn last_event_ops(core: &mut Core) -> Vec<Op> {
 #[test]
 fn table_single_block_row_edit_keeps_identity() {
     let mut core = core_no_coalesce("P0\n| a𠮷 | 🙂 |\n| c | d |\nP1");
-    assert_eq!(top_kinds(&core), vec![BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph]);
+    assert_eq!(
+        top_kinds(&core),
+        vec![BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph]
+    );
     let t_id = node_id(&core, &[1]);
     // 表块文本 = 原始管道行按 \n 连接（含分隔行语义未建模，v0 如实记录）
     assert_eq!(node_text_of(&core, &[1]), "| a𠮷 | 🙂 |\n| c | d |");
@@ -73,7 +84,12 @@ fn table_single_block_row_edit_keeps_identity() {
 
     // 行 2 的 'c' 在块内码点 13（行1 10 码点 + \n + "| "）——块内偏移编辑
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![1], start: 13, end: 14, insert: "🦊".into() }],
+        vec![Op::ReplaceText {
+            path: vec![1],
+            start: 13,
+            end: 14,
+            insert: "🦊".into(),
+        }],
         mdcore::ApplyMeta::view("test"),
     )
     .unwrap();
@@ -83,7 +99,12 @@ fn table_single_block_row_edit_keeps_identity() {
 
     // 行内非 BMP 替换：🙂（码点 7）→ X，仍是单块文本编辑
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![1], start: 7, end: 8, insert: "X".into() }],
+        vec![Op::ReplaceText {
+            path: vec![1],
+            start: 7,
+            end: 8,
+            insert: "X".into(),
+        }],
         mdcore::ApplyMeta::view("test"),
     )
     .unwrap();
@@ -106,16 +127,22 @@ fn table_row_append_is_text_growth_not_new_block() {
     let mut core = core_no_coalesce("P0\n| a |\n| b |\nP1");
     let ids = top_ids(&core);
     let old_t = node_text_of(&core, &[1]);
-    core.sync_from_markdown("P0\n| a |\n| b |\n| c | d |\nP1").unwrap();
+    core.sync_from_markdown("P0\n| a |\n| b |\n| c | d |\nP1")
+        .unwrap();
     let ops = last_event_ops(&mut core);
     // 同位置表块 → 单个原位 ReplaceText（ID 保持）；无任何 InsertBlock
     assert_eq!(ops.len(), 1, "恰好 1 个 op: {ops:?}");
     let old_t_len = old_t.chars().count();
     assert_eq!(old_t_len, 11, "旧表文本码点数自证（\"| a |\n| b |\" = 11）");
-    assert!(matches!(&ops[0], Op::ReplaceText { path, start: 0, end, .. }
+    assert!(
+        matches!(&ops[0], Op::ReplaceText { path, start: 0, end, .. }
         if path == &vec![1usize] && *end == old_t_len),
-    "ReplaceText end = 旧表文本码点数");
-    assert_eq!(top_kinds(&core), vec![BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph]);
+        "ReplaceText end = 旧表文本码点数"
+    );
+    assert_eq!(
+        top_kinds(&core),
+        vec![BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph]
+    );
     assert_eq!(top_ids(&core), ids, "加行不改身份");
     assert_eq!(node_text_of(&core, &[1]), "| a |\n| b |\n| c | d |");
     core.undo().unwrap();
@@ -131,12 +158,24 @@ fn table_middle_break_aligned_prefix_keeps_id_tail_new() {
     core.sync_from_markdown("P0\n| a |\nX\n| c |\nP1").unwrap();
     // 位置对照：[0] P0 不动；[1] T(3行)→T(1行) 原位；[2] P1 槽被改写为 "X"；
     //           [3][4] 新表 + 新 P1
-    assert_eq!(top_kinds(&core), vec![BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph]);
+    assert_eq!(
+        top_kinds(&core),
+        vec![
+            BlockKind::Paragraph,
+            BlockKind::Table,
+            BlockKind::Paragraph,
+            BlockKind::Table,
+            BlockKind::Paragraph
+        ]
+    );
     assert_eq!(top_texts(&core), vec!["P0", "| a |", "X", "| c |", "P1"]);
     let now = top_ids(&core);
     assert_eq!(now[0], ids[0]);
     assert_eq!(now[1], ids[1], "首表槽保 ID");
-    assert_eq!(now[2], ids[2], "对齐位 2 = 原 P1 的 ID（内容被改写——按位对齐规则的代价）");
+    assert_eq!(
+        now[2], ids[2],
+        "对齐位 2 = 原 P1 的 ID（内容被改写——按位对齐规则的代价）"
+    );
     assert!(now[3].0 > ids[2].0 && now[4].0 > now[3].0, "净增尾部新 ID");
     core.undo().unwrap();
     assert_eq!(top_texts(&core), vec!["P0", "| a |\n| b |\n| c |", "P1"]);
@@ -151,9 +190,14 @@ fn paste_table_aligns_into_slot_keeps_id() {
     core.sync_from_markdown("p1\n| a |\n| b |\np2").unwrap();
     let ops = last_event_ops(&mut core);
     assert_eq!(ops.len(), 2, "SetBlockType + ReplaceText: {ops:?}");
-    assert!(matches!(&ops[0], Op::SetBlockType { path, kind: BlockKind::Table } if path == &vec![1usize]));
+    assert!(
+        matches!(&ops[0], Op::SetBlockType { path, kind: BlockKind::Table } if path == &vec![1usize])
+    );
     assert!(matches!(&ops[1], Op::ReplaceText { path, .. } if path == &vec![1usize]));
-    assert_eq!(top_kinds(&core), vec![BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph]);
+    assert_eq!(
+        top_kinds(&core),
+        vec![BlockKind::Paragraph, BlockKind::Table, BlockKind::Paragraph]
+    );
     assert_eq!(node_id(&core, &[1]), mid_id, "对齐槽吸收粘贴，ID 保持");
 }
 
@@ -162,16 +206,32 @@ fn paste_table_aligns_into_slot_keeps_id() {
 fn paste_table_and_fence_tail_new_ids_undo_identity() {
     let mut core = core_no_coalesce("p1\np2");
     let ids = top_ids(&core);
-    core.sync_from_markdown("p1\np2\n| a𠮷 | 🙂 |\n| c | d |\n```js\nx𠮷\n```").unwrap();
-    assert_eq!(top_kinds(&core), vec![BlockKind::Paragraph, BlockKind::Paragraph, BlockKind::Table, BlockKind::CodeBlock]);
+    core.sync_from_markdown("p1\np2\n| a𠮷 | 🙂 |\n| c | d |\n```js\nx𠮷\n```")
+        .unwrap();
+    assert_eq!(
+        top_kinds(&core),
+        vec![
+            BlockKind::Paragraph,
+            BlockKind::Paragraph,
+            BlockKind::Table,
+            BlockKind::CodeBlock
+        ]
+    );
     let now = top_ids(&core);
     assert!(now[0] == ids[0] && now[1] == ids[1], "前缀对齐保 ID");
-    assert!(now[2].0 > ids[1].0 && now[3].0 > now[2].0, "粘贴块全部新 ID");
+    assert!(
+        now[2].0 > ids[1].0 && now[3].0 > now[2].0,
+        "粘贴块全部新 ID"
+    );
     let pasted_ids = now.clone();
     core.undo().unwrap();
     assert_eq!(top_texts(&core), vec!["p1", "p2"]);
     core.redo().unwrap();
-    assert_eq!(top_ids(&core), pasted_ids, "redo 复原粘贴身份（inverses 物化 ID）");
+    assert_eq!(
+        top_ids(&core),
+        pasted_ids,
+        "redo 复原粘贴身份（inverses 物化 ID）"
+    );
     assert_eq!(node_text_of(&core, &[3]), "x𠮷");
 }
 
@@ -185,7 +245,11 @@ fn nested_list_split_inherits_marker_depth_new_id() {
     let mut core = core_no_coalesce("- a 𠮷\n  - b 🙂\n    - c 👨‍👩‍👧‍👦");
     // 树形：a=[0] > b=[0,0] > c=[0,0,0]（depth 栈建树）
     assert_eq!(node_text_of(&core, &[0, 0, 0]), "c 👨‍👩‍👧‍👦");
-    let (a_id, b_id, c_id) = (node_id(&core, &[0]), node_id(&core, &[0, 0]), node_id(&core, &[0, 0, 0]));
+    let (a_id, b_id, c_id) = (
+        node_id(&core, &[0]),
+        node_id(&core, &[0, 0]),
+        node_id(&core, &[0, 0, 0]),
+    );
     let watermark = core.tree.alloc.watermark();
 
     // 在 b（"b 🙂"，3 码点）码点 2 处分段（纯文本切分不修整空白）：
@@ -194,14 +258,29 @@ fn nested_list_split_inherits_marker_depth_new_id() {
     assert_eq!(node_text_of(&core, &[0, 0]), "b ");
     let tail = &core.tree.node(core.tree.resolve(&[0, 1]).unwrap());
     assert_eq!(tail.text.to_string(), "🙂");
-    assert_eq!(tail.attrs.get("marker"), Some(&"-".to_string()), "marker 继承");
-    assert_eq!(tail.attrs.get("depth"), Some(&"2".to_string()), "depth 继承");
+    assert_eq!(
+        tail.attrs.get("marker"),
+        Some(&"-".to_string()),
+        "marker 继承"
+    );
+    assert_eq!(
+        tail.attrs.get("depth"),
+        Some(&"2".to_string()),
+        "depth 继承"
+    );
     assert!(tail.id.0 >= watermark, "新增 item 新分配 ID");
     assert_eq!(node_id(&core, &[0]), a_id, "祖先 item ID 不变");
     assert_eq!(node_id(&core, &[0, 0]), b_id, "被切 item（head）ID 不变");
-    assert_eq!(node_id(&core, &[0, 0, 0]), c_id, "子 item 跟随 head，ID 不变");
+    assert_eq!(
+        node_id(&core, &[0, 0, 0]),
+        c_id,
+        "子 item 跟随 head，ID 不变"
+    );
     // v0 规则：tail 是 b 的下一个兄弟（c 仍留在 b 下）——先序序列化顺序如实反映
-    assert_eq!(tree_to_markdown(&core.tree), "- a 𠮷\n  - b \n    - c 👨‍👩‍👧‍👦\n  - 🙂");
+    assert_eq!(
+        tree_to_markdown(&core.tree),
+        "- a 𠮷\n  - b \n    - c 👨‍👩‍👧‍👦\n  - 🙂"
+    );
 }
 
 // 7. 嵌套 item merge：survivor = 前一个兄弟（同父），文本并回，marker 保持 survivor 的
@@ -211,9 +290,16 @@ fn nested_list_merge_survivor_prev_sibling() {
     // b=[0,0], b2=[0,1]
     let (b_id, b2_id) = (node_id(&core, &[0, 0]), node_id(&core, &[0, 1]));
     core.merge_block(core.revision(), vec![0, 1]).unwrap();
-    assert_eq!(node_text_of(&core, &[0, 0]), "b 🙂b2 β", "survivor=b，尾部文本并回");
+    assert_eq!(
+        node_text_of(&core, &[0, 0]),
+        "b 🙂b2 β",
+        "survivor=b，尾部文本并回"
+    );
     assert_eq!(node_id(&core, &[0, 0]), b_id, "survivor ID 保持");
-    assert!(core.tree.lookup_id(b2_id).is_none(), "被并块身份失效不回收（§8.2）");
+    assert!(
+        core.tree.lookup_id(b2_id).is_none(),
+        "被并块身份失效不回收（§8.2）"
+    );
     assert_eq!(tree_to_markdown(&core.tree), "- a 𠮷\n  - b 🙂b2 β");
     core.undo().unwrap();
     assert_eq!(node_text_of(&core, &[0, 0]), "b 🙂");
@@ -237,10 +323,17 @@ fn nested_top_split_children_stay_with_head() {
     assert_eq!(node_id(&core, &[0]), a_id);
     let tail = &core.tree.node(core.tree.resolve(&[1]).unwrap());
     assert_eq!(tail.attrs.get("marker"), Some(&"-".to_string()));
-    assert_eq!(tail.attrs.get("depth"), Some(&"1".to_string()), "顶层 item depth 继承");
+    assert_eq!(
+        tail.attrs.get("depth"),
+        Some(&"1".to_string()),
+        "顶层 item depth 继承"
+    );
     assert!(tail.children.is_empty(), "tail 不继承子树（v0 规则）");
     let _ = tail_id;
-    assert_eq!(tree_to_markdown(&core.tree), "- a \n  - b 🙂\n    - c 👨‍👩‍👧‍👦\n- 𠮷");
+    assert_eq!(
+        tree_to_markdown(&core.tree),
+        "- a \n  - b 🙂\n    - c 👨‍👩‍👧‍👦\n- 𠮷"
+    );
     core.undo().unwrap();
     assert_eq!(tree_to_markdown(&core.tree), "- a 𠮷\n  - b 🙂\n    - c 👨‍👩‍👧‍👦");
 }
@@ -254,8 +347,11 @@ fn deep_nest_sync_child_insert_keeps_existing_ids() {
     core.sync_from_markdown("- a\n  - a1\n  - a2\n- b").unwrap();
     let ops = last_event_ops(&mut core);
     assert_eq!(ops.len(), 1);
-    assert!(matches!(&ops[0], Op::InsertBlock { parent, index, .. }
-        if parent == &vec![0usize] && *index == 1), "a2 插到 a 的子位 [0,1]: {ops:?}");
+    assert!(
+        matches!(&ops[0], Op::InsertBlock { parent, index, .. }
+        if parent == &vec![0usize] && *index == 1),
+        "a2 插到 a 的子位 [0,1]: {ops:?}"
+    );
     assert_eq!(node_text_of(&core, &[0, 1]), "a2");
     let now = top_ids(&core);
     assert!(now[0] == ids[0] && now[1] == ids[1], "顶层 item ID 不变");
@@ -272,7 +368,11 @@ fn ordered_marker_split_inherits() {
     assert_eq!(node_text_of(&core, &[0]), "甲𠮷");
     assert_eq!(node_text_of(&core, &[1]), "乙");
     let tail = &core.tree.node(core.tree.resolve(&[1]).unwrap());
-    assert_eq!(tail.attrs.get("marker"), Some(&"1.".to_string()), "有序 marker 字面继承");
+    assert_eq!(
+        tail.attrs.get("marker"),
+        Some(&"1.".to_string()),
+        "有序 marker 字面继承"
+    );
     assert_eq!(tree_to_markdown(&core.tree), "1. 甲𠮷\n1. 乙");
 }
 
@@ -292,13 +392,23 @@ fn paste_middle_insert_aligned_prefix_keeps_ids() {
     assert_eq!(ops.len(), 2, "最小 op 序列 = 原位改写 + 尾插: {ops:?}");
     assert_eq!(
         ops[0],
-        Op::ReplaceText { path: vec![1usize], start: 0, end: 1, insert: "X".into() }
+        Op::ReplaceText {
+            path: vec![1usize],
+            start: 0,
+            end: 1,
+            insert: "X".into()
+        }
     );
-    assert!(matches!(&ops[1], Op::InsertBlock { parent, index, kind: BlockKind::Paragraph, text, id: Some(_), .. }
-        if parent.is_empty() && *index == 2 && text.as_ref() == "b"));
+    assert!(
+        matches!(&ops[1], Op::InsertBlock { parent, index, kind: BlockKind::Paragraph, text, id: Some(_), .. }
+        if parent.is_empty() && *index == 2 && text.as_ref() == "b")
+    );
     let now = top_ids(&core);
     assert_eq!(now[0], ids[0]);
-    assert_eq!(now[1], ids[1], "槽 1 = 原 b 的 ID（内容已是 X——按位对齐规则的代价）");
+    assert_eq!(
+        now[1], ids[1],
+        "槽 1 = 原 b 的 ID（内容已是 X——按位对齐规则的代价）"
+    );
     assert!(now[2].0 > ids[1].0, "尾部 b 为新 ID");
     core.undo().unwrap();
     assert_eq!(top_texts(&core), vec!["a", "b"]);
@@ -315,12 +425,21 @@ fn paste_middle_delete_slot_inheritance() {
     assert_eq!(
         ops,
         vec![
-            Op::ReplaceText { path: vec![1usize], start: 0, end: 1, insert: "c".into() },
+            Op::ReplaceText {
+                path: vec![1usize],
+                start: 0,
+                end: 1,
+                insert: "c".into()
+            },
             Op::RemoveBlock { path: vec![2usize] },
         ]
     );
     let now = top_ids(&core);
-    assert_eq!(now, vec![ids[0], ids[1]], "c 内容落在 b 的槽 ID 下（ID 跟位置不跟内容）");
+    assert_eq!(
+        now,
+        vec![ids[0], ids[1]],
+        "c 内容落在 b 的槽 ID 下（ID 跟位置不跟内容）"
+    );
     assert!(core.tree.lookup_id(ids[2]).is_none(), "原 c 的 ID 失效");
     core.undo().unwrap();
     assert_eq!(top_texts(&core), vec!["a", "b", "c"]);
@@ -351,7 +470,10 @@ fn paste_tail_grow_shrink_id_stability() {
     let ops = last_event_ops(&mut core);
     assert_eq!(
         ops,
-        vec![Op::RemoveBlock { path: vec![3usize] }, Op::RemoveBlock { path: vec![2usize] }],
+        vec![
+            Op::RemoveBlock { path: vec![3usize] },
+            Op::RemoveBlock { path: vec![2usize] }
+        ],
         "尾部删除按高位→低位"
     );
     assert_eq!(top_ids(&core), vec![ids4[0], ids4[1]], "保留块 ID 不变");
@@ -359,7 +481,10 @@ fn paste_tail_grow_shrink_id_stability() {
     core.sync_from_markdown("a\nb\nc\nd").unwrap();
     let now = top_ids(&core);
     assert!(now[0] == ids2[0] && now[1] == ids2[1]);
-    assert!(now[2].0 > ids4[3].0 && now[3].0 > now[2].0, "再插入为新 ID（分配器永不复用）");
+    assert!(
+        now[2].0 > ids4[3].0 && now[3].0 > now[2].0,
+        "再插入为新 ID（分配器永不复用）"
+    );
 }
 
 // 15. 复合内容跨块粘贴（quote+嵌套 list）：新子树先序新 ID；undo/redo 身份恒等
@@ -367,16 +492,32 @@ fn paste_tail_grow_shrink_id_stability() {
 fn cross_block_paste_undo_redo_identity() {
     let mut core = core_no_coalesce("p1\np2");
     let ids = top_ids(&core);
-    core.sync_from_markdown("p1\np2\n> q 🚀\n- item 𠮷\n  - nested 👨‍👩‍👧‍👦").unwrap();
+    core.sync_from_markdown("p1\np2\n> q 🚀\n- item 𠮷\n  - nested 👨‍👩‍👧‍👦")
+        .unwrap();
     // 新 top：[p1, p2, quote(容器+子段落), item(含 nested)]
-    assert_eq!(top_kinds(&core), vec![BlockKind::Paragraph, BlockKind::Paragraph, BlockKind::Blockquote, BlockKind::ListItem]);
+    assert_eq!(
+        top_kinds(&core),
+        vec![
+            BlockKind::Paragraph,
+            BlockKind::Paragraph,
+            BlockKind::Blockquote,
+            BlockKind::ListItem
+        ]
+    );
     assert_eq!(node_text_of(&core, &[2, 0]), "q 🚀");
     assert_eq!(node_text_of(&core, &[3]), "item 𠮷");
     assert_eq!(node_text_of(&core, &[3, 0]), "nested 👨‍👩‍👧‍👦");
     let now = top_ids(&core);
     assert!(now[0] == ids[0] && now[1] == ids[1], "前缀对齐保 ID");
-    assert!(now[2].0 > ids[1].0 && now[3].0 > now[2].0, "粘贴子树全部新 ID");
-    let pasted = (now.clone(), node_id(&core, &[2, 0]), node_id(&core, &[3, 0]));
+    assert!(
+        now[2].0 > ids[1].0 && now[3].0 > now[2].0,
+        "粘贴子树全部新 ID"
+    );
+    let pasted = (
+        now.clone(),
+        node_id(&core, &[2, 0]),
+        node_id(&core, &[3, 0]),
+    );
     core.undo().unwrap();
     assert_eq!(top_texts(&core), vec!["p1", "p2"]);
     assert_eq!(top_ids(&core), ids);

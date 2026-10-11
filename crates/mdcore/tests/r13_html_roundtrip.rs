@@ -49,7 +49,9 @@ fn assert_roundtrip_identity(md_src: &str) {
 
 #[test]
 fn rt_identity_headings_paragraphs_cjk() {
-    assert_roundtrip_identity("# 标题一\n\n首段：中文内容与 English 混排。\n\n## 二级标题\n\n第二段文字。");
+    assert_roundtrip_identity(
+        "# 标题一\n\n首段：中文内容与 English 混排。\n\n## 二级标题\n\n第二段文字。",
+    );
 }
 
 #[test]
@@ -66,14 +68,14 @@ fn rt_identity_ordered_list_start_number() {
 
 #[test]
 fn rt_identity_blockquote_nested_with_list() {
-    assert_roundtrip_identity(
-        "> 引用外层\n>\n> > 引用内层\n>\n> - 引用内列表\n> - 第二项",
-    );
+    assert_roundtrip_identity("> 引用外层\n>\n> > 引用内层\n>\n> - 引用内列表\n> - 第二项");
 }
 
 #[test]
 fn rt_identity_code_fence_with_lang() {
-    assert_roundtrip_identity("前文段落\n\n```rust\nfn main() {\n    println!(\"你好\");\n}\n```\n\n后文段落");
+    assert_roundtrip_identity(
+        "前文段落\n\n```rust\nfn main() {\n    println!(\"你好\");\n}\n```\n\n后文段落",
+    );
 }
 
 #[test]
@@ -89,10 +91,34 @@ fn rt_identity_marks_strong_em_code_del() {
     let mut core = Core::from_markdown("alpha beta gamma delta");
     core.apply_ops(
         vec![
-            Op::SetMark { path: vec![0], start: 0, end: 5, kind: "strong".into(), add: true },
-            Op::SetMark { path: vec![0], start: 6, end: 10, kind: "em".into(), add: true },
-            Op::SetMark { path: vec![0], start: 11, end: 16, kind: "code".into(), add: true },
-            Op::SetMark { path: vec![0], start: 17, end: 22, kind: "del".into(), add: true },
+            Op::SetMark {
+                path: vec![0],
+                start: 0,
+                end: 5,
+                kind: "strong".into(),
+                add: true,
+            },
+            Op::SetMark {
+                path: vec![0],
+                start: 6,
+                end: 10,
+                kind: "em".into(),
+                add: true,
+            },
+            Op::SetMark {
+                path: vec![0],
+                start: 11,
+                end: 16,
+                kind: "code".into(),
+                add: true,
+            },
+            Op::SetMark {
+                path: vec![0],
+                start: 17,
+                end: 22,
+                kind: "del".into(),
+                add: true,
+            },
         ],
         ApplyMeta::view("r13_marks"),
     )
@@ -100,18 +126,28 @@ fn rt_identity_marks_strong_em_code_del() {
 
     let html = tree_to_html(&core.tree);
     assert!(
-        html.contains("<p><strong>alpha</strong> <em>beta</em> <code>gamma</code> <del>delta</del></p>"),
+        html.contains(
+            "<p><strong>alpha</strong> <em>beta</em> <code>gamma</code> <del>delta</del></p>"
+        ),
         "mark 导出标签化: {html}"
     );
 
     let back = html_to_tree(&html);
     let node = back.node(back.resolve(&[0]).unwrap());
     assert_eq!(node.text.to_string(), "alpha beta gamma delta");
-    let got: Vec<(usize, usize, &str)> =
-        node.marks.iter().map(|m| (m.start, m.end, m.kind.as_str())).collect();
+    let got: Vec<(usize, usize, &str)> = node
+        .marks
+        .iter()
+        .map(|m| (m.start, m.end, m.kind.as_str()))
+        .collect();
     assert_eq!(
         got,
-        vec![(0, 5, "strong"), (6, 10, "em"), (11, 16, "code"), (17, 22, "del")],
+        vec![
+            (0, 5, "strong"),
+            (6, 10, "em"),
+            (11, 16, "code"),
+            (17, 22, "del")
+        ],
         "mark round-trip span/kind 逐一还原"
     );
 }
@@ -123,17 +159,35 @@ fn rt_identity_u_mark_and_br_linebreak() {
     let mut core = Core::from_markdown("第一行第二行继续");
     core.apply_ops(
         vec![
-            Op::ReplaceText { path: vec![0], start: 3, end: 3, insert: "\n".into() },
-            Op::SetMark { path: vec![0], start: 0, end: 3, kind: "u".into(), add: true },
+            Op::ReplaceText {
+                path: vec![0],
+                start: 3,
+                end: 3,
+                insert: "\n".into(),
+            },
+            Op::SetMark {
+                path: vec![0],
+                start: 0,
+                end: 3,
+                kind: "u".into(),
+                add: true,
+            },
         ],
         ApplyMeta::view("r13_u"),
     )
     .unwrap();
     let html = tree_to_html(&core.tree);
-    assert!(html.contains("<u>第一行</u><br>第二行继续"), "mark 收口 + 换行导出为 <br>: {html}");
+    assert!(
+        html.contains("<u>第一行</u><br>第二行继续"),
+        "mark 收口 + 换行导出为 <br>: {html}"
+    );
     let back = html_to_tree(&html);
     let node = back.node(back.resolve(&[0]).unwrap());
-    assert_eq!(node.text.to_string(), "第一行\n第二行继续", "br 还原为文本换行");
+    assert_eq!(
+        node.text.to_string(),
+        "第一行\n第二行继续",
+        "br 还原为文本换行"
+    );
     assert_eq!(node.marks.len(), 1);
     assert_eq!(node.marks[0].kind, "u");
     assert_eq!((node.marks[0].start, node.marks[0].end), (0, 3));
@@ -145,11 +199,19 @@ fn rt_identity_u_mark_and_br_linebreak() {
 
 #[test]
 fn md_to_html_rendering_contract() {
-    let html = tree_to_html(&markdown_to_tree("# 大标题\n\n正文一段\n\n- 甲\n- 乙\n\n> 引用\n\n```\ncode line\n```\n\n---\n"));
+    let html = tree_to_html(&markdown_to_tree(
+        "# 大标题\n\n正文一段\n\n- 甲\n- 乙\n\n> 引用\n\n```\ncode line\n```\n\n---\n",
+    ));
     assert!(html.contains("<h1>大标题</h1>"), "{html}");
     assert!(html.contains("<p>正文一段</p>"), "{html}");
-    assert!(html.contains("<ul>\n<li>甲</li>\n<li>乙</li>\n</ul>"), "{html}");
-    assert!(html.contains("<blockquote>\n<p>引用</p>\n</blockquote>"), "{html}");
+    assert!(
+        html.contains("<ul>\n<li>甲</li>\n<li>乙</li>\n</ul>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<blockquote>\n<p>引用</p>\n</blockquote>"),
+        "{html}"
+    );
     assert!(html.contains("<pre><code>code line</code></pre>"), "{html}");
     assert!(html.contains("<hr>"), "{html}");
 }
@@ -157,8 +219,14 @@ fn md_to_html_rendering_contract() {
 #[test]
 fn md_to_html_table_structure() {
     let html = tree_to_html(&markdown_to_tree("| A | B |\n|---|---|\n| a1 | b1 |"));
-    assert!(html.contains("<table>\n<thead><tr><th>A</th><th>B</th></tr></thead>"), "{html}");
-    assert!(html.contains("<tbody>\n<tr><td>a1</td><td>b1</td></tr>\n</tbody>"), "{html}");
+    assert!(
+        html.contains("<table>\n<thead><tr><th>A</th><th>B</th></tr></thead>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<tbody>\n<tr><td>a1</td><td>b1</td></tr>\n</tbody>"),
+        "{html}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +239,10 @@ fn html_paste_sample_maps_to_markdown() {
     let imp = import_html(webpage);
     let md = tree_to_markdown(&imp.tree);
     assert!(md.contains("## 发布说明"), "{md}");
-    assert!(md.contains("**重要**") || md.contains("重要"), "strong 保留或文本保留: {md}");
+    assert!(
+        md.contains("**重要**") || md.contains("重要"),
+        "strong 保留或文本保留: {md}"
+    );
     assert!(md.contains("- 性能优化"), "{md}");
     assert!(md.contains("  - 渲染管线"), "嵌套列表缩进: {md}");
     assert!(md.contains("> 引用官方公告。"), "{md}");
@@ -179,8 +250,16 @@ fn html_paste_sample_maps_to_markdown() {
     assert!(md.contains("cargo test --workspace"), "{md}");
     assert!(md.contains("| 模块 | 状态 |"), "表格管道行: {md}");
     // <article> 为未知/分节容器：透明穿轴但必须留痕（§18 Loss Report）。
-    assert_eq!(imp.losses.len(), 1, "仅 article 包装一条损失: {:?}", imp.losses);
-    assert_eq!(imp.losses[0].disposition, LossDisposition::DemotedToParagraph);
+    assert_eq!(
+        imp.losses.len(),
+        1,
+        "仅 article 包装一条损失: {:?}",
+        imp.losses
+    );
+    assert_eq!(
+        imp.losses[0].disposition,
+        LossDisposition::DemotedToParagraph
+    );
     assert!(imp.losses[0].original.contains("article"));
 }
 
@@ -193,8 +272,16 @@ fn unknown_container_demotes_with_loss() {
     let imp = import_html(r#"<div class="toc" data-x="1"><p>目录内容</p></div>"#);
     assert_eq!(imp.tree.top_level().len(), 1, "div 透明，子内容按块保留");
     assert!(!imp.losses.is_empty(), "带属性的未知容器必须留痕");
-    let loss = imp.losses.iter().find(|l| l.disposition == LossDisposition::DemotedToParagraph).expect("demote loss");
-    assert!(loss.original.contains("div"), "original 记录原结构: {}", loss.original);
+    let loss = imp
+        .losses
+        .iter()
+        .find(|l| l.disposition == LossDisposition::DemotedToParagraph)
+        .expect("demote loss");
+    assert!(
+        loss.original.contains("div"),
+        "original 记录原结构: {}",
+        loss.original
+    );
     assert!(!loss.note.is_empty());
 }
 
@@ -208,9 +295,16 @@ fn script_style_iframe_dropped_no_execution_semantics() {
     assert!(!md.contains("alert"), "脚本内容不进文档");
     assert!(!md.contains("evil.example"), "iframe 属性不进文档");
     assert!(!md.contains(".a{}"), "style 内容不进文档");
-    let dropped: Vec<&mdcore::html::Loss> =
-        imp.losses.iter().filter(|l| l.disposition == LossDisposition::Dropped).collect();
-    assert!(dropped.len() >= 3, "script/style/iframe 各记一条 Dropped: {:?}", imp.losses);
+    let dropped: Vec<&mdcore::html::Loss> = imp
+        .losses
+        .iter()
+        .filter(|l| l.disposition == LossDisposition::Dropped)
+        .collect();
+    assert!(
+        dropped.len() >= 3,
+        "script/style/iframe 各记一条 Dropped: {:?}",
+        imp.losses
+    );
 }
 
 #[test]
@@ -219,7 +313,9 @@ fn degenerate_table_falls_back_to_raw_paragraph() {
     // 空表格无可保留文本：不落块，但必须记 RawBlock 留痕。
     assert_eq!(imp.tree.top_level().len(), 2);
     assert!(
-        imp.losses.iter().any(|l| l.disposition == LossDisposition::RawBlock),
+        imp.losses
+            .iter()
+            .any(|l| l.disposition == LossDisposition::RawBlock),
         "记 RawBlock: {:?}",
         imp.losses
     );
@@ -244,10 +340,11 @@ fn export_escapes_all_text_nodes() {
     assert!(html.contains("&amp;"), "与号转义: {html}");
     assert!(html.contains("&quot;"), "双引号转义: {html}");
     assert!(html.contains("&#39;"), "单引号转义: {html}");
-    assert!(!html[html.find("<p>").unwrap() + 3..html.find("</p>").unwrap()]
-        .contains('<')
-        || html.contains("&lt;"),
-       "段落文本内不得出现未转义标签");
+    assert!(
+        !html[html.find("<p>").unwrap() + 3..html.find("</p>").unwrap()].contains('<')
+            || html.contains("&lt;"),
+        "段落文本内不得出现未转义标签"
+    );
 }
 
 #[test]
@@ -255,12 +352,24 @@ fn import_never_produces_executable_semantics() {
     // 字面文本里的 script（经实体或纯文本）不构成元素；真元素被丢弃（见上）。
     let imp = import_html("<p>1 &lt; 2 &amp;&amp; 3 &gt; 2</p>");
     let node = imp.tree.node(imp.tree.resolve(&[0]).unwrap());
-    assert_eq!(node.text.to_string(), "1 < 2 && 3 > 2", "实体解码为字面文本");
+    assert_eq!(
+        node.text.to_string(),
+        "1 < 2 && 3 > 2",
+        "实体解码为字面文本"
+    );
     // 实体伪装的标签不会被二次解析（防 double-decode 注入）。
     let imp2 = import_html("<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>");
     let n2 = imp2.tree.node(imp2.tree.resolve(&[0]).unwrap());
-    assert_eq!(n2.text.to_string(), "<script>alert(1)</script>", "解码结果不再走元素通道");
-    assert!(imp2.losses.is_empty(), "文本内容不算结构损失: {:?}", imp2.losses);
+    assert_eq!(
+        n2.text.to_string(),
+        "<script>alert(1)</script>",
+        "解码结果不再走元素通道"
+    );
+    assert!(
+        imp2.losses.is_empty(),
+        "文本内容不算结构损失: {:?}",
+        imp2.losses
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +398,11 @@ fn loss_report_fields_are_populated() {
     let imp = import_html(r#"前文<section><p>节内容</p></section>"#);
     let l = &imp.losses[0];
     assert!(l.offset < 10, "offset 指向输入中的起始处: {}", l.offset);
-    assert!(l.original.starts_with('<'), "original 为原结构片段: {}", l.original);
+    assert!(
+        l.original.starts_with('<'),
+        "original 为原结构片段: {}",
+        l.original
+    );
     assert_eq!(l.disposition, LossDisposition::DemotedToParagraph);
     assert!(l.note.contains("section") || !l.note.is_empty());
 }

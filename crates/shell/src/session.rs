@@ -55,7 +55,10 @@ pub enum SessionError {
     /// 窗口未注册（close/focus/get 作用于未知窗口）。
     UnknownWindow(WindowId),
     /// 同一文档已在别窗打开（v0 一窗一档；宿主应改为聚焦该窗）。
-    DocumentAlreadyOpen { document_id: DocumentId, window: WindowId },
+    DocumentAlreadyOpen {
+        document_id: DocumentId,
+        window: WindowId,
+    },
 }
 
 /// 多窗口会话管理器：窗口→会话映射 + 焦点序 + 资源上限。
@@ -77,7 +80,11 @@ impl Default for SessionManager {
 
 impl SessionManager {
     pub fn new_with_limit(limit: usize) -> Self {
-        Self { sessions: BTreeMap::new(), focus_order: Vec::new(), limit }
+        Self {
+            sessions: BTreeMap::new(),
+            focus_order: Vec::new(),
+            limit,
+        }
     }
 
     // ---- 检视 ----
@@ -105,11 +112,15 @@ impl SessionManager {
     }
 
     pub fn get(&self, window: WindowId) -> Result<&DocumentSession, SessionError> {
-        self.sessions.get(&window).ok_or(SessionError::UnknownWindow(window))
+        self.sessions
+            .get(&window)
+            .ok_or(SessionError::UnknownWindow(window))
     }
 
     pub fn get_mut(&mut self, window: WindowId) -> Result<&mut DocumentSession, SessionError> {
-        self.sessions.get_mut(&window).ok_or(SessionError::UnknownWindow(window))
+        self.sessions
+            .get_mut(&window)
+            .ok_or(SessionError::UnknownWindow(window))
     }
 
     /// 反向映射：document_id → 持有它的窗口（一窗一档 → 唯一）。
@@ -157,7 +168,10 @@ impl SessionManager {
 
     /// 注销窗口（返回会话供宿主收尾——如未存改动的保存确认）。
     pub fn close(&mut self, window: WindowId) -> Result<DocumentSession, SessionError> {
-        let session = self.sessions.remove(&window).ok_or(SessionError::UnknownWindow(window))?;
+        let session = self
+            .sessions
+            .remove(&window)
+            .ok_or(SessionError::UnknownWindow(window))?;
         self.focus_order.retain(|&w| w != window);
         Ok(session)
     }
@@ -187,7 +201,10 @@ impl SessionManager {
                 })
             })
             .collect();
-        SessionRecord { schema_version: SESSION_RECORD_VERSION, windows }
+        SessionRecord {
+            schema_version: SESSION_RECORD_VERSION,
+            windows,
+        }
     }
 }
 

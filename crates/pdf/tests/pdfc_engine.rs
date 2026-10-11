@@ -5,8 +5,8 @@
 //! **环境合同（不静默 skip）**：库定位走 [`PdfiumEngine::open`] 的定位序
 //! （env `MDC_PDFIUM_LIB` → 编译期候选清单（含分析仓 spike 取件位）→
 //! 系统）；fixtures 走 env `MDC_PDF_TEST_FIXTURES`（目录）→ 编译期候选
-//! （spike fixtures 目录）。**任一缺失 = 本文件明确 panic 并打印全部
-//! 已尝试候选**——门禁环境必须可诊断，静默跳过 = 测试面造假。
+//! （crate 本地 fixtures/ 优先，spike 位兜底）。**任一缺失 = 本文件明确
+//! panic 并打印全部已尝试候选**——门禁环境必须可诊断，静默跳过 = 测试面造假。
 //!
 //! 锁清单（每锁一条 `#[test]`）：
 //! 1. `engine_binds_and_opens_fixture`——定位序绑定 + 打开：small.pdf
@@ -64,13 +64,16 @@ use mdc_pdf::worker::{RenderWorker, WorkerReply};
 const FIXTURES_ENV: &str = "MDC_PDF_TEST_FIXTURES";
 
 /// 编译期 fixtures 候选清单（crate manifest 相对——与库候选同根推导）。
+/// crate 本地优先（T1 审计 F12：产品仓自持素材位在前——fixtures 入库后
+/// fresh clone 即可复现，不受仓外目录状态影响）；spike 位 = bootstrap
+/// 生成器/门禁环境兜底。
 fn fixture_candidates() -> Vec<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     vec![
-        // 分析仓 spike fixtures（门禁环境取件位）。
-        manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/fixtures"),
-        // crate 本地 fixtures/（产品仓自带素材位，PDF-e 起）。
+        // crate 本地 fixtures/（产品仓自带素材位，PDF-e 起入库）。
         manifest.join("fixtures"),
+        // 分析仓 spike fixtures（bootstrap 生成位/门禁环境取件位）。
+        manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/fixtures"),
     ]
 }
 
@@ -112,6 +115,8 @@ fn open_small() -> PdfiumEngine {
 }
 
 /// 装配会话（占位几何数组——引擎接线后几何查询应旁路占位值）。
+/// meta.page_count 与引擎页数同源构造（T1 审计 O3 项后 attach_engine
+/// 装配期一致性校验——两侧不一致 = typed 拒绝，见 pdfb_skeleton 锁）。
 fn session_with_engine(engine: PdfiumEngine, placeholder: PageGeometry) -> PdfSession {
     let count = engine.page_count();
     let mut session = PdfSession::open(
@@ -125,7 +130,9 @@ fn session_with_engine(engine: PdfiumEngine, placeholder: PageGeometry) -> PdfSe
         OutlineTree::new(),
     )
     .expect("会话装配（元数据与占位几何自洽）");
-    session.attach_engine(Box::new(engine));
+    session
+        .attach_engine(Box::new(engine))
+        .expect("引擎页数与元数据一致（同源构造）");
     session
 }
 

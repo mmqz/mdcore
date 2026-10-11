@@ -45,7 +45,11 @@
 //! 31. serde 面反序 Rect 拒收（pdf-b-1r 审计重要项回归锁：反序矩形曾可
 //!     经 patch 静默落库，PDF-d 落盘将产出非法 /Rect）；
 //! 32. 搜索两模式非重叠语义一致（"aaaa"×"aa"=2——审计轻微项回归锁：
-//!     不敏感路径曾产出重叠命中，与 match_indices 非重叠计数不一致）。
+//!     不敏感路径曾产出重叠命中，与 match_indices 非重叠计数不一致）；
+//! 33. attach_engine 页数一致性装配期校验（T1 审计 O3 项回归锁：引擎
+//!     页多/页少双侧 typed 拒绝（携带双侧数值）+ 一致时装配成功 +
+//!     拒绝后会话保持 v0 注入路径——双权威不一致的两条静默失败路径
+//!     在装配面收口）。
 
 use std::fs;
 use std::path::Path;
@@ -57,7 +61,7 @@ use mdc_pdf::annotation::{
 use mdc_pdf::command::{
     AnnotationFilter, Command, CommandError, Outcome, SearchOptions, Source, TextTarget,
 };
-use mdc_pdf::document::{DocumentMeta, OpenError, PdfDocumentId, PdfSession};
+use mdc_pdf::document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
 use mdc_pdf::engine::DocumentEngine;
 use mdc_pdf::outline::{OutlineNode, OutlineTarget, OutlineTree};
 use mdc_pdf::page::{PageCount, PageGeometry, PageIndex, PageSpan, PageSpanError, Rotation};
@@ -1512,4 +1516,100 @@ fn search_overlap_semantics_is_consistent_across_modes() {
         );
         assert!(!truncated);
     }
+}
+
+// ---------------------------------------------------------------------------
+// 33. attach_engine 页数一致性装配期校验（T1 审计 O3 项回归锁）
+// ---------------------------------------------------------------------------
+
+/// mock 引擎（O3 回归锁专用）：页数可配置；数据面保底实现（装配期校验
+/// 只读 `page_count`，数据方法在锁内不可达——保底不 panic，误用时以
+/// 可判别的空载荷/typed 错误暴露）。
+struct StubEngine {
+    pages: u32,
+}
+
+impl DocumentEngine for StubEngine {
+    fn page_count(&self) -> u32 {
+        self.pages
+    }
+
+    fn page_geometry(&self, _idx: PageIndex) -> Result<PageGeometry, CommandError> {
+        Err(CommandError::engine("StubEngine 无几何数据（mock 保底）"))
+    }
+
+    fn outline(&self) -> Result<OutlineTree, CommandError> {
+        Ok(OutlineTree::new())
+    }
+
+    fn extract_text(&self, span: PageSpan) -> Result<Vec<(PageIndex, String)>, CommandError> {
+        Ok(span.iter().map(|idx| (idx, String::new())).collect())
+    }
+}
+
+#[test]
+fn attach_engine_validates_page_count_consistency() {
+    // O3 回归锁：attach_engine 曾只登记「调用方合同」——双权威不一致时
+    // 引擎页少 → 整命令 InvalidPage（显式失败），引擎页多 → 静默漏
+    // 末尾页（Search/ExtractText 以 meta.page_count 为上界）。修复后
+    // 装配期 typed 拒绝（AttachEngineError::PageCountMismatch 携带双侧
+    // 数值），两条静默失败路径收口为单一显式失败。
+    let mut s = session(2); // meta.page_count = 2（打开期冻结的权威）
+
+    // 引擎页多（3 > 2）：旧行为 = 静默漏第 3 页（不可见的静默错果）。
+    assert_eq!(
+        s.attach_engine(Box::new(StubEngine { pages: 3 })),
+        Err(AttachEngineError::PageCountMismatch {
+            expected: 2,
+            engine: 3
+        }),
+        "引擎页多 → 装配期 typed 拒绝（双侧数值携带）"
+    );
+    assert!(
+        !s.engine_attached(),
+        "拒绝后引擎不装配（会话保持 v0 注入路径）"
+    );
+
+    // 引擎页少（1 < 2）：旧行为 = 首个越界命令整命令 InvalidPage。
+    assert_eq!(
+        s.attach_engine(Box::new(StubEngine { pages: 1 })),
+        Err(AttachEngineError::PageCountMismatch {
+            expected: 2,
+            engine: 1
+        }),
+        "引擎页少 → 装配期 typed 拒绝（与页多同款，方向不对称即锁不住）"
+    );
+    assert!(!s.engine_attached(), "拒绝无副作用累积");
+
+    // 拒绝后 v0 降级通道完整（注入路径照常服务——拒绝不破坏会话）。
+    s.set_page_text(PageIndex(0), "injected")
+        .expect("页注入（v0 降级通道完整）");
+    let out = s
+        .execute(Command::ExtractText {
+            target: TextTarget::All,
+            source: Source::View,
+        })
+        .expect("ExtractText 走注入路径");
+    let Outcome::ExtractedText { pages } = out else {
+        panic!("应得 ExtractedText")
+    };
+    assert_eq!(pages.len(), 2, "页集形状仍以 meta.page_count 为准");
+    assert_eq!(pages[0].1, "injected", "注入文本可见（引擎未装配）");
+
+    // 正控：页数一致 → 装配成功（校验不误伤合法装配）且引擎路径真实
+    // 接管（stub 空串旁路注入文本——数据源切换发生，非仅标记在位）。
+    s.attach_engine(Box::new(StubEngine { pages: 2 }))
+        .expect("页数一致装配成功");
+    assert!(s.engine_attached(), "一致引擎在位");
+    let out = s
+        .execute(Command::ExtractText {
+            target: TextTarget::All,
+            source: Source::View,
+        })
+        .expect("ExtractText 走引擎路径");
+    let Outcome::ExtractedText { pages } = out else {
+        panic!("应得 ExtractedText")
+    };
+    assert_eq!(pages.len(), 2, "引擎路径页集形状不变（载荷形状两路径一致）");
+    assert_eq!(pages[0].1, "", "stub 空串接管（注入文本被旁路）");
 }

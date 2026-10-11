@@ -28,28 +28,51 @@ fn main() {
     for (i, s) in ["今日", "发布 ", "v0.1!"].iter().enumerate() {
         *now.lock().unwrap() = i as u64 * 200;
         core.replace_text(
-            TextTarget::ByPath { path: vec![1usize], start: 0, end: 0 },
+            TextTarget::ByPath {
+                path: vec![1usize],
+                start: 0,
+                end: 0,
+            },
             s.to_string(),
         )
         .unwrap();
     }
     println!("=== after human typing (coalesced) ===");
-    println!("undo depth = {}, revision = {}", core.history.undo_depth(), core.revision());
+    println!(
+        "undo depth = {}, revision = {}",
+        core.history.undo_depth(),
+        core.revision()
+    );
     println!("{}\n", debug::dump_tree(&core.tree));
 
     // AI 命令：独立条目 + 锚点寻址（拿到列表块 ID）
     let item_id = core.tree.node(core.tree.resolve(&[2usize]).unwrap()).id;
     core.apply_ops(
         vec![
-            Op::ReplaceText { path: vec![2usize], start: 0, end: 0, insert: "RC".into() },
-            Op::SetBlockType { path: vec![3usize], kind: BlockKind::Paragraph },
+            Op::ReplaceText {
+                path: vec![2usize],
+                start: 0,
+                end: 0,
+                insert: "RC".into(),
+            },
+            Op::SetBlockType {
+                path: vec![3usize],
+                kind: BlockKind::Paragraph,
+            },
         ],
         ApplyMeta::ai("ai.polish"),
     )
     .unwrap();
     println!("=== after ai command (own entry) ===");
-    println!("undo depth = {}, revision = {}", core.history.undo_depth(), core.revision());
-    println!("inspect: {}\n", debug::inspect(&core.tree, item_id).unwrap_or_default());
+    println!(
+        "undo depth = {}, revision = {}",
+        core.history.undo_depth(),
+        core.revision()
+    );
+    println!(
+        "inspect: {}\n",
+        debug::inspect(&core.tree, item_id).unwrap_or_default()
+    );
 
     // stale 演示：用旧 base 提交结构命令
     let stale = core.revision() - 1;
@@ -80,7 +103,11 @@ fn main() {
     // restore 回 undo 前的精确状态（含 revision）
     let restored = Core::restore(mdcore::snapshot::Snapshot::from_json(&snap_json).unwrap());
     println!("=== restored from snapshot ===");
-    println!("revision = {}, nodes = {}", restored.revision(), restored.tree.node_count());
+    println!(
+        "revision = {}, nodes = {}",
+        restored.revision(),
+        restored.tree.node_count()
+    );
 
     println!("\n=== history json (first 400 chars) ===");
     let hj = core.history_json();

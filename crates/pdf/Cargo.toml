@@ -18,8 +18,8 @@ description = "第二 Document Model（PDF 面）：页/大纲/标注三层模�
 #   依赖（nom / flate2 / md-5 等）为 lopdf 非可选面随包引入；image 系
 #   （embed_image）保持关闭——与 pdfium-render 面同一零 image 纪律。
 [dependencies]
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 pdfium-render = { version = "=0.9.4", optional = true, default-features = false, features = [
     "pdfium_latest",
     "thread_safe",

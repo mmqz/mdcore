@@ -603,3 +603,51 @@ fn lru_put_update_with_oversized_value_self_evicts() {
     assert_eq!(cache.len(), 1);
     assert_eq!(cache.get(&2), Some(&"b"));
 }
+
+// ---------------------------------------------------------------------------
+// 18. 首作业 id 0 的排队取消令牌（T1 审计 F1 项回归锁）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn worker_cancel_first_job_id_zero_is_honored() {
+    // F1 回归锁：旧实现 `last_replied: u64 = 0` 哨兵与首个合法作业 id 0
+    // 撞值（`0 < 0` 恒 false），首作业的排队取消令牌必被 absorb_cancel
+    // 丢弃——回执 Done 而非 Cancelled，违反取消合同（模块文档 + CONTRACT
+    // §6 ❸弃置语义）。修复后哨兵改 Option<u64>（None = 尚未回执，不
+    // 剪枝），id 0 的令牌照常吸收。
+    //
+    // 时序构造（确定性依据）：**取消令牌先于作业消息送达**——通道 FIFO
+    // 保证工人在入队作业 0 之前必已吸收其取消令牌（吸收点 = 阻塞 recv
+    // 或开跑前排空，两路径都先于队首弹出）。这是「id 0 在队且取消已
+    // 吸收」的唯一确定性构造：id 0 是首作业，无前置长作业可借以加宽
+    // 取消窗口（先提交后取消的次序依赖线程唤醒时序，存在不可消除的
+    // 竞态窗口——本锁不依赖它）。
+    let mock = MockRasterizer::new();
+    let calls = mock.calls();
+    let mut worker = RenderWorker::new(mock);
+    worker.cancel(0); // 取消首个作业（id 0——令牌先于作业送达）
+    let id_a = worker.submit(RenderRequest {
+        page: PageIndex(0),
+        width_px: 30,
+    });
+    let id_b = worker.submit(RenderRequest {
+        page: PageIndex(1),
+        width_px: 30,
+    });
+    assert_eq!((id_a, id_b), (0, 1), "作业 id 从 0 单调分配（合同不变）");
+    match await_reply(&mut worker, id_a) {
+        WorkerReply::Cancelled { id } => {
+            assert_eq!(id, 0, "首作业 id 0 命中取消令牌（旧哨兵缺陷回执 Done）")
+        }
+        other => panic!("首作业 id 0 应被取消（零执行），得 {other:?}"),
+    }
+    match await_reply(&mut worker, id_b) {
+        WorkerReply::Done { result: Ok(_), .. } => {}
+        other => panic!("次作业不受首作业取消影响，得 {other:?}"),
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "仅次作业执行渲染——id 0 被跳过（零 rasterize 调用）"
+    );
+}

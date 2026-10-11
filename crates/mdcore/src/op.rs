@@ -100,7 +100,14 @@ impl Op {
 /// 调用方拿到的事件/历史条目携带具体 ID。
 pub fn apply_op(tree: &mut BlockTree, op: &mut Op) -> Result<(), OpError> {
     match op {
-        Op::InsertBlock { parent, index, kind, attrs, text, id } => {
+        Op::InsertBlock {
+            parent,
+            index,
+            kind,
+            attrs,
+            text,
+            id,
+        } => {
             if *kind == BlockKind::Document {
                 return Err(OpError::InvalidKind("document kind is reserved for root"));
             }
@@ -117,7 +124,12 @@ pub fn apply_op(tree: &mut BlockTree, op: &mut Op) -> Result<(), OpError> {
             let id = tree.resolve(path).ok_or(TreeError::BadPath)?;
             tree.remove_subtree(id)?;
         }
-        Op::ReplaceText { path, start, end, insert } => {
+        Op::ReplaceText {
+            path,
+            start,
+            end,
+            insert,
+        } => {
             let id = tree.resolve(path).ok_or(TreeError::BadPath)?;
             let node = tree.node_mut(id);
             if *start > *end || *end > node.text.len_chars() {
@@ -138,13 +150,23 @@ pub fn apply_op(tree: &mut BlockTree, op: &mut Op) -> Result<(), OpError> {
             let id = tree.resolve(path).ok_or(TreeError::BadPath)?;
             tree.node_mut(id).attrs = attrs.clone();
         }
-        Op::SetMark { path, start, end, kind, add } => {
+        Op::SetMark {
+            path,
+            start,
+            end,
+            kind,
+            add,
+        } => {
             let id = tree.resolve(path).ok_or(TreeError::BadPath)?;
             let node = tree.node_mut(id);
             if *start > *end || *end > node.text.len_chars() {
                 return Err(OpError::BadRange);
             }
-            let span = MarkSpan { start: *start, end: *end, kind: kind.clone() };
+            let span = MarkSpan {
+                start: *start,
+                end: *end,
+                kind: kind.clone(),
+            };
             if *add {
                 if !node.marks.contains(&span) {
                     node.marks.push(span);
@@ -153,7 +175,11 @@ pub fn apply_op(tree: &mut BlockTree, op: &mut Op) -> Result<(), OpError> {
                 node.marks.retain(|s| s != &span);
             }
         }
-        Op::MoveBlock { from, to_parent, to_index } => {
+        Op::MoveBlock {
+            from,
+            to_parent,
+            to_index,
+        } => {
             let id = tree.resolve(from).ok_or(TreeError::BadPath)?;
             let parent_id = tree.resolve(to_parent).ok_or(TreeError::BadPath)?;
             tree.move_subtree(id, parent_id, *to_index)?;
@@ -167,7 +193,12 @@ pub fn apply_op(tree: &mut BlockTree, op: &mut Op) -> Result<(), OpError> {
 /// 2. 完全在编辑区之后 → 平移 delta；
 /// 3. 完整包含编辑区 → span 吞下插入文本（end += delta，CM6 同款）；
 /// 4. 部分重叠 → 保留头部 [s.start, start)，无头部则保留平移后的尾部。
-pub fn adjust_marks(marks: &[MarkSpan], start: usize, end: usize, insert_len: usize) -> Vec<MarkSpan> {
+pub fn adjust_marks(
+    marks: &[MarkSpan],
+    start: usize,
+    end: usize,
+    insert_len: usize,
+) -> Vec<MarkSpan> {
     let delta = insert_len as isize - (end - start) as isize;
     let mut out = Vec::with_capacity(marks.len());
     for s in marks {
@@ -180,13 +211,25 @@ pub fn adjust_marks(marks: &[MarkSpan], start: usize, end: usize, insert_len: us
                 kind: s.kind.clone(),
             }
         } else if s.start <= start && s.end >= end {
-            MarkSpan { start: s.start, end: (s.end as isize + delta) as usize, kind: s.kind.clone() }
+            MarkSpan {
+                start: s.start,
+                end: (s.end as isize + delta) as usize,
+                kind: s.kind.clone(),
+            }
         } else if s.start < start {
-            MarkSpan { start: s.start, end: start, kind: s.kind.clone() }
+            MarkSpan {
+                start: s.start,
+                end: start,
+                kind: s.kind.clone(),
+            }
         } else {
             let tail_start = (end as isize + delta) as usize;
             let tail_end = (s.end as isize + delta) as usize;
-            MarkSpan { start: tail_start, end: tail_end, kind: s.kind.clone() }
+            MarkSpan {
+                start: tail_start,
+                end: tail_end,
+                kind: s.kind.clone(),
+            }
         };
         if span.end > span.start {
             out.push(span);
@@ -211,7 +254,12 @@ pub fn invert_op(tree_before: &BlockTree, op: &Op) -> Result<Vec<Op>, OpError> {
             build_rebuild_ops(&parent, base_index, &data, &mut ops);
             Ok(ops)
         }
-        Op::ReplaceText { path, start, end, insert } => {
+        Op::ReplaceText {
+            path,
+            start,
+            end,
+            insert,
+        } => {
             let id = tree_before.resolve(path).ok_or(TreeError::BadPath)?;
             let node = tree_before.node(id);
             if *start > *end || *end > node.text.len_chars() {
@@ -239,7 +287,13 @@ pub fn invert_op(tree_before: &BlockTree, op: &Op) -> Result<Vec<Op>, OpError> {
                 attrs: tree_before.node(id).attrs.clone(),
             }])
         }
-        Op::SetMark { path, start, end, kind, add } => {
+        Op::SetMark {
+            path,
+            start,
+            end,
+            kind,
+            add,
+        } => {
             // R24-a2 修复（求逆不对称，探针 probe_setmark_inverse 抓出）：
             // 逆的方向由 **state-before 的 span 存在性**决定——
             // - no-op（add=true 且 span 已在 / add=false 且 span 不在）→
@@ -253,7 +307,11 @@ pub fn invert_op(tree_before: &BlockTree, op: &Op) -> Result<Vec<Op>, OpError> {
             if *start > *end || *end > node.text.len_chars() {
                 return Err(OpError::BadRange);
             }
-            let span = MarkSpan { start: *start, end: *end, kind: kind.clone() };
+            let span = MarkSpan {
+                start: *start,
+                end: *end,
+                kind: kind.clone(),
+            };
             let exists = node.marks.contains(&span);
             let inv_add = if exists == *add { *add } else { !*add };
             Ok(vec![Op::SetMark {
@@ -264,7 +322,11 @@ pub fn invert_op(tree_before: &BlockTree, op: &Op) -> Result<Vec<Op>, OpError> {
                 add: inv_add,
             }])
         }
-        Op::MoveBlock { from, to_parent, to_index } => {
+        Op::MoveBlock {
+            from,
+            to_parent,
+            to_index,
+        } => {
             if from.is_empty() {
                 // 虚根不可移动（R11 压测逮到的边界：空路径曾致减法溢出 panic）
                 return Err(OpError::Tree(TreeError::BadPath));
@@ -281,14 +343,19 @@ pub fn invert_op(tree_before: &BlockTree, op: &Op) -> Result<Vec<Op>, OpError> {
     }
 }
 
-fn build_rebuild_ops(parent: &NodePath, index: usize, data: &crate::tree::NodeData, out: &mut Vec<Op>) {
+fn build_rebuild_ops(
+    parent: &NodePath,
+    index: usize,
+    data: &crate::tree::NodeData,
+    out: &mut Vec<Op>,
+) {
     out.push(Op::InsertBlock {
         parent: parent.to_vec(),
         index,
         kind: data.kind,
         attrs: data.attrs.clone(),
         text: data.text.as_str().into(), // R22-a：&str 直达 Arc<str>，单次拷贝
-        id: Some(data.id.0), // 恢复原身份（§8.2：undo 不改写历史身份）
+        id: Some(data.id.0),             // 恢复原身份（§8.2：undo 不改写历史身份）
     });
     for (i, child) in data.children.iter().enumerate() {
         let sub = join(parent, index);

@@ -28,15 +28,26 @@ fn clock_of(cell: &Arc<std::sync::Mutex<u64>>) -> Arc<dyn Fn() -> u64 + Send + S
 }
 
 fn top_kinds(core: &Core) -> Vec<BlockKind> {
-    core.tree.top_level().iter().map(|&c| core.tree.node(c).kind).collect()
+    core.tree
+        .top_level()
+        .iter()
+        .map(|&c| core.tree.node(c).kind)
+        .collect()
 }
 
 fn top_ids(core: &Core) -> Vec<BlockId> {
-    core.tree.top_level().iter().map(|&c| core.tree.node(c).id).collect()
+    core.tree
+        .top_level()
+        .iter()
+        .map(|&c| core.tree.node(c).id)
+        .collect()
 }
 
 fn text_at(core: &Core, path: &[usize]) -> String {
-    core.tree.node(core.tree.resolve(path).unwrap()).text.to_string()
+    core.tree
+        .node(core.tree.resolve(path).unwrap())
+        .text
+        .to_string()
 }
 
 fn kind_at(core: &Core, path: &[usize]) -> BlockKind {
@@ -72,7 +83,10 @@ fn spike_a_tree_shape_and_nesting() {
 
     let quote = items[4];
     assert_eq!(
-        core.tree.node(core.tree.node(quote).children[0]).text.to_string(),
+        core.tree
+            .node(core.tree.node(quote).children[0])
+            .text
+            .to_string(),
         "quoted"
     );
     // code fence 多行内容完整
@@ -116,35 +130,55 @@ fn spike_b_identity_invariants_matrix() {
 
     // 文本修改 → 保持
     core.replace_text(
-        TextTarget::ByPath { path: para_path.clone(), start: 0, end: 0 },
+        TextTarget::ByPath {
+            path: para_path.clone(),
+            start: 0,
+            end: 0,
+        },
         "X".into(),
     )
     .unwrap();
     assert_eq!(kind_at(&core, &para_path), BlockKind::Paragraph);
-    assert_eq!(core.tree.node(core.tree.resolve(&para_path).unwrap()).id, para_id);
+    assert_eq!(
+        core.tree.node(core.tree.resolve(&para_path).unwrap()).id,
+        para_id
+    );
 
     // 属性修改 → 保持
     let mut attrs = BTreeMap::new();
     attrs.insert("k".to_string(), "v".to_string());
-    core.set_attrs(core.revision(), para_path.clone(), attrs).unwrap();
-    assert_eq!(core.tree.node(core.tree.resolve(&para_path).unwrap()).id, para_id);
+    core.set_attrs(core.revision(), para_path.clone(), attrs)
+        .unwrap();
+    assert_eq!(
+        core.tree.node(core.tree.resolve(&para_path).unwrap()).id,
+        para_id
+    );
 
     // 类型变更 → 保持
     core.set_block_type(core.revision(), para_path.clone(), BlockKind::Heading)
         .unwrap();
-    assert_eq!(core.tree.node(core.tree.resolve(&para_path).unwrap()).id, para_id);
+    assert_eq!(
+        core.tree.node(core.tree.resolve(&para_path).unwrap()).id,
+        para_id
+    );
 
     // 移动 → 保持（ID 跟随到新路径）
-    core.move_block(core.revision(), para_path.clone(), vec![], 0).unwrap();
+    core.move_block(core.revision(), para_path.clone(), vec![], 0)
+        .unwrap();
     assert_eq!(
-        core.tree.path_of(core.tree.lookup_id(para_id).unwrap()).unwrap(),
+        core.tree
+            .path_of(core.tree.lookup_id(para_id).unwrap())
+            .unwrap(),
         vec![0usize],
         "移动后 ID 解析到新路径"
     );
 
     // split → 原 ID 留左侧，右侧新 ID
     core.split_block(core.revision(), vec![0usize], 3).unwrap();
-    assert_eq!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id, para_id);
+    assert_eq!(
+        core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id,
+        para_id
+    );
     let right_id = core.tree.node(core.tree.resolve(&[1usize]).unwrap()).id;
     assert_ne!(right_id, para_id);
     assert_eq!(text_at(&core, &[0]), "Xte");
@@ -152,7 +186,10 @@ fn spike_b_identity_invariants_matrix() {
 
     // merge → survivor = 前一个（默认前/目标 ID），右侧 ID 失效
     core.merge_block(core.revision(), vec![1usize]).unwrap();
-    assert_eq!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id, para_id);
+    assert_eq!(
+        core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id,
+        para_id
+    );
     assert_eq!(core.tree.lookup_id(right_id), None, "被并块 ID 失效");
     assert_eq!(text_at(&core, &[0]), "Xtext para");
 
@@ -211,7 +248,11 @@ fn spike_c_all_first_stage_primitives() {
 
     // 2 replace_text（path 快路径）
     core.replace_text(
-        TextTarget::ByPath { path: vec![1usize], start: 0, end: 0 },
+        TextTarget::ByPath {
+            path: vec![1usize],
+            start: 0,
+            end: 0,
+        },
         ">> ".into(),
     )
     .unwrap();
@@ -221,9 +262,11 @@ fn spike_c_all_first_stage_primitives() {
     // 4 set_attrs（code fence 改语言）
     let mut attrs = BTreeMap::new();
     attrs.insert("lang".to_string(), "python".to_string());
-    core.set_attrs(core.revision(), vec![5usize], attrs).unwrap();
+    core.set_attrs(core.revision(), vec![5usize], attrs)
+        .unwrap();
     assert_eq!(
-        core.tree.node(core.tree.resolve(&[5usize]).unwrap())
+        core.tree
+            .node(core.tree.resolve(&[5usize]).unwrap())
             .attrs
             .get("lang")
             .map(String::as_str),
@@ -231,13 +274,18 @@ fn spike_c_all_first_stage_primitives() {
     );
     // 5 set_mark（加粗段落前 5 字符）
     core.set_mark(
-        TextTarget::ByPath { path: vec![1usize], start: 0, end: 5 },
+        TextTarget::ByPath {
+            path: vec![1usize],
+            start: 0,
+            end: 5,
+        },
         "bold".into(),
         true,
     )
     .unwrap();
     // 6 move_block（代码块移到最前；插入后原 [6] 为 CodeBlock）
-    core.move_block(core.revision(), vec![6usize], vec![], 0).unwrap();
+    core.move_block(core.revision(), vec![6usize], vec![], 0)
+        .unwrap();
     assert_eq!(top_kinds(&core)[0], BlockKind::CodeBlock);
     // 7 split_block（[3] 为 Heading "Title"，len 5）
     core.split_block(core.revision(), vec![3usize], 3).unwrap();
@@ -270,22 +318,39 @@ fn spike_c_all_first_stage_primitives() {
                 text: "b".into(),
                 id: None,
             },
-            Op::ReplaceText { path: vec![0usize], start: 1, end: 1, insert: "!".into() },
+            Op::ReplaceText {
+                path: vec![0usize],
+                start: 1,
+                end: 1,
+                insert: "!".into(),
+            },
         ],
     )
     .unwrap();
-    assert_eq!(core.history.undo_depth(), depth_before + 1, "事务 = 单条历史");
+    assert_eq!(
+        core.history.undo_depth(),
+        depth_before + 1,
+        "事务 = 单条历史"
+    );
 
     // commit_source（View A 块编辑回解析；单原子块原位改 → ID 保持）
     let before = core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id;
-    core.commit_source(core.revision(), vec![0usize], "## committed").unwrap();
+    core.commit_source(core.revision(), vec![0usize], "## committed")
+        .unwrap();
     assert_eq!(kind_at(&core, &[0]), BlockKind::Heading);
     assert_eq!(
-        core.tree.node(core.tree.resolve(&[0usize]).unwrap()).attrs.get("level").map(String::as_str),
+        core.tree
+            .node(core.tree.resolve(&[0usize]).unwrap())
+            .attrs
+            .get("level")
+            .map(String::as_str),
         Some("2")
     );
     assert_eq!(text_at(&core, &[0]), "committed");
-    assert_eq!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id, before);
+    assert_eq!(
+        core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id,
+        before
+    );
 
     // 全程事件在流上
     assert!(core.take_events().len() >= 11);
@@ -305,7 +370,11 @@ fn spike_d_coalescing_window_and_semantic_break() {
     for t in [0u64, 100, 200, 300] {
         *now.lock().unwrap() = t;
         core.replace_text(
-            TextTarget::ByPath { path: vec![0usize], start: 4, end: 4 },
+            TextTarget::ByPath {
+                path: vec![0usize],
+                start: 4,
+                end: 4,
+            },
             "x".into(),
         )
         .unwrap();
@@ -323,7 +392,11 @@ fn spike_d_coalescing_window_and_semantic_break() {
     // 窗口过期后的文本编辑 → 新条目
     *now.lock().unwrap() = 10_000;
     core.replace_text(
-        TextTarget::ByPath { path: vec![0usize], start: 8, end: 8 },
+        TextTarget::ByPath {
+            path: vec![0usize],
+            start: 8,
+            end: 8,
+        },
         "y".into(),
     )
     .unwrap();
@@ -347,20 +420,38 @@ fn spike_d_ai_ops_are_first_class_history() {
 
     // AI 变更：独立条目（source != View 永不合并）+ 可 undo
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0usize], start: 5, end: 5, insert: " world".into() }],
-        ApplyMeta { source: Source::Ai, command: Some("ai.append".into()) },
+        vec![Op::ReplaceText {
+            path: vec![0usize],
+            start: 5,
+            end: 5,
+            insert: " world".into(),
+        }],
+        ApplyMeta {
+            source: Source::Ai,
+            command: Some("ai.append".into()),
+        },
     )
     .unwrap();
     core.apply_ops(
-        vec![Op::SetBlockType { path: vec![0usize], kind: BlockKind::Heading }],
-        ApplyMeta { source: Source::Ai, command: Some("ai.rewrite".into()) },
+        vec![Op::SetBlockType {
+            path: vec![0usize],
+            kind: BlockKind::Heading,
+        }],
+        ApplyMeta {
+            source: Source::Ai,
+            command: Some("ai.rewrite".into()),
+        },
     )
     .unwrap();
     assert_eq!(core.history.undo_depth(), before + 2);
 
     // 与人类击键不合并：紧跟一次 View 文本编辑 → 又一条新条目
     core.replace_text(
-        TextTarget::ByPath { path: vec![0usize], start: 11, end: 11 },
+        TextTarget::ByPath {
+            path: vec![0usize],
+            start: 11,
+            end: 11,
+        },
         "!".into(),
     )
     .unwrap();
@@ -372,24 +463,39 @@ fn spike_d_ai_ops_are_first_class_history() {
     core.undo().unwrap();
     assert_eq!(kind_at(&core, &[0]), BlockKind::Paragraph);
     core.undo().unwrap();
-    assert_eq!(core.tree.node(core.tree.lookup_id(id).unwrap()).text.to_string(), "hello");
+    assert_eq!(
+        core.tree
+            .node(core.tree.lookup_id(id).unwrap())
+            .text
+            .to_string(),
+        "hello"
+    );
 
     let events = core.take_events();
     assert!(events.iter().any(|e| e.meta.source == Source::Undo));
-    assert!(events.iter().any(|e| e.meta.command.as_deref() == Some("ai.append")));
+    assert!(events
+        .iter()
+        .any(|e| e.meta.command.as_deref() == Some("ai.append")));
 }
 
 #[test]
 fn spike_d_history_json_roundtrip_and_log_replay() {
     let mut core = Core::from_markdown(SAMPLE);
     core.replace_text(
-        TextTarget::ByPath { path: vec![1usize], start: 4, end: 8 },
+        TextTarget::ByPath {
+            path: vec![1usize],
+            start: 4,
+            end: 8,
+        },
         "TEXT".into(),
     )
     .unwrap();
     core.split_block(core.revision(), vec![1usize], 3).unwrap();
     core.apply_ops(
-        vec![Op::SetBlockType { path: vec![2usize], kind: BlockKind::Heading }],
+        vec![Op::SetBlockType {
+            path: vec![2usize],
+            kind: BlockKind::Heading,
+        }],
         ApplyMeta::ai("ai.style"),
     )
     .unwrap();
@@ -403,7 +509,11 @@ fn spike_d_history_json_roundtrip_and_log_replay() {
     restored.set_history_json(&hj).unwrap();
     assert_eq!(restored.history.undo_depth(), core.history.undo_depth());
     restored.undo().unwrap();
-    assert_eq!(kind_at(&restored, &[2]), BlockKind::Paragraph, "恢复的 undo 撤销 AI 改写");
+    assert_eq!(
+        kind_at(&restored, &[2]),
+        BlockKind::Paragraph,
+        "恢复的 undo 撤销 AI 改写"
+    );
     restored.redo().unwrap();
     assert_eq!(kind_at(&restored, &[2]), BlockKind::Heading);
 
@@ -453,7 +563,10 @@ fn spike_d_snapshot_midstream_and_allocator_watermark() {
         )
         .unwrap();
     assert!(core.tree.node(core.tree.resolve(&[0usize]).unwrap()).id.0 >= 1);
-    let new_id = restored.tree.node(restored.tree.resolve(&[0usize]).unwrap()).id;
+    let new_id = restored
+        .tree
+        .node(restored.tree.resolve(&[0usize]).unwrap())
+        .id;
     assert!(new_id.0 >= wm);
 }
 
@@ -467,7 +580,11 @@ fn spike_e_structural_stale_must_reject() {
     let depth0 = core.history.undo_depth();
 
     core.replace_text(
-        TextTarget::ByPath { path: vec![0usize], start: 0, end: 1 },
+        TextTarget::ByPath {
+            path: vec![0usize],
+            start: 0,
+            end: 1,
+        },
         "x".into(),
     )
     .unwrap(); // revision → 1
@@ -498,7 +615,8 @@ fn spike_e_anchor_mapping_and_rejects() {
     let b_gamma = core.tree.node(core.tree.resolve(&[2usize]).unwrap()).id;
 
     // ① 移动块之后：锚点仍解析到新路径（ADR-B1 混合式的价值时刻）
-    core.move_block(core.revision(), vec![0usize], vec![], 2).unwrap();
+    core.move_block(core.revision(), vec![0usize], vec![], 2)
+        .unwrap();
     // [0]=beta [1]=gamma [2]=alpha
     assert_eq!(text_at(&core, &[0]), "beta");
     core.replace_text(
@@ -515,22 +633,45 @@ fn spike_e_anchor_mapping_and_rejects() {
 
     // ② expect 不匹配 → reject
     let err = core.replace_text(
-        TextTarget::ByAnchor { block: b_beta, start: 0, end: 4, expect: Some("xxxx".into()) },
+        TextTarget::ByAnchor {
+            block: b_beta,
+            start: 0,
+            end: 4,
+            expect: Some("xxxx".into()),
+        },
         "y".into(),
     );
-    assert_eq!(err, Err(Reject::Anchor(AnchorError::ExpectMismatch { block: b_beta })));
+    assert_eq!(
+        err,
+        Err(Reject::Anchor(AnchorError::ExpectMismatch {
+            block: b_beta
+        }))
+    );
 
     // ③ 越界 → reject
     let err = core.replace_text(
-        TextTarget::ByAnchor { block: b_beta, start: 0, end: 99, expect: None },
+        TextTarget::ByAnchor {
+            block: b_beta,
+            start: 0,
+            end: 99,
+            expect: None,
+        },
         "y".into(),
     );
-    assert!(matches!(err, Err(Reject::Anchor(AnchorError::OutOfRange { .. }))));
+    assert!(matches!(
+        err,
+        Err(Reject::Anchor(AnchorError::OutOfRange { .. }))
+    ));
 
     // ④ 块被删 → Missing → reject（绝不猜测，§8.4 原则）
     core.delete_block(core.revision(), vec![1usize]).unwrap();
     let err = core.replace_text(
-        TextTarget::ByAnchor { block: b_gamma, start: 0, end: 2, expect: None },
+        TextTarget::ByAnchor {
+            block: b_gamma,
+            start: 0,
+            end: 2,
+            expect: None,
+        },
         "z".into(),
     );
     assert_eq!(err, Err(Reject::Anchor(AnchorError::Missing(b_gamma))));
@@ -550,7 +691,11 @@ fn spike_e_marks_edit_semantics() {
 
     *now.lock().unwrap() = tick(&now);
     core.set_mark(
-        TextTarget::ByPath { path: p.clone(), start: 0, end: 5 },
+        TextTarget::ByPath {
+            path: p.clone(),
+            start: 0,
+            end: 5,
+        },
         "bold".into(),
         true,
     )
@@ -559,53 +704,105 @@ fn spike_e_marks_edit_semantics() {
     // 区间内插入 → span 吞下插入（CM6 同款，可逆）；时间拉开确保独立历史条目
     *now.lock().unwrap() = tick(&now);
     core.replace_text(
-        TextTarget::ByPath { path: p.clone(), start: 2, end: 2 },
+        TextTarget::ByPath {
+            path: p.clone(),
+            start: 2,
+            end: 2,
+        },
         "XX".into(),
     )
     .unwrap();
     let node = core.tree.node(core.tree.resolve(&p).unwrap());
     assert_eq!(node.text.to_string(), "heXXllo world");
-    assert_eq!(node.marks, vec![MarkSpan { start: 0, end: 7, kind: "bold".into() }]);
+    assert_eq!(
+        node.marks,
+        vec![MarkSpan {
+            start: 0,
+            end: 7,
+            kind: "bold".into()
+        }]
+    );
     core.undo().unwrap();
     let node = core.tree.node(core.tree.resolve(&p).unwrap());
     assert_eq!(node.text.to_string(), "hello world");
-    assert_eq!(node.marks, vec![MarkSpan { start: 0, end: 5, kind: "bold".into() }]);
+    assert_eq!(
+        node.marks,
+        vec![MarkSpan {
+            start: 0,
+            end: 5,
+            kind: "bold".into()
+        }]
+    );
 
     // 编辑区后方平移（可逆）
     *now.lock().unwrap() = tick(&now);
     core.replace_text(
-        TextTarget::ByPath { path: p.clone(), start: 6, end: 6 },
+        TextTarget::ByPath {
+            path: p.clone(),
+            start: 6,
+            end: 6,
+        },
         "dear ".into(),
     )
     .unwrap();
     let node = core.tree.node(core.tree.resolve(&p).unwrap());
-    assert_eq!(node.marks, vec![MarkSpan { start: 0, end: 5, kind: "bold".into() }]);
+    assert_eq!(
+        node.marks,
+        vec![MarkSpan {
+            start: 0,
+            end: 5,
+            kind: "bold".into()
+        }]
+    );
     core.undo().unwrap();
     assert_eq!(
         core.tree.node(core.tree.resolve(&p).unwrap()).marks,
-        vec![MarkSpan { start: 0, end: 5, kind: "bold".into() }]
+        vec![MarkSpan {
+            start: 0,
+            end: 5,
+            kind: "bold".into()
+        }]
     );
 
     // 跨越区间的删除 → span 截断（v0 有损语义，登记 README）
     *now.lock().unwrap() = tick(&now);
     core.replace_text(
-        TextTarget::ByPath { path: p.clone(), start: 3, end: 8 },
+        TextTarget::ByPath {
+            path: p.clone(),
+            start: 3,
+            end: 8,
+        },
         String::new(),
     )
     .unwrap();
     let node = core.tree.node(core.tree.resolve(&p).unwrap());
     assert_eq!(node.text.to_string(), "helrld");
-    assert_eq!(node.marks, vec![MarkSpan { start: 0, end: 3, kind: "bold".into() }]);
+    assert_eq!(
+        node.marks,
+        vec![MarkSpan {
+            start: 0,
+            end: 3,
+            kind: "bold".into()
+        }]
+    );
 
     // set_mark(false) 移除
     *now.lock().unwrap() = tick(&now);
     core.set_mark(
-        TextTarget::ByPath { path: p.clone(), start: 0, end: 3 },
+        TextTarget::ByPath {
+            path: p.clone(),
+            start: 0,
+            end: 3,
+        },
         "bold".into(),
         false,
     )
     .unwrap();
-    assert!(core.tree.node(core.tree.resolve(&p).unwrap()).marks.is_empty());
+    assert!(core
+        .tree
+        .node(core.tree.resolve(&p).unwrap())
+        .marks
+        .is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -617,12 +814,21 @@ fn spike_e_marks_edit_semantics() {
 fn invariants_shared_op_stream() {
     let mut core = Core::from_markdown("base");
     core.replace_text(
-        TextTarget::ByPath { path: vec![0usize], start: 4, end: 4 },
+        TextTarget::ByPath {
+            path: vec![0usize],
+            start: 4,
+            end: 4,
+        },
         " human".into(),
     )
     .unwrap();
     core.apply_ops(
-        vec![Op::ReplaceText { path: vec![0usize], start: 0, end: 0, insert: "AI: ".into() }],
+        vec![Op::ReplaceText {
+            path: vec![0usize],
+            start: 0,
+            end: 0,
+            insert: "AI: ".into(),
+        }],
         ApplyMeta::ai("ai.prefix"),
     )
     .unwrap();

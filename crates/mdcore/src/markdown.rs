@@ -37,7 +37,13 @@ pub fn tree_to_markdown(tree: &BlockTree) -> String {
     lines.join("\n")
 }
 
-fn render(tree: &BlockTree, id: NodeId, list_indent: &str, quote_prefix: &str, out: &mut Vec<String>) {
+fn render(
+    tree: &BlockTree,
+    id: NodeId,
+    list_indent: &str,
+    quote_prefix: &str,
+    out: &mut Vec<String>,
+) {
     let node = tree.node(id);
     let emit = |content: &str, out: &mut Vec<String>| {
         for line in content.split('\n') {
@@ -64,7 +70,11 @@ fn render(tree: &BlockTree, id: NodeId, list_indent: &str, quote_prefix: &str, o
         }
         BlockKind::ThematicBreak => emit("---", out),
         BlockKind::ListItem => {
-            let marker = node.attrs.get("marker").cloned().unwrap_or_else(|| "-".into());
+            let marker = node
+                .attrs
+                .get("marker")
+                .cloned()
+                .unwrap_or_else(|| "-".into());
             let head = format!("{quote_prefix}{list_indent}{marker} {}", node.text);
             for (i, line) in head.split('\n').enumerate() {
                 if i == 0 {
@@ -163,7 +173,13 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
             // 同深度同一 quote 容器复用
             if let Some((k, d, id)) = stack.last().copied() {
                 if k == BlockKind::Blockquote && d == depth {
-                    let p = tree.create_node(BlockKind::Paragraph, &bq.1, Attrs::new(), Vec::new(), None);
+                    let p = tree.create_node(
+                        BlockKind::Paragraph,
+                        &bq.1,
+                        Attrs::new(),
+                        Vec::new(),
+                        None,
+                    );
                     attach(&mut tree, id, p);
                     i += 1;
                     continue;

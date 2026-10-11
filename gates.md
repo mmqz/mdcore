@@ -926,7 +926,11 @@ image crate（决策①），依赖面不进 image 系。
 修复四项：幽灵取消令牌防御（absorb_cancel 增 job_watermark 双侧剪枝
 ——id 超过提交水位 = 调用方 bug 令牌直接丢弃，集合上界 = 在飞作业数）/
 attach_engine 页数一致性调用方合同入档（双权威不一致的失败模式显式
-化）/ perf_random_flip 正名为 perf_sequential_flip（两阶段顺序取页，
+化；**T1 审计 O3 修复后已升级为装配期硬校验**——`attach_engine`
+返回 `Result<(), AttachEngineError>`，引擎页数 ≠ `meta.page_count`
+即 typed 拒绝 `PageCountMismatch{expected, engine}`（双侧数值携带，
+拒绝时引擎 drop、会话保持 v0 注入路径），调用方合同退役为第二防线
+——见文末 T1 卫生修复轮）/ perf_random_flip 正名为 perf_sequential_flip（两阶段顺序取页，
 名实相符）/ Engine 钳制与 put-更新超大自逐两回归锁（+2）。在档不修
 两项：命中侧计时口径（测试注释已明示）与绑定失败重试路径无直接锁
 （进程单例语义限制，实现读审确认真实）。
@@ -1091,3 +1095,113 @@ wasm32 check 过；scan.sh 0 命中（product + --all 扩展面均 0）；clippy
 零新增（workspace 面 mdc-wasm 2 条 = 既有基线；lopdf 单特性面与双引擎
 面全绿）；cargo fmt 过（mdc-pdf 范围）。既有 236 锁断言语义零改动
 （PDF-b/c 锁原样全绿）。
+
+**T1 修复轮门禁更新（2026-10-10，实跑复核）**：workspace 默认面
+**252/252**（245 + T1-fix-a 5 mdcore 质量锁 + T1-fix-b 2 pdf 锁——
+pdfb_skeleton 32→33 / pdfc_cache_worker 17→18）；feature 面
+engine-pdfium **73/73 + 6 ignored**、双引擎面 **90/90 + 6 ignored**
+（fix-b 时点缺 form_probe.pdf 的 1 失败已自愈——探针 fixture 复原
+就位，mount_preserves_existing_page_annots 复跑通过）。
+详见下节「T1 卫生修复轮」。
+
+## T1 卫生修复轮（2026-10-10，产品仓卫生批量 fix-c）
+
+> 范围 = T1 勘察/复审 12 项清单中的仓卫生项（F5/F7/F8/F11/F12/O2）+
+> fix-a/fix-b 代码修复的在档收口。代码缺陷修复本体（F1/F2/O3/O4/F10/
+> F9）由并行代理 A/B 落地，本轮全部在其工作区改动之上**追加**（未回退/
+> 覆盖任何既有改动；fmt 清扫对其代码仅重排格式，语义零变化——
+> workspace 252/252 全绿复核）。
+
+- **F5 工具链钉住 + 全仓 fmt 清扫**：新增 `rust-toolchain.toml`
+  （`channel = "1.99.0"`——rustfmt 行为随工具链版本漂移的根治：此前
+  无钉住，rustfmt 1.10.0 对旧工具链格式的 mdcore/shell/wasm 一次性
+  报出全仓 fmt 门禁红；升级工具链 = 显式改该文件 + 全仓复跑门禁）。
+  本轮 `cargo fmt --all` 一次性清扫 **492 diff / 34 文件**（mdcore 26
+  + shell 7 + mdcore-wasm 1；T1-survey 时点 459/32，fix-a/fix-b 新增
+  代码带来 +33 diff/+2 文件）；crates/pdf 维持干净（四轮手工对齐）。
+  清扫后 `cargo fmt --all -- --check` **0 diff**——fmt 门禁自此
+  跨环境可复现。
+- **F7 版本单源清单补 pdf**：r24_packaging.rs 版本一致性锁清单
+  `["mdcore","mdcore-wasm","shell","shell-native"]` → 增 `"pdf"`
+  （PDF-b 起 workspace 第五成员此前漏列，仅由 pdfb_skeleton 版本自锁
+  补位成闭环）——根 Cargo.toml「跨 crate 一致性锁背书」注释重新
+  成立；模块文档「四 crate」同步改「五 crate」。
+- **F8 shell-native 文档纠偏**：模块文档「未列入 workspace members、
+  `cargo test` 不会触碰」与根 Cargo.toml members/default-members 均含
+  其矛盾——改为事实（**在列** + 零依赖蓝图测试随 workspace 运行，
+  冒烟锁 `blueprint_constants_present`；「依赖注释态」= 实体面
+  wry/tao/gtk 不进编译面），保留设计意图注记（蓝图常驻 workspace =
+  结构漂移由门禁即时可见）；mdshell Cargo.toml description 同类失真
+  （「不在本 workspace 编译面内」）一并纠正。
+- **F11 依赖卫生单源**：根 Cargo.toml 增 `[workspace.dependencies]`
+  （serde = "1.0.229" / serde_json = "1.0.151"——与 Cargo.lock 现解析
+  精确一致，**锁文件零变化**[git diff 实证]）；mdcore / mdcore-wasm /
+  mdshell / mdc-pdf 四 crate 改 `workspace = true` 继承（mdcore 的
+  宽松 `"1"` 要求同步收紧到锁内现值）；feature 声明（derive/rc）留
+  crate 本地面；引擎 pin（pdfium-render/lopdf 的 optional 面）保持
+  各 crate 现状不动（feature 决策记录在案）。
+- **O2 门禁口径对齐（实跑为准）**：`cargo test --workspace` 默认面
+  **252/252 全绿、25 个非空语义锁套件**（34 个 test result 行——含
+  feature 面空套件与 doc-tests；1 ignored = shell-native 文档的
+  `ignore` 代码块非测试）＝ 245 旧基线 + T1-fix-a 5（mdcore
+  t1_quality_fixes）+ T1-fix-b 2（pdfb_skeleton 32→33 /
+  pdfc_cache_worker 17→18）。文档修正：COMPLIANCE.md §3「16 套件」
+  → 25 套件/252 用例；README 构建与门禁「24 套件/245 用例」→
+  25/252、收口纪律「18 套件」→ 25；本文件 PDF-d 门禁段增 T1 更新
+  口径块（上文）。T1-survey 在分析仓 worklog 的「223+/16 套件」口径
+  失实由主代理登记勘误（非本轮范围）。
+- **F12 feature 面可复现 bootstrap 成文 + fixtures 候选序调整**：
+  bootstrap 三步清单成文（下小节，COMPLIANCE.md §3 后同款指引）；
+  三测试文件（pdfc_engine / pdfc_perf / pdfd_writer）的
+  fixture_candidates 候选序改为 **crate 本地 `crates/pdf/fixtures/`
+  优先、仓外 spike 位兜底**（产品仓自持素材位在前——fixtures 入库后
+  fresh clone 即可复现、不受仓外目录状态影响；当前 crate 本地位不
+  存在，环境行为零变化）。libpdfium.so 定位序不变（env → 候选清单
+  → 系统）。
+- **fix-b 移交项收口**：① pdf-c-1r 在档行「attach_engine 调用方
+  合同」更新为装配期硬校验语义（`PageCountMismatch{expected, engine}`
+  typed 拒绝、双侧数值携带、拒绝时引擎 drop 会话保持 v0 注入路径；
+  回归锁 33 `attach_engine_validates_page_count_consistency`——上文
+  PDF-c 审计轮段内更新）；② worker 取消合同「作用于尚未开跑的排队
+  作业」经 F1 修复后为真（`last_replied` 改 `Option<u64>`，首作业
+  id 0 的排队取消令牌不再被哨兵撞值丢弃；回归锁 18
+  `worker_cancel_first_job_id_zero_is_honored`）——措辞无需改动；
+  ③ CONTRACT.md §6 核查：仅时间线语「会话引擎接线」提及 attach，
+  **无 attach 行为合同措辞在档——无需升版**（§6 错误面/命令面零
+  变化，AttachEngineError 为 Rust 侧装配期错误不进 serde 协议面）。
+- **门禁（本轮验收）**：cargo test --workspace 252/252 全绿；clippy
+  --workspace --all-targets 零新警告（mdc-wasm 2 条 static_method_of =
+  既有基线）；cargo fmt --all -- --check 0 diff；wasm32 check
+  （`-p mdcore-wasm --target wasm32-unknown-unknown`）过；Cargo.lock
+  零变化；scan.sh 0 命中；feature 面复验（F12 候选序调序后实跑）：
+  engine-pdfium 73/73 + 6 ignored / engine-lopdf 60/60 / 双引擎
+  90/90 + 6 ignored（form_probe.pdf 探针 fixture 已在 spike 位就位，
+  fix-b 时点的 1 失败自愈）。
+
+### feature 面前置 bootstrap（T1-F12 成文——净克隆复现引擎门的唯一路径）
+
+> feature 面测试载荷（libpdfium.so + fixtures）**非净克隆自带**：
+> 默认面门禁零引擎依赖、裸环境全绿；`engine-pdfium` /
+> `engine-lopdf` 面需先在分析仓 spike 完成 bootstrap。三步均在
+> `cleanroom-analysis/md-line/pdf-a/spike/` 目录下执行：
+
+1. `./fetch-pdfium.sh` —— 取 libpdfium.so（版本 pin `chromium/8086`
+   non-V8 + SHA256 验证——升级 = 改脚本内 pin + 复验三探针 + NOTICES
+   更新）；
+2. `cargo run --release` —— 生成 fixtures：small.pdf（3 页）/
+   large.pdf（500 页）/ small_annotated.pdf（lopdf 现场构造，无外部
+   素材依赖）；
+3. `cargo run --bin formfill_probe --release` —— 生成 form_probe.pdf
+   （AcroForm 表单探针——PDF-d 锁 ⑮ 挂载面载荷；探针源由并行代理
+   复原入库中）。
+
+载荷定位序（测试运行期，任一缺失 = panic 打印全部已尝试候选——不
+静默 skip，门禁环境必须可诊断）：
+
+- **libpdfium.so**：env `MDC_PDFIUM_LIB`（文件路径）→ 编译期候选清单
+  （产品仓 `bin/lib/` → 分析仓 spike `bin/lib/` → crate 本地
+  `bin/lib/`）→ 系统（`bind_to_system_library`）；绑定失败 =
+  `CommandError::Engine` 携带全部已尝试路径。
+- **fixtures**：env `MDC_PDF_TEST_FIXTURES`（目录）→ 编译期候选
+  （**crate 本地 `crates/pdf/fixtures/` 优先**——产品仓自持素材位，
+  T1-F12 调序；仓外 spike `fixtures/` 兜底）。

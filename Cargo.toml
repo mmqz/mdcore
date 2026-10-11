@@ -10,6 +10,16 @@ default-members = ["crates/mdcore", "crates/shell", "crates/shell-native", "crat
 [workspace.package]
 version = "0.1.0"
 
+# T1 依赖卫生（fix-c）：serde/serde_json 版本要求单源化——各 crate 以
+# `workspace = true` 继承本表（禁止 crate 内独立写版本号）；取值与
+# Cargo.lock 现解析精确一致（serde 1.0.229 / serde_json 1.0.151），
+# 收紧零锁变化。feature 声明（derive/rc 等）是 crate 本地面，随各
+# crate 清单写 `features = [...]`；引擎 pin（pdfium-render/lopdf 的
+# optional 面）保持各 crate 现状——PDF-c/d 决策记录见 gates.md。
+[workspace.dependencies]
+serde = "1.0.229"
+serde_json = "1.0.151"
+
 # R8 Headless Core v0 — 依赖策略（主档 §9 / tech-stack）:
 #   ropey      = 文本存储实现（指定的技术栈成员）
 #   serde      = JSON 序列化（op 流 / snapshot / history 的最低成本选择）

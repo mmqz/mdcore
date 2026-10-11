@@ -1,10 +1,15 @@
 //! mdshell-native — R10 原生宿主壳（tao + wry + GTK3，ADR-H1 定谳：Slint
 //! 因 GPL 证与 ADR-C1 排除）胶水。
 //!
-//! ⚠️ 状态：**设计定稿、编译待原生环境**（沙箱无 sudo，webkit2gtk-4.1-dev
-//! 不可安装；本 crate 未列入 workspace members，`cargo test` 不会触碰）。
-//! 本文件是结构蓝图：在有系统依赖的机器上按 Cargo.toml 注释启用依赖后
-//! 即为可编译起点。
+//! ⚠️ 状态：**设计定稿、实体编译待原生环境**（沙箱无 sudo，
+//! webkit2gtk-4.1-dev 不可安装——tao/wry/GTK3 依赖在 Cargo.toml 中保持
+//! 注释态）。本 crate **在列 workspace members 与 default-members**
+//! （根 Cargo.toml）：零依赖蓝图形态随 `cargo test --workspace` 编译并
+//! 运行（冒烟锁 `blueprint_constants_present` 即本文件 tests 模块）；
+//! 「依赖注释态」= 实体面（wry/tao/gtk）不进 workspace 编译面。本文件
+//! 是结构蓝图：在有系统依赖的机器上按 Cargo.toml 注释启用依赖后即为
+//! 可编译起点。设计意图注记：蓝图以零依赖形态常驻 workspace 是刻意
+//! 选择——crate 结构漂移由门禁即时可见，而非等原生环境才暴露。
 //!
 //! 结构（与 mdshell 契约层、web/dist 的对接关系）：
 //!

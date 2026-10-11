@@ -24,7 +24,10 @@ pub enum OpenProgress {
     /// 首段已入核并可交互（TTI 时刻）。
     FirstChunkInteractive { blocks: usize },
     /// 第 `chunk_index`/`total_chunks` 段已追加。
-    ChunkAppended { chunk_index: usize, total_chunks: usize },
+    ChunkAppended {
+        chunk_index: usize,
+        total_chunks: usize,
+    },
     /// 全文档就绪（终态 = 一次性打开的等价树，Rust 侧已有三重相等测试背书）。
     Completed { blocks: usize },
 }
@@ -48,7 +51,11 @@ pub struct DocumentSession {
 impl DocumentSession {
     /// 新建会话（路径未设 = 匿名/未另存文档，不入恢复集）。
     pub fn new(core: Core) -> Self {
-        Self { id: core.document_id(), core, path: None }
+        Self {
+            id: core.document_id(),
+            core,
+            path: None,
+        }
     }
 
     /// 附路径提示（链式；宿主开档后设置）。
@@ -64,7 +71,11 @@ pub fn open_document(markdown: &str, meta_json: Option<&str>) -> Result<Document
         Some(meta) => Core::open_document(markdown, meta).map_err(|e| format!("{e:?}"))?,
         None => Core::from_markdown(markdown),
     };
-    Ok(DocumentSession { id: core.document_id(), core, path: None })
+    Ok(DocumentSession {
+        id: core.document_id(),
+        core,
+        path: None,
+    })
 }
 
 /// 渐进打开（大文档路径）：分块追加进核，每步回调进度。
@@ -85,17 +96,28 @@ pub fn open_document_progressive<H: Host>(
         // meta 携带 document_id/历史：先建核再注入（保持与 open_document 同一恢复路径）
         core = Core::open_document(first, meta).map_err(|e| format!("{e:?}"))?;
     }
-    on_progress(OpenProgress::FirstChunkInteractive { blocks: core.tree.top_level().len() });
+    on_progress(OpenProgress::FirstChunkInteractive {
+        blocks: core.tree.top_level().len(),
+    });
     host.surface_load_markdown(&mdcore::markdown::tree_to_markdown(&core.tree))?;
 
     let total = chunks.len();
     for (i, chunk) in iter {
         core.extend_from_markdown(chunk)
             .map_err(|e| format!("chunk {i} rejected: {e:?}"))?;
-        on_progress(OpenProgress::ChunkAppended { chunk_index: i, total_chunks: total });
+        on_progress(OpenProgress::ChunkAppended {
+            chunk_index: i,
+            total_chunks: total,
+        });
     }
-    on_progress(OpenProgress::Completed { blocks: core.tree.top_level().len() });
-    Ok(DocumentSession { id: core.document_id(), core, path: None })
+    on_progress(OpenProgress::Completed {
+        blocks: core.tree.top_level().len(),
+    });
+    Ok(DocumentSession {
+        id: core.document_id(),
+        core,
+        path: None,
+    })
 }
 
 /// 保存：markdown 全文 + meta JSON（document_id + 整栈历史）。
@@ -114,7 +136,9 @@ mod tests {
     }
     impl RecordingHost {
         fn new() -> Self {
-            Self { loads: RefCell::new(vec![]) }
+            Self {
+                loads: RefCell::new(vec![]),
+            }
         }
     }
     impl Host for RecordingHost {
@@ -133,7 +157,8 @@ mod tests {
     #[test]
     fn full_open_save_roundtrip_keeps_identity() {
         let mut core = mdcore::Core::from_markdown("alpha\nbeta\n");
-        core.set_document_id(Some(DocumentId::generate(1_700_000_000_000))).unwrap();
+        core.set_document_id(Some(DocumentId::generate(1_700_000_000_000)))
+            .unwrap();
         let (md, meta) = core.save_document();
 
         let session = open_document(&md, Some(&meta)).expect("open");
@@ -149,10 +174,9 @@ mod tests {
 
         let mut host = RecordingHost::new();
         let events = RefCell::new(vec![]);
-        let session = open_document_progressive(&chunks, None, &mut host, |p| {
-            events.borrow_mut().push(p)
-        })
-        .expect("progressive open");
+        let session =
+            open_document_progressive(&chunks, None, &mut host, |p| events.borrow_mut().push(p))
+                .expect("progressive open");
 
         // 终态与一次性打开等价（Rust 侧三重相等已证；此处断言指纹面）
         assert_eq!(
@@ -175,7 +199,10 @@ mod tests {
         let chunks = vec![section(0), "```rust\nfn dangling() {\n".to_string()];
         let r = open_document_progressive(&chunks, None, &mut host, |_| {});
         assert!(r.is_err(), "悬挂 fence 必须拒绝");
-        assert!(r.err().unwrap().contains("rejected"), "错误面可定位 chunk 序号");
+        assert!(
+            r.err().unwrap().contains("rejected"),
+            "错误面可定位 chunk 序号"
+        );
     }
 
     #[test]

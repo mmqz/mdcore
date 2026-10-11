@@ -15,6 +15,15 @@ use crate::page::{PageGeometry, PageIndex, PageSpan};
 
 /// 文档引擎抽象（只读数据面；标注写入走 PDF-d 会话增量写路径）。
 pub trait DocumentEngine {
+    /// 文档页数（引擎侧权威）。消费点：
+    /// [`crate::document::PdfSession::attach_engine`] 以此对
+    /// `meta.page_count` 做装配期一致性校验（双权威不唯一致时 typed
+    /// 拒绝——T1 审计 O3 项：Search/ExtractText 以 meta 页数为上界，
+    /// 引擎页多 → 静默漏末尾页 / 页少 → 整命令 InvalidPage，两条静默
+    /// 失败路径在装配面收口）；宿主构造 [`crate::document::DocumentMeta`]
+    /// 亦以此为准（同源构造，不独立拼装）。
+    fn page_count(&self) -> u32;
+
     /// 单页几何（原始 MediaBox 尺寸 + `/Rotate`；归一化取
     /// [`PageGeometry::effective_width`] 等——消费方不自行处理旋转）。
     fn page_geometry(&self, idx: PageIndex) -> Result<PageGeometry, CommandError>;

@@ -70,9 +70,10 @@ const PDFIUM_LIB_ENV: &str = "MDC_PDFIUM_LIB";
 
 fn fixture_candidates() -> Vec<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // crate 本地优先 / spike 兜底（顺序依据见 pdfc_engine.rs——T1 审计 F12）。
     vec![
-        manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/fixtures"),
         manifest.join("fixtures"),
+        manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/fixtures"),
     ]
 }
 

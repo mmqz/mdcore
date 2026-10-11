@@ -52,7 +52,15 @@ fn bulk_transactions_are_atomic_and_undoable_at_scale() {
         })
         .collect();
     // 直接用 apply_ops（Vec<Op>）：见 lib.rs 公共面
-    let r = core.apply_ops(ops, mdcore::ApplyMeta { source: mdcore::history::Source::Ai, command: Some("bulk_edit".into()) }).unwrap();
+    let r = core
+        .apply_ops(
+            ops,
+            mdcore::ApplyMeta {
+                source: mdcore::history::Source::Ai,
+                command: Some("bulk_edit".into()),
+            },
+        )
+        .unwrap();
     assert_eq!(r.revision, rev0 + 1, "百 op 事务 = 单 revision");
     assert_eq!(core.history.undo_depth(), 1, "单事务单历史条目");
 
@@ -73,7 +81,14 @@ fn bulk_transactions_are_atomic_and_undoable_at_scale() {
             id: None,
         })
         .collect();
-    core.apply_ops(good_ops, mdcore::ApplyMeta { source: mdcore::history::Source::Ai, command: Some("bulk_insert".into()) }).unwrap();
+    core.apply_ops(
+        good_ops,
+        mdcore::ApplyMeta {
+            source: mdcore::history::Source::Ai,
+            command: Some("bulk_insert".into()),
+        },
+    )
+    .unwrap();
     assert_eq!(top_lens(&core).len(), 20_050);
 
     // 非法事务：49 个合法 ReplaceText + 1 个 BadPath → 全回滚（原子性）
@@ -92,10 +107,22 @@ fn bulk_transactions_are_atomic_and_undoable_at_scale() {
         end: 0,
         insert: "nope".into(),
     });
-    let rejected = core.apply_ops(bad_ops, mdcore::ApplyMeta { source: mdcore::history::Source::Ai, command: None });
-    assert!(matches!(rejected, Err(Reject::Invalid(_))), "坏路径必须拒绝: {rejected:?}");
+    let rejected = core.apply_ops(
+        bad_ops,
+        mdcore::ApplyMeta {
+            source: mdcore::history::Source::Ai,
+            command: None,
+        },
+    );
+    assert!(
+        matches!(rejected, Err(Reject::Invalid(_))),
+        "坏路径必须拒绝: {rejected:?}"
+    );
     assert_eq!(top_lens(&core).len(), 20_050, "回滚后块数不变");
-    assert!(!mdcore::markdown::tree_to_markdown(&core.tree).contains("XXX"), "回滚后无残留编辑");
+    assert!(
+        !mdcore::markdown::tree_to_markdown(&core.tree).contains("XXX"),
+        "回滚后无残留编辑"
+    );
 }
 
 #[test]
@@ -111,7 +138,14 @@ fn move_and_undo_keep_identity_at_scale() {
             to_index: 19_000 + k,
         })
         .collect();
-    core.apply_ops(ops, mdcore::ApplyMeta { source: mdcore::history::Source::Ai, command: Some("bulk_move".into()) }).unwrap();
+    core.apply_ops(
+        ops,
+        mdcore::ApplyMeta {
+            source: mdcore::history::Source::Ai,
+            command: Some("bulk_move".into()),
+        },
+    )
+    .unwrap();
     let moved = mdcore::markdown::tree_to_markdown(&core.tree);
     assert_ne!(moved, before);
 

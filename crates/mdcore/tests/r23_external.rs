@@ -37,7 +37,12 @@ fn id_set(core: &Core) -> Vec<BlockId> {
 
 fn type_text(core: &mut Core, path: NodePath, start: usize, end: usize, insert: &str) {
     core.apply_ops(
-        vec![Op::ReplaceText { path, start, end, insert: insert.into() }],
+        vec![Op::ReplaceText {
+            path,
+            start,
+            end,
+            insert: insert.into(),
+        }],
         ApplyMeta::view("type"),
     )
     .unwrap();
@@ -46,11 +51,35 @@ fn type_text(core: &mut Core, path: NodePath, start: usize, end: usize, insert: 
 // 1. 探针：任一字段不同即 stale；全同才 fresh
 #[test]
 fn stamp_stale_semantics() {
-    let base = FileStamp { modified_ms: 1000, size: 42 };
-    assert!(!base.is_stale(&FileStamp { modified_ms: 1000, size: 42 }));
-    assert!(base.is_stale(&FileStamp { modified_ms: 1001, size: 42 }), "mtime 变");
-    assert!(base.is_stale(&FileStamp { modified_ms: 1000, size: 43 }), "size 变");
-    assert!(base.is_stale(&FileStamp { modified_ms: 1000, size: 0 }), "截断必报");
+    let base = FileStamp {
+        modified_ms: 1000,
+        size: 42,
+    };
+    assert!(!base.is_stale(&FileStamp {
+        modified_ms: 1000,
+        size: 42
+    }));
+    assert!(
+        base.is_stale(&FileStamp {
+            modified_ms: 1001,
+            size: 42
+        }),
+        "mtime 变"
+    );
+    assert!(
+        base.is_stale(&FileStamp {
+            modified_ms: 1000,
+            size: 43
+        }),
+        "size 变"
+    );
+    assert!(
+        base.is_stale(&FileStamp {
+            modified_ms: 1000,
+            size: 0
+        }),
+        "截断必报"
+    );
 }
 
 // 2. 决策：无变化 → Noop（即使本地脏——mtime 回声/自存不扰民）
@@ -60,7 +89,11 @@ fn plan_noop_when_unchanged() {
     let report = core.match_external_markdown("alpha\nbeta", None);
     assert!(!report.has_changes());
     assert_eq!(plan_reload(&report, false), ReloadAction::Noop);
-    assert_eq!(plan_reload(&report, true), ReloadAction::Noop, "外部没变，本地脏也不重载");
+    assert_eq!(
+        plan_reload(&report, true),
+        ReloadAction::Noop,
+        "外部没变，本地脏也不重载"
+    );
 }
 
 // 3. 决策：有变化 + 本地净 → SilentAdopt
@@ -85,13 +118,22 @@ fn plan_offer_choice_when_dirty() {
 fn adopt_edit_preserves_identity() {
     let mut core = Core::from_markdown("alpha\nbeta\ngamma");
     let all = ids(&core);
-    let out = core.adopt_external("alpha\nBETA EDITED\ngamma", None).unwrap();
+    let out = core
+        .adopt_external("alpha\nBETA EDITED\ngamma", None)
+        .unwrap();
     assert_eq!(out.report.edited.len(), 1);
     assert_eq!(out.carried_ids, 3, "三块身份全保");
     assert_eq!(out.fresh_ids, 0);
     assert_eq!(ids(&core), all, "id 集恒等");
-    assert_eq!(out.revision_after, out.revision_before + 1, "System 事务推进 revision");
-    assert_eq!(core.tree.node(core.tree.lookup_id(all[1]).unwrap()).text, "BETA EDITED");
+    assert_eq!(
+        out.revision_after,
+        out.revision_before + 1,
+        "System 事务推进 revision"
+    );
+    assert_eq!(
+        core.tree.node(core.tree.lookup_id(all[1]).unwrap()).text,
+        "BETA EDITED"
+    );
 }
 
 // 6. 采纳：整体重排 → 身份全保（moved 携带旧 id）
@@ -103,10 +145,18 @@ fn adopt_reorder_preserves_identity() {
     assert_eq!(out.report.moved.len(), 3);
     assert_eq!(out.carried_ids, 3);
     assert_eq!(out.fresh_ids, 0);
-    assert_eq!(id_set(&core), all, "身份集合恒等（文档序已变，比集合不比先序）");
+    assert_eq!(
+        id_set(&core),
+        all,
+        "身份集合恒等（文档序已变，比集合不比先序）"
+    );
     // 新序内容正确
-    let texts: Vec<String> =
-        core.tree.top_level().iter().map(|&n| core.tree.node(n).text.to_string()).collect();
+    let texts: Vec<String> = core
+        .tree
+        .top_level()
+        .iter()
+        .map(|&n| core.tree.node(n).text.to_string())
+        .collect();
     assert_eq!(texts, ["gamma", "alpha", "beta"]);
 }
 
@@ -121,7 +171,10 @@ fn adopt_added_fresh_ids_monotonic() {
     let new_ids = ids(&core);
     assert_eq!(new_ids.len(), 2);
     let added = *new_ids.iter().max().unwrap();
-    assert!(added.0 > all.iter().map(|b| b.0).max().unwrap(), "新鲜 id 不撞旧身份");
+    assert!(
+        added.0 > all.iter().map(|b| b.0).max().unwrap(),
+        "新鲜 id 不撞旧身份"
+    );
     assert!(!all.contains(&added));
 }
 
@@ -145,9 +198,14 @@ fn adopt_take_external_drains_undo() {
     let mut core = Core::from_markdown("alpha\nbeta");
     type_text(&mut core, vec![0], 5, 5, "X"); // 本地未存改动 1
     type_text(&mut core, vec![1], 4, 4, "Y"); // 本地未存改动 2
-    assert!(core.history.can_undo(), "本地未存交互在栈（两次击键 1s 窗内可能并条，不断言深度）");
+    assert!(
+        core.history.can_undo(),
+        "本地未存交互在栈（两次击键 1s 窗内可能并条，不断言深度）"
+    );
 
-    let out = core.adopt_external("alpha\nEXTERNAL REPLACED BOTH", None).unwrap();
+    let out = core
+        .adopt_external("alpha\nEXTERNAL REPLACED BOTH", None)
+        .unwrap();
     assert!(out.report.has_changes());
     assert!(!core.history.can_undo(), "被放弃文档态的 undo 全作废");
     assert!(!core.history.can_redo(), "redo 同作废");
@@ -200,8 +258,14 @@ fn adopt_manifest_trusted_added_carries_id() {
     let mut fp = TreeFingerprint::new(&new_tree);
     let trusted = BlockId(9_999);
     let manifest: Vec<ManifestEntry> = vec![
-        ManifestEntry { id: old_alpha, ..entry_of(&new_tree, &mut fp, 0) },
-        ManifestEntry { id: trusted, ..entry_of(&new_tree, &mut fp, 1) },
+        ManifestEntry {
+            id: old_alpha,
+            ..entry_of(&new_tree, &mut fp, 0)
+        },
+        ManifestEntry {
+            id: trusted,
+            ..entry_of(&new_tree, &mut fp, 1)
+        },
     ];
     let out = core.adopt_external(new_md, Some(&manifest)).unwrap();
     assert_eq!(out.report.stats.manifest, 2, "快路径直接对位");
@@ -211,9 +275,17 @@ fn adopt_manifest_trusted_added_carries_id() {
     assert_eq!(core.tree.node(nid).text, "synced from other device");
 }
 
-fn entry_of(tree: &mdcore::tree::BlockTree, fp: &mut TreeFingerprint, top_index: usize) -> ManifestEntry {
+fn entry_of(
+    tree: &mdcore::tree::BlockTree,
+    fp: &mut TreeFingerprint,
+    top_index: usize,
+) -> ManifestEntry {
     let f = fp.block_fingerprint(tree.top_level()[top_index]);
-    ManifestEntry { id: BlockId(0), structural: f.structural, content: f.content }
+    ManifestEntry {
+        id: BlockId(0),
+        structural: f.structural,
+        content: f.content,
+    }
 }
 
 // 13. 采纳：嵌套子树整体替换 → 内层身份随映射携带（列表重排 + 子项不变）
@@ -221,7 +293,9 @@ fn entry_of(tree: &mdcore::tree::BlockTree, fp: &mut TreeFingerprint, top_index:
 fn adopt_nested_move_inner_carried() {
     let mut core = Core::from_markdown("- p1\n  - c1\n  - c2\n- p2\n");
     let all = ids(&core);
-    let out = core.adopt_external("- p2\n- p1\n  - c1\n  - c2\n", None).unwrap();
+    let out = core
+        .adopt_external("- p2\n- p1\n  - c1\n  - c2\n", None)
+        .unwrap();
     assert!(out.report.added.is_empty() && out.report.removed.is_empty());
     assert_eq!(out.carried_ids, all.len(), "嵌套子块身份全保");
     assert_eq!(out.fresh_ids, 0);
@@ -234,8 +308,15 @@ fn adopt_deterministic() {
     let build = || {
         let mut core = Core::from_markdown("alpha\nbeta\ngamma");
         type_text(&mut core, vec![0], 5, 5, "!");
-        let out = core.adopt_external("gamma!\nalpha\nbrand new", None).unwrap();
-        (out.report, out.carried_ids, out.fresh_ids, out.revision_after)
+        let out = core
+            .adopt_external("gamma!\nalpha\nbrand new", None)
+            .unwrap();
+        (
+            out.report,
+            out.carried_ids,
+            out.fresh_ids,
+            out.revision_after,
+        )
     };
     let (r1, c1, f1, v1) = build();
     let (r2, c2, f2, v2) = build();

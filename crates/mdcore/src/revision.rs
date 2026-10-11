@@ -2,7 +2,10 @@
 //!
 //! - 每个**已封口**的前向事务一条记录（coalesced 追加同 revision 号多记录，
 //!   重放按序合并语义等价）。
-//! - undo/redo 不入日志（可由前向流推导）；精确状态复原走 snapshot。
+//! - undo/redo 入日志（R11 审查修正：此前「不入日志、可由前向流推导」
+//!   的说法不成立——不记会导致重放与实时状态分叉，违背「日志自含 +
+//!   确定性重放」承诺；以 Source::Undo / Source::Redo 记录，重放侧按
+//!   普通 op 序列应用）。精确状态复原走 snapshot。
 //! - JSONL 行式存储：一行一条记录，便于增量 append 与截断。
 
 use serde::{Deserialize, Serialize};
@@ -92,7 +95,12 @@ impl RevisionLog {
                 ops += 1;
                 headers += 5; // op 枚举体 + 内部 Vec/String 头近似
                 match o {
-                    Op::InsertBlock { parent, attrs, text, .. } => {
+                    Op::InsertBlock {
+                        parent,
+                        attrs,
+                        text,
+                        ..
+                    } => {
                         content += text.len();
                         path_elems += parent.len();
                         for (k, v) in attrs {
@@ -116,7 +124,9 @@ impl RevisionLog {
                         path_elems += path.len();
                         content += kind.len();
                     }
-                    Op::MoveBlock { from, to_parent, .. } => {
+                    Op::MoveBlock {
+                        from, to_parent, ..
+                    } => {
                         path_elems += from.len() + to_parent.len();
                     }
                     Op::RemoveBlock { path } => path_elems += path.len(),

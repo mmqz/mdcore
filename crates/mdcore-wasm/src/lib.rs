@@ -33,7 +33,12 @@ impl WasmCore {
 
     /// 应用一批 op（JSON 数组）。op 形状见 mdcore::op::Op 的 serde。
     /// 失败返回 Err(JSON)（Reject 序列化）。
-    pub fn apply_ops(&mut self, ops_json: &str, source: &str, command: Option<String>) -> Result<String, JsValue> {
+    pub fn apply_ops(
+        &mut self,
+        ops_json: &str,
+        source: &str,
+        command: Option<String>,
+    ) -> Result<String, JsValue> {
         let ops: Vec<mdcore::op::Op> = serde_json::from_str(ops_json)
             .map_err(|e| JsValue::from_str(&format!("bad ops json: {e}")))?;
         let source = match source {
@@ -72,11 +77,15 @@ impl WasmCore {
     }
 
     pub fn undo(&mut self) -> Option<String> {
-        self.inner.undo().map(|r| serde_json::json!({ "revision": r.revision }).to_string())
+        self.inner
+            .undo()
+            .map(|r| serde_json::json!({ "revision": r.revision }).to_string())
     }
 
     pub fn redo(&mut self) -> Option<String> {
-        self.inner.redo().map(|r| serde_json::json!({ "revision": r.revision }).to_string())
+        self.inner
+            .redo()
+            .map(|r| serde_json::json!({ "revision": r.revision }).to_string())
     }
 
     /// 取走事件队列（op 流），JSON 数组。
@@ -148,10 +157,10 @@ impl WasmCore {
     pub fn set_document_id(&mut self, id: Option<String>) -> Result<(), JsValue> {
         let parsed = match id {
             None => None,
-            Some(s) => {
-                Some(s.parse::<mdcore::document::DocumentId>()
-                    .map_err(|e| JsValue::from_str(&e.to_string()))?)
-            }
+            Some(s) => Some(
+                s.parse::<mdcore::document::DocumentId>()
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?,
+            ),
         };
         self.inner
             .set_document_id(parsed)
@@ -186,7 +195,9 @@ impl WasmCore {
     pub fn restore(snapshot_json: &str) -> Result<WasmCore, JsValue> {
         let snap = mdcore::snapshot::Snapshot::from_json(snapshot_json)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(WasmCore { inner: mdcore::Core::restore(snap) })
+        Ok(WasmCore {
+            inner: mdcore::Core::restore(snap),
+        })
     }
 
     #[wasm_bindgen(static_method_of = WasmCore)]

@@ -153,17 +153,19 @@ where
 /// 响应停机）——保证队首开跑前已见过全部已送达取消（FIFO 下 cancel
 /// 消息必晚于其作业消息，不排空则取消永不可见）。
 ///
-/// `last_replied` 单调（回执 id 递增）：取消集以它剪枝（已回执作业的
-/// 迟到取消令牌直接丢弃）；`job_watermark` = 迄今见过的最大作业 id，
-/// 幽灵令牌防御（pdf-c-1r 审计轻微项）：id > watermark = 调用方取消了
-/// 从未提交的作业（调用方 bug），丢弃不入驻——集合上界 = 在飞作业数，
-/// 不随会话泄漏。
+/// `last_replied` 单调（回执 id 递增；`Option`：None = 尚未回执过任何
+/// 作业——下界哨兵不与合法 id 0 撞值，T1 审计 F1 修复：旧实现以 0
+/// 为哨兵，首作业 id 0 的排队取消令牌必被 `0 < 0` 误弃）：取消集以
+/// 它剪枝（已回执作业的迟到取消令牌直接丢弃）；`job_watermark` =
+/// 迄今见过的最大作业 id，幽灵令牌防御（pdf-c-1r 审计轻微项）：
+/// id > watermark = 调用方取消了从未提交的作业（调用方 bug），
+/// 丢弃不入驻——集合上界 = 在飞作业数，不随会话泄漏。
 fn worker_loop<R>(mut rasterizer: R, cmd_rx: Receiver<WorkerCommand>, reply_tx: Sender<WorkerReply>)
 where
     R: Rasterizer + Send,
 {
     let mut cancelled: HashSet<u64> = HashSet::new();
-    let mut last_replied: u64 = 0;
+    let mut last_replied: Option<u64> = None;
     let mut job_watermark: u64 = 0;
     let mut pending: VecDeque<(u64, RenderRequest)> = VecDeque::new();
     loop {
@@ -199,7 +201,7 @@ where
         if cancelled.remove(&id) {
             // 开跑前命中取消令牌——跳过执行（零渲染调用）。
             let _ = reply_tx.send(WorkerReply::Cancelled { id });
-            last_replied = id;
+            last_replied = Some(id);
             continue;
         }
         // panic 隔离（S4.2）：AssertUnwindSafe 的理由——&mut R 跨
@@ -208,15 +210,22 @@ where
         let result = catch_unwind(AssertUnwindSafe(|| rasterizer.rasterize(request)))
             .unwrap_or(Err(CommandError::RenderPanic));
         let _ = reply_tx.send(WorkerReply::Done { id, result });
-        last_replied = id;
+        last_replied = Some(id);
     }
 }
 
-/// 取消令牌吸收：双侧剪枝——已回执（<= last_replied）丢弃（结果已被
-/// 取消方按弃置语义处理）；从未提交（> job_watermark，调用方 bug 的
-/// 幽灵令牌）丢弃（pdf-c-1r 审计防御）；只驻留在飞作业的取消令牌。
-fn absorb_cancel(cancelled: &mut HashSet<u64>, id: u64, last_replied: u64, job_watermark: u64) {
-    if last_replied < id && id <= job_watermark {
+/// 取消令牌吸收：双侧剪枝——已回执（`last_replied` 及更早；None =
+/// 尚未回执任何作业，不剪枝——首作业 id 0 的令牌不得被哨兵撞值误弃
+/// [T1 审计 F1]）丢弃（结果已被取消方按弃置语义处理）；从未提交
+/// （> job_watermark，调用方 bug 的幽灵令牌）丢弃（pdf-c-1r 审计防御）；
+/// 只驻留在飞作业的取消令牌。
+fn absorb_cancel(
+    cancelled: &mut HashSet<u64>,
+    id: u64,
+    last_replied: Option<u64>,
+    job_watermark: u64,
+) {
+    if last_replied.is_none_or(|lr| lr < id) && id <= job_watermark {
         cancelled.insert(id);
     }
 }

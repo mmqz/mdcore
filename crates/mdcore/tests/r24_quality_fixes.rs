@@ -19,7 +19,13 @@ use mdcore::op::Op;
 use mdcore::{ApplyMeta, Core};
 
 fn set_mark(add: bool) -> Op {
-    Op::SetMark { path: vec![0], start: 0, end: 4, kind: "bold".into(), add }
+    Op::SetMark {
+        path: vec![0],
+        start: 0,
+        end: 4,
+        kind: "bold".into(),
+        add,
+    }
 }
 
 fn marks_of(c: &Core) -> usize {
@@ -31,12 +37,14 @@ fn probe_redundant_add_mark_undo_must_be_noop() {
     // 固定时钟分段：t=0 第一次 add（有效）；t=5000 第二次 add（超出 1s
     // 合并窗 → 独立条目，且是对已存在 span 的 no-op）。
     let mut c = Core::from_markdown_with_clock("hello world", Arc::new(|| 0));
-    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark")).unwrap();
+    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark"))
+        .unwrap();
     assert_eq!(marks_of(&c), 1, "第一次 add 生效");
     assert_eq!(c.history.undo_depth(), 1);
 
     c.set_clock(Arc::new(|| 5_000));
-    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark")).unwrap();
+    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark"))
+        .unwrap();
     assert_eq!(marks_of(&c), 1, "重复 add 是 no-op");
     assert_eq!(c.history.undo_depth(), 2, "出窗 → 独立条目");
 
@@ -53,12 +61,17 @@ fn probe_redundant_add_mark_undo_must_be_noop() {
 fn probe_remove_absent_mark_undo_must_be_noop() {
     // 移除从不存在的 span：独立条目 no-op → undo 必须 no-op
     let mut c = Core::from_markdown_with_clock("hello world", Arc::new(|| 0));
-    c.apply_ops(vec![set_mark(false)], ApplyMeta::view("unmark")).unwrap();
+    c.apply_ops(vec![set_mark(false)], ApplyMeta::view("unmark"))
+        .unwrap();
     assert_eq!(marks_of(&c), 0);
     assert_eq!(c.history.undo_depth(), 1);
 
     c.undo().unwrap();
-    assert_eq!(marks_of(&c), 0, "no-op 的 undo 必须 no-op（修复前：凭空造 mark）");
+    assert_eq!(
+        marks_of(&c),
+        0,
+        "no-op 的 undo 必须 no-op（修复前：凭空造 mark）"
+    );
 }
 
 #[test]
@@ -67,9 +80,11 @@ fn probe_coalesced_adds_undo_reverts_whole_group() {
     // 整组（回到组前状态 = 无 mark）。逆序应用：inv(add#2)=no-op，
     // inv(add#1)=remove → remove。修复前后此路径均正确，作为对照锁。
     let mut c = Core::from_markdown_with_clock("hello world", Arc::new(|| 1_000));
-    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark")).unwrap();
+    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark"))
+        .unwrap();
     c.set_clock(Arc::new(|| 1_500)); // 同窗（<1000ms）
-    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark")).unwrap();
+    c.apply_ops(vec![set_mark(true)], ApplyMeta::view("mark"))
+        .unwrap();
     assert_eq!(marks_of(&c), 1);
     assert_eq!(c.history.undo_depth(), 1, "同窗并条");
 
@@ -81,9 +96,27 @@ fn probe_coalesced_adds_undo_reverts_whole_group() {
 fn probe_setmark_range_validation() {
     // R24-a2 加固：SetMark 越界区间必须 Reject（与 ReplaceText 同款校验）
     let mut c = Core::from_markdown("hello");
-    let bad = Op::SetMark { path: vec![0], start: 5, end: 2, kind: "bold".into(), add: true };
-    assert!(c.apply_ops(vec![bad], ApplyMeta::view("mark")).is_err(), "start > end 必须 Reject");
-    let bad2 = Op::SetMark { path: vec![0], start: 0, end: 99, kind: "bold".into(), add: true };
-    assert!(c.apply_ops(vec![bad2], ApplyMeta::view("mark")).is_err(), "end > len 必须 Reject");
+    let bad = Op::SetMark {
+        path: vec![0],
+        start: 5,
+        end: 2,
+        kind: "bold".into(),
+        add: true,
+    };
+    assert!(
+        c.apply_ops(vec![bad], ApplyMeta::view("mark")).is_err(),
+        "start > end 必须 Reject"
+    );
+    let bad2 = Op::SetMark {
+        path: vec![0],
+        start: 0,
+        end: 99,
+        kind: "bold".into(),
+        add: true,
+    };
+    assert!(
+        c.apply_ops(vec![bad2], ApplyMeta::view("mark")).is_err(),
+        "end > len 必须 Reject"
+    );
     assert_eq!(marks_of(&c), 0, "Reject 后树零污染（事务回滚）");
 }
