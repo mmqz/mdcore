@@ -49,7 +49,13 @@
 //! 33. attach_engine 页数一致性装配期校验（T1 审计 O3 项回归锁：引擎
 //!     页多/页少双侧 typed 拒绝（携带双侧数值）+ 一致时装配成功 +
 //!     拒绝后会话保持 v0 注入路径——双权威不一致的两条静默失败路径
-//!     在装配面收口）。
+//!     在装配面收口）；
+//! 34. OpenAssessment form_probe serde 形状（S6 表单探针——PDF-e：
+//!     字段枚举 serde 往返 + 旧 JSON 缺省兼容[serde default] + None
+//!     序列化省略——协议面增量不破坏旧消费者）；
+//! 35. 打开入口限额检查（PDF-e：S3-L7 check_open_input_bytes 理由码 +
+//!     边界放行/超限拒；S3-L4 check_open_budget 预算 0 必拒——lopdf
+//!     面端到端锁在 pdfe_security.rs，本锁锁常开 helper 面）。
 
 use std::fs;
 use std::path::Path;
@@ -927,6 +933,7 @@ fn encrypted_assessment_denies_writes_policy_first() {
             family: DangerousFamily::OpenAction,
             detail: "Catalog /OpenAction (launch)".into(),
         }],
+        form_probe: None,
     };
     let mut s = session_with(2, assessment);
 
@@ -991,19 +998,24 @@ fn encrypted_assessment_denies_writes_policy_first() {
 
 #[test]
 fn dangerous_family_serde_names_frozen() {
+    // PDF-e 起八族（5 → 8，对齐 SECURITY_POLICY S2.2/S2.3 全清单——
+    // 新增 /UriAction、/JavaScript 动作、/Names JS 树三族）。
     let pairs = [
         (DangerousFamily::OpenAction, "OpenAction"),
         (DangerousFamily::AdditionalActions, "AdditionalActions"),
         (DangerousFamily::LaunchAction, "LaunchAction"),
+        (DangerousFamily::UriAction, "UriAction"),
         (DangerousFamily::EmbeddedFiles, "EmbeddedFiles"),
         (DangerousFamily::RichMedia, "RichMedia"),
+        (DangerousFamily::JavaScript, "JavaScript"),
+        (DangerousFamily::NamesJavaScript, "NamesJavaScript"),
     ];
     for (family, name) in pairs {
         let json = serde_json::to_string(&family).expect("族序列化");
         assert_eq!(
             json,
             format!("\"{name}\""),
-            "五族 serde 名冻结——协议面锚，变体名漂移=破坏性变更"
+            "八族 serde 名冻结——协议面锚，变体名漂移=破坏性变更"
         );
         let back: DangerousFamily = serde_json::from_str(&json).expect("族反序列化");
         assert_eq!(back, family);
@@ -1011,7 +1023,13 @@ fn dangerous_family_serde_names_frozen() {
     // 斜杠形（PDF 原始键）不进协议面——引擎映射层职责。
     assert!(
         serde_json::from_str::<DangerousFamily>("\"/OpenAction\"").is_err(),
-        "斜杠形拒绝：协议面只认代码语义名"
+        "斜杠形拒绝（旧五族样本）：协议面只认代码语义名"
+    );
+    assert!(
+        serde_json::from_str::<DangerousFamily>("\"/JavaScript\"").is_err()
+            && serde_json::from_str::<DangerousFamily>("\"/URI\"").is_err()
+            && serde_json::from_str::<DangerousFamily>("\"/Names\"").is_err(),
+        "斜杠形拒绝（新三族全样本）：协议面只认代码语义名"
     );
 }
 
@@ -1251,9 +1269,19 @@ fn author_length_limit_hard_rejects_over_200_chars() {
 #[test]
 fn limits_defaults_match_security_policy_table() {
     let l = Limits::default();
-    assert_eq!(l.decode_output_max_bytes, 1 << 30, "L0 解压输出 1 GiB");
-    assert_eq!(l.object_depth_max, 128, "L0 嵌套深度 128");
-    assert_eq!(l.xref_objects_max, 8_388_607, "L0 xref 上限（ISO 附录 C）");
+    assert_eq!(
+        l.decode_output_max_bytes,
+        1 << 30,
+        "L0 解压输出 1 GiB（PDF-e 接线：渲染目标面）"
+    );
+    assert_eq!(
+        l.object_depth_max, 128,
+        "L0 嵌套深度 128（PDF-e 接线：扫描游走护栏）"
+    );
+    assert_eq!(
+        l.xref_objects_max, 8_388_607,
+        "L0 xref 上限（ISO 附录 C；lopdf 无挂点——v0 边界登记）"
+    );
     assert_eq!(
         l.raster_max_side_px, 8_192,
         "L2 位图单边 8192（PDF-c 启用）"
@@ -1264,16 +1292,16 @@ fn limits_defaults_match_security_policy_table() {
     );
     assert_eq!(
         l.render_watchdog_ms, 20_000,
-        "L2 看门狗 20s（PDF-c 启用，❸弃置）"
+        "L2 看门狗 20s（PDF-e 接线：工人换代，❸弃置）"
     );
     assert_eq!(
         l.open_budget_ms, 3_000,
-        "L4 打开预算 3s（PDF-c 接入，❷降级）"
+        "L4 打开预算 3s（PDF-e 接线：打开面 ❶硬拒绝）"
     );
     assert_eq!(
         l.open_file_max_bytes,
         1 << 30,
-        "L7 文件大小 1 GiB（宿主 open 前执行）"
+        "L7 文件大小 1 GiB（PDF-e 接线：open 家族入口统一）"
     );
     assert_eq!(l.author_max_chars, 200, "L7 作者名 200 字符（v0 生效，❶）");
     assert_eq!(l.search_max_hits_cap, 1_000, "搜索面上限（PDF-b 定稿，❷）");
@@ -1306,6 +1334,15 @@ fn limits_enforce_family_behaviors() {
     assert_eq!(
         l.enforce_open_file_bytes(1 << 20),
         (1 << 20, LimitBehavior::HardReject)
+    );
+    // ❶硬拒绝族（PDF-e 接线：渲染目标缓冲面——宽×高×4，先于分配）。
+    assert_eq!(
+        l.enforce_decode_output_bytes((1 << 30) + 1),
+        (1 << 30, LimitBehavior::HardReject)
+    );
+    assert_eq!(
+        l.enforce_decode_output_bytes(1 << 28),
+        (1 << 28, LimitBehavior::HardReject)
     );
 }
 
@@ -1612,4 +1649,107 @@ fn attach_engine_validates_page_count_consistency() {
     };
     assert_eq!(pages.len(), 2, "引擎路径页集形状不变（载荷形状两路径一致）");
     assert_eq!(pages[0].1, "", "stub 空串接管（注入文本被旁路）");
+}
+
+// ---------------------------------------------------------------------------
+// 34. OpenAssessment form_probe serde 形状（S6 表单探针，PDF-e）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn open_assessment_form_probe_serde_shape() {
+    use mdc_pdf::security::{FormField, FormProbe};
+
+    // (a) 携表单探针的评估 serde 往返（字段名/现值逐项保真）。
+    let assessment = OpenAssessment {
+        encrypted: false,
+        warnings: vec![DangerousHit {
+            family: DangerousFamily::JavaScript,
+            detail: "obj 7 0: /JavaScript 动作".into(),
+        }],
+        form_probe: Some(FormProbe {
+            field_count: 2,
+            fields: vec![
+                FormField {
+                    name: "parent.kid".into(),
+                    value: Some("层级现值".into()),
+                },
+                FormField {
+                    name: "toggle".into(),
+                    value: None,
+                },
+            ],
+        }),
+    };
+    let json = serde_json::to_string(&assessment).expect("评估序列化");
+    assert_eq!(
+        serde_json::from_str::<OpenAssessment>(&json).expect("评估反序列化"),
+        assessment,
+        "form_probe serde 往返逐项保真（含 None 现值与层级全名）"
+    );
+
+    // (b) None 序列化省略字段（协议面增量——旧形状输出保持逐字节稳定）。
+    let bare = OpenAssessment::default();
+    let bare_json = serde_json::to_string(&bare).expect("无表单评估序列化");
+    assert_eq!(
+        bare_json, "{\"encrypted\":false,\"warnings\":[]}",
+        "form_probe=None 序列化省略字段——skip_serializing_if（旧消费者零感知）"
+    );
+
+    // (c) 旧 JSON（无 form_probe 键）反序列化 = None（serde default 增量兼容）。
+    let legacy = serde_json::from_str::<OpenAssessment>("{\"encrypted\":true,\"warnings\":[]}")
+        .expect("旧 JSON 反序列化");
+    assert!(
+        legacy.encrypted && legacy.form_probe.is_none(),
+        "缺省 form_probe → None（PDF-e 前的宿主载荷兼容）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 35. 打开入口限额检查（L7 输入字节 / L4 打开预算——常开 helper 面）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn open_entry_limit_checks_reason_codes_and_boundary() {
+    use mdc_pdf::security::{Limits, REASON_OPEN_BUDGET, REASON_OPEN_FILE_BYTES};
+    use std::time::Instant;
+
+    // (a) L7 边界语义：恰等上限放行（min 收敛不触发拒绝），上限 +1 拒。
+    let limits = Limits {
+        open_file_max_bytes: 100,
+        ..Limits::default()
+    };
+    assert!(
+        limits.check_open_input_bytes(100).is_ok(),
+        "恰等上限 = 放行（硬拒绝族边界：生效值 == 请求值不拒）"
+    );
+    assert_eq!(
+        limits.check_open_input_bytes(101),
+        Err(CommandError::SecurityDeny {
+            reason: REASON_OPEN_FILE_BYTES
+        }),
+        "超限 → typed 拒绝 + 稳定理由码 S3-L7-open-file-bytes"
+    );
+
+    // (b) L4 预算：Duration 全精度比较——0 预算下任何真实耗时必拒
+    // （确定性触发面；默认 3s 预算的端到端锁在 pdfe_security.rs）。
+    let zero = Limits {
+        open_budget_ms: 0,
+        ..Limits::default()
+    };
+    let started = Instant::now();
+    std::thread::sleep(std::time::Duration::from_micros(1));
+    assert_eq!(
+        zero.check_open_budget(started),
+        Err(CommandError::SecurityDeny {
+            reason: REASON_OPEN_BUDGET
+        }),
+        "预算 0 + 真实耗时 → 拒（理由码 S3-L4-open-budget）"
+    );
+
+    // (c) 宽预算正控：毫秒级耗时不误伤（3s 默认值面）。
+    let started = Instant::now();
+    assert!(
+        Limits::default().check_open_budget(started).is_ok(),
+        "默认 3s 预算下瞬时检查放行（不误伤正常打开）"
+    );
 }

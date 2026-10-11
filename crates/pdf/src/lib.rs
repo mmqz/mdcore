@@ -29,8 +29,11 @@
 //! - **命令边界**（[`command`]）：六命令 + typed 错误面（七变体——
 //!   PDF-c 增 RenderPanic/Engine，v1.2 内部增量）；Human 与 AI 走
 //!   同一路径（source 溯源镜像 mdcore 事件源语义）；
-//! - **安全策略**（[`security`]）：S2 危险对象族 / S3 限额三行为学 /
-//!   S5 加密写拒（SECURITY_POLICY.md 的类型层编码，数值权威）；
+//! - **安全策略**（[`security`]）：S2 危险对象族（八族）+ S3 限额三
+//!   行为学 + S5 加密写拒 + S6 表单探针（SECURITY_POLICY.md 的类型层
+//!   编码，数值权威）；PDF-e 接线 [`security_scan`]（feature
+//!   `engine-lopdf`：打开时对象图扫描 → `OpenAssessment`）与
+//!   [`worker`] 看门狗换代；
 //! - **会话**（[`document`]）：`PdfSession` 单一调度入口（`execute`）——
 //!   只有打开后形态；数据源两级（v0 宿主注入 / PDF-c 引擎实装）+ PDF-d
 //!   增量写器 attach；
@@ -51,6 +54,8 @@ pub mod page;
 pub mod protocol;
 pub mod render;
 pub mod security;
+#[cfg(feature = "engine-lopdf")]
+pub mod security_scan;
 pub mod worker;
 pub mod writer;
 #[cfg(feature = "engine-lopdf")]
@@ -60,6 +65,6 @@ pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
 pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
-pub use security::{DangerousFamily, Limits, OpenAssessment};
+pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};
 pub use writer::{AnnotationWriter, IncrementalSave, MockWriter};

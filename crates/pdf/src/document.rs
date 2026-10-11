@@ -83,7 +83,9 @@ pub enum AttachEngineError {
     /// Search/ExtractText 以 `meta.page_count` 为上界，双权威不一致的
     /// 两条静默失败路径（引擎页多 → 漏末尾页 / 页少 → 整命令
     /// `InvalidPage`）在装配面收口为单一显式拒绝）。拒绝时引擎 drop
-    /// （与 `open` 消耗参数的失败语义一致），会话保持 v0 注入路径。
+    /// （与 `open` 消耗参数的失败语义一致），会话数据源不变（首次
+    /// 装配拒绝 → 仍无引擎 = v0 注入路径；二次注入拒绝 → 旧引擎保持
+    /// 在位）。
     PageCountMismatch {
         /// 会话元数据页数（`meta.page_count`——打开期冻结的权威）。
         expected: u32,
@@ -224,8 +226,10 @@ impl PdfSession {
     /// 携带）——Search/ExtractText 以 `meta.page_count` 为上界，双权威
     /// 不一致的两条静默失败路径（引擎页多 → 静默漏末尾页；引擎页少 →
     /// 整命令 `InvalidPage`）在装配面收口为单一显式失败。拒绝时引擎
-    /// drop（与 `open` 消耗参数的失败语义一致），会话保持 v0 注入路径；
-    /// 宿主接线层仍应同源构造两者（校验是防线非许可）。
+    /// drop（与 `open` 消耗参数的失败语义一致），会话数据源不变
+    /// （首次装配拒绝 → 仍无引擎 = v0 注入路径；二次注入拒绝 → 旧
+    /// 引擎保持在位——拒绝路径零副作用）；宿主接线层仍应同源构造两者
+    /// （校验是防线非许可）。
     pub fn attach_engine(
         &mut self,
         engine: Box<dyn DocumentEngine>,

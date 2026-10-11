@@ -51,11 +51,14 @@
 //!
 //! `rasterize` 以 `Limits::default()` 执行 ❷钳制：单边 ≤ 8192px、
 //! 总像素 ≤ 64M（超限收敛 + 实际尺寸在 [`crate::render::RenderedPage`]
-//! 报告，调用方读报告值——不假装请求值生效）。会话自定义限额的接线
-//! 属 PDF-d+（数值权威在 [`crate::security::Limits`] 不变）。
+//! 报告，调用方读报告值——不假装请求值生效）。钳制后另有 S3-L0
+//! 渲染目标面 ❶硬闸（宽×高×4 缓冲字节 vs `decode_output_max_bytes`，
+//! 先于分配——PDF-e 接线；冻结数值下不触发的纵深防线）。会话自定义
+//! 限额的接线属 PDF-d+（数值权威在 [`crate::security::Limits`] 不变）。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use pdfium_render::prelude::*;
 
@@ -64,7 +67,7 @@ use crate::engine::DocumentEngine;
 use crate::outline::{OutlineNode, OutlineTarget, OutlineTree};
 use crate::page::{PageGeometry, PageIndex, PageSpan, Rotation};
 use crate::render::{Rasterizer, RenderRequest, RenderedPage};
-use crate::security::Limits;
+use crate::security::{LimitBehavior, Limits, REASON_DECODE_OUTPUT};
 
 /// 库定位环境变量（文件路径；优先级最高）。
 pub const PDFIUM_LIB_ENV: &str = "MDC_PDFIUM_LIB";
@@ -87,25 +90,37 @@ pub struct PdfiumEngine {
 
 impl PdfiumEngine {
     /// 打开文档（定位序绑定：env → 候选清单 → 系统；绑定失败返回
-    /// `CommandError::Engine`——消息含全部已尝试路径）。
+    /// `CommandError::Engine`——消息含全部已尝试路径）。打开面限额
+    /// （PDF-e 接线，open 家族入口统一）：S3-L7 输入字节 ❶先于装载；
+    /// S3-L4 打开预算 ❶（装载耗时，超限 typed 拒绝）。
     pub fn open(bytes: Vec<u8>) -> Result<Self, CommandError> {
+        let limits = Limits::default();
+        limits.check_open_input_bytes(bytes.len() as u64)?;
+        let started = Instant::now();
         let pdfium = shared_pdfium()?;
         let document = pdfium
             .load_pdf_from_byte_vec(bytes, None)
             .map_err(CommandError::engine)?;
+        limits.check_open_budget(started)?;
         Ok(Self { document })
     }
 
-    /// 显式单路径绑定 + 打开（无回退——宿主引导/诊断路径）。
+    /// 显式单路径绑定 + 打开（无回退——宿主引导/诊断路径）。限额面
+    /// 与 [`PdfiumEngine::open`] 同款（S3-L7 输入字节 + S3-L4 打开预算，
+    /// PDF-e 接线）。
     ///
     /// 语义：**始终**尝试 `bind_to_library(path)`——路径无效或进程已
     /// 绑定均返回 `Engine` 错误（诊断确定性：不因单例已在位而静默改用
     /// 旧绑定）。首个成功者成为进程单例（后续 [`Self::open`] 复用）。
     pub fn open_with_library(path: &Path, bytes: Vec<u8>) -> Result<Self, CommandError> {
+        let limits = Limits::default();
+        limits.check_open_input_bytes(bytes.len() as u64)?;
+        let started = Instant::now();
         let pdfium = bind_explicit(path)?;
         let document = pdfium
             .load_pdf_from_byte_vec(bytes, None)
             .map_err(CommandError::engine)?;
+        limits.check_open_budget(started)?;
         Ok(Self { document })
     }
 
@@ -267,6 +282,18 @@ impl Rasterizer for PdfiumEngine {
             let scale = (budget / (f64::from(width_px) * f64::from(height_px))).sqrt();
             width_px = ((f64::from(width_px) * scale).floor() as u32).max(1);
             height_px = ((f64::from(height_px) * scale).floor() as u32).max(1);
+        }
+
+        // S3-L0 结构层 → 渲染目标面（❶硬拒绝，先于分配——PDF-e 接线）：
+        // 目标缓冲字节（宽×高×4，BGRA）超 `decode_output_max_bytes` →
+        // typed 拒绝。冻结数值下的纵深硬闸（64M px × 4B = 256 MiB <
+        // 1 GiB 不触发）——未来限额调整（如放大像素预算）时此处收口。
+        let buffer_bytes = u64::from(width_px) * u64::from(height_px) * 4;
+        let (effective, behavior) = limits.enforce_decode_output_bytes(buffer_bytes);
+        if behavior == LimitBehavior::HardReject && effective < buffer_bytes {
+            return Err(CommandError::SecurityDeny {
+                reason: REASON_DECODE_OUTPUT,
+            });
         }
 
         // 调用方缓冲 + 低层位图（FPDFBitmap_CreateEx/FPDF_RenderPageBitmap

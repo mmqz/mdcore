@@ -36,7 +36,28 @@
 //! 14. `boxed_rasterizer_object_form`——`Box<dyn Rasterizer + Send>`
 //!     装箱形态可用（S4 对象引用形态——宿主以 trait 对象装配管线）；
 //! 15. `render_types_serde_roundtrip`——RenderRequest/RenderedPage
-//!     serde 往返（协议草案锚——载荷形状先行冻结）。
+//!     serde 往返（协议草案锚——载荷形状先行冻结）；
+//! 16. `engine_error_constructor_clamps_message`——Engine 错误受限构造
+//!     （pdf-c-1r 审计）；17. `lru_put_update_with_oversized_value_self_
+//!     evicts`（同轮）；18. `worker_cancel_first_job_id_zero_is_honored`
+//!     （T1 审计 F1 项——id 0 哨兵）；
+//! 19. `worker_watchdog_times_out_poisons_and_replaces`——看门狗超时
+//!     （PDF-e S3-L2 ❸弃置 + S4.2 工人重建）：慢作业 Timeout 回执 +
+//!     毒化换代（后续作业由替代代服务——代次日志证据）+ 超时作业不
+//!     重放 + 旧工人 C 调用返回后自然退出；
+//! 20. `worker_watchdog_replays_queue_and_cancels_in_order`——换代重
+//!     放：排队作业按提交序重放 + 未决取消令牌随作业重放（Cancelled
+//!     零执行）；
+//! 21. `worker_without_watchdog_serves_slow_job_to_completion`——能力
+//!     面拆分：`new` 裸工人无看门狗（慢作业 Done、代次恒 0）；
+//! 22. `worker_factory_panic_graceful_disconnect`——工厂 panic 断连
+//!     不悬挂（T2-review ❶ 处方，T2-fix）：渲染线程内捕获 → 先置
+//!     看门狗终态（其克隆 drop → 通道断连 → 宿主收报 None）→ 再
+//!     传播；看门狗线程退出（Linux /proc 复核）+ 代次恒 0（死亡
+//!     ≠换代）；
+//! 23. `worker_replacement_factory_panic_disconnects`——替代代工厂
+//!     panic 面：换代处理（宿主公共调用帧）不 panic 逃逸 + 新代
+//!     死亡经断连可观测（收报 None）+ 替代代零服务。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -114,14 +135,25 @@ impl Rasterizer for MockRasterizer {
     }
 }
 
-/// 等待回执（顺序收取直到拿到目标 id——工人回执 FIFO，目标必达）。
-fn await_reply(worker: &mut RenderWorker<MockRasterizer>, job_id: u64) -> WorkerReply {
+/// 等待回执（顺序收取直到拿到目标 id——工人回执 FIFO，目标必达；
+/// 泛型化：MockRasterizer 与看门狗锁的 WatchdogMock 共用——PDF-e 起
+/// 回执含 Timeout 变体，三形态都属目标 id 的合法回执）。
+fn await_reply<R>(worker: &mut RenderWorker<R>, job_id: u64) -> WorkerReply
+where
+    R: Rasterizer + Send + 'static,
+{
     let deadline = Duration::from_secs(10);
     let start = std::time::Instant::now();
     loop {
         if let Some(reply) = worker.recv_timeout(Duration::from_millis(50)) {
             assert!(
-                matches!(&reply, WorkerReply::Done { id, .. } | WorkerReply::Cancelled { id } if *id == job_id),
+                matches!(
+                    &reply,
+                    WorkerReply::Done { id, .. }
+                    | WorkerReply::Cancelled { id }
+                    | WorkerReply::Timeout { id }
+                    if *id == job_id
+                ),
                 "回执 id 关联：期望 {job_id}，得 {reply:?}"
             );
             return reply;
@@ -650,4 +682,371 @@ fn worker_cancel_first_job_id_zero_is_honored() {
         1,
         "仅次作业执行渲染——id 0 被跳过（零 rasterize 调用）"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 19. 看门狗超时：Timeout 回执 + 工人毒化换代 + 旧工人退出（PDF-e S3-L2）
+// ---------------------------------------------------------------------------
+
+/// 看门狗锁 mock：代次标记（工厂分配——「哪个工人服务了作业」的观测
+/// 面）+ 首代慢页受控（触发超时）+ 实例退出观测（Drop 置位——旧工人
+/// C 调用返回后自然退出回收的观测锚）。
+struct WatchdogMock {
+    generation: usize,
+    /// 本代实例的慢页（None = 健康代；Some = 该页渲染睡眠 250ms）。
+    slow_page: Option<u32>,
+    /// (代次, 页号) 调用日志（服务证据：作业由哪一代执行）。
+    log: Arc<std::sync::Mutex<Vec<(usize, u32)>>>,
+    /// 本实例退出旗标（线程结束 → mock drop → 置位）。
+    exited: Arc<AtomicUsize>,
+}
+
+impl Drop for WatchdogMock {
+    fn drop(&mut self) {
+        self.exited.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Rasterizer for WatchdogMock {
+    fn rasterize(&mut self, request: RenderRequest) -> Result<RenderedPage, CommandError> {
+        self.log
+            .lock()
+            .unwrap()
+            .push((self.generation, request.page.0));
+        if self.slow_page == Some(request.page.0) {
+            // 模拟敌意病态页：渲染耗时远超看门狗预算（不可中断的 C 调用）。
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let width = request.width_px;
+        Ok(RenderedPage {
+            width_px: width,
+            height_px: width * 4 / 3,
+            bgra: vec![7; (width * width * 4 / 3 * 4) as usize],
+        })
+    }
+}
+
+/// 看门狗锁共用装配台：调用日志（代次×页号）+ 各代退出旗标 +
+/// 工厂（首代带敌意慢页 0，替代代健康）。
+struct WatchdogRig {
+    log: Arc<std::sync::Mutex<Vec<(usize, u32)>>>,
+    exits: Arc<std::sync::Mutex<Vec<Arc<AtomicUsize>>>>,
+}
+
+impl WatchdogRig {
+    fn new() -> Self {
+        Self {
+            log: Arc::new(std::sync::Mutex::new(Vec::new())),
+            exits: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    /// 工厂闭包（'static：共享柄克隆入闭包——RenderWorker::watchdog
+    /// 的构造合同）：首代带敌意慢页 0（250ms ≫ 看门狗预算）；替代代
+    /// 健康。
+    fn factory(&self) -> impl Fn() -> WatchdogMock + Send + Sync {
+        let log = Arc::clone(&self.log);
+        let exits = Arc::clone(&self.exits);
+        let generations = Arc::new(AtomicUsize::new(0));
+        move || {
+            let gen = generations.fetch_add(1, Ordering::SeqCst);
+            let exited = Arc::new(AtomicUsize::new(0));
+            exits.lock().unwrap().push(Arc::clone(&exited));
+            WatchdogMock {
+                generation: gen,
+                slow_page: (gen == 0).then_some(0),
+                log: Arc::clone(&log),
+                exited,
+            }
+        }
+    }
+
+    /// 调用日志快照（(代次, 页号) 序列——服务证据面）。
+    fn log_snapshot(&self) -> Vec<(usize, u32)> {
+        self.log.lock().unwrap().clone()
+    }
+
+    /// 指定代实例是否已退出（线程结束 → mock drop → 旗标 > 0）。
+    fn generation_exited(&self, gen: usize) -> bool {
+        self.exits
+            .lock()
+            .unwrap()
+            .get(gen)
+            .is_some_and(|flag| flag.load(Ordering::SeqCst) > 0)
+    }
+}
+
+/// 轮询等待条件成立（deadline 有界——事件落地为微秒级，轮询间隔
+/// 只影响检测延迟不影响确定性）。
+fn poll_until(what: &str, mut check: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !check() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "等待超时：{what}（10s 内未成立——机制疑似失效）"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn worker_watchdog_times_out_poisons_and_replaces() {
+    // S3-L2 ❸弃置 + S4.2 工人重建（PDF-e 实装）回归锁：慢作业超看门狗
+    // → ① 该作业 Timeout 回执（结果弃置不采用）；② 工人毒化换代
+    // （后续作业由替代代服务——调用日志的代次证据）；③ 旧工人 C 调用
+    // 返回后自然退出（实例 Drop 旗标）；④ 超时作业不重放（恰执行一次）。
+    let rig = WatchdogRig::new();
+    let mut worker = RenderWorker::watchdog(rig.factory(), Duration::from_millis(80));
+    let slow = worker.submit(RenderRequest {
+        page: PageIndex(0), // 首代敌意页（250ms ≫ 80ms 预算）
+        width_px: 8,
+    });
+    match await_reply(&mut worker, slow) {
+        WorkerReply::Timeout { id } => {
+            assert_eq!(id, slow, "慢作业回执 Timeout（❸弃置——typed）")
+        }
+        other => panic!("超预算作业应 Timeout，得 {other:?}"),
+    }
+    // 换代观测（确定性：轮询 generation——事件由看门狗在 Timeout 后
+    // 微秒级送达，公共调用入口处理）。
+    poll_until(
+        "看门狗换代事件落地（generation 0 → 1）",
+        || worker.generation() == 1,
+    );
+    // 后续作业由替代工人服务（代次证据 = 日志 (1, page)）。
+    let next = worker.submit(RenderRequest {
+        page: PageIndex(1),
+        width_px: 8,
+    });
+    match await_reply(&mut worker, next) {
+        WorkerReply::Done {
+            id,
+            result: Ok(page),
+        } => {
+            assert_eq!(id, next);
+            assert_eq!(page.width_px, 8, "新代产物形状正常");
+        }
+        other => panic!("换代后作业应 Done（新代服务），得 {other:?}"),
+    }
+    // 执行证据：敌意页恰执行一次（首代开跑后看门狗才可能计时超限——
+    // 不重放）；后续页由新代执行恰一次。
+    let log = rig.log_snapshot();
+    assert_eq!(
+        log.iter().filter(|(_, page)| *page == 0).count(),
+        1,
+        "超时作业不重放（弃置非重试）：{log:?}"
+    );
+    assert!(log.contains(&(1, 1)), "后续作业由替代代服务：{log:?}");
+    // 旧工人自然退出（C 调用 250ms 返回 → 断连 → 线程退出 → mock drop）。
+    poll_until(
+        "旧工人线程退出（敌意渲染返回后自然回收）",
+        || rig.generation_exited(0),
+    );
+    // 收尾：drop 不悬挂（当前代健康，join 即回；旧代已 detach）。
+    drop(worker);
+}
+
+#[test]
+fn worker_watchdog_replays_queue_and_cancels_in_order() {
+    // 换代重放语义锁：慢作业超时触发换代时，排队作业按提交序重放、
+    // 未决取消令牌随作业重放（新代 FIFO 吸收路径同首播）——回执序
+    // Timeout{0} → Done{1} → Cancelled{2}，被取消作业零执行。
+    let rig = WatchdogRig::new();
+    let mut worker = RenderWorker::watchdog(rig.factory(), Duration::from_millis(80));
+    let id0 = worker.submit(RenderRequest {
+        page: PageIndex(0), // 首代敌意页（看门狗触发点）
+        width_px: 8,
+    });
+    let id1 = worker.submit(RenderRequest {
+        page: PageIndex(1),
+        width_px: 8,
+    });
+    let id2 = worker.submit(RenderRequest {
+        page: PageIndex(2),
+        width_px: 8,
+    });
+    // 排队取消 id2（首代卡在 id0——令牌必未吸收，随换代重放）。
+    worker.cancel(id2);
+    match await_reply(&mut worker, id0) {
+        WorkerReply::Timeout { id } => assert_eq!(id, id0, "慢作业 Timeout"),
+        other => panic!("作业 0 应 Timeout，得 {other:?}"),
+    }
+    poll_until("换代事件落地", || worker.generation() == 1);
+    match await_reply(&mut worker, id1) {
+        WorkerReply::Done { id, .. } => assert_eq!(id, id1, "重放作业 1 完成于新代"),
+        other => panic!("重放作业 1 应 Done，得 {other:?}"),
+    }
+    match await_reply(&mut worker, id2) {
+        WorkerReply::Cancelled { id } => assert_eq!(id, id2, "取消令牌随作业重放——Cancelled"),
+        other => panic!("重放作业 2 应被取消，得 {other:?}"),
+    }
+    // 执行证据：页 0 恰一次（首代）、页 1 恰一次（新代）、页 2 零次
+    // （取消先于执行）。
+    let log = rig.log_snapshot();
+    assert_eq!(log.iter().filter(|(_, p)| *p == 0).count(), 1, "{log:?}");
+    assert_eq!(log.iter().filter(|(_, p)| *p == 1).count(), 1, "{log:?}");
+    assert_eq!(log.iter().filter(|(_, p)| *p == 2).count(), 0, "{log:?}");
+    poll_until("旧工人线程退出", || rig.generation_exited(0));
+    drop(worker);
+}
+
+#[test]
+fn worker_without_watchdog_serves_slow_job_to_completion() {
+    // 能力面拆分锁：`new` = 无看门狗裸工人（无引擎重建能力即无换代
+    // 面）——慢作业照常完成（Done 而非 Timeout），代次恒 0。对照锁：
+    // 看门狗是 `watchdog` 工厂构造的增益面，不隐式施于所有工人。
+    let mock = MockRasterizer::with_delay(Duration::from_millis(150));
+    let mut worker = RenderWorker::new(mock);
+    let id = worker.submit(RenderRequest {
+        page: PageIndex(3),
+        width_px: 8,
+    });
+    match await_reply(&mut worker, id) {
+        WorkerReply::Done {
+            id: reply_id,
+            result: Ok(_),
+        } => assert_eq!(reply_id, id, "无看门狗工人慢作业照常完成"),
+        other => panic!("裸工人不产生 Timeout（看门狗非隐式），得 {other:?}"),
+    }
+    assert_eq!(worker.generation(), 0, "无换代（代次恒 0）");
+}
+
+// ---------------------------------------------------------------------------
+// 22. 工厂 panic：断连不悬挂 + 看门狗退出 + 代次恒 0（T2-review ❶ 回归锁）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn worker_factory_panic_graceful_disconnect() {
+    // 工厂 panic 面（T2-review ❶ 处方，T2-fix 回归锁）：宿主照抄文档
+    // 示例闭包（`move || PdfiumEngine::open(bytes.clone()).expect(...)`）
+    // 的 expect 失败路径 = 工厂 panic。修复语义：渲染线程闭包内
+    // catch_unwind → **先**置 state=Retired（看门狗见终态即退——不
+    // 泄漏 10ms 轮询线程 → 其回执通道克隆 drop）→ **再** resume 传播
+    // （渲染线程死亡）。
+    //
+    // 断言面：① 宿主收报得 None **且远早于收报预算**（断连而非超时：
+    // recv_timeout 防真悬挂卡死套件——若看门狗泄漏持克隆，通道永不
+    // 断连，recv_timeout 将吃满 5s 预算，耗时断言判红）；② 看门狗
+    // 线程退出（断连已机械证明其克隆 drop——克隆为 watchdog_loop 按
+    // 值局部，drop 即函数返回、此后不可能再轮询；Linux 面再以
+    // /proc/self/task 线程计数回归基线直接复核线程本体）；③ 死亡
+    // 不是换代（代次恒 0——无 Timeout 合成、无换代事件：工厂 panic
+    // 与看门狗毒化两机制分立）。
+    #[cfg(target_os = "linux")]
+    let baseline_tasks = std::fs::read_dir("/proc/self/task")
+        .map(|entries| entries.count())
+        .unwrap_or(usize::MAX);
+    let mut worker = RenderWorker::watchdog(
+        || -> MockRasterizer { panic!("工厂受控 panic（expect 失败路径）") },
+        Duration::from_millis(80),
+    );
+    worker.submit(RenderRequest {
+        page: PageIndex(0),
+        width_px: 8,
+    });
+    // ① 断连不悬挂：None 且远早于预算（断连解阻塞，超时解阻塞的
+    // 耗时 = 全预算——两者由耗时断言区分）。
+    let started = std::time::Instant::now();
+    let reply = worker.recv_timeout(Duration::from_secs(5));
+    let elapsed = started.elapsed();
+    assert!(
+        reply.is_none(),
+        "工厂 panic 后宿主收报应得 None（通道断连）；得 {reply:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "断连应在看门狗轮询间隔量级内落地（实测 {elapsed:?}）；吃满预算 = 通道未断连（悬挂面）"
+    );
+    // ③ 死亡不是换代（代次恒 0——与看门狗毒化换代分立的两机制）。
+    assert_eq!(
+        worker.generation(),
+        0,
+        "工厂 panic 是死亡不是换代（代次不得 +1）"
+    );
+    // ② 看门狗线程退出（Linux 直接复核线程本体；非 Linux 断连证明
+    // 已足——克隆 drop 即 watchdog_loop 返回，无再轮询可能）。
+    #[cfg(target_os = "linux")]
+    {
+        poll_until(
+            "看门狗线程退出（/proc/self/task 线程计数回归基线）",
+            || {
+                std::fs::read_dir("/proc/self/task")
+                    .map(|entries| entries.count())
+                    .is_ok_and(|count| count <= baseline_tasks)
+            },
+        );
+    }
+    drop(worker); // 收尾不悬挂（渲染线程已死，join 即回）。
+}
+
+// ---------------------------------------------------------------------------
+// 23. 替代代工厂 panic：换代处理不 panic 逃逸 + 断连（T2-review ❶ 换代侧）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn worker_replacement_factory_panic_disconnects() {
+    // 替代代工厂 panic 面（T2-review ❶ 处方的换代侧收口）：修复前
+    // 工厂在包装器线程（process_retirements 的宿主公共调用帧内）执行
+    // ——替代代重开失败 = panic 直接炸穿宿主 recv/submit/generation
+    // 调用（非受控逃逸）；修复后工厂移入渲染线程闭包 + catch_unwind
+    // ——换代处理正常返回，替代代死亡经通道断连可观测（收报 None）。
+    let calls = Arc::new(AtomicUsize::new(0));
+    let factory_calls = Arc::new(AtomicUsize::new(0));
+    let factory = {
+        let calls = Arc::clone(&calls);
+        let factory_calls = Arc::clone(&factory_calls);
+        move || -> MockRasterizer {
+            // 首代健康（带敌意慢页 0——触发看门狗换代）；替代代 panic
+            //（字节快照重开失败路径：快照损坏/装载失败）。
+            if factory_calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                panic!("替代代工厂受控 panic（字节快照重开失败）");
+            }
+            MockRasterizer {
+                calls: Arc::clone(&calls),
+                panic_on: Arc::new(std::sync::Mutex::new(None)),
+                delay: Duration::from_millis(250), // ≫ 80ms 看门狗预算
+            }
+        }
+    };
+    let mut worker = RenderWorker::watchdog(factory, Duration::from_millis(80));
+    let slow = worker.submit(RenderRequest {
+        page: PageIndex(0),
+        width_px: 8,
+    });
+    // 首代慢作业 Timeout——随后的 generation() 公共调用即修复前的
+    // panic 逃逸点（替代代工厂曾在该宿主帧内执行）。
+    match await_reply(&mut worker, slow) {
+        WorkerReply::Timeout { id } => assert_eq!(id, slow, "首代慢作业 Timeout（触发换代）"),
+        other => panic!("首代慢作业应 Timeout，得 {other:?}"),
+    }
+    poll_until(
+        "换代事件落地（generation 0 → 1，宿主调用帧无 panic 逃逸）",
+        || worker.generation() == 1,
+    );
+    // 替代代工厂 panic → 渲染线程死亡 + 看门狗终态退出 → 新代回执
+    // 通道断连：宿主收报 None（recv_timeout 防真悬挂；耗时远小于
+    // 预算 = 断连而非超时）。
+    let started = std::time::Instant::now();
+    let reply = worker.recv_timeout(Duration::from_secs(5));
+    let elapsed = started.elapsed();
+    assert!(
+        reply.is_none(),
+        "替代代死亡后宿主收报应得 None（断连）；得 {reply:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "断连应在看门狗轮询间隔量级内落地（实测 {elapsed:?}）；吃满预算 = 未断连（悬挂面）"
+    );
+    assert_eq!(worker.generation(), 1, "死亡不再触发换代（代次停在 1）");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "仅首代慢作业执行过渲染（替代代未服务任何作业）"
+    );
+    assert_eq!(
+        factory_calls.load(Ordering::SeqCst),
+        2,
+        "工厂恰调两次（首代 + 替代代 panic 面）"
+    );
+    drop(worker); // 收尾不悬挂（渲染线程已死，join 即回）。
 }

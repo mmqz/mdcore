@@ -67,6 +67,7 @@ fn session(page_count: u32, encrypted: bool) -> PdfSession {
         OpenAssessment {
             encrypted,
             warnings: vec![],
+            form_probe: None,
         },
         vec![geometry(); page_count as usize],
         OutlineTree::new(),

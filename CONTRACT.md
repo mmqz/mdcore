@@ -1,9 +1,12 @@
-# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1.2）
+# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1.3）
 
 > R23-d 冻结 v1（2026-10-10）；R24-a minor 升版 v1.1（2026-10-10，纯增量：
 > window 面增设置读写项，v1 面零破坏）；PDF-b minor 升版 v1.2（2026-10-10，
 > 纯增量：新增 §6 PDF 面（草案），window 面零变化，`__contractVersion`
-> 保持 1.1）。目的：消除原型母本与产品仓（mdcore/）的契约漂移——两侧
+> 保持 1.1）；PDF-e minor 升版 v1.3（2026-10-11，纯增量：§6 内 serde
+> 协议面增量——危险族 5→8 族、`OpenAssessment` 增 `form_probe` 字段、
+> `WorkerReply` 增 `Timeout` 变体、`SecurityDeny` 新理由码三枚；window 面
+> 零变化，`__contractVersion` 保持 1.1）。目的：消除原型母本与产品仓（mdcore/）的契约漂移——两侧
 > 对同一契约面的实现必须逐签名一致；破坏性变更必须升
 > `__contractVersion` 并更新本文 + 双侧契约锁测试（`web/tests/contract_gate.py` /
 > `crates/shell/tests/contract_freeze.rs`）。命名域：`mdcore` / `mdshell` / `mdc-*`
@@ -227,7 +230,7 @@ impl Core {
   （构造函数面兼容：新增字段走 `DocumentSession::new().with_path()`
   构造器，既有结构字面量构造点 = 唯三公开构造函数，全部同步）。
 
-## §6 PDF 面（v1.2 增补，PDF-b——草案）
+## §6 PDF 面（v1.2 增补，PDF-b——草案；v1.3 增补，PDF-e）
 
 > PDF-b 骨架轮（mdc-pdf crate，crates/pdf；md-line/pdf_carrier_plan §5）。
 > **window 面零新增，`__contractVersion` 保持 1.1**——版本常量守卫的是
@@ -267,17 +270,32 @@ impl Core {
 
 - **S1 引擎能力面**：pdfium 只取 non-V8 构建（JS 不接、XFA 不启用）+
   零网络 + mupdf 禁入（AGPL）——选型即安全决策（ADR-P1）。
-- **S2 危险对象族**：`/OpenAction` `/AA` `/Launch` `/EmbeddedFiles`
-  `/RichMedia` 打开时只读检测告警（`OpenAssessment.warnings`），不执行、
-  不阻断打开。
-- **S3 限额三行为学**：❶硬拒绝（空查询；作者名 > 200 字符；文件
-  > 1 GiB）/ ❷钳制（搜索 `max_hits` ≤ 1000 + `truncated` 告知；摘录
-  ≤ 200 字符）/ ❸弃置（渲染看门狗，PDF-c）。
-- **S4 沙箱与进程边界**：渲染工人池 + 逐页 panic 隔离 + 读写分线程
-  快照（PDF-c/d 接线；trait 面 object-safe 已冻结）。
+- **S2 危险对象族（v1.3 起八族）**：`/OpenAction` `/AA` `/Launch`
+  `/URI` `/EmbeddedFiles` `/RichMedia` `/JavaScript` `/Names` JS 树
+  ——打开时只读检测告警（`OpenAssessment.warnings`，PDF-e 实装：
+  feature `engine-lopdf` 下 lopdf 对象图全扫，`open_scan()` /
+  `LopdfWriter::from_bytes` 装载后填充；serde 族名冻结锁背书），
+  不执行、不阻断打开（S2.4 只读告警语义）。
+- **S3 限额三行为学**：❶硬拒绝（空查询；作者名 > 200 字符；打开
+  输入 > 1 GiB；打开预算 3s 超时；渲染目标缓冲 > 1 GiB）/ ❷钳制
+  （搜索 `max_hits` ≤ 1000 + `truncated` 告知；摘录 ≤ 200 字符）/
+  ❸弃置（渲染看门狗 20s——PDF-e 实装：超时作业 `Timeout` 回执 +
+  工人毒化换代）。打开面限额接线（v1.3，PDF-e）：L7 输入字节 /
+  L4 打开预算在 lopdf `from_bytes` / `open_scan` 与 pdfium
+  `PdfiumEngine::open` 入口统一执行；lopdf 内部无挂点的两限额
+  （xref 对象数、解析器内逐对象深度）登记为 v0 边界。
+- **S4 沙箱与进程边界**：专职渲染线程（单工人常态）+ 逐页 panic
+  隔离（catch_unwind → `RenderPanic` 回执，同工人续跑）+ 看门狗
+  超时换代（`RenderWorker::watchdog` 工厂：引擎字节快照重开替代
+  工人，PDF-e 实装；**非常驻工人池**——S4.1 措辞与实装对齐）+
+  读写分线程快照（PDF-c/d 接线；trait 面 object-safe 已冻结）。
 - **S5 加密签名面**：仍加密态（`OpenAssessment.encrypted`）拒绝一切
   写类命令（`SecurityDeny`，先于存在性检查）；增量写保持原字节前缀
   （签名文档友好，PDF-d 语义锁）。
+- **S6 表单探针（v1.3 增）**：/AcroForm 存在时字段枚举进
+  `OpenAssessment.form_probe`（字段全名 + 可读现值 + 总数；PDF-e
+  实装）——被动可读面告警，**永不初始化交互式 formfill**；serde
+  增量兼容（旧 JSON 缺省 = None，None 序列化省略字段）。
 
 ### 时间线
 
@@ -290,6 +308,32 @@ impl Core {
   预证（lopdf 写 → pdfium 读；GUI 层 = 开发环境轮）、原字节前缀逐位
   保持语义锁；命令面不变（flush = 会话 API 非命令，六命令零变化）。
   gates.md PDF-d 节在档。
+- **PDF-e 安全姿态对齐（已完成 2026-10-11）**：S2/S6 打开时扫描实装
+  （`security_scan`，八族 + 表单探针）、S3 看门狗换代 + 打开面限额
+  接线、文档与实装对齐（本轮 v1.3）；gates.md PDF-e 节在档。
+
+### v1.2 → v1.3 变更记录（2026-10-11，PDF-e）
+
+- §6 内 serde 协议面增量（全部为**纯增量**，旧消费者零破坏）：
+  - `DangerousFamily` 5 族 → **8 族**（新增 `UriAction` / `JavaScript` /
+    `NamesJavaScript`——对齐 SECURITY_POLICY S2.2/S2.3 全清单；serde
+    名冻结锁同步扩）；
+  - `OpenAssessment` 增 `form_probe: Option<FormProbe>` 字段
+    （`#[serde(default, skip_serializing_if)]`——旧 JSON 缺省反序列化
+    = None，None 序列化省略字段；`FormField{name, value}` / `FormProbe
+    {field_count, fields}` 新 serde 形状）；
+  - `WorkerReply` 增 `Timeout { id }` 变体（Serialize-only 错误面单向，
+    与 `CommandError` 同纪律）；
+  - `SecurityDeny.reason` 新理由码三枚：`S3-L7-open-file-bytes` /
+    `S3-L4-open-budget` / `S3-L0-decode-output`（稳定策略码语义不变）。
+- **`__contractVersion` 保持 1.1**：window 面零变化（版本常量守卫 web
+  window 面；PDF 面为独立 crate Rust 面，未进 web 桥）——仿 v1.2
+  先例并显式在档。
+- Rust 面新增 `security_scan` 模块（feature `engine-lopdf`）与
+  `RenderWorker::watchdog` 工厂 / `generation()` 观测面、
+  `LopdfWriter::from_bytes_with_limits` / `assessment()`、
+  `Limits::check_open_input_bytes` / `check_open_budget` /
+  `enforce_decode_output_bytes`（§1 compile 冻结面扩展，非 serde 面）。
 
 ### v1.1 → v1.2 变更记录（2026-10-10，PDF-b）
 

@@ -31,6 +31,7 @@
 //! `write_annotation` 以 `InvalidPage` 显式失败，不静默错页挂载。
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 // 版本钉住的 lopdf 再导出（feature 门内）：测试/宿主经本 crate 引用与
 // 实装同版本的 lopdf 实例——避免 dev-dependency 把 lopdf 带进默认测试
@@ -44,7 +45,7 @@ use lopdf::{
 use crate::annotation::{AnnotId, Annotation, AnnotationKind, Point, Quad, Rect, Rgb};
 use crate::command::CommandError;
 use crate::page::PageIndex;
-use crate::security::REASON_ENCRYPTED_WRITE;
+use crate::security::{Limits, OpenAssessment, REASON_ENCRYPTED_WRITE};
 use crate::writer::{encode_author, pdf_date_string, AnnotationWriter, IncrementalSave};
 
 /// FreeText 默认外观（/DA）：`/Helv 12 Tf 0 g`——Acrobat 对无 /AP 的
@@ -63,14 +64,33 @@ pub struct LopdfWriter {
     /// 自上次成功保存以来是否有新写入（幂等保存判据——与 staged 分离：
     /// staged 是终身映射，pending 是本轮修订判据）。
     pending: bool,
+    /// 打开评估（from_bytes 装载后 S2/S6 扫描——PDF-e 接线；产品面
+    /// 出口 [`LopdfWriter::assessment`]：宿主取出喂 `PdfSession::open`
+    /// 的 assessment 参数）。
+    assessment: OpenAssessment,
 }
 
 impl LopdfWriter {
-    /// 从 PDF 字节构造（全内存）。失败面：
+    /// 从 PDF 字节构造（全内存；限额 = [`Limits::default`]——自定义
+    /// 限额用 [`LopdfWriter::from_bytes_with_limits`]）。失败面：
+    /// - S3-L7 输入字节超限 / S3-L4 打开预算超限 → `SecurityDeny`
+    ///   （open 家族入口统一检查——先于解析 / 后于扫描，PDF-e 接线）；
     /// - 解析失败（垃圾字节等）→ `Engine`；
     /// - 加密档（仍加密或曾加密）→ `SecurityDeny`（S5 引擎侧独立防线，
     ///   先于一切写入——与会话层 S5 判定双防线）。
     pub fn from_bytes(pdf: Vec<u8>) -> Result<Self, CommandError> {
+        Self::from_bytes_with_limits(pdf, Limits::default())
+    }
+
+    /// 带限额构造（打开面入口，限额注入形态——测试/宿主同款）：
+    /// S3-L7 输入字节 ❶ → 装载 → S5 加密拒 → S2/S6 扫描 →
+    /// S3-L4 打开预算 ❶。
+    pub fn from_bytes_with_limits(pdf: Vec<u8>, limits: Limits) -> Result<Self, CommandError> {
+        // S3-L7 输入层（open 家族入口统一——与 open_scan /
+        // PdfiumEngine::open 同款；先于解析：敌意大文档的无界解析面
+        // 在入口收口）。
+        limits.check_open_input_bytes(pdf.len() as u64)?;
+        let started = Instant::now();
         let doc = Document::load_mem(&pdf)
             .map_err(|e| CommandError::engine(format!("lopdf 装载失败：{e}")))?;
         if doc.is_encrypted() || doc.was_encrypted() {
@@ -80,11 +100,24 @@ impl LopdfWriter {
                 reason: REASON_ENCRYPTED_WRITE,
             });
         }
+        // S2/S6 扫描（装载后——告警/表单探针随写器携带；加密拒在前，
+        // 携带的 assessment 恒为非加密态）。
+        let assessment = crate::security_scan::scan_document(&doc, &limits);
+        // S3-L4 打开预算（装载 + 扫描整段计时）。
+        limits.check_open_budget(started)?;
         Ok(Self {
             inc: IncrementalDocument::create_from(pdf, doc),
             staged: HashMap::new(),
             pending: false,
+            assessment,
         })
+    }
+
+    /// 打开评估（S2 危险族告警 + S6 表单探针 + S5 加密旗标——
+    /// from_bytes 装载时扫描；喂 `PdfSession::open` 的 assessment
+    /// 参数——PDF-e 接线的产品面出口）。
+    pub fn assessment(&self) -> &OpenAssessment {
+        &self.assessment
     }
 
     /// 取回当前产物字节（原字节 + 已 flush 修订；未 flush 时 = 输入

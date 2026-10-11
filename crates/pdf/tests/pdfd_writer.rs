@@ -165,6 +165,7 @@ fn session_with_writer(
         OpenAssessment {
             encrypted,
             warnings: vec![],
+            form_probe: None,
         },
         vec![
             PageGeometry {

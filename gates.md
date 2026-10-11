@@ -1141,7 +1141,7 @@ engine-pdfium **73/73 + 6 ignored**、双引擎面 **90/90 + 6 ignored**
   crate 本地面；引擎 pin（pdfium-render/lopdf 的 optional 面）保持
   各 crate 现状不动（feature 决策记录在案）。
 - **O2 门禁口径对齐（实跑为准）**：`cargo test --workspace` 默认面
-  **252/252 全绿、25 个非空语义锁套件**（34 个 test result 行——含
+  **252/252 全绿、25 个语义锁套件**（34 个 test result 行——含
   feature 面空套件与 doc-tests；1 ignored = shell-native 文档的
   `ignore` 代码块非测试）＝ 245 旧基线 + T1-fix-a 5（mdcore
   t1_quality_fixes）+ T1-fix-b 2（pdfb_skeleton 32→33 /
@@ -1150,6 +1150,12 @@ engine-pdfium **73/73 + 6 ignored**、双引擎面 **90/90 + 6 ignored**
   25/252、收口纪律「18 套件」→ 25；本文件 PDF-d 门禁段增 T1 更新
   口径块（上文）。T1-survey 在分析仓 worklog 的「223+/16 套件」口径
   失实由主代理登记勘误（非本轮范围）。
+  〔T1-verify 终审脚注，PDF-e 轮补记：「25 套件」= **24 个非空测试
+  目标套件 + shell-native 的 1-ignored doc-test 行**——「非空语义
+  锁套件」的措辞把仅含 ignored 行的 shell-native doc-test 计入了
+  非空面，计数本身不错（252 用例主口径精确），拆解在此；PDF-e 起
+  默认面 35 个 test result 行（+pdfe_security feature 空套件）、
+  257 用例，见 PDF-e 节门禁。〕
 - **F12 feature 面可复现 bootstrap 成文 + fixtures 候选序调整**：
   bootstrap 三步清单成文（下小节，COMPLIANCE.md §3 后同款指引）；
   三测试文件（pdfc_engine / pdfc_perf / pdfd_writer）的
@@ -1205,3 +1211,183 @@ engine-pdfium **73/73 + 6 ignored**、双引擎面 **90/90 + 6 ignored**
 - **fixtures**：env `MDC_PDF_TEST_FIXTURES`（目录）→ 编译期候选
   （**crate 本地 `crates/pdf/fixtures/` 优先**——产品仓自持素材位，
   T1-F12 调序；仓外 spike `fixtures/` 兜底）。
+
+## PDF-e：安全姿态对齐（2026-10-11）
+
+**背景**：T1 审计定谳的「文档先于实现」漂移收口轮。权威策略 =
+SECURITY_POLICY.md v1（分析仓，只读参照），产品侧权威 = CONTRACT.md
+§6 + crates/pdf/src/security.rs。T1 清单的漂移点：`DangerousHit` /
+`OpenAssessment.warnings` 零生产构造点（检测面不存在）、危险族 5 族
+vs 策略 S2.2/S2.3 全清单 8 族、`render_watchdog_ms` 注释称「PDF-c
+启用」实未接线、`open_budget_ms` / `decode_output_max_bytes` /
+`object_depth_max` / `xref_objects_max` 零消费点、
+`enforce_open_file_bytes` 零调用、S2.4 `open_scan()` 承诺未兑现、
+S4.1「渲染工人池」实为单 `RenderWorker`、S4.2「panic 后工人重建」实为
+同工人续跑、S6 表单枚举进 SecurityReport 未实装。
+
+**交付**（crates/pdf + CONTRACT.md；feature 纪律不变——默认零引擎
+依赖，`cargo tree` 面 default=[] 不动）：
+
+- `security_scan.rs`（新模块，feature `engine-lopdf`）：S2.4 承诺的
+  `open_scan(pdf, limits) -> OpenAssessment`（L7 输入字节 ❶ → lopdf
+  装载 → S2 八族 + S6 表单探针 + S5 加密旗标 → L4 打开预算 ❶——
+  产物直接喂 `PdfSession::open`，告警不阻断打开）+ `scan_document`
+  （纯对象图扫描，`LopdfWriter::from_bytes` 装载后复用同一实现）。
+  **对象图全扫**（`Document::objects` 逐对象 + 内联嵌套递归，引用不
+  追——间接对象都在顶层枚举）：不可达敌意对象同样可见（检测面不
+  依赖解析器可达性判定）；一 dict 每族至多一 hit（同族多触发条件
+  合并——如 `/S /URI` 与 `/URI` 键双探测）；报告确定性（族声明序 ×
+  详情字典序 + 精确去重——同文档任何环境同一报告）；/AcroForm
+  /Fields 字段树走查带引用链 seen-set 环防 + 深度护栏
+  （`object_depth_max` 复用）；
+- `security.rs`：`DangerousFamily` 5 族 → **8 族**（增 `UriAction` /
+  `JavaScript` / `NamesJavaScript`，声明序 = 报告排序序；serde 名
+  冻结锁同步扩——协议面锚）+ S6 `FormProbe{field_count, fields}` /
+  `FormField{name, value}` + `OpenAssessment.form_probe`
+  （`serde(default, skip_serializing_if)`——旧 JSON 缺省 = None，
+  None 序列化省略，旧消费者零感知）+ 理由码三枚
+  （`S3-L7-open-file-bytes` / `S3-L4-open-budget` /
+  `S3-L0-decode-output`）+ `Limits::check_open_input_bytes` /
+  `check_open_budget`（Duration 全精度比较——0 预算确定性触发）/
+  `enforce_decode_output_bytes`；字段注释逐项改为真实接线状态
+  （已接线/登记待办分列）；
+- `worker.rs`：**看门狗换代实装**（S3-L2 ❸弃置 + S4.2 工人重建）。
+  `RenderWorker::watchdog(factory, budget)` 工厂构造：每代 = 渲染线程
+  + 看门狗线程（共享 `WatchState` 短锁观测态；轮询 10ms）；在跑作业
+  自**开跑时刻**起算超 `render_watchdog_ms` → ① `WorkerReply::Timeout
+  {id}` 回执（❸弃置——迟到的旧代 `Done` 由包装器按「在飞作业首回执」
+  验收面静默丢弃，「结果永不采用」的机械保证）→ ② 换代事件 →
+  包装器在下一公共调用（submit/recv/cancel/drop）：drain 旧代回执 →
+  旧代通道/join 句柄弃置（**断连弃置不 join**：敌意永挂 C 调用不得
+  悬挂停机；旧线程 C 调用返回后见断连即退、自然回收）→ 工厂闭包起
+  替代工人（**字节快照重开**——S4.4 纪律：闭包持字节快照，首代与
+  替代代引擎都在渲染线程归属内构造）→ 在飞作业 + 未决取消令牌按
+  提交序重放（保序：令牌在作业后——新代 FIFO 吸收路径同首播）。
+  `generation()` 观测面（0 起，换代 +1）。`RenderWorker::new` 保持
+  **无看门狗裸工人**（能力面拆分——无引擎重建能力即无换代面）；
+  单工人常态 + 看门狗触发的工人重建 = v0 形态（非常驻工人池，
+  CONTRACT §6 S4.1 措辞同步）；
+- `engine_pdfium.rs`：打开面限额接线（`open` / `open_with_library`：
+  L7 输入字节先于装载 + L4 打开预算）+ `rasterize` 内 S3-L0 渲染
+  目标硬闸（L2 钳制后、分配前：宽×高×**4**（BGRA 实缓冲——任务书
+  写 ×3，实装按真实分配口径）vs `decode_output_max_bytes`，超限
+  `SecurityDeny{S3-L0-decode-output}`）；
+- `writer_lopdf.rs`：`from_bytes` → `from_bytes_with_limits`（L7 →
+  装载 → S5 加密拒（既有）→ S2/S6 扫描 → L4 预算）+ `assessment()`
+  产品面出口（宿主取出喂 `PdfSession::open`——与 `open_scan` 同一
+  扫描单一实现）；
+- `document.rs`：attach_engine 拒绝语义措辞精度（T1-verify ③：二次
+  注入拒绝场景保持的是**旧引擎**而非 v0——行为本正确，仅措辞）；
+- `CONTRACT.md`：§6 v1.2 → **v1.3**（八族 + form_probe serde 形状 +
+  `Timeout` 变体 + 三理由码——全部纯增量；`__contractVersion` 保持
+  1.1，window 面零变化，仿 v1.2 先例显式在档）。
+
+**决策记录**：
+
+① **检测面 = 对象图全扫而非可达性走查**：不可达敌意对象（不挂任何
+页/catalog）同样检出——敌意载荷可藏于未引用对象，检测不应依赖解析器
+可达性判定（pdfium 视角与对象图视角的可达集本就不同）；
+② **看门狗 = 独立线程 + 开跑时刻锚点**：在跑作业的 C 调用不可中断
+（不假装能杀线程——与取消令牌「只作用于排队作业」同一诚实纪律），
+看门狗只观测不注入；超时处置 = 回执 + 换代（弃置语义），不杀线程；
+换代后旧代 join 句柄弃置 = 敌意永挂 C 调用下停机不悬挂（资源滞留
+上限 = 恶意触发换代的次数，接受并在此在档）；
+③ **换代重放保序**：作业先于令牌重放——新代 `job_watermark` 先覆盖
+再吸收取消，FIFO 语义与首播一致（锁 20 的零执行断言背书）；
+④ **加密档检测边界诚实性**：仍加密（口令不可得）态 lopdf 不解析对象
+图——S2 检测面不可用（无假阳/假阴），`encrypted` 旗标仍置位（S5 据此
+拒写）；曾加密（空口令自动解密）态对象图明文可见——检测照常。两形态
+有锁；
+⑤ **深度护栏面区分（短路验证发现）**：lopdf 0.45 解析器自身嵌套预算
+`reader::MAX_NESTING_DEPTH = 100` 会静默丢弃超深对象（探针实证：100
+层链序列化后 `/AA` 仍在字节里，load 后对象易号消失——99 层完好）。
+文件面的深嵌套攻击被解析器先行截断（100 < 128 护栏）；扫描护栏只对
+内存构造面（`scan_document` 直扫）可观测——判别锁 10 因此重构为内存
+面直扫（原文件面写法恒真 = 锁空转，SC-J 实证后修复）；
+⑥ **L0 渲染目标硬闸的可达性**：冻结数值下不可达（64M px × 4B =
+256 MiB < 1 GiB，L2 钳制先行）——纵深防线（未来限额调整的收口闸），
+接线在 `rasterize` 分配前；引擎级端到端锁不可构造
+（`PdfiumEngine::rasterize` 用 `Limits::default()`，自定义限额接线属
+PDF-d+），helper 面锁在 pdfb_skeleton 35 号 + 理由码入档。
+
+**语义锁**（+16：11 feature 面专属 + 5 默认面常开[pdfb 2 + cache_worker 3]；
+T2-fix 终修 +2 默认面常开[cache_worker 3→5]）：
+`tests/pdfe_security.rs` **11 条**（feature `engine-lopdf`，敌意
+fixtures 全部 lopdf 现场构造——零仓外依赖）：①良性零告警 + 报告
+确定性 ②八族全检出（多族混合 + 不可达对象可见）③详情对象号定位 +
+同 dict 同族合并 ④S6 表单探针（层级全名 `.` 连接 + /Tx 现值可读 +
+表单非危险族——warnings 恒空）⑤加密双形态检测边界 ⑥写器
+assessment 出口（与 open_scan 同结果）⑦L7 超限双入口拒 ⑧L4 预算
+双入口拒（0 预算确定性触发）⑨会话端到端（告警不阻断打开 + 非加密态
+写命令正常）⑩深度护栏判别式（内存面直扫——见决策⑤）⑪字段树环防
+（/Kids 自引用终止 + 计数不重复）。`pdfb_skeleton.rs` +2（34
+form_probe serde 形状：往返保真 + None 省略 + 旧 JSON 缺省兼容；35
+打开入口限额：L7 边界值 + L4 零预算 + 理由码）。`pdfc_cache_worker.rs`
++3（19 看门狗超时：Timeout 回执 + 换代代次证据 + 超时作业不重放 +
+旧工人自然退出；20 换代重放：排队作业保序 + 取消令牌随作业重放——
+被取消作业零执行；21 能力面拆分对照：`new` 裸工人慢作业 Done、代次
+恒 0）。T2-fix +2（22 工厂 panic 断连不悬挂：先置看门狗终态再传播 +
+看门狗线程退出[Linux /proc 复核] + 代次恒 0[死亡≠换代]；23 替代代
+工厂 panic：换代处理无 panic 逃逸 + 新代断连 + 替代代零服务）。
+**全部新锁经短路验证**（临时拿掉实装 → 锁红 → 恢复 → 绿，
+10 组机制级实验；SC-J 发现锁 10 空转并重构，见决策⑤；T2-fix 两锁
+另经 4 组实验：SC-K1 catch 拿掉红 / SC-K2 Retired 先置拿掉红 /
+SC-K2b 耗时断言禁用后 /proc 探针独判红 / SC-K3 修复前形态双红）。
+
+**已知边界（诚实登记）**：
+
+- `xref_objects_max`（8,388,607）与 lopdf 解析器内逐对象深度：lopdf
+  内部无挂点——v0 边界项，升级 lopdf / 自研解析层时接线
+  （security.rs 字段注释在档）；S3 对象流 seen-set 同理（/AcroForm
+  字段树游走面已有 seen-set 环防——lopdf 解析面对象流去重无挂点）；
+- L0 渲染目标硬闸冻结数值下不可达（决策⑥）；引擎级端到端锁随自定义
+  限额接线（PDF-d+）补；
+- `RenderWorker::watchdog` 生产消费点 = **零**（仅测试调用——语义锁
+  19/20/21/22/23）：看门狗换代是已实装能力面，宿主接线
+  （`Limits.render_watchdog_ms` → 工厂构造预算）属后续轮（PDF-f+）——
+  与 L0 引擎级端到端锁同款登记口径（T2-review ❹，T2-fix 补登）；
+- 仍加密档 S2 检测面不可用（决策④）——检测需明文对象图，非能力缺口
+  的隐瞒（S5.1 只读支持加密档打开不变）；
+- 旧代工人线程 detach（决策②）：敌意永挂 C 调用下旧线程不退出，
+  资源滞留上限 = 恶意触发次数；权衡 = 停机不悬挂优先；
+- S4.1/S4.2 措辞已与实装对齐（CONTRACT v1.3）：单工人常态 + 看门狗
+  换代；panic = 同工人续跑（RenderPanic 回执）、超时 = 换代——两
+  机制分立，不再合称「工人池 / panic 重建」。
+
+**门禁**（2026-10-11 实跑）：`cargo test --workspace` 默认面
+**257/257**（252 T1 基线 + PDF-e 默认面 5 新锁：pdfb_skeleton
+33→35 / pdfc_cache_worker 18→21；35 个 test result 行——pdfe_security
+为 feature 空套件；「25 套件」口径拆解见 T1 节 O2 脚注）；feature
+面 engine-lopdf **76/76**（65 常开 + 11 pdfe_security）、
+engine-pdfium **78/78 + 6 ignored**（73 + 5 常开新锁）、双引擎
+**106/106 + 6 ignored**（90 + 5 + 11）；clippy 四面
+（default/lopdf/pdfium/dual --all-targets）零新警告；`cargo fmt
+-p mdc-pdf -- --check` 0 diff（本轮新增代码 fmt 清扫后入档）；
+compliance/scan.sh 0 命中；既有 252 锁断言语义零改动（PDF-b/c/d/T1
+锁原样全绿）。CONTRACT.md v1.3 升版在档（纯增量，window 面零变化）。
+
+**T2-fix 终修（2026-10-11，修复代理H——T2-review 定谳 1 重要 + 3 轻微
++ 1 移交收口）**：❶（重要）`spawn_generation` 工厂 panic 语义——工厂
+移入渲染线程闭包内执行 + `catch_unwind`（T2-review 处方：**先**置
+`WatchState::Retired`——看门狗即退、其回执克隆 drop、通道断连、宿主
+收报得 `None` 不悬挂——**再** `resume_unwind` 传播；:417-430 内层注释
+与模块文档统一为真实行为）。短路验证 4 组：SC-K1 catch 拿掉 → 锁
+22/23 双红（recv_timeout 实测 5.000s 吃满预算——耗时断言判别断连
+vs 超时）/ SC-K2 Retired 先置拿掉 → 双红 / SC-K2b 耗时断言临时禁用
+→ /proc 看门狗退出探针独判红（10s 超时——两判别面各自非摆设）/
+SC-K3 修复前形态（工厂在构造线程块内执行）→ 双红（panic 逃逸：锁
+22 于构造器、锁 23 于宿主公共调用帧——替代代重开 panic 炸穿 recv/
+generation 的真实修复前面）。另以线程身份探针实证：修复前工厂实在
+**构造线程**执行（`spawn({...})` 块参数在调用点求值——T2-review 的
+「现状」方向描述反了，但其处方目标态与本修一致：代码向模块文档
+「引擎都在渲染线程内构造」统一，替代代引擎构造不再落在宿主线程）。
+❸（轻微）`probe_form` 注释补畸形 /AcroForm 归 None（与良性缺省
+同判——诚实登记）。❹（轻微）看门狗零生产消费点入已知边界（上文）。
+门禁复跑：默认面 **259/259**（257 + T2-fix 2：cache_worker 21→23）、
+engine-lopdf **78/78**、engine-pdfium **80/80 + 6 ignored**、双引擎
+**108/108 + 6 ignored**；clippy 四面 + workspace 零新警告（mdc-wasm
+2 条 = 在档基线）；`cargo fmt -p mdc-pdf -- --check` 0 diff；
+cache_worker 套件连跑 3 次零抖动。README/COMPLIANCE 计数同步 259
+（E 移交项 252→257 为 T2-fix 锁增量落定前口径）。❷（轻微）licenses/
+18→17 计数勘误在 compliance-baseline 分支（F 工作树两处），与本仓
+收口分开提交。

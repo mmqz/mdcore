@@ -27,9 +27,12 @@
 ## 3. 常驻门禁（每轮收口必须双绿）
 
 1. `bash compliance/scan.sh`（denylist 门禁：品牌词/上游特有词扫描，strict 0 / ns 0）
-2. `cargo test --workspace`（25 套件语义锁全绿，252 用例——2026-10-10
-   T1 修复轮实跑口径：245 旧基线 + 5 mdcore 质量锁 [T1-fix-a] +
-   2 pdf 锁 [T1-fix-b]；套件数 = 非空语义锁套件实跑统计）
+2. `cargo test --workspace`（25 套件语义锁全绿，259 用例——2026-10-11
+   PDF-e 轮 + T2-fix 终修实跑口径：252 T1 基线 + 5 默认面安全锁
+   [pdfb_skeleton 33→35 / pdfc_cache_worker 18→21] + T2-fix 2 工厂
+   panic 语义锁 [pdfc_cache_worker 21→23]；套件口径 = 24 个非空测试目标套件 +
+   shell-native 的 1-ignored doc-test 行〔T1-verify 终审脚注，拆解见
+   gates.md T1 节〕；feature 面计数见 gates.md PDF-e 节门禁）
 3. 启用新系统依赖（wry/tao/GTK 系）后：重跑 SBOM 并更新
    `compliance_release/THIRD-PARTY-NOTICES`（LGPL 系统库动态链接政策）。
 
