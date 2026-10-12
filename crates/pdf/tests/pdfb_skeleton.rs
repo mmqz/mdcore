@@ -1103,10 +1103,7 @@ fn source_mirror_bidirectional_exact_count() {
         // 变体声明形态：`Name,` / `Name { .. }` / `Name(..)`——取首个
         // 大写开头的标识符词。Source 为 unit 变体枚举，此解析即足够
         // （若未来形态复杂化到误报，锁"宁可误报不可漏报"）。
-        let name = t
-            .split(|c: char| c == ',' || c == '{' || c == '(' || c == ' ')
-            .next()
-            .unwrap_or("");
+        let name = t.split([',', '{', '(', ' ']).next().unwrap_or("");
         if name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
             variants.push(name);
         }

@@ -60,7 +60,12 @@ cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf  # 109 + 6i
 cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf --test pdfc_perf -- --ignored  # 6/6
 bash compliance/scan.sh                    # 0 hits
 cargo check --workspace --target wasm32-unknown-unknown
-cargo clippy --workspace                   # 2 条在档基线，零新增
+# clippy 四面 --all-targets（gates.md PDF-e 起口径；t8 曾收窄为 --workspace
+# 漏检测试面 1 条，已回退修复）——2 条 wasm 在档基线，四面零新增
+cargo clippy --workspace --all-targets
+cargo clippy -p mdc-pdf --features engine-lopdf --all-targets
+cargo clippy -p mdc-pdf --features engine-pdfium --all-targets
+cargo clippy -p mdc-pdf --features engine-pdfium,engine-lopdf --all-targets
 cargo fmt --all -- --check
 # web 面：cd web && python3 tests/contract_gate.py（18）+ web_smoke.py（15）+ ime_cdp.py（28）
 ```
