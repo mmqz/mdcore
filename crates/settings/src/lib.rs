@@ -1,3 +1,11 @@
+//! mdc-settings — 域无关设置面基础设施。
+//!
+//! T3 复用地基轮（2026-10-12）自 mdshell（crates/shell）整体抽取——
+//! 对 mdcore 零依赖（依赖闭包由 tests/closure_lock.rs 固化），
+//! mdshell 经 `pub use mdc_settings as settings` re-export 保持
+//! `mdshell::settings::*` 路径零破坏。消费面：三域（MD/PDF/Office）
+//! 均可直接依赖本 crate，不再连带 mdcore 块核。
+//!
 //! R24-a 设置面核侧（主档 §31 R24-a）。
 //!
 //! 机制合同（四条硬语义，r24_settings 语义锁背书）：
@@ -59,10 +67,19 @@ pub struct Settings {
     pub appearance: AppearanceSettings,
 }
 
+/// undo 合并窗默认值（毫秒）。
+///
+/// 与 mdcore::history::COALESCE_MS 数值同源——但本 crate 对 mdcore
+/// **零依赖**（域无关抽取纪律），不直接引用该常量；数值一致性由
+/// mdshell 侧 r24_settings::defaults_align_with_core_constants 跨
+/// crate 锁背书（双侧任一漂移即测试红，单源纪律不断）。
+const UNDO_COALESCE_MS_DEFAULT: u64 = 1000;
+
 /// 编辑行为层。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EditorSettings {
-    /// undo 合并窗（毫秒）——默认与 mdcore::history::COALESCE_MS 同源。
+    /// undo 合并窗（毫秒）——默认值与 mdcore::history::COALESCE_MS
+    /// 对齐（跨 crate 常量锁背书，见 UNDO_COALESCE_MS_DEFAULT 注）。
     pub undo_coalesce_ms: u64,
     /// 超过该字节数的文档走渐进打开（R10-a 路径选择；1MB = W4 基准参照）。
     pub progressive_open_threshold_bytes: u64,
@@ -99,7 +116,7 @@ impl Default for Settings {
         Self {
             schema_version: SCHEMA_VERSION,
             editor: EditorSettings {
-                undo_coalesce_ms: mdcore::history::COALESCE_MS,
+                undo_coalesce_ms: UNDO_COALESCE_MS_DEFAULT,
                 progressive_open_threshold_bytes: 1_048_576,
             },
             ai: AiSettings {

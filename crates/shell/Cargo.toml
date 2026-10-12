@@ -6,6 +6,6 @@ description = "R10 宿主契约层：文档生命周期（open/progressive-open/
 
 [dependencies]
 mdcore = { path = "../mdcore" }
+mdc-settings = { path = "../settings" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-toml_edit = "0.25.17"

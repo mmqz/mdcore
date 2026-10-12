@@ -1,0 +1,9 @@
+[package]
+name = "mdc-settings"
+version.workspace = true
+edition = "2021"
+description = "域无关设置面基础设施（T3 复用地基轮自 mdshell 抽取）：四层 schema + TOML sidecar 格式保持 + 六态降级 + 未来版本拒写。对 mdcore 零依赖——依赖闭包由 closure_lock 测试固化（设置面是 MD/PDF/Office 三域可共用的基础能力，抽取依据 = boundary-audit REPORT R5）。"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml_edit = "0.25.17"

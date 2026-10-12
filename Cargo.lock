@@ -497,6 +497,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-settings"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml_edit",
+]
+
+[[package]]
 name = "mdcore"
 version = "0.1.0"
 dependencies = [
@@ -518,10 +526,10 @@ dependencies = [
 name = "mdshell"
 version = "0.1.0"
 dependencies = [
+ "mdc-settings",
  "mdcore",
  "serde",
  "serde_json",
- "toml_edit",
 ]
 
 [[package]]

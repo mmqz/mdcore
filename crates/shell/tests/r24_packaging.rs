@@ -1,7 +1,7 @@
 //! R24-c — 打包分发基建锁（版本单源 + 工件纪律 + 定名门）。
 //!
 //! 锁清单：
-//! 1. 版本单源：五 crate 全部 `version.workspace = true`（禁止独立声明）+
+//! 1. 版本单源：六 crate 全部 `version.workspace = true`（禁止独立声明）+
 //!    根 `[workspace.package].version` == `mdcore::VERSION`（运行时唯一
 //!    出口）+ 本 crate（shell）编译期版本一致（发布产物四处注入同源）；
 //! 2. 打包工件在位且命名域合规：桌面入口（mime + scheme 注册面）/
@@ -60,10 +60,18 @@ fn version_single_source_via_workspace() {
         .expect("workspace.package 内必须有 version");
     assert_eq!(ws_version, mdcore::VERSION, "根手写点与运行时常量必须一致");
 
-    // 五 crate 全部继承（独立声明 = 第二手写点 = 漂移源，禁止）。
+    // 六 crate 全部继承（独立声明 = 第二手写点 = 漂移源，禁止）。
     // 清单含 crates/pdf（mdc-pdf，PDF-b 起 workspace 成员——T1 审计 F7
-    // 补齐：此前清单漏列，仅由 pdfb_skeleton 的版本自锁补位）。
-    for c in ["mdcore", "mdcore-wasm", "shell", "shell-native", "pdf"] {
+    // 补齐：此前清单漏列，仅由 pdfb_skeleton 的版本自锁补位）与
+    // crates/settings（mdc-settings，T3 复用地基轮抽取件）。
+    for c in [
+        "mdcore",
+        "mdcore-wasm",
+        "shell",
+        "shell-native",
+        "pdf",
+        "settings",
+    ] {
         let mf = read(&format!("crates/{c}/Cargo.toml"));
         assert!(
             mf.contains("version.workspace = true"),
