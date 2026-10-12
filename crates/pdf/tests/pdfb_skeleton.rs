@@ -1078,6 +1078,65 @@ fn source_mirrors_mdcore_five_values() {
     }
 }
 
+/// t8 复用地基轮：镜像锁**双向化**。既有 source_mirrors_mdcore_five_values
+/// 锁的是"五值在场"——P6 §4.1-D2 缺口：mdcore **新增**第六个 Source 值时
+/// 不报警（单向漂移静默发生，pdf 侧封闭枚举遇未知 serde tag 才在运行时
+/// 炸）。本测试补两个方向的"多侧"守卫：
+/// (c) mdcore 侧恰五变体计数锁（文件文本级——变体声明行数 == 5）；
+/// (d) pdf 侧编译期穷尽锁（无通配的全臂 match——本 crate 加第六变体即
+///     编译失败，早于任何运行时断言）。
+#[test]
+fn source_mirror_bidirectional_exact_count() {
+    // (c) mdcore 侧：Source 枚举体内变体声明恰 5 个（多/少均报警）。
+    let md = fs::read_to_string(repo_root().join("crates/mdcore/src/history.rs"))
+        .expect("mdcore history.rs 在位");
+    let start = md.find("pub enum Source").expect("mdcore Source 枚举在位");
+    let body_start = start + md[start..].find('{').expect("Source 枚举体起始 {");
+    let body_end = body_start + md[body_start..].find("\n}").expect("Source 枚举体闭合");
+    let body = &md[body_start..body_end];
+    let mut variants: Vec<&str> = Vec::new();
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("///") || t.starts_with("//") || t.starts_with("#[") {
+            continue; // doc 注释 / 普通注释 / 属性，非变体声明
+        }
+        // 变体声明形态：`Name,` / `Name { .. }` / `Name(..)`——取首个
+        // 大写开头的标识符词。Source 为 unit 变体枚举，此解析即足够
+        // （若未来形态复杂化到误报，锁"宁可误报不可漏报"）。
+        let name = t
+            .split(|c: char| c == ',' || c == '{' || c == '(' || c == ' ')
+            .next()
+            .unwrap_or("");
+        if name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            variants.push(name);
+        }
+    }
+    assert_eq!(
+        variants.len(),
+        5,
+        "mdcore Source 变体数恰为 5（实测 {variants:?}）——新增/删除变体必须\
+         双侧同步：pdf 侧 Source 枚举 + 本镜像锁 + CONTRACT §6 表述"
+    );
+    for v in ["View", "Undo", "Redo", "Ai", "System"] {
+        assert!(variants.contains(&v), "mdcore Source 含变体 {v}");
+    }
+
+    // (d) pdf 侧：编译期穷尽锁。const fn + 无通配 match：本 crate Source
+    // 若新增第六变体，此 match 不再穷尽 → 编译失败（镜像的 pdf 侧"多出
+    // 变体"从此有机械守卫，与 (c) 的 mdcore 侧计数锁对称）。
+    const fn pdf_source_is_exactly_five(s: Source) -> u8 {
+        match s {
+            Source::View => 0,
+            Source::Undo => 1,
+            Source::Redo => 2,
+            Source::Ai => 3,
+            Source::System => 4,
+        }
+    }
+    assert_eq!(pdf_source_is_exactly_five(Source::View), 0);
+    assert_eq!(pdf_source_is_exactly_five(Source::System), 4);
+}
+
 // ---------------------------------------------------------------------------
 // 21. 协议常量
 // ---------------------------------------------------------------------------

@@ -41,13 +41,7 @@ impl WasmCore {
     ) -> Result<String, JsValue> {
         let ops: Vec<mdcore::op::Op> = serde_json::from_str(ops_json)
             .map_err(|e| JsValue::from_str(&format!("bad ops json: {e}")))?;
-        let source = match source {
-            "ai" => Source::Ai,
-            "undo" => Source::Undo,
-            "redo" => Source::Redo,
-            "system" => Source::System,
-            _ => Source::View,
-        };
+        let source = parse_source(source)?;
         let meta = ApplyMeta { source, command };
         match self.inner.apply_ops(ops, meta) {
             Ok(r) => Ok(serde_json::json!({ "revision": r.revision }).to_string()),
@@ -214,4 +208,55 @@ impl WasmCore {
 
 fn serialize_reject(reject: &mdcore::Reject) -> String {
     serde_json::to_string(reject).unwrap_or_else(|_| "\"invalid\"".into())
+}
+
+/// T3 复用地基轮：source 字符串 → Source 的**封闭映射**（typed reject）。
+///
+/// 修复前缺陷（审计 P3 G3/U2）：`_ => Source::View` 静默兜底——非法
+/// source 字符串被错标为人手编辑（View），污染 Human/AI 溯源（数据
+/// 正确性级缺口）。修复后五合法值显式映射，非法值显式拒绝；合法值
+/// 集合与 CONTRACT §3 面零变化（仅收紧未定义的非法输入路径）。
+fn parse_source(source: &str) -> Result<Source, JsValue> {
+    parse_source_str(source).map_err(|e| JsValue::from_str(&e))
+}
+
+/// 纯函数内核（host 可测——JsValue 在非 wasm 目标的构造即 panic，
+/// 故拒绝路径的测试走本函数；JsValue 包装由 wasm32 + web 三门禁背书）。
+fn parse_source_str(source: &str) -> Result<Source, String> {
+    match source {
+        "view" => Ok(Source::View),
+        "ai" => Ok(Source::Ai),
+        "undo" => Ok(Source::Undo),
+        "redo" => Ok(Source::Redo),
+        "system" => Ok(Source::System),
+        other => Err(format!(
+            "bad source: {other:?} (legal: view/ai/undo/redo/system)"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_source_str;
+    use mdcore::history::Source;
+
+    #[test]
+    fn five_legal_sources_map_explicitly() {
+        assert_eq!(parse_source_str("view").unwrap(), Source::View);
+        assert_eq!(parse_source_str("ai").unwrap(), Source::Ai);
+        assert_eq!(parse_source_str("undo").unwrap(), Source::Undo);
+        assert_eq!(parse_source_str("redo").unwrap(), Source::Redo);
+        assert_eq!(parse_source_str("system").unwrap(), Source::System);
+    }
+
+    #[test]
+    fn unknown_source_is_rejected_not_silently_view() {
+        // 修复前行为：非法串静默兜底为 View（溯源污染）。现必须显式拒绝。
+        for bad in ["", "human", "Human", "VIEW", "external", "ai "] {
+            assert!(
+                parse_source_str(bad).is_err(),
+                "source={bad:?} 必须拒绝——静默兜底为 View 会污染 Human/AI 溯源"
+            );
+        }
+    }
 }

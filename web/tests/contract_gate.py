@@ -66,10 +66,17 @@ def main() -> int:
                 events: Array.isArray(window.__mdcoreEvents),
                 perf: typeof window.__perf,
                 core: typeof window.__core,
+                view: typeof window.__view,
             })""")
             check("boot_surface_types",
-                  all(v == "function" for k, v in surf.items() if k not in ("events", "core", "perf"))
-                  and surf["events"] and surf["core"] == "object" and surf["perf"] == "object", json.dumps(surf))
+                  all(v == "function" for k, v in surf.items() if k not in ("events", "core", "perf", "view"))
+                  and surf["events"] and surf["core"] == "object" and surf["perf"] == "object"
+                  and surf["view"] == "object", json.dumps(surf))
+            # T3 复用地基轮 F-1 现状锁：__wasmMemory/__heapTrace 仅渐进路径
+            # 安装——默认一次性启动后不在场（此前契约误记"恒在"，已勘误）。
+            check("boot_progressive_only_members_absent_by_default",
+                  page.evaluate("window.__wasmMemory === undefined && window.__heapTrace === undefined"),
+                  "默认启动后 __wasmMemory/__heapTrace 应不在场（渐进路径专属）")
 
             # ---- §3.3 __bridge 清单 ----
             br = page.evaluate("""() => ({
@@ -164,6 +171,19 @@ def main() -> int:
                   and len(spy2) == 1  # 拒绝写入不派事件
                   and st3["schema_version"] == 1 and st3["appearance"]["theme"] == "dark"
                   and st3["appearance"]["font_size_px"] == 15, json.dumps(rejected))
+
+            # ---- §3.1 F-1 对侧现状锁：渐进路径专属成员在场 ----
+            # 默认启动缺席已由 boot_progressive_only_members_absent_by_default
+            # 锁定；此处开 ?chunks=2 渐进页验在场（CONTRACT §3 勘误后双侧
+            # 与实现一致——T3 复用地基轮）。
+            ppage = browser.new_page()
+            ppage.goto("http://127.0.0.1:8931/index.html?chunks=2")
+            ppage.wait_for_function("window.__ready === true", timeout=30000)
+            check("boot_progressive_only_members_present_on_progressive_boot",
+                  ppage.evaluate("typeof window.__wasmMemory === 'object' && window.__wasmMemory !== null"
+                                 " && Array.isArray(window.__heapTrace)"),
+                  "渐进启动应安装 __wasmMemory(Memory)/__heapTrace(数组)")
+            ppage.close()
 
             browser.close()
         srv.shutdown()

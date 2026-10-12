@@ -58,8 +58,11 @@ fn save_document(session: &DocumentSession) -> (String, String);   // (markdown,
 `__ready: boolean`；`__core`（WasmCore）；`__view`（CM6 EditorView）；`__bridge`；
 `__blocks(): BlockInfo[]`；`__blockCount(): number`；`__md(): string`；
 `__memStats(): Record`；`__mdcoreEvents: CoreEvent[]`（新核事件流起点，重建清零）；
-`__perf`（loadMs/typeMs/fallbackSyncMs/undoMs/progressive）；`__wasmMemory`；
-`__heapTrace`；`__contractVersion: 1`。
+`__perf`（loadMs/typeMs/fallbackSyncMs/undoMs/progressive）；`__contractVersion: 1.1`。
+
+**渐进路径专属**（仅 `?chunks=K>1` 渐进启动安装；一次性启动与 `__inject`
+重建不安装——T3 复用地基轮勘误对齐，此前误记为恒在）：
+`__wasmMemory`；`__heapTrace`。
 
 ### 宿主注入面（R23-d 冻结）
 
