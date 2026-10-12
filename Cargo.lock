@@ -487,6 +487,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-office"
+version = "0.1.0"
+
+[[package]]
 name = "mdc-pdf"
 version = "0.1.0"
 dependencies = [
