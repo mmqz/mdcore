@@ -27,12 +27,13 @@
 ## 3. 常驻门禁（每轮收口必须双绿）
 
 1. `bash compliance/scan.sh`（denylist 门禁：品牌词/上游特有词扫描，strict 0 / ns 0）
-2. `cargo test --workspace`（25 套件语义锁全绿，259 用例——2026-10-11
-   PDF-e 轮 + T2-fix 终修实跑口径：252 T1 基线 + 5 默认面安全锁
-   [pdfb_skeleton 33→35 / pdfc_cache_worker 18→21] + T2-fix 2 工厂
-   panic 语义锁 [pdfc_cache_worker 21→23]；套件口径 = 24 个非空测试目标套件 +
-   shell-native 的 1-ignored doc-test 行〔T1-verify 终审脚注，拆解见
-   gates.md T1 节〕；feature 面计数见 gates.md PDF-e 节门禁）
+2. `cargo test --workspace`（语义锁全绿，**361 用例**——2026-10-13
+   xlsx-r1 阶段 B 实跑口径：PDF-e/T2-fix 259 + T3 复用 8 = 267 +
+   office-impl T1 23 [18 集成 + 5 文档] = 290 + 阶段 B 71 [office
+   url_policy 16 单测 + 消毒五面靶向安全 44 + office-io io 单测 9 +
+   17 件语料 harness 2]；46 test result 行全 ok / 31 非空套件；
+   290 基线只增不改；feature 面计数见 gates.md PDF-e 节门禁——
+   lopdf 79 / pdfium 81+6i / dual 109+6i 本轮复验逐位一致零波及）
 3. 启用新系统依赖（wry/tao/GTK 系）后：重跑 SBOM 并更新
    `compliance_release/THIRD-PARTY-NOTICES`（LGPL 系统库动态链接政策）。
 

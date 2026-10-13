@@ -16,6 +16,10 @@
 │   页/大纲/标注三层模型 + Command 边界 + 安全策略（S1-S5） +       │
 │   pdfium 引擎/LRU 页缓存/渲染工人（engine-pdfium）+ lopdf 标注    │
 │   增量写（engine-lopdf）；mdcore://pdf 协议草案（CONTRACT §6）      │
+├─ Office 域 mdc-office + mdc-office-io（xlsx-r1 阶段 B）───────────┤
+│   消毒六面（CSV 公式/XML 字符/XML 实体/HTML/域白名单/URL scheme）  │
+│   + XLSX 读路径（容器双门：声明四检查+谎言头闭环 → calamine 四面） │
+│   三域纪律：对 mdcore 零编译依赖；DOCX 独立模块边界（零预设计）    │
 ├─ 编辑核 mdcore（Rust，五 crate workspace）────────────────────────┤
 │   ropey 树 + op log + undo（ADR-B2/B4/B5）+ 块身份（ADR-B1）        │
 │   revision/anchor（R13/R17 语义锁）+ 渐进打开 + Human+AI 共用状态    │
@@ -38,7 +42,7 @@
 ## 构建与门禁
 
 ```bash
-cargo test --workspace              # 25 套件语义锁（259 用例；R23-e 148 + R24-a 16 + 质量审计 7 + R24-b 12 + R24-c 4 + T1-fix-a 5 + PDF-b 33 + PDF-c 常开 18 + PDF-d 常开 9 + PDF-e 5 + T2-fix 2 [工厂 panic 语义锁]；2026-10-10 实跑复核 = 245 旧基线 + T1-fix-a 5 mdcore 质量锁 + T1-fix-b 2 pdf 锁 [pdfb_skeleton 32→33 / pdfc_cache_worker 17→18]；2026-10-11 PDF-e 5 + T2-fix 2 [pdfc_cache_worker 21→23]；默认零引擎依赖，裸环境全绿）
+cargo test --workspace              # 语义锁全绿 361 用例（46 test result 行全 ok / 31 非空套件；PDF-e+T2-fix 259 → T3 复用 267 → office-impl T1 290 [+18 集成 +5 文档] → xlsx-r1 阶段 B 361 [+71：office url_policy 16 单测 + 消毒五面靶向安全 44 + office-io io 单测 9 + 17 件语料 harness 2]；290 基线只增不改；默认零引擎依赖，裸环境全绿）
 cargo test -p mdc-pdf --features engine-pdfium    # +13 引擎锁 + 6 #[ignore] 性能门（需 libpdfium.so，定位序：MDC_PDFIUM_LIB → 候选清单 → 系统）
 cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf    # +17 PDF-d 标注写锁（lopdf 增量写；需 libpdfium.so + spike fixtures）
 cargo test -p mdc-pdf --features engine-pdfium --test pdfc_perf -- --ignored --nocapture    # 性能门实测打印（阈值 = 实测×3）
