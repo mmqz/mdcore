@@ -207,6 +207,9 @@ fn dim4_multisheet(dir: &str) -> String {
 
 /// dim5 关系引用（外链 URL×2 + internal 内部链接 + 纯文本 URL 值）。
 fn dim5_relationships(dir: &str) -> String {
+    // v2：五链接形态（= 分析仓语料 dim5 v2 同构）——外链纯 /
+    // 外链含 & 查询参数（实体补偿证据链）/ 内部 / tooltip /
+    // file 子锚（外部工作簿引用形态，PLAN 原规格补齐）。
     let p = format!("{dir}/dim5_relationships.xlsx");
     let mut wb = Workbook::new();
     {
@@ -220,7 +223,19 @@ fn dim5_relationships(dir: &str) -> String {
         ws.write_url_with_text(1, 0, "https://example.org/path?q=1&x=2", "带文本链接")
             .unwrap();
         ws.write_url(2, 0, "internal:Target!A1").unwrap();
+        // URL 样式字符串（非超链接单元格，纯值面）
         ws.write_string(3, 0, "https://example.net/plain").unwrap();
+        ws.write_url_with_options(
+            4,
+            0,
+            "https://example.com/tip",
+            "悬停有提示的链接",
+            "悬停提示文本",
+            None,
+        )
+        .unwrap();
+        ws.write_url(5, 0, "file:///C:/refs/Book2.xlsx#Sheet1!A1")
+            .unwrap();
     }
     let target = wb.add_worksheet();
     target.set_name("Target").unwrap();
@@ -525,7 +540,24 @@ fn anchor_ok(file: &str, b: &Book) -> bool {
         "dim2_styles.xlsx" => b.non_empty_cells() == 6,
         "dim3_merged.xlsx" => b.sheets[0].merges.len() == 3 && b.non_empty_cells() == 4,
         "dim4_multisheet.xlsx" => b.sheet_names() == vec!["Data", "RefSheet", "Calc", "TailEmpty"],
-        "dim5_relationships.xlsx" => b.non_empty_cells() == 5,
+        "dim5_relationships.xlsx" => {
+            // v2：6 值格（Links：4 链接格 + 纯文本 + 2 新链接格）+
+            // Target 1 格 = 7；五链接形态 + 实体补偿链锚定。
+            b.non_empty_cells() == 7
+                && b.sheets[0].hyperlinks.len() == 5
+                && b.sheets[0]
+                    .hyperlinks
+                    .iter()
+                    .any(|h| h.target.as_deref() == Some("https://example.org/path?q=1&x=2"))
+                && b.sheets[0]
+                    .hyperlinks
+                    .iter()
+                    .any(|h| h.location.as_deref() == Some("Sheet1!A1"))
+                && b.sheets[0]
+                    .hyperlinks
+                    .iter()
+                    .any(|h| h.tooltip.as_deref() == Some("悬停提示文本"))
+        }
         // 容忍度发现锚点（mal7c / mal7e）在专测钉定，此处归类即可
         _ => true,
     }

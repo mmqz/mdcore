@@ -2,7 +2,7 @@
 name = "mdc-office-io"
 version.workspace = true
 edition = "2021"
-description = "Office 域 XLSX IO 引擎侧基础设施（xlsx-r1 阶段 B）：容器预扫门（声明值四检查）+ 尺寸诚实性门（谎言头闭环，zip 8.6 读界无内建强制的策略层补面）+ calamine 读取包装（表名/值矩阵/公式文本/合并范围四 API 面）+ 统一错误三分（拒绝/容器损坏/解析错误）。三方依赖 = 分析仓 ADR-O1 已验证候选（calamine/zip，版本按 xlsx-r1/DEPS.md 锁定）；对 mdcore 零编译依赖（三域纪律）。"
+description = "Office 域 XLSX IO 引擎侧基础设施（xlsx-r1 阶段 B）：容器预扫门（声明值四检查）+ 尺寸诚实性门（谎言头闭环，zip 8.6 读界无内建强制的策略层补面）+ calamine 读取包装（表名/值矩阵/公式文本/合并/超链接五 API 面，v2 实体补偿）+ 统一错误三分（拒绝/容器损坏/解析错误）。三方依赖 = 分析仓 ADR-O1 已验证候选（calamine/zip，版本按 xlsx-r1/DEPS.md 锁定）；对 mdcore 零编译依赖（三域纪律）。"
 
 # xlsx-r1 阶段 B 双 crate 方案 A（分析仓 xlsx-r1/REPORT.md §2）：
 # mdc-office 保持纯 std 零三方依赖（T1 自锁测试不变量），IO 三方
