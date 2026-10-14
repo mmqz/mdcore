@@ -29,6 +29,12 @@
 //! 安全依据：分析仓 SECURITY_POLICY §2.1 四检查 + §3 限额表 +
 //! §2.1 第 5 项（门 3，v1.1）；实证：xlsx-r1 t10-d harness 17/17
 //! 零 panic（read_proto.rs）+ 本模块 Phase 2 测试组。
+//!
+//! **t17 增量（2026-10-14）**：字节面读入口
+//! （[`read_book_from_bytes`] / [`read_book_from_bytes_with_options`]）
+//! ——wasm 桥消费面（wasm32 无文件系统），门结构与路径入口恒等
+//! （门 1/门 2+3/全部上限两模式恒同）；五面提取抽出共享核
+//! `extract_sheets`（两入口同一实现——行为单一真源）。
 
 use calamine::{Data, Dimensions, Hyperlink, Range, Reader, Xlsx};
 
@@ -492,6 +498,45 @@ pub fn read_book_with_options(path: &str, opts: &ReadOptions) -> Result<Book, Re
 
     let mut book: Xlsx<_> =
         calamine::open_workbook(path).map_err(|e| ReadError::ParseError(format!("open: {e}")))?;
+    extract_sheets(&mut book, warnings)
+}
+
+/// 读入口（字节面——t17 增量，wasm/内存消费方；门结构与 [`read_book`]
+/// 恒等）。动机与 docx.rs `read_docx_from_bytes`（xlsx-r2 Phase 3）
+/// 同款：wasm32-unknown-unknown 无文件系统，非路径消费方（wasm 桥）
+/// 需要字节入口过同一套门。calamine 侧 `Xlsx::new(Cursor)` 直读
+/// （`open_workbook` 为文件便利面）。
+pub fn read_book_from_bytes(bytes: &[u8]) -> Result<Book, ReadError> {
+    read_book_from_bytes_with_options(bytes, &ReadOptions::default())
+}
+
+/// 读入口（字节面 + 选项——t17）：[`ReadOptions::compat`] 语义与
+/// [`read_book_with_options`] 恒等（门 1/门 2/安全上限两模式恒不放松）。
+pub fn read_book_from_bytes_with_options(
+    bytes: &[u8],
+    opts: &ReadOptions,
+) -> Result<Book, ReadError> {
+    let cursor = std::io::Cursor::new(bytes);
+    let mut za =
+        zip::ZipArchive::new(cursor).map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
+    prescan(&mut za)?; // 门 1：声明值四检查
+    let mut warnings = Vec::new();
+    // 门 2+3 融合趟：尺寸诚实性 + 部件良构性（单次解压）。
+    verify_pass(&mut za, true, !opts.compat, &mut warnings)?;
+    drop(za);
+
+    let mut book: Xlsx<_> = Xlsx::new(std::io::Cursor::new(bytes))
+        .map_err(|e| ReadError::ParseError(format!("open: {e}")))?;
+    extract_sheets(&mut book, warnings)
+}
+
+/// calamine 五面提取共享核（路径/字节两入口同一实现——单一行为
+/// 真源，t17 抽出；提取逻辑与 xlsx-r2 Phase 2 起的 [`read_book`]
+/// 逐行相同）。
+fn extract_sheets<R: std::io::Read + std::io::Seek>(
+    book: &mut Xlsx<R>,
+    warnings: Vec<CompatibilityWarning>,
+) -> Result<Book, ReadError> {
     let names = book.sheet_names().to_vec();
     let mut sheets = Vec::with_capacity(names.len());
     for name in &names {
@@ -1085,5 +1130,43 @@ mod tests {
             Some("Sheet1!A1")
         );
         let _ = std::fs::remove_file(&p);
+    }
+
+    /// t17：字节入口与路径入口行为等价（同一共享核 extract_sheets）
+    /// ——同字节两入口读出同构 Book。
+    #[test]
+    fn bytes_entry_matches_path_entry() {
+        let p = tmp("bytes_parity");
+        let entries = minimal_xlsx("hello bytes");
+        write_zip(&p, &entries);
+        let bytes = std::fs::read(&p).unwrap();
+        let by_path = read_book(&p).unwrap();
+        let by_bytes = read_book_from_bytes(&bytes).unwrap();
+        assert_eq!(by_path.sheet_names(), by_bytes.sheet_names());
+        assert_eq!(by_path.non_empty_cells(), by_bytes.non_empty_cells());
+        assert_eq!(by_bytes.sheet_names(), vec!["S1"]);
+        assert_eq!(by_bytes.non_empty_cells(), 1);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// t17：字节入口敌意面——垃圾字节/截断档案 → ContainerCorrupt
+    ///（门结构同路径入口：EOCD 不可读即拒）。
+    #[test]
+    fn bytes_entry_garbage_and_truncated_reject() {
+        for garbage in [&b""[..], &[0u8, 1, 2, 99, 255], b"not a zip at all"] {
+            match read_book_from_bytes(garbage) {
+                Err(ReadError::ContainerCorrupt(_)) => {}
+                other => panic!("expected ContainerCorrupt, got {other:?}"),
+            }
+        }
+        let p = tmp("bytes_trunc");
+        let entries = minimal_xlsx("truncate me");
+        write_zip(&p, &entries);
+        let bytes = std::fs::read(&p).unwrap();
+        let _ = std::fs::remove_file(&p);
+        match read_book_from_bytes(&bytes[..bytes.len() / 2]) {
+            Err(ReadError::ContainerCorrupt(_)) => {}
+            other => panic!("expected ContainerCorrupt for truncated, got {other:?}"),
+        }
     }
 }

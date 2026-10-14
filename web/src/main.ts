@@ -66,7 +66,7 @@ import {
   WidgetType,
   keymap,
 } from '@codemirror/view';
-import init, { WasmCore, import_docx } from '../pkg/mdcore_wasm.js';
+import init, { WasmCore, import_docx, import_xlsx } from '../pkg/mdcore_wasm.js';
 
 // ---------------------------------------------------------------------------
 // 核侧数据形状（blocks_json / take_events 的最小面）
@@ -1218,6 +1218,10 @@ declare global {
     __importDocx: (bytes: Uint8Array) => { ok: true; markdown: string; stats: Record<string, unknown> } | { ok: false; code: string; message: string };
     /** t16：最近一次 DOCX 导入结果（成功 = {ok, markdown, stats}；失败 = {ok:false, code, message}）。 */
     __lastDocxImport: { ok: boolean; markdown?: string; stats?: Record<string, unknown>; code?: string; message?: string } | null;
+    /** t17：XLSX 字节导入（表→GFM 表映射 + 规模上限 stats；成功后经 __inject 重建核）。 */
+    __importXlsx: (bytes: Uint8Array) => { ok: true; markdown: string; stats: Record<string, unknown> } | { ok: false; code: string; message: string };
+    /** t17：最近一次 XLSX 导入结果（成功 = {ok, markdown, stats}；失败 = {ok:false, code, message}）。 */
+    __lastXlsxImport: { ok: boolean; markdown?: string; stats?: Record<string, unknown>; code?: string; message?: string } | null;
     /** 契约版本（变更须升版并三处同步：常量 + CONTRACT.md + 双侧锁测试）。 */
     __contractVersion: number;
     __ready: boolean;
@@ -1546,6 +1550,110 @@ function setupDocxImport(): void {
 }
 
 setupDocxImport();
+
+// ---------------------------------------------------------------------------
+// t17 — XLSX 导入（office-io 读面经 wasm 桥的 web 消费切片，t16 模式
+// 对称展开）
+//
+// 路径：file input → bytes → wasm import_xlsx（容器三门兼容模式读 +
+// 表→GFM 表映射 + 规模上限）→ 成功经 __inject（既有宿主注入契约）；
+// 失败 = typed 错误码 + 消息入状态行，编辑器现状零触碰。wasm 面形状
+// 与错误码表 = crates/mdcore-wasm/src/xlsx_import.rs 模块文档（单一
+// 真源）。只读消费——XLSX 维持 C3 读—改—重建裁决。
+// ---------------------------------------------------------------------------
+type XlsxImportStats = {
+  sheets: number;
+  tables: number;
+  empty_sheets: number;
+  rows: number;
+  cells: number;
+  formulas_flattened: number;
+  merged_ranges: number;
+  hyperlinks_dropped: number;
+  sheets_dropped: number;
+  rows_dropped: number;
+  cols_dropped: number;
+  warnings: { part: string; kind: string; detail: string }[];
+};
+
+/** wasm import_xlsx 的薄包装：JSON 出入口 + 异常 → typed 结果（不抛出）。 */
+function xlsxImport(bytes: Uint8Array):
+  | { ok: true; markdown: string; stats: XlsxImportStats }
+  | { ok: false; code: string; message: string } {
+  try {
+    const payload = JSON.parse(import_xlsx(bytes)) as { markdown: string; stats: XlsxImportStats };
+    return { ok: true, markdown: payload.markdown, stats: payload.stats };
+  } catch (e: unknown) {
+    // Rust 侧 Err(JsValue::from_str(json)) → JS 串异常；防御非 JSON 面
+    //（理论上不可达——wasm 面错误恒 JSON）。
+    const raw = typeof e === 'string' ? e : (e as { message?: string })?.message ?? '';
+    try {
+      const parsed = JSON.parse(raw) as { code: string; message: string };
+      return { ok: false, code: parsed.code, message: parsed.message };
+    } catch {
+      return { ok: false, code: 'unknown', message: raw || String(e) };
+    }
+  }
+}
+
+/** stats → 状态行（导入摘要；丢弃面计数显式化——诚实边界）。 */
+function xlsxStatusLine(stats: XlsxImportStats): string {
+  const parts = [
+    `${stats.sheets} sheet${stats.sheets === 1 ? '' : 's'}`,
+    `${stats.tables} table${stats.tables === 1 ? '' : 's'}`,
+    `${stats.rows} row${stats.rows === 1 ? '' : 's'}`,
+  ];
+  if (stats.empty_sheets > 0) parts.push(`${stats.empty_sheets} empty`);
+  if (stats.formulas_flattened > 0) parts.push(`${stats.formulas_flattened} formula${stats.formulas_flattened === 1 ? '' : 's'} flattened`);
+  if (stats.merged_ranges > 0) parts.push(`${stats.merged_ranges} merge${stats.merged_ranges === 1 ? '' : 's'}`);
+  if (stats.hyperlinks_dropped > 0) parts.push(`${stats.hyperlinks_dropped} link${stats.hyperlinks_dropped === 1 ? '' : 's'} dropped`);
+  if (stats.sheets_dropped > 0) parts.push(`${stats.sheets_dropped} sheet${stats.sheets_dropped === 1 ? '' : 's'} truncated`);
+  if (stats.rows_dropped > 0 || stats.cols_dropped > 0) parts.push(`${stats.rows_dropped} rows/${stats.cols_dropped} cols truncated`);
+  if (stats.warnings.length > 0) parts.push(`${stats.warnings.length} warning${stats.warnings.length === 1 ? '' : 's'}`);
+  return `imported: ${parts.join(' · ')}`;
+}
+
+function setupXlsxImport(): void {
+  const fileInput = document.getElementById('xlsx-file') as HTMLInputElement | null;
+  const statusEl = document.getElementById('xlsx-status') as HTMLElement | null;
+  const showStatus = (text: string, isError: boolean): void => {
+    if (!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.classList.toggle('xlsx-error', isError);
+  };
+  window.__importXlsx = (bytes: Uint8Array):
+    | { ok: true; markdown: string; stats: Record<string, unknown> }
+    | { ok: false; code: string; message: string } => {
+    const result = xlsxImport(bytes);
+    if (!result.ok) {
+      window.__lastXlsxImport = { ok: false, code: result.code, message: result.message };
+      showStatus(`import failed (${result.code}): ${result.message}`, true);
+      return { ok: false, code: result.code, message: result.message };
+    }
+    if (typeof window.__inject !== 'function') {
+      // 启动竞态兜底（__inject 在 main() 完成安装；正常路径不可达）。
+      const code = 'not_ready';
+      window.__lastXlsxImport = { ok: false, code, message: 'editor boot incomplete' };
+      showStatus('import failed (not_ready): editor boot incomplete', true);
+      return { ok: false, code, message: 'editor boot incomplete' };
+    }
+    window.__inject(result.markdown); // 既有宿主注入契约：整体重建核
+    window.__lastXlsxImport = { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
+    showStatus(xlsxStatusLine(result.stats), false);
+    return { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
+  };
+  fileInput?.addEventListener('change', () => {
+    void (async (): Promise<void> => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      window.__importXlsx(new Uint8Array(await file.arrayBuffer()));
+      fileInput.value = ''; // 同名重选可再触发 change
+    })();
+  });
+  window.__lastXlsxImport = null;
+}
+
+setupXlsxImport();
 main().catch((e: unknown) => {
   const el = document.getElementById('debug');
   if (el) el.textContent = `boot failed: ${String(e)}`;

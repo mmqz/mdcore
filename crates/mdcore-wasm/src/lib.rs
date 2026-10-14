@@ -10,8 +10,14 @@
 //! t16 增补（2026-10-17）：[`docx_import`] 模块 = office-io 首个消费边
 //!（DOCX → Markdown 导入，自由函数 [`docx_import::import_docx`]——不碰
 //! WasmCore 状态，类面零变化；三域纪律新边仅 mdcore-wasm → office-io）。
+//!
+//! t17 增补（2026-10-14）：[`xlsx_import`] 模块 = XLSX 读面 web 消费切片
+//!（自由函数 [`xlsx_import::import_xlsx`]，t16 模式对称展开——容器三门
+//! 兼容模式读 + 表→GFM 表映射 + typed 错误码族；只读消费，XLSX 维持
+//! C3 读—改—重建裁决）。
 
 pub mod docx_import;
+pub mod xlsx_import;
 
 use std::sync::Arc;
 
