@@ -2,7 +2,7 @@
 name = "mdc-office-io"
 version.workspace = true
 edition = "2021"
-description = "Office 域 XLSX IO 引擎侧基础设施（xlsx-r1 阶段 B）：容器预扫门（声明值四检查）+ 尺寸诚实性门（谎言头闭环，zip 8.6 读界无内建强制的策略层补面）+ calamine 读取包装（表名/值矩阵/公式文本/合并/超链接五 API 面，v2 实体补偿）+ 统一错误三分（拒绝/容器损坏/解析错误）。三方依赖 = 分析仓 ADR-O1 已验证候选（calamine/zip，版本按 xlsx-r1/DEPS.md 锁定）；对 mdcore 零编译依赖（三域纪律）。"
+description = "Office 域 XLSX IO 引擎侧基础设施（xlsx-r1 阶段 B + xlsx-r2 Phase 1）：容器预扫门（声明值四检查）+ 尺寸诚实性门（谎言头闭环，zip 8.6 读界无内建强制的策略层补面）+ calamine 读取包装（表名/值矩阵/公式文本/合并/超链接五 API 面，v2 实体补偿）+ 新建工作簿写 API（rust_xlsxwriter 包装，引擎类型零泄漏 + 流式纪律 typed 拦截）+ 统一错误三分（拒绝/容器损坏/解析错误）。三方依赖 = 分析仓 ADR-O1 已验证候选（calamine/zip/rust_xlsxwriter，版本按 xlsx-r1/DEPS.md 锁定）；对 mdcore 零编译依赖（三域纪律）。"
 
 # xlsx-r1 阶段 B 双 crate 方案 A（分析仓 xlsx-r1/REPORT.md §2）：
 # mdc-office 保持纯 std 零三方依赖（T1 自锁测试不变量），IO 三方
@@ -11,22 +11,27 @@ description = "Office 域 XLSX IO 引擎侧基础设施（xlsx-r1 阶段 B）：
 #
 # 版本锁定依据 = 分析仓 xlsx-r1/DEPS.md §1（2026-10-13 核验）：
 # - calamine 0.36（lock 钉 0.36.1，MIT）：仅读取四 API 面；
-# - zip 8.6（lock 钉 8.6.0，MIT OR Apache-2.0）：容器双门。与
+# - zip 8.6（lock 钉 8.6.0，MIT 单许可）：容器双门。与
 #   calamine/rust_xlsxwriter 传递面（zip ^8.6）对齐——多版本并存
 #   消除；zip 8.6 读界无声明值强制（lie86 探针定谳），谎言头防线
 #   由策略层 verify_actual_sizes 承载（src/io.rs 门 2）。
 #   供应链注记：zip 活跃线在 zip-rs/zip2 仓（crates.io 包名 zip），
 #   zip-rs/zip master 停滞 0.6.x 禁作参照（ADR-O1 O1-5）。
 #
+# xlsx-r2 Phase 1（2026-10-14，用户三阶段指令）：rust_xlsxwriter
+# 由 dev-dependency 升产品依赖——C2 写面产品化（正式写 API =
+# src/write.rs）。许可证 MIT OR Apache-2.0 按 MIT 履行（DEPS.md §1
+# 阶段 B 修正登记；NOTICES v1.4 增量：dev/lock 面分类账条目升
+# 正文产品面）。闭包零新增（rust_xlsxwriter 传递依赖仅 zip，已在）。
+#
 # dev-dependencies（测试面，不进产品闭包）：
-# - rust_xlsxwriter：7 维语料正向五维生成（写读互证，C2 证据链）；
 # - flate2：谎言头测试的原始 deflate 流构造（与 zip 内部同源，非
 #   第二实现）。
 
 [dependencies]
 calamine = "0.36"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
+rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
 
 [dev-dependencies]
-rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
