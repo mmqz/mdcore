@@ -6,6 +6,12 @@
 //!
 //! 所有方法入参/出参均为 JSON 字符串（wasm-bindgen 边界保持零宏魔法）。
 //! u64 往返为 JS BigInt（revision / id 由宿主按需 Number() 化）。
+//!
+//! t16 增补（2026-10-17）：[`docx_import`] 模块 = office-io 首个消费边
+//!（DOCX → Markdown 导入，自由函数 [`docx_import::import_docx`]——不碰
+//! WasmCore 状态，类面零变化；三域纪律新边仅 mdcore-wasm → office-io）。
+
+pub mod docx_import;
 
 use std::sync::Arc;
 

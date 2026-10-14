@@ -625,6 +625,7 @@ dependencies = [
 name = "mdcore-wasm"
 version = "0.1.0"
 dependencies = [
+ "mdc-office-io",
  "mdcore",
  "serde_json",
  "wasm-bindgen",
