@@ -59,6 +59,13 @@
 //! - 日期/时间值以序列数（[`CellValue::Number`]）写入——无 numFmt
 //!   时无日历显示形态（显示层语义，超出写面宣称）。
 //!
+//! - **流式面目标条件化（t19，2026-10-14）**：[`WorkbookWriter::
+//!   add_sheet_streaming`] 仅在非 wasm32 目标存在——引擎流式背书 =
+//!   tempfile（`constant_memory` 特性下 `Worksheet::new()` 对每张表
+//!   急切 `tempfile_in(temp_dir())`，worksheet.rs:1742），wasm32 无
+//!   文件系统 → 该面在 wasm32 结构性不可用（API 缺席，非降级；
+//!   Cargo.toml t19 注记 + wasm32 消费方即 mdcore-wasm 仅用非流式面）。
+//!
 //! ## 不支持面登记（诚实边界，未实测不宣称）
 //!
 //! - 完整样式模型（条件格式/主题色/富文本内联样式——style_probe
@@ -289,6 +296,11 @@ impl WorkbookWriter {
 
     /// 加流式表（constant_memory——行序前向写纪律由包装层 typed 强制；
     /// 大表场景，T3 探针 100 万格量级验证）。同一工作簿可混用两种表。
+    ///
+    /// **仅非 wasm32 目标**（t19）：引擎流式背书 = tempfile
+    /// （`constant_memory` 特性使 `Worksheet::new()` 急切建临时文件
+    /// ——wasm32 无文件系统，结构性不可用，见模块文档）。
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn add_sheet_streaming(&mut self, name: &str) -> Result<SheetWriter<'_>, WriteError> {
         self.add_sheet_inner(name, true)
     }
@@ -299,11 +311,18 @@ impl WorkbookWriter {
         streaming: bool,
     ) -> Result<SheetWriter<'_>, WriteError> {
         validate_sheet_name(name, &self.sheet_names)?;
+        // wasm32：流式面结构性不可用（引擎 tempfile 背书，模块文档）——
+        // add_sheet_streaming 已目标条件化缺席，此分支恒 false。
+        #[cfg(target_arch = "wasm32")]
+        let _ = streaming;
+        #[cfg(not(target_arch = "wasm32"))]
         let ws = if streaming {
             self.wb.add_worksheet_with_constant_memory()
         } else {
             self.wb.add_worksheet()
         };
+        #[cfg(target_arch = "wasm32")]
+        let ws = self.wb.add_worksheet();
         ws.set_name(name)
             .map_err(|e| WriteError::Engine(format!("set_name: {e}")))?;
         self.sheet_names.push(name.to_string());
@@ -600,6 +619,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn streaming_backward_write_typed_rejected() {
         // 引擎静默丢弃路径（worksheet.rs insert_cell：row < current_row
         // → eprintln + return）→ 包装层 typed 拦截，绝不静默丢数据。
@@ -617,6 +637,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn streaming_merge_backward_rejected() {
         let mut w = WorkbookWriter::new();
         let mut s = w.add_sheet_streaming("S").unwrap();
@@ -694,6 +715,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn write_row_sequential() {
         let mut w = WorkbookWriter::new();
         let mut s = w.add_sheet_streaming("S").unwrap();

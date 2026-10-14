@@ -20,9 +20,15 @@
 //!（[`WasmCore::export_docx`] 增量方法——编辑器当前块树 → DocxWriter →
 //! zip 字节下载；与 t16 导入合流 = DOCX 往返闭环；映射降级面显式登记
 //! 于该模块文档）。
+//!
+//! t19 增补（2026-10-14）：[`xlsx_export`] 模块 = XLSX 写面 web 消费切片
+//!（[`WasmCore::export_xlsx`] 增量方法——编辑器当前块树 →
+//! WorkbookWriter → zip 字节下载；与 t17 导入合流 = XLSX 往返闭环，
+//! office 消费三部曲收口；栅格映射降级面显式登记于该模块文档）。
 
 pub mod docx_export;
 pub mod docx_import;
+pub mod xlsx_export;
 pub mod xlsx_import;
 
 use std::sync::Arc;

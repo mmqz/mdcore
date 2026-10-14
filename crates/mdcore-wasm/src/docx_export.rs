@@ -148,7 +148,9 @@ fn runs_from(text: &str, marks: &[MarkSpan]) -> Vec<RunSpec> {
 
 /// 块文本 → docx 段落行序列（'\n' 分行 + 每行剥一个行尾 '\r'——
 /// CRLF 容忍；孤立 '\r' 原样透传，登记见模块文档）。
-fn text_lines(text: &str) -> Vec<&str> {
+/// t19：GFM 行切分语义单一真源 —— [`crate::xlsx_export`] 共用
+///（pub(crate)，无行为变化）。
+pub(crate) fn text_lines(text: &str) -> Vec<&str> {
     text.split('\n')
         .map(|l| l.strip_suffix('\r').unwrap_or(l))
         .collect()
@@ -241,7 +243,9 @@ fn is_separator_row(cells: &[String]) -> bool {
 
 /// Table 块文本 → 表行序列（首个发射行后紧跟的分隔形行剔除；
 /// 单元格 `\n`/`\r` → 空格；空白行跳过）。0 行 = 空表 → 调用方跳过。
-fn table_rows(text: &str) -> Vec<Vec<String>> {
+/// t19：GFM 管道行语义单一真源 —— [`crate::xlsx_export`] 共用
+///（pub(crate)，无行为变化）。
+pub(crate) fn table_rows(text: &str) -> Vec<Vec<String>> {
     let mut out: Vec<Vec<String>> = Vec::new();
     for line in text_lines(text) {
         if line.trim().is_empty() {

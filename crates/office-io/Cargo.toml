@@ -31,7 +31,6 @@ description = "Office 域 XLSX IO 引擎侧基础设施（xlsx-r1 阶段 B + xls
 [dependencies]
 calamine = "0.36"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
-rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
 # xlsx-r2 Phase 2（2026-10-14，用户三阶段指令）：门 3 部件良构性
 # 校验件。quick-xml 0.41.0 原已在产品闭包（calamine 传递依赖，NOTICES
 # v1.4 正文在档）——升直依赖零闭包增量、零 lock 变化；仅用于流式
@@ -47,6 +46,37 @@ quick-xml = "0.41"
 # 上游已合入下游 fork 功能线（FORK_CHANGES.md）——锁版本 + 破坏性
 # 变更先跑读侧往返测试（tests/docx_roundtrip.rs 即此纪律的常驻化）。
 docx-rs = { version = "0.4", default-features = false }
+
+# ---------------------------------------------------------------------------
+# t19（2026-10-14）：rust_xlsxwriter 依赖边目标分裂 + "wasm" 特性——
+# wasm32 运行时崩溃面修复（两项一手发现，e2e 实证；wasm32 check 编译
+# 期均不可见——t16「可行性探针一次过」只证编译不证运行）：
+#
+# 发现①：`Workbook::new()`（workbook.rs:419）→ `DocProperties::new()`
+# → `ExcelDateTime::utc_now()` → `SystemTime::now()`（datetime.rs:1308）
+# ——wasm32-unknown-unknown 无时间系统，运行时 panic（wasm trap
+# "unreachable"）。引擎 `wasm` 特性把该分支切到 `js_sys::Date::now()`
+# （datetime.rs:1320，cfg = feature"wasm" AND target"wasm32"）——原生
+# 构建 cfg not(all(...)) 恒真 → SystemTime 分支不变（行为零变化）。
+#
+# 发现②：`constant_memory` 特性使 `Worksheet::new()`（worksheet.rs:1742）
+# 对**每一张表**（含非流式普通表）急切 `tempfile_in(std::env::temp_dir())`
+# ——wasm32 无文件系统，`temp_dir()` panic "no filesystem on this
+# platform"（std sys/paths/unsupported.rs:52）。流式背书 = tempfile 是
+# 引擎结构性质（上游文档明示 constant_memory 不支持 wasm）→ 该特性
+# 仅保留在非 wasm32 目标；write.rs 流式 API（add_sheet_streaming）
+# wasm32 目标条件化缺席（模块文档登记）。
+#
+# 闭包零新包：js-sys 0.3.106 / wasm-bindgen 0.2.129 均已在 lock
+# （chrono / console_error_panic_hook 等既有边）——lock 唯一 diff =
+# rust_xlsxwriter 条目 dependencies 数组 +2 行（t16 path 边「最小必然
+# diff 如实登记」先例）。
+# ---------------------------------------------------------------------------
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rust_xlsxwriter = { version = "0.99", features = ["constant_memory", "wasm"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+rust_xlsxwriter = { version = "0.99", features = ["wasm"] }
 
 [dev-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

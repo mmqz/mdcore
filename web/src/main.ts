@@ -1226,6 +1226,10 @@ declare global {
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
+    /** t19：当前编辑器文档 → XLSX 字节导出（块模型→WorkbookWriter 栅格映射 + 降级面；wasm 面/错误码 = xlsx_export.rs 模块文档单一真源）。 */
+    __exportXlsx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
+    /** t19：最近一次 XLSX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
+    __lastXlsxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
     /** 契约版本（变更须升版并三处同步：常量 + CONTRACT.md + 双侧锁测试）。 */
     __contractVersion: number;
     __ready: boolean;
@@ -1746,6 +1750,97 @@ function setupDocxExport(): void {
 }
 
 setupDocxExport();
+
+// ---------------------------------------------------------------------------
+// t19 — XLSX 导出（编辑器当前文档 → .xlsx 下载；office-io 写面经 wasm 桥）
+//
+// 路径：export 按钮 → window.__core.export_xlsx()（BlockTree →
+// WorkbookWriter 栅格映射 + 降级面显式注册——wasm 面与错误码表 =
+// crates/mdcore-wasm/src/xlsx_export.rs 模块文档单一真源）→ Blob +
+// a.download 下载 document.xlsx。状态行 = 大小 + 表数（__blocks
+// 块型近似 = wasm 真源的显示面：文本块>0 → Document 表 +1、每表块
+// +1、全零 → 1 空表）。与 t17 导入合流 = XLSX 往返闭环，office
+// 消费三部曲收口。
+// ---------------------------------------------------------------------------
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** 工作簿表数近似（wasm 真源 = xlsx_export.rs 命名策略；此处仅为
+ * 状态行显示面——非表块存在 → Document 表，每表块一独立表，空文档
+ * → 单空表 Sheet1）。 */
+function sheetCount(): number {
+  if (typeof window.__blocks !== 'function') return 1; // 启动竞态防御
+  const blocks = window.__blocks();
+  const tables = blocks.filter((b) => b.type === 'table').length;
+  const textish = blocks.length - tables;
+  if (textish === 0 && tables === 0) return 1; // 空文档 = 单空表
+  return (textish > 0 ? 1 : 0) + tables;
+}
+
+/** 导出字节下载（Blob + a.download；headless 测试环境 = 点击即返）。 */
+function downloadXlsx(bytes: Uint8Array): void {
+  const blob = new Blob([new Uint8Array(bytes)], { type: XLSX_MIME });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'document.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function setupXlsxExport(): void {
+  const btn = document.getElementById('xlsx-export-btn') as HTMLButtonElement | null;
+  const statusEl = document.getElementById('xlsx-export-status') as HTMLElement | null;
+  const showStatus = (text: string, isError: boolean): void => {
+    if (!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.classList.toggle('xlsx-export-error', isError);
+  };
+  window.__exportXlsx = ():
+    | { ok: true; bytes: Uint8Array; sizeBytes: number }
+    | { ok: false; code: string; message: string } => {
+    const core = window.__core;
+    if (!core) {
+      // 启动竞态兑底（__core 在 main() 完成安装；正常路径不可达）。
+      const code = 'not_ready';
+      window.__lastXlsxExport = { ok: false, code, message: 'editor boot incomplete' };
+      showStatus('export failed (not_ready): editor boot incomplete', true);
+      return { ok: false, code, message: 'editor boot incomplete' };
+    }
+    try {
+      const bytes = core.export_xlsx(); // Uint8Array（wasm-bindgen Vec<u8> 面）
+      downloadXlsx(bytes);
+      const kb = bytes.length >= 1024 ? `${(bytes.length / 1024).toFixed(1)} KB` : `${bytes.length} B`;
+      const sheets = sheetCount();
+      showStatus(`exported: ${kb} · ${sheets} sheet${sheets === 1 ? '' : 's'}`, false);
+      window.__lastXlsxExport = { ok: true, sizeBytes: bytes.length };
+      return { ok: true, bytes, sizeBytes: bytes.length };
+    } catch (e: unknown) {
+      // Rust 侧 Err(JsValue::from_str(json)) → JS 串异常；防御非 JSON 面
+      //（理论上不可达——wasm 面错误恒 JSON）。
+      const raw = typeof e === 'string' ? e : (e as { message?: string })?.message ?? '';
+      let code = 'unknown';
+      let message = raw || String(e);
+      try {
+        const parsed = JSON.parse(raw) as { code: string; message: string };
+        code = parsed.code;
+        message = parsed.message;
+      } catch {
+        // 保留 unknown 兑底
+      }
+      window.__lastXlsxExport = { ok: false, code, message };
+      showStatus(`export failed (${code}): ${message}`, true);
+      return { ok: false, code, message };
+    }
+  };
+  btn?.addEventListener('click', () => {
+    window.__exportXlsx();
+  });
+  window.__lastXlsxExport = null;
+}
+
+setupXlsxExport();
 
 main().catch((e: unknown) => {
   const el = document.getElementById('debug');
