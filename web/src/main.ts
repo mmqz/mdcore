@@ -1222,6 +1222,10 @@ declare global {
     __importXlsx: (bytes: Uint8Array) => { ok: true; markdown: string; stats: Record<string, unknown> } | { ok: false; code: string; message: string };
     /** t17：最近一次 XLSX 导入结果（成功 = {ok, markdown, stats}；失败 = {ok:false, code, message}）。 */
     __lastXlsxImport: { ok: boolean; markdown?: string; stats?: Record<string, unknown>; code?: string; message?: string } | null;
+    /** t18：当前编辑器文档 → DOCX 字节导出（块模型→DocxWriter 映射 + 降级面；wasm 面/错误码 = docx_export.rs 模块文档单一真源）。 */
+    __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
+    /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
+    __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
     /** 契约版本（变更须升版并三处同步：常量 + CONTRACT.md + 双侧锁测试）。 */
     __contractVersion: number;
     __ready: boolean;
@@ -1654,6 +1658,95 @@ function setupXlsxImport(): void {
 }
 
 setupXlsxImport();
+
+// ---------------------------------------------------------------------------
+// t18 — DOCX 导出（编辑器当前文档 → .docx 下载；office-io 写面经 wasm 桥）
+//
+// 路径：export 按钮 → window.__core.export_docx()（BlockTree → DocxWriter
+// 映射 + 降级面显式注册——wasm 面与错误码表 = crates/mdcore-wasm/src/
+// docx_export.rs 模块文档单一真源）→ Blob + a.download 下载
+// document.docx。状态行 = 大小 + 块数 + 降级块计数（__blocks 现场面，
+// 不新增 wasm 面）。与 t16 导入合流 = DOCX 往返闭环。
+// ---------------------------------------------------------------------------
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+/** 降级块计数（映射表中无 docx 表达面的块型——code_block/blockquote/
+ * list_item/thematic_break；详见 docx_export.rs 模块文档）。 */
+function degradedBlockCount(): number {
+  if (typeof window.__blocks !== 'function') return 0; // 启动竞态防御
+  const degraded = new Set(['code_block', 'blockquote', 'list_item', 'thematic_break']);
+  return window.__blocks().filter((b) => degraded.has(b.type)).length;
+}
+
+/** 导出字节下载（Blob + a.download；headless 测试环境 = 点击即返）。 */
+function downloadDocx(bytes: Uint8Array): void {
+  const blob = new Blob([new Uint8Array(bytes)], { type: DOCX_MIME });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'document.docx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function setupDocxExport(): void {
+  const btn = document.getElementById('docx-export-btn') as HTMLButtonElement | null;
+  const statusEl = document.getElementById('docx-export-status') as HTMLElement | null;
+  const showStatus = (text: string, isError: boolean): void => {
+    if (!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.classList.toggle('docx-export-error', isError);
+  };
+  window.__exportDocx = ():
+    | { ok: true; bytes: Uint8Array; sizeBytes: number }
+    | { ok: false; code: string; message: string } => {
+    const core = window.__core;
+    if (!core) {
+      // 启动竞态兑底（__core 在 main() 完成安装；正常路径不可达）。
+      const code = 'not_ready';
+      window.__lastDocxExport = { ok: false, code, message: 'editor boot incomplete' };
+      showStatus('export failed (not_ready): editor boot incomplete', true);
+      return { ok: false, code, message: 'editor boot incomplete' };
+    }
+    try {
+      const bytes = core.export_docx(); // Uint8Array（wasm-bindgen Vec<u8> 面）
+      downloadDocx(bytes);
+      const kb = bytes.length >= 1024 ? `${(bytes.length / 1024).toFixed(1)} KB` : `${bytes.length} B`;
+      const blocks = core.blocks_count();
+      const degraded = degradedBlockCount();
+      const parts = [`exported: ${kb}`, `${blocks} block${blocks === 1 ? '' : 's'}`];
+      if (degraded > 0) parts.push(`${degraded} simplified`);
+      showStatus(parts.join(' · '), false);
+      window.__lastDocxExport = { ok: true, sizeBytes: bytes.length };
+      return { ok: true, bytes, sizeBytes: bytes.length };
+    } catch (e: unknown) {
+      // Rust 侧 Err(JsValue::from_str(json)) → JS 串异常；防御非 JSON 面
+      //（理论上不可达——wasm 面错误恒 JSON）。
+      const raw = typeof e === 'string' ? e : (e as { message?: string })?.message ?? '';
+      let code = 'unknown';
+      let message = raw || String(e);
+      try {
+        const parsed = JSON.parse(raw) as { code: string; message: string };
+        code = parsed.code;
+        message = parsed.message;
+      } catch {
+        // 保留 unknown 兜底
+      }
+      window.__lastDocxExport = { ok: false, code, message };
+      showStatus(`export failed (${code}): ${message}`, true);
+      return { ok: false, code, message };
+    }
+  };
+  btn?.addEventListener('click', () => {
+    window.__exportDocx();
+  });
+  window.__lastDocxExport = null;
+}
+
+setupDocxExport();
+
 main().catch((e: unknown) => {
   const el = document.getElementById('debug');
   if (el) el.textContent = `boot failed: ${String(e)}`;

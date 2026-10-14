@@ -15,7 +15,13 @@
 //!（自由函数 [`xlsx_import::import_xlsx`]，t16 模式对称展开——容器三门
 //! 兼容模式读 + 表→GFM 表映射 + typed 错误码族；只读消费，XLSX 维持
 //! C3 读—改—重建裁决）。
+//!
+//! t18 增补（2026-10-14）：[`docx_export`] 模块 = DOCX 写面 web 消费切片
+//!（[`WasmCore::export_docx`] 增量方法——编辑器当前块树 → DocxWriter →
+//! zip 字节下载；与 t16 导入合流 = DOCX 往返闭环；映射降级面显式登记
+//! 于该模块文档）。
 
+pub mod docx_export;
 pub mod docx_import;
 pub mod xlsx_import;
 
