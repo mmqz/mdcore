@@ -162,6 +162,11 @@ pub enum WarningKind {
     /// 发现——值面容忍行为不变（mal7c 登记：读侧不过滤，再输出须过
     /// mdc-office 消毒链），此处仅提升可见性（两模式恒登记）。
     ControlChars,
+    /// 跨部件引用悬空（docx-r1：r:id 无关系条目 / 关系目标部件缺失
+    /// / 目标路径越出包根——兼容模式容忍降级：目标不暴露或槽位跳过，
+    /// 警告随文档返回；严格模式为 typed reject 不产警告）。XLSX 面
+    /// 无此类别使用面（关系引用不进 XLSX 模型）。
+    BrokenReference,
 }
 
 /// 兼容模式结构化警告（随 [`Book::warnings`] 返回）。
