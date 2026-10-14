@@ -1,4 +1,5 @@
-//! XLSX 读路径产品模块——容器预扫门 + calamine 包装 + 统一错误面。
+//! XLSX 读路径产品模块——容器预扫门 + 尺寸/部件融合验证 + calamine
+//! 包装 + 统一错误面。
 //!
 //! xlsx-r1 阶段 B 落地（2026-10-13）：分析仓 spike `src/io.rs` 直移
 //! （`cargo test` 验证态 25/25 → 本 crate 同构内联单测）；接战语料 =
@@ -12,8 +13,22 @@
 //! 处理 _x00HH_，`&` 以 `&amp;` 字面量读出；依据 = 分析仓 FIDELITY.md
 //! v2 勘误链 + xlsx-r1 t10-c 实证）。
 //!
-//! 安全依据：分析仓 SECURITY_POLICY §2.1 四检查 + §3 限额表；
-//! 实证：xlsx-r1 t10-d harness 17/17 零 panic（read_proto.rs）。
+//! **xlsx-r2 Phase 2 增量（2026-10-14，用户三阶段指令）**：门 3 部件
+//! 良构性验证 + 默认严格模式 + 显式兼容模式。mal7e 类问题闭环：
+//! 畸形/无效 XML 部件**不再静默变空/部分数据**——默认严格拒拒
+//! （[`ReadError::InvalidPart`]）；[`ReadOptions::compat`] 显式兼容
+//! 模式下降级为结构化警告（[`Book::warnings`]，数据照常提取）。
+//! 门 3 融合在门 2 的既有解压趟内（零额外解压成本），校验面 =
+//! 标签配对（quick-xml check_end_names）+ 根元素唯一/在位 + EOF
+//! 未闭合元素（截断检测）+ 元素深度上限（[`LIMIT_XML_DEPTH`]，
+//! 嵌套炸弹面——SECURITY_POLICY §2.2.3 挂账项闭项）+ 控制字符
+//! 发现登记（XML 1.0 非法字节恒警告——mal7c 值面容忍行为不变，
+//! 见模块尾容忍度登记）。门 1/门 2 与全部安全上限在两种模式下
+//! **恒等**（兼容模式不放松任何安全防线）。
+//!
+//! 安全依据：分析仓 SECURITY_POLICY §2.1 四检查 + §3 限额表 +
+//! §2.1 第 5 项（门 3，v1.1）；实证：xlsx-r1 t10-d harness 17/17
+//! 零 panic（read_proto.rs）+ 本模块 Phase 2 测试组。
 
 use calamine::{Data, Dimensions, Hyperlink, Range, Reader, Xlsx};
 
@@ -27,6 +42,10 @@ pub const LIMIT_TOTAL_DECLARED: u64 = 300 * 1024 * 1024;
 pub const LIMIT_SINGLE_ENTRY: u64 = LIMIT_TOTAL_DECLARED;
 /// 条目数上限（v1 新设 10,000；mal6d 实测校准）。
 pub const LIMIT_ENTRY_COUNT: usize = 10_000;
+/// XML 部件元素嵌套深度上限（门 3，Phase 2）。真实 xlsx 部件深度
+/// 个位到十位级（worksheet/共享字符串嵌套）；嵌套炸弹面在此截断
+/// （quick-xml 拉取式无栈溢出风险，上限防下游消费面）。
+pub const LIMIT_XML_DEPTH: usize = 1_000;
 
 // ---------------------------------------------------------------------------
 // 统一错误面
@@ -44,6 +63,10 @@ pub enum ReadError {
     ContainerCorrupt(String),
     /// 容器过门后的解析层错误（calamine / zip 读界）。
     ParseError(String),
+    /// 门 3 部件良构性拒绝（Phase 2 默认严格）：畸形 XML 部件不再
+    /// 静默变空/部分数据——typed reject；[`ReadOptions::compat`]
+    /// 兼容模式下降级为 [`CompatibilityWarning`]。
+    InvalidPart { part: String, detail: String },
 }
 
 impl std::fmt::Display for ReadError {
@@ -58,6 +81,9 @@ impl std::fmt::Display for ReadError {
             }
             ReadError::ContainerCorrupt(m) => write!(f, "container corrupt: {m}"),
             ReadError::ParseError(m) => write!(f, "parse error: {m}"),
+            ReadError::InvalidPart { part, detail } => {
+                write!(f, "invalid part: {part}: {detail}")
+            }
         }
     }
 }
@@ -122,19 +148,156 @@ pub fn prescan<R: std::io::Read + std::io::Seek>(
     })
 }
 
-/// 实际尺寸诚实性验证（谎言头闭环，策略层实现）。
+// ---------------------------------------------------------------------------
+// 兼容模式类型（Phase 2：默认严格 + 显式兼容）
+// ---------------------------------------------------------------------------
+
+/// 结构化警告类别（兼容模式下降级的畸形部件 + 任何模式下恒登记的
+/// 控制字符发现）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarningKind {
+    /// 畸形 XML 部件（兼容模式容忍：垃圾/截断/失衡/多根/超深）。
+    MalformedXml,
+    /// XML 1.0 非法控制字节（0x00-0x08/0x0B/0x0C/0x0E-0x1F）在部件内
+    /// 发现——值面容忍行为不变（mal7c 登记：读侧不过滤，再输出须过
+    /// mdc-office 消毒链），此处仅提升可见性（两模式恒登记）。
+    ControlChars,
+}
+
+/// 兼容模式结构化警告（随 [`Book::warnings`] 返回）。
+#[derive(Debug, Clone)]
+pub struct CompatibilityWarning {
+    pub part: String,
+    pub kind: WarningKind,
+    pub detail: String,
+}
+
+/// 读路径选项（Phase 2）。
 ///
-/// 依据（xlsx-r1 实测定谳 2026-10-13）：zip 8.6 读界**无**声明值强制
-/// （谎言头条目 read_to_end 全量读回零错误，仅 CRC 校验可被正确
-/// CRC 绕过）；zip 9 的内建拒绝（T3 3b）为 9.x 独有。calamine
-/// 0.36.1 内部依赖 zip 8.6 → 实际读路径无此防线，由本层补：
-/// 逐条目有界读取计数，实际 > 声明即 typed reject。
+/// - 默认（`compat: false`）= **严格模式**：畸形 XML 部件 typed
+///   reject（[`ReadError::InvalidPart`]）——mal7e 类静默空/部分数据
+///   闭环；
+/// - `compat: true` = **兼容模式**：畸形部件降级为结构化警告，数据
+///   照常提取（下游 calamine 自身仍可能报错——兼容模式只放宽本层
+///   验证，不改变引擎行为）；
+/// - **门 1/门 2 与全部安全上限在两模式恒等**（兼容不放松安全）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReadOptions {
+    pub compat: bool,
+}
+
+// ---------------------------------------------------------------------------
+// 门 2+3 融合验证趟（单次解压：尺寸诚实性 + 部件良构性）
+// ---------------------------------------------------------------------------
+
+/// 尺寸计数读适配器：包裹 zip 条目，读时累计实际字节（门 2 谎言头
+/// 检出：实际 > 声明即置位）+ 扫描 XML 1.0 非法控制字节（门 3 登记面）。
+struct CountingReader<'a, R> {
+    inner: &'a mut R,
+    declared: u64,
+    count: u64,
+    lied: bool,
+    /// 仅 XML 部件扫描控制字节（非 XML 二进制部件不适用 XML 1.0
+    /// 字符律——如内嵌图片本就是任意字节）。
+    scan_ctrl: bool,
+    ctrl_at: Option<u64>,
+}
+
+impl<'a, R> CountingReader<'a, R> {
+    fn new(inner: &'a mut R, declared: u64, scan_ctrl: bool) -> Self {
+        Self {
+            inner,
+            declared,
+            count: 0,
+            lied: false,
+            scan_ctrl,
+            ctrl_at: None,
+        }
+    }
+}
+
+impl<R: std::io::Read> std::io::Read for CountingReader<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        for &b in &buf[..n] {
+            // XML 1.0 Char 产法定律：仅 #x9/#xA/#xD 与 #x20 起合法
+            //（仅 XML 部件域扫描）。
+            if self.scan_ctrl
+                && matches!(b, 0x00..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F)
+                && self.ctrl_at.is_none()
+            {
+                self.ctrl_at = Some(self.count);
+            }
+            self.count += 1;
+            if self.count > self.declared {
+                self.lied = true;
+            }
+        }
+        Ok(n)
+    }
+}
+
+/// 门 3 流式结构校验：quick-xml 拉取解析 + 自有深度/根追踪。
 ///
-/// 成本注记：合法档全量解压一次（总量已由 prescan 锁 ≤300MB）；
-/// 随后 calamine 重读。双读为 v1 已知成本，优化路径（受信源跳过
-/// 开关）留后续裁决。
-pub fn verify_actual_sizes<R: std::io::Read + std::io::Seek>(
+/// 校验面（全部结构级，非 DTD/实体级——GeneralRef 透传不展开，
+/// 十亿笑声面免疫）：标签配对（quick-xml check_end_names 默认 true）/
+/// 根元素在位且唯一 / EOF 未闭合元素（截断） / 深度上限
+/// （[`LIMIT_XML_DEPTH`]）。
+fn validate_xml_structure<R: std::io::BufRead>(reader: R) -> Result<(), String> {
+    let mut xml = quick_xml::Reader::from_reader(reader);
+    let mut buf = Vec::with_capacity(8 * 1024);
+    let mut depth: usize = 0;
+    let mut saw_root = false;
+    use quick_xml::events::Event;
+    loop {
+        match xml.read_event_into(&mut buf) {
+            Ok(Event::Start(_)) => {
+                if saw_root && depth == 0 {
+                    return Err("multiple root elements".into());
+                }
+                saw_root = true;
+                depth += 1;
+                if depth > LIMIT_XML_DEPTH {
+                    return Err(format!("element depth over limit {LIMIT_XML_DEPTH}"));
+                }
+            }
+            Ok(Event::Empty(_)) => {
+                if saw_root && depth == 0 {
+                    return Err("multiple root elements".into());
+                }
+                saw_root = true;
+            }
+            Ok(Event::End(_)) => {
+                if depth == 0 {
+                    return Err("unbalanced end tag".into());
+                }
+                depth -= 1;
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        buf.clear();
+    }
+    if !saw_root {
+        return Err("no root element".into());
+    }
+    if depth > 0 {
+        return Err(format!("truncated: {depth} unclosed element(s) at EOF"));
+    }
+    Ok(())
+}
+
+/// 门 2+3 融合单趟：逐条目有界读取计数（实际 > 声明即拒——谎言头
+/// 闭环）+ .xml/.rels 部件的良构性流式校验（`validate_parts` 开关）。
+///
+/// 成本结构（与 xlsx-r1 相比零额外解压）：门 2 本就读全量一次，
+/// 门 3 校验在同一趟的字节流上过 quick-xml（结构级拉取解析）。
+fn verify_pass<R: std::io::Read + std::io::Seek>(
     za: &mut zip::ZipArchive<R>,
+    validate_parts: bool,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<(), ReadError> {
     let n = za.len();
     for i in 0..n {
@@ -143,29 +306,101 @@ pub fn verify_actual_sizes<R: std::io::Read + std::io::Seek>(
             .map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
         let name = zf.name().to_string();
         let declared = zf.size();
-        let mut total: u64 = 0;
-        let mut buf = vec![0u8; 64 * 1024];
-        loop {
-            use std::io::Read as _;
-            match zf.read(&mut buf) {
-                Ok(0) => break,
-                Ok(k) => {
-                    total = total.saturating_add(k as u64);
-                    if total > declared {
-                        return Err(ReadError::PrescanRejected {
-                            reason: "actual size exceeds declared (lie header)",
-                            entry: Some(name),
+        let is_xml = validate_parts && (name.ends_with(".xml") || name.ends_with(".rels"));
+        let mut counting = CountingReader::new(&mut zf, declared, is_xml);
+        if is_xml {
+            let mut br = std::io::BufReader::new(&mut counting);
+            let parse = validate_xml_structure(&mut br);
+            // 解析中止（错误）时未读尽：补完谎言检查（有界——lied
+            // 即停；成功路径 BufReader 已到 EOF 为 no-op）。
+            let drain = drain_bounded(&mut br);
+            if let Err(e) = drain {
+                return Err(ReadError::ContainerCorrupt(format!("{e}")));
+            }
+            if counting.lied {
+                return Err(ReadError::PrescanRejected {
+                    reason: "actual size exceeds declared (lie header)",
+                    entry: Some(name),
+                });
+            }
+            match parse {
+                Ok(()) => {}
+                Err(detail) => {
+                    if strict {
+                        return Err(ReadError::InvalidPart {
+                            part: name.clone(),
+                            detail,
                         });
                     }
+                    warnings.push(CompatibilityWarning {
+                        part: name.clone(),
+                        kind: WarningKind::MalformedXml,
+                        detail: format!("compat mode: malformed XML tolerated: {detail}"),
+                    });
                 }
-                Err(e) => {
-                    // CRC 不匹配 / 解压损坏 → 容器损坏族
-                    return Err(ReadError::ContainerCorrupt(format!("{e}")));
+            }
+        } else {
+            // 纯尺寸路径（门 2 原实现语义：即时检出即拒）。
+            let mut sink = vec![0u8; 64 * 1024];
+            loop {
+                use std::io::Read as _;
+                match counting.read(&mut sink) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if counting.lied {
+                            return Err(ReadError::PrescanRejected {
+                                reason: "actual size exceeds declared (lie header)",
+                                entry: Some(name),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        return Err(ReadError::ContainerCorrupt(format!("{e}")));
+                    }
                 }
             }
         }
+        if let Some(off) = counting.ctrl_at {
+            warnings.push(CompatibilityWarning {
+                part: name.clone(),
+                kind: WarningKind::ControlChars,
+                detail: format!(
+                    "XML 1.0 illegal control byte at offset {off} (value-face tolerance unchanged; sanitize on re-emission)"
+                ),
+            });
+        }
     }
     Ok(())
+}
+
+/// 有界排空（谎言检出即停——实际量受声明值与门 1 总量上限约束）。
+fn drain_bounded<R: std::io::Read>(r: &mut R) -> std::io::Result<()> {
+    let mut sink = vec![0u8; 64 * 1024];
+    loop {
+        match r.read(&mut sink) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// 实际尺寸诚实性验证（谎言头闭环，策略层实现——门 2 独立面，
+/// 历史公开 API 保持：仅尺寸计数，不含门 3 校验）。
+///
+/// 依据（xlsx-r1 实测定谳 2026-10-13）：zip 8.6 读界**无**声明值强制
+/// （谎言头条目 read_to_end 全量读回零错误，仅 CRC 校验可被正确
+/// CRC 绕过）；zip 9 的内建拒绝（T3 3b）为 9.x 独有。calamine
+/// 0.36.1 内部依赖 zip 8.6 → 实际读路径无此防线，由本层补。
+///
+/// 成本注记：合法档全量解压一次（总量已由 prescan 锁 ≤300MB）；
+/// 随后 calamine 重读。双读为 v1 已知成本；受信源跳过开关经
+/// 裁决**不设**（无基准证据不得加跳过——xlsx-r2 用户指令）。
+pub fn verify_actual_sizes<R: std::io::Read + std::io::Seek>(
+    za: &mut zip::ZipArchive<R>,
+) -> Result<(), ReadError> {
+    let mut sink = Vec::new();
+    verify_pass(za, false, true, &mut sink).map(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -183,10 +418,14 @@ pub struct SheetData {
     pub hyperlinks: Vec<Hyperlink>,
 }
 
-/// 整档提取：表序 + 逐表四面（v2：+超链接；C1 读取能力产品面）。
+/// 整档提取：表序 + 逐表四面（v2：+超链接；C1 读取能力产品面）
+/// 以及结构化警告（Phase 2：兼容模式下降级的畸形部件与控制字符
+/// 发现；严格模式下畸形部件不降级而是直接 typed reject，故
+/// warnings 至多含 ControlChars 项）。
 #[derive(Debug)]
 pub struct Book {
     pub sheets: Vec<SheetData>,
+    pub warnings: Vec<CompatibilityWarning>,
 }
 
 impl Book {
@@ -208,18 +447,29 @@ impl Book {
     }
 }
 
-/// 读入口：预扫门 → 尺寸验证 → calamine 全量提取（五面）。
+/// 读入口（严格模式默认）：预扫门 → 尺寸/部件融合验证 → calamine
+/// 全量提取（五面）。
 ///
 /// 门在前（敌意输入零解析层接触）：①prescan 声明值四检查；
-/// ②verify_actual_sizes 谎言头闭环（zip 8.6 读界无内建强制——
-/// 2026-10-13 实测，策略层补）。门过后错误归 ParseError。
+/// ②尺寸诚实性 + 部件良构性融合趟（门 2+3，单次解压——Phase 2
+/// 起畸形 XML 部件 typed reject，mal7e 类静默空/部分数据闭环）。
+/// 门过后错误归 ParseError。
 pub fn read_book(path: &str) -> Result<Book, ReadError> {
+    read_book_with_options(path, &ReadOptions::default())
+}
+
+/// 读入口（带选项——Phase 2）：[`ReadOptions::compat`] = true 时
+/// 畸形部件降级为结构化警告（数据照常提取，门 1/门 2/安全上限
+/// 恒不放松）；默认严格行为同 [`read_book`]。
+pub fn read_book_with_options(path: &str, opts: &ReadOptions) -> Result<Book, ReadError> {
     let f =
         std::fs::File::open(path).map_err(|e| ReadError::ContainerCorrupt(format!("open: {e}")))?;
     let mut za =
         zip::ZipArchive::new(f).map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
     prescan(&mut za)?; // 门 1：声明值四检查
-    verify_actual_sizes(&mut za)?; // 门 2：实际尺寸诚实性
+    let mut warnings = Vec::new();
+    // 门 2+3 融合趟：尺寸诚实性 + 部件良构性（单次解压）。
+    verify_pass(&mut za, true, !opts.compat, &mut warnings)?;
     drop(za);
 
     let mut book: Xlsx<_> =
@@ -263,7 +513,7 @@ pub fn read_book(path: &str) -> Result<Book, ReadError> {
             hyperlinks,
         });
     }
-    Ok(Book { sheets })
+    Ok(Book { sheets, warnings })
 }
 
 /// calamine 0.36.1 读侧怪癖补偿（v2）：hyperlink rels `Target` 及
@@ -419,7 +669,9 @@ mod tests {
 
     #[test]
     fn control_char_tolerance_pinned() {
-        // t10-d mal7c 实证钉定：0x00 在文本位被读侧容忍，值含 NUL。
+        // t10-d mal7c 实证钉定：0x00 在文本位被读侧容忍，值含 NUL
+        // ——值面行为 Phase 2 不变；新增可见性：结构化警告恒登记
+        //（两模式同）。
         let p = tmp("nul");
         let entries = minimal_xlsx("a\0b");
         write_zip(&p, &entries);
@@ -428,24 +680,48 @@ mod tests {
             Some(Data::String(s)) => assert!(s.contains('\u{0}'), "值应含 NUL：{s:?}"),
             other => panic!("expected string, got {other:?}"),
         }
+        // 警告面：ControlChars 在位（严格模式不拒——值面容忍）。
+        assert!(
+            book.warnings
+                .iter()
+                .any(|w| w.kind == WarningKind::ControlChars),
+            "控制字符发现应登记为警告：{:?}",
+            book.warnings
+        );
         let _ = std::fs::remove_file(&p);
     }
 
     #[test]
-    fn garbage_part_tolerated_as_empty() {
-        // t10-d mal7e 实证钉定：垃圾部件静默降级空表（已知行为登记）。
+    fn garbage_part_strict_reject_compat_warns() {
+        // t10-d mal7e 实证钉定（Phase 2 行为变化）：垃圾部件不再
+        // 静默降级空表——默认严格 typed reject；兼容模式降级为结构化
+        // 警告 + 数据照常提取（calamine 容忍行为不变）。
         let p = tmp("garbage");
         let mut entries = minimal_xlsx("unused");
-        // 替换 sheet1 为二进制垃圾
         for (n, d) in entries.iter_mut() {
             if n == "xl/worksheets/sheet1.xml" {
                 *d = (0..256u16).map(|i| i as u8).cycle().take(1024).collect();
             }
         }
         write_zip(&p, &entries);
-        let book = read_book(&p).unwrap();
+        // 严格（默认）：typed reject，部件名在错误内。
+        match read_book(&p) {
+            Err(ReadError::InvalidPart { part, .. }) => {
+                assert_eq!(part, "xl/worksheets/sheet1.xml");
+            }
+            other => panic!("expected InvalidPart, got {other:?}"),
+        }
+        // 兼容：Ok + MalformedXml 警告 + 空表（calamine 行为不变）。
+        let book = read_book_with_options(&p, &ReadOptions { compat: true }).unwrap();
         assert_eq!(book.sheets.len(), 1);
         assert_eq!(book.non_empty_cells(), 0);
+        assert!(
+            book.warnings.iter().any(
+                |w| w.kind == WarningKind::MalformedXml && w.part == "xl/worksheets/sheet1.xml"
+            ),
+            "兼容模式应降级为警告：{:?}",
+            book.warnings
+        );
         let _ = std::fs::remove_file(&p);
     }
 
@@ -521,10 +797,13 @@ mod tests {
 
     #[test]
     fn truncation_boundary_pinned() {
-        // t10-d 补充实证（lib 测试发现，2026-10-13）：截断容忍度分界——
-        // ① 恰好只缺根闭合 </worksheet>（标签边界外的截断）→ **容忍**，
-        //    值正常读回（mal7a harness 件报错是因为它截在 </sheetData
-        //    标签**内**，缺 '>'）；② 标签内截断 → ParseError。
+        // t10-d 补充实证（lib 测试发现，2026-10-13）+ Phase 2 行为
+        // 变化（2026-10-14）：截断容忍度分界在门 3 收敛——两种截断
+        // 形态在严格模式下均 typed reject（缺根闭合 = EOF 未闭合元素；
+        // 标签内截断 = quick-xml 语法错）；兼容模式下维持 xlsx-r1 实测
+        // 分界：缺根闭合 → 警告 + calamine 容忍读回；标签内截断 →
+        // 警告后 calamine 自身报 ParseError（兼容只放宽本层验证，
+        // 不改变引擎行为）。
         let p = tmp("trunc_ok");
         let mut entries = minimal_xlsx("v");
         for (n, d) in entries.iter_mut() {
@@ -533,8 +812,20 @@ mod tests {
             }
         }
         write_zip(&p, &entries);
-        let book = read_book(&p).unwrap(); // 容忍：缺根闭合仍读回
+        match read_book(&p) {
+            Err(ReadError::InvalidPart { part, detail }) => {
+                assert_eq!(part, "xl/worksheets/sheet1.xml");
+                assert!(detail.contains("unclosed"), "detail: {detail}");
+            }
+            other => panic!("expected strict InvalidPart, got {other:?}"),
+        }
+        // 兼容：警告 + calamine 容忍读回（xlsx-r1 实测行为保持）。
+        let book = read_book_with_options(&p, &ReadOptions { compat: true }).unwrap();
         assert_eq!(book.non_empty_cells(), 1);
+        assert!(book
+            .warnings
+            .iter()
+            .any(|w| w.kind == WarningKind::MalformedXml));
         let _ = std::fs::remove_file(&p);
 
         let p2 = tmp("trunc_err");
@@ -546,10 +837,156 @@ mod tests {
         }
         write_zip(&p2, &entries2);
         match read_book(&p2) {
+            Err(ReadError::InvalidPart { .. }) => {} // 严格：语法错拒拒
+            other => panic!("expected strict InvalidPart, got {other:?}"),
+        }
+        // 兼容：警告降级后 calamine 自身 ParseError（不改变引擎行为）。
+        match read_book_with_options(&p2, &ReadOptions { compat: true }) {
             Err(ReadError::ParseError(_)) => {}
-            other => panic!("expected parse error, got {other:?}"),
+            other => panic!("expected compat ParseError, got {other:?}"),
         }
         let _ = std::fs::remove_file(&p2);
+    }
+
+    #[test]
+    fn gate3_multiple_roots_rejected() {
+        // 门 3：多根元素 = 畸形 XML（严格拒；兼容警告）。
+        let p = tmp("multiroot");
+        let mut entries = minimal_xlsx("v");
+        for (n, d) in entries.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                let malformed = br#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet><extra/>"#;
+                *d = malformed.to_vec();
+            }
+        }
+        write_zip(&p, &entries);
+        match read_book(&p) {
+            Err(ReadError::InvalidPart { detail, .. }) => {
+                assert!(detail.contains("multiple root"), "detail: {detail}");
+            }
+            other => panic!("expected InvalidPart, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn gate3_empty_xml_part_rejected() {
+        // 门 3：零字节 XML 部件 = 无根（严格拒）。
+        let p = tmp("emptyxml");
+        let mut entries = minimal_xlsx("v");
+        for (n, d) in entries.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                d.clear();
+            }
+        }
+        write_zip(&p, &entries);
+        match read_book(&p) {
+            Err(ReadError::InvalidPart { detail, .. }) => {
+                assert!(detail.contains("no root"), "detail: {detail}");
+            }
+            other => panic!("expected InvalidPart, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn gate3_depth_limit_enforced() {
+        // 深度 = LIMIT_XML_DEPTH + 1 的部件（root 1 层 + n×1000）。
+        let p = tmp("deepbomb");
+        let mut entries = minimal_xlsx("v");
+        let depth = LIMIT_XML_DEPTH;
+        let mut xml = String::from("<?xml version=\"1.0\"?><root>");
+        for _ in 0..depth {
+            xml.push_str("<n>");
+        }
+        for _ in 0..depth {
+            xml.push_str("</n>");
+        }
+        xml.push_str("</root>");
+        let xml_bytes = xml.into_bytes();
+        for (n, d) in entries.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                *d = xml_bytes.clone();
+            }
+        }
+        write_zip(&p, &entries);
+        match read_book(&p) {
+            Err(ReadError::InvalidPart { detail, .. }) => {
+                assert!(detail.contains("depth over limit"), "detail: {detail}");
+            }
+            other => panic!("expected InvalidPart, got {other:?}"),
+        }
+        // 深度恰好 = 上限的部件合法（边界对测：root 1 层 + n×999 =
+        // LIMIT_XML_DEPTH 整）。
+        let p2 = tmp("deepok");
+        let mut entries2 = minimal_xlsx("v");
+        let depth2 = LIMIT_XML_DEPTH - 1;
+        let mut xml2 = String::from("<?xml version=\"1.0\"?><root>");
+        for _ in 0..depth2 {
+            xml2.push_str("<n>");
+        }
+        for _ in 0..depth2 {
+            xml2.push_str("</n>");
+        }
+        xml2.push_str("</root>");
+        let xml2_bytes = xml2.into_bytes();
+        for (n, d) in entries2.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                // 嵌套合法但非 worksheet 结构 → calamine 提取空表
+                //（门 3 过 + 引擎容忍——不属畸形面）。
+                *d = xml2_bytes.clone();
+            }
+        }
+        write_zip(&p2, &entries2);
+        match read_book(&p2) {
+            Ok(_) => {}
+            other => panic!("depth == limit 应过门, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    #[test]
+    fn gate3_non_xml_parts_not_validated() {
+        // 门 3 校验域 = .xml/.rels 后缀部件；非 XML 后缀的二进制部件
+        //（如内嵌图片）不校验（OPC 内容类型分界——图片本就是二进制）。
+        let p = tmp("binpart");
+        let mut entries = minimal_xlsx("v");
+        entries.push((
+            "xl/media/image1.png".into(),
+            (0..256u16).map(|i| i as u8).collect(),
+        ));
+        write_zip(&p, &entries);
+        let book = read_book(&p).unwrap(); // 二进制部件不拒
+        assert_eq!(book.non_empty_cells(), 1);
+        // 且其内容不产生控制字符警告（不在校验域）。
+        assert!(
+            !book
+                .warnings
+                .iter()
+                .any(|w| w.part == "xl/media/image1.png"),
+            "非 XML 部件不应入警告面：{:?}",
+            book.warnings
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn verify_actual_sizes_standalone_still_works() {
+        // 门 2 独立面（历史公开 API）：仅尺寸校验，不含门 3——
+        // 畸形 XML 部件在独立面下不拒（门 3 属 read_book 管线）。
+        let p = tmp("standalone");
+        let mut entries = minimal_xlsx("unused");
+        for (n, d) in entries.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                *d = (0..256u16).map(|i| i as u8).cycle().take(1024).collect();
+            }
+        }
+        write_zip(&p, &entries);
+        let f = std::fs::File::open(&p).unwrap();
+        let mut za = zip::ZipArchive::new(f).unwrap();
+        assert!(verify_actual_sizes(&mut za).is_ok()); // 尺寸诚实 → 过
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]

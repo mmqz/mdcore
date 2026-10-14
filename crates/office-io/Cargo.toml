@@ -32,6 +32,12 @@ description = "Office 域 XLSX IO 引擎侧基础设施（xlsx-r1 阶段 B + xls
 calamine = "0.36"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
+# xlsx-r2 Phase 2（2026-10-14，用户三阶段指令）：门 3 部件良构性
+# 校验件。quick-xml 0.41.0 原已在产品闭包（calamine 传递依赖，NOTICES
+# v1.4 正文在档）——升直依赖零闭包增量、零 lock 变化；仅用于流式
+# 结构校验（check_end_names 默认 true + 深度计数），不做实体展开
+# （GeneralRef 透传不解析——十亿笑声面免疫）。
+quick-xml = "0.41"
 
 [dev-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

@@ -15,7 +15,9 @@
 use std::io::Write as _;
 
 use calamine::Data;
-use mdc_office_io::io::{read_book, Book, ReadError};
+use mdc_office_io::io::{
+    read_book, read_book_with_options, Book, ReadError, ReadOptions, WarningKind,
+};
 use rust_xlsxwriter::{Format, Workbook};
 
 // ---------------------------------------------------------------------------
@@ -42,7 +44,10 @@ impl Class {
 fn classify(r: &Result<Book, ReadError>) -> Class {
     match r {
         Ok(_) => Class::Ok,
-        Err(ReadError::PrescanRejected { .. }) => Class::Reject,
+        // 门拒绝族（Phase 2 起含门 3 部件良构性）。
+        Err(ReadError::PrescanRejected { .. }) | Err(ReadError::InvalidPart { .. }) => {
+            Class::Reject
+        }
         Err(_) => Class::Err,
     }
 }
@@ -470,15 +475,16 @@ fn dim7_abnormal_xml(dir: &str) -> Vec<(String, Class)> {
         s
     };
 
-    // 7a 截断（截在 </sheetData 标签内——与 lib 单测的「缺根闭合
-    // 容忍」构成分界：标签内截断 = ERR）
+    // 7a 截断（截在 </sheetData 标签内——Phase 2 起门 3 在引擎前
+    // 拦截：quick-xml 语法错 → Reject[InvalidPart]；兼容模式下警告
+    // 降级后 calamine 自身仍报 ParseError → Err——分界双测钉定）
     {
         let p = format!("{dir}/mal7a_xml_truncated.xlsx");
         let mut s = head.to_vec();
         s.extend_from_slice(b"val");
         s.extend_from_slice(br#"</t></is></c></row></sheetData"#); // 缺 >
         build_min_xlsx(&p, &s);
-        out.push((p, Class::Err));
+        out.push((p, Class::Reject));
     }
 
     // 7b 非法实体
@@ -502,12 +508,14 @@ fn dim7_abnormal_xml(dir: &str) -> Vec<(String, Class)> {
         out.push((p, Class::Err));
     }
 
-    // 7e 非 XML 二进制垃圾——实证钉定：静默降级空表
+    // 7e 非 XML 二进制垃圾——Phase 2 行为变化（mal7e 类问题闭环）：
+    // 不再静默降级空表——默认严格 Reject[InvalidPart]；兼容模式
+    // Ok + MalformedXml 警告 + 空表（引擎容忍行为不变）
     {
         let p = format!("{dir}/mal7e_not_xml.xlsx");
         let s: Vec<u8> = (0..256u16).map(|i| i as u8).cycle().take(1024).collect();
         build_min_xlsx(&p, &s);
-        out.push((p, Class::Ok));
+        out.push((p, Class::Reject));
     }
 
     // 对照组：正常最小档
@@ -589,11 +597,11 @@ fn corpus_seventeen_files_three_way_classification() {
         (Class::Reject, false), // mal6d 条目数超限
         (Class::Err, false),    // mal6e EOCD 损坏
         (Class::Err, false),    // mal6f 缺 Content_Types
-        (Class::Err, false),    // mal7a 标签内截断
-        (Class::Err, false),    // mal7b 非法实体
-        (Class::Ok, false),     // mal7c 0x00 容忍（专测钉锚点）
+        (Class::Reject, false), // mal7a 标签内截断 → 门 3（Phase 2）
+        (Class::Err, false),    // mal7b 非法实体（引擎层错误）
+        (Class::Ok, false),     // mal7c 0x00 容忍（专测钉锚点 + 警告面）
         (Class::Err, false),    // mal7d 编码错
-        (Class::Ok, false),     // mal7e 垃圾降级（专测钉锚点）
+        (Class::Reject, false), // mal7e 垃圾部件 → 门 3（Phase 2 闭环）
         (Class::Ok, false),     // ok7 对照
     ];
     assert_eq!(cases.len(), expected.len(), "敌意/对照件构造数与期望表对齐");
@@ -651,7 +659,8 @@ fn corpus_seventeen_files_three_way_classification() {
 
 #[test]
 fn corpus_tolerance_discoveries_anchored() {
-    // mal7c：0x00 读侧容忍入值（读侧不过滤——再输出须过消毒链）
+    // mal7c：0x00 读侧容忍入值（读侧不过滤——再输出须过消毒链）；
+    // Phase 2 起恒登记 ControlChars 结构化警告（两模式同）。
     let dir = out_dir("tol");
     let head: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>"#;
     let tail: &[u8] = br#"</t></is></c></row></sheetData></worksheet>"#;
@@ -665,14 +674,91 @@ fn corpus_tolerance_discoveries_anchored() {
         matches!(b.sheets[0].values.get((0, 0)), Some(Data::String(v)) if v.contains('\u{0}')),
         "mal7c：值应含 NUL（容忍度实证锚点）"
     );
+    assert!(
+        b.warnings
+            .iter()
+            .any(|w| w.kind == WarningKind::ControlChars && w.part == "xl/worksheets/sheet1.xml"),
+        "mal7c：控制字符发现应登记为结构化警告：{:?}",
+        b.warnings
+    );
 
-    // mal7e：垃圾部件静默降级空表（无错误信号——已知行为登记）
+    // mal7e（Phase 2 闭环）：垃圾部件默认严格拒绝——不再静默降级
+    // 空表；兼容模式 = Ok + MalformedXml 警告 + 空表（引擎容忍不变）。
     let garbage: Vec<u8> = (0..256u16).map(|i| i as u8).cycle().take(1024).collect();
     let p7e = format!("{dir}/mal7e.xlsx");
     build_min_xlsx(&p7e, &garbage);
-    let b = read_book(&p7e).unwrap();
+    match read_book(&p7e) {
+        Err(ReadError::InvalidPart { part, .. }) => {
+            assert_eq!(part, "xl/worksheets/sheet1.xml")
+        }
+        other => panic!("mal7e：严格模式应 InvalidPart，got {other:?}"),
+    }
+    let b = read_book_with_options(&p7e, &ReadOptions { compat: true }).unwrap();
     assert_eq!(b.sheets.len(), 1);
-    assert_eq!(b.non_empty_cells(), 0, "mal7e：静默降级为 1 表 0 格");
+    assert_eq!(
+        b.non_empty_cells(),
+        0,
+        "mal7e 兼容：降级为 1 表 0 格（警告可见）"
+    );
+    assert!(b
+        .warnings
+        .iter()
+        .any(|w| w.kind == WarningKind::MalformedXml));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn corpus_compat_mode_classification() {
+    // Phase 2 兼容模式全语料复扫：只有「门 3 拦下的畸形部件」分类
+    // 变化（Reject → Ok[警告] / Reject → Err[警告后引擎自身报错]），
+    // 门 1/门 2/引擎错误面恒不变（兼容不放松安全）。
+    let dir = out_dir("compat");
+    let mut cases: Vec<(String, Class)> = Vec::new();
+    cases.extend(dim6_malicious_zip(&dir));
+    cases.extend(dim7_abnormal_xml(&dir));
+    let compat = ReadOptions { compat: true };
+
+    // 兼容模式期望表（与严格表逐位对照——变化仅门 3 两项）：
+    let expected: &[Class] = &[
+        Class::Reject, // mal6a 谎言头（门 2 恒拒——兼容不放松）
+        Class::Reject, // mal6b 路径逃逸（门 1 恒拒）
+        Class::Reject, // mal6c 声明巨量（门 1 恒拒）
+        Class::Reject, // mal6d 条目数超限（门 1 恒拒）
+        Class::Err,    // mal6e EOCD 损坏（容器面恒不变）
+        Class::Err,    // mal6f 缺 Content_Types（引擎面恒不变）
+        Class::Err,    // mal7a 标签内截断（警告降级后引擎 ParseError）
+        Class::Err,    // mal7b 非法实体（门 3 不拦实体名，引擎错）
+        Class::Ok,     // mal7c 控制字符（恒容忍 + 恒警告）
+        Class::Err,    // mal7d 编码错（引擎面恒不变）
+        Class::Ok,     // mal7e 垃圾部件（警告降级 + 引擎容忍空表）
+        Class::Ok,     // ok7 对照
+    ];
+    assert_eq!(cases.len(), expected.len());
+
+    let mut failures = Vec::new();
+    for (i, (p, _)) in cases.iter().enumerate() {
+        let r = read_book_with_options(p, &compat);
+        let actual = classify(&r);
+        if actual != expected[i] {
+            let file = p.rsplit('/').next().unwrap_or(p);
+            let detail = match &r {
+                Ok(_) => "unexpected Ok".to_string(),
+                Err(e) => e.to_string(),
+            };
+            failures.push(format!(
+                "{file}: compat expected {} got {} [{detail}]",
+                expected[i].tag(),
+                actual.tag()
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "兼容模式归类失败 {} 件：\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
