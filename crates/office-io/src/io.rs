@@ -165,7 +165,7 @@ pub enum WarningKind {
 }
 
 /// 兼容模式结构化警告（随 [`Book::warnings`] 返回）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompatibilityWarning {
     pub part: String,
     pub kind: WarningKind,
@@ -401,6 +401,19 @@ pub fn verify_actual_sizes<R: std::io::Read + std::io::Seek>(
 ) -> Result<(), ReadError> {
     let mut sink = Vec::new();
     verify_pass(za, false, true, &mut sink).map(|_| ())
+}
+
+/// 门 2+3 融合趟的 crate 内复用面（xlsx-r2 Phase 3）：DOCX 读路径
+/// 与 XLSX 同为 zip 容器 + OPC 部件约定，复用**同一门实现**——
+/// 容器级基础设施共享（SECURITY_POLICY v1.1 §2.1），非领域抽象
+/// （DOCX 模块边界见 docx.rs 模块文档）。外部消费方经
+/// [`read_book`]/[`crate::docx`] 管线间接使用。
+pub(crate) fn verify_gates<R: std::io::Read + std::io::Seek>(
+    za: &mut zip::ZipArchive<R>,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<(), ReadError> {
+    verify_pass(za, true, strict, warnings)
 }
 
 // ---------------------------------------------------------------------------

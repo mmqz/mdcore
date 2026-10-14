@@ -38,6 +38,15 @@ rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
 # 结构校验（check_end_names 默认 true + 深度计数），不做实体展开
 # （GeneralRef 透传不解析——十亿笑声面免疫）。
 quick-xml = "0.41"
+# xlsx-r2 Phase 3（2026-10-14，用户三阶段指令）：DOCX 模型级读/写
+# 切片引擎（ADR-O1 O1-3 选型：bokuweb/docx-rs 0.4.22，MIT——办公件
+# 浅克隆 LICENSE 一手直读）。default-features = false 关闭 image 特性
+# （png/tiff/gif/bmp/jpeg 巨树不入闭包）；闭包增量 = docx-rs + base64
+# 两项（NOTICES v1.5 增量）；其余依赖（zip 8.6/quick-xml/serde 族/
+# thiserror/smallvec）全部原位。供应链观察项（office-e §4）：
+# 上游已合入下游 fork 功能线（FORK_CHANGES.md）——锁版本 + 破坏性
+# 变更先跑读侧往返测试（tests/docx_roundtrip.rs 即此纪律的常驻化）。
+docx-rs = { version = "0.4", default-features = false }
 
 [dev-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
