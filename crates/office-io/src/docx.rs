@@ -25,9 +25,34 @@
 //!   （default 槽位单段 run 序）；
 //! - **敌意面显式化**：docx-rs 读侧对 .rels 词汇表外元素静默忽略
 //!   （`XMLElement::from_str` 全名映射 `Ok(Unsupported)` 永不 Err
-//!   ——reader/xml_element.rs:447，CAPABILITY_NOTES §8 实证勘误）；
+//!   ——reader/xml_element.rs:447，CAPABILITY_NOTES §8 实证勘误）;
 //!   本层对同一面给显式信号：严格拒（OPC 关系部件模式 ECMA-376
 //!   Part 2 词汇表）/ 兼容警告 + 跳过（引擎同等容忍 + 可见性）。
+//!
+//! **docx-r2 增量（2026-10-16，遗留① 收尾轮）**：主题 = **脚注/图片/
+//! 域/first-even 槽位四面收口**（底稿 = 分析仓 docx-r1
+//! CAPABILITY_NOTES.md §5/§6/§7 增补 + r2 勘误链）：
+//! - **脚注（写）**：[`RunSpec::footnote`] run 级脚注引用（引擎
+//!   `add_footnote_reference` + 打包自动收集 footnotes.xml）；**读面
+//!   引擎受限维持登记**（reader 从不读 footnotes.xml——CAPABILITY_NOTES
+//!   §5，本轮锚点精确化）；
+//! - **图片（读）**：**容器级媒体清单** [`DocxDocument::images`]（自有
+//!   实现：[Content_Types].xml 解析 + `word/media/*` 枚举 + .rels 联接
+//!   + run 级 `a:blip r:embed` 引用计数——引擎面三个静默怪癖在档，
+//!     本清单不受其影响）；
+//! - **图片（写）**：[`DocxWriter::image`] **PNG-only 内联图**——勘误：
+//!   引擎 `Pic::new_with_dimensions` **不受** `image` 特性门控（r1 §6
+//!   初判修正：仅 `Pic::new` 自动转码面被门控）；`image` 特性代价
+//!   = +23 crate（登记不启用）；
+//! - **域（写·简单域）**：[`RunSpec::field_page`]/
+//!   [`RunSpec::field_num_pages`]（fldChar begin/instrText/end 三连，
+//!   引擎 `add_tc` 同构先例）；读面维持登记（引擎区分结构但提取面
+//!   外）；TOC/PAGEREF/HYPERLINK 域登记不暴露（引擎 `todo!()` 崩溃面
+//!   在 instr_text.rs:32）；
+//! - **first/even 页眉页脚（写）**：[`DocxWriter::first_header`] 等
+//!   四方法（引擎激活语义完整：first 自动 titlePg、even 自动
+//!   evenAndOddHeaders）；同槽重复调用 = 原位替换（**保持原槽 rid**
+//!   ——r1 的无条件 rIdHeader1 在多槽组合下会踩踏，本轮修复）。
 //!
 //! ## 模块边界（CAPABILITIES.md §2 裁决——DOCX 独立模块）
 //!
@@ -69,8 +94,9 @@
 //! ## 不支持面与数据损失登记（诚实边界——模型级切片的现实）
 //!
 //! 读侧**跳过并登记**（文本提取不受损面外的可见损失）：
-//! - 图形/图片/形状（Drawing/Shape——模型级切片不含媒体面；
-//!   引擎包级字节面在 docx-rs 读模型 `Docx::images`，未暴露）；
+//! - 图形/图片/形状（**媒体面已暴露**：容器级清单 [`DocxDocument::
+//!   images`]——字节/内容类型/引用关系/run 级引用计数；**块序内图片
+//!   位置不入块模型**[Block 无图片块]——模型级文本提取边界，登记）；
 //! - **表格单元格内超链接目标**（单元格文本保留，目标丢弃——
 //!   TableData 扁平文本面；引擎解析能力在档
 //!   [docx-r1/CAPABILITY_NOTES §2，分析仓]）；
@@ -79,16 +105,21 @@
 //!   StructuredDataTag（内容控件）；
 //! - 脚注/尾注（**读面引擎受限**：docx-rs 从不读 footnotes.xml 且
 //!   正文 `w:footnoteReference` 不入模型——CAPABILITY_NOTES §5；
-//!   写面引擎在，未实测不暴露）；
+//!   写面已暴露 [`RunSpec::footnote`]，读回文本不含脚注内容——
+//!   XML 级断言见 tests/docx_roundtrip.rs）；
 //! - 节属性（page size/margin 等——页眉页脚引用面已暴露，其余
 //!   节语义面外）；first/even 页眉页脚槽位的**激活设置语义**
 //!   （titlePg/evenAndOddHeaders——变体透传，激活判定归消费方）；
 //! - 编号/列表语义（列表段落文本保留，编号结构丢弃）；
-//! - 域指令文本（instrText 引擎入模型字符串，提取面外——登记）。
+//! - 域指令文本（instrText 引擎入模型字符串，提取面外——登记；
+//!   写面简单域 PAGE/NUMPAGES 已暴露，域结果文本不入读回文本——
+//!   域值是渲染期计算面）。
 //!
 //! 写侧**不支持**（引擎能力在[docx-rs 写面远大于本切片]，未实测
-//! 不暴露）：图片、表格样式、域、目录、编号列表、first/even 页眉
-//! 页脚槽位、页眉页脚内表格（引擎均支持——CAPABILITY_NOTES）。
+//! 不暴露）：图片自动转码（`Pic::new` 需 `image` 特性 = +23 crate
+//! 依赖树——登记，PNG 显式尺寸面已暴露）、非 PNG 图片、浮动定位/
+//! 旋转图片、表格样式、TOC/PAGEREF/HYPERLINK 域、目录、编号列表、
+//! 页眉页脚内表格、锚点写面（引擎均支持——CAPABILITY_NOTES）。
 //!
 //! 证据链：tests/docx_roundtrip.rs（写→读全环 + 门结构复用 + 敌意
 //! 输入钉定 + .rels 敌意面 + 引擎崩溃面直探针）+ 本模块内联单测。
@@ -182,6 +213,11 @@ impl RelationshipTable {
 
     fn len(&self) -> usize {
         self.by_id.len()
+    }
+
+    /// 条目迭代（媒体清单联接用——遍历序非确定，消费面须自排序）。
+    fn iter(&self) -> impl Iterator<Item = &Relationship> {
+        self.by_id.values()
     }
 }
 
@@ -495,6 +531,236 @@ fn rels_owner_part(rels_path: &str) -> Option<String> {
     Some(format!("{owner_dir}/{base}"))
 }
 
+// ---------------------------------------------------------------------------
+// [Content_Types].xml 解析（docx-r2：媒体清单的部件类型面——自有，
+// quick-xml 直依赖，零新依赖；纪律与 rels 层同族）
+// ---------------------------------------------------------------------------
+
+/// 包内容类型声明（`[Content_Types].xml` 的 Default/Override 两面）。
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ContentTypes {
+    /// 扩展名（小写归一）→ 内容类型（`<Default Extension="png" .../>`）。
+    defaults: HashMap<String, String>,
+    /// 部件名（去前导 `/`）→ 内容类型（`<Override PartName=... .../>`）。
+    overrides: HashMap<String, String>,
+}
+
+impl ContentTypes {
+    /// 部件的内容类型（Override 优先于 Default——OPC 语义）；无声明
+    /// = None（严格模式拒 / 兼容警告面）。
+    fn content_type_of(&self, part_name: &str) -> Option<String> {
+        if let Some(ct) = self.overrides.get(part_name) {
+            return Some(ct.clone());
+        }
+        let ext = part_name.rsplit_once('.')?.1.to_ascii_lowercase();
+        self.defaults.get(&ext).cloned()
+    }
+}
+
+/// 解析 `[Content_Types].xml`（词汇表：Types/Default/Override only——
+/// 严格拒 / 兼容警告 + 跳过；缺属性 = schema 违反同 rels 层分派；
+/// 重复 Default 扩展名 / Override PartName：严格拒 / 兼容首胜）。
+fn parse_content_types(
+    data: &[u8],
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<ContentTypes, io::ReadError> {
+    const PART: &str = "[Content_Types].xml";
+    let malformed = |detail: String| io::ReadError::InvalidPart {
+        part: PART.to_string(),
+        detail,
+    };
+    // 兼容模式跳条目/降级（警告登记；严格模式同面 typed reject）。
+    fn warn_skip(detail: String, warnings: &mut Vec<CompatibilityWarning>) {
+        warnings.push(CompatibilityWarning {
+            part: "[Content_Types].xml".to_string(),
+            kind: WarningKind::MalformedXml,
+            detail: format!("compat mode: content-types entry skipped: {detail}"),
+        });
+    }
+    let mut reader = quick_xml::Reader::from_reader(data);
+    let mut buf = Vec::with_capacity(4 * 1024);
+    let mut out = ContentTypes::default();
+    let mut depth: usize = 0;
+    use quick_xml::events::Event;
+    // 词汇表外元素（含根元素名错误）：严格拒 / 兼容警告 + 跳过
+    // （rels 层同族——引擎对 [Content_Types].xml 的 FromXML 是
+    // depth==1 全收宽容面，本层给显式信号）。
+    let unknown = |local: &[u8], warnings: &mut Vec<CompatibilityWarning>| {
+        let detail = format!(
+            "unknown element '{}' (content-types vocabulary: Types/Default/Override only)",
+            String::from_utf8_lossy(local)
+        );
+        if strict {
+            Err(malformed(detail))
+        } else {
+            warn_skip(format!("{detail} (tolerated, skipped)"), warnings);
+            Ok(())
+        }
+    };
+    loop {
+        // Start 与 Empty 合并处理（Empty 无 End 事件——深度仅 Start 递增）。
+        let (e, is_start) = match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => (e, true),
+            Ok(Event::Empty(e)) => (e, false),
+            Ok(Event::End(_)) => {
+                depth = depth.saturating_sub(1);
+                buf.clear();
+                continue;
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {
+                buf.clear();
+                continue;
+            }
+            Err(e) => {
+                return if strict {
+                    // 严格模式下门 3 已先拒（.xml 部件）——不可达路径，
+                    // 保守同拒。
+                    Err(malformed(format!("content-types XML parse error: {e}")))
+                } else {
+                    warnings.push(CompatibilityWarning {
+                        part: PART.to_string(),
+                        kind: WarningKind::MalformedXml,
+                        detail: format!("compat mode: content-types parse degraded: {e}"),
+                    });
+                    Ok(ContentTypes::default())
+                };
+            }
+        };
+        let local = e.name().local_name();
+        let local = local.as_ref();
+        if depth == 0 {
+            if local != b"Types" {
+                unknown(local, warnings)?;
+            }
+        } else if depth == 1 && local == b"Default" {
+            match parse_ct_entry(&e, &reader, b"Extension")? {
+                Ok((ext, ct)) => {
+                    let ext = ext.to_ascii_lowercase();
+                    match out.defaults.entry(ext.clone()) {
+                        std::collections::hash_map::Entry::Occupied(_) => {
+                            let detail = format!("duplicate Default Extension '{ext}'");
+                            if strict {
+                                return Err(malformed(detail));
+                            }
+                            warn_skip(format!("{detail} (first wins)"), warnings);
+                        }
+                        std::collections::hash_map::Entry::Vacant(v) => {
+                            v.insert(ct);
+                        }
+                    }
+                }
+                Err(detail) => {
+                    if strict {
+                        return Err(malformed(detail));
+                    }
+                    warn_skip(detail, warnings);
+                }
+            }
+        } else if depth == 1 && local == b"Override" {
+            match parse_ct_entry(&e, &reader, b"PartName")? {
+                Ok((part, ct)) => {
+                    let part = part.trim_start_matches('/').to_string();
+                    match out.overrides.entry(part.clone()) {
+                        std::collections::hash_map::Entry::Occupied(_) => {
+                            let detail = format!("duplicate Override PartName '{part}'");
+                            if strict {
+                                return Err(malformed(detail));
+                            }
+                            warn_skip(format!("{detail} (first wins)"), warnings);
+                        }
+                        std::collections::hash_map::Entry::Vacant(v) => {
+                            v.insert(ct);
+                        }
+                    }
+                }
+                Err(detail) => {
+                    if strict {
+                        return Err(malformed(detail));
+                    }
+                    warn_skip(detail, warnings);
+                }
+            }
+        } else {
+            unknown(local, warnings)?;
+        }
+        if is_start {
+            depth += 1;
+            if depth > io::LIMIT_XML_DEPTH {
+                return Err(malformed(format!(
+                    "element depth over limit {}",
+                    io::LIMIT_XML_DEPTH
+                )));
+            }
+        }
+        buf.clear();
+    }
+    if depth > 0 {
+        // EOF 截断（严格模式下门 3 已先拒——不可达路径，保守同拒）。
+        return if strict {
+            Err(malformed(format!(
+                "truncated: {depth} unclosed element(s) at EOF"
+            )))
+        } else {
+            warnings.push(CompatibilityWarning {
+                part: PART.to_string(),
+                kind: WarningKind::MalformedXml,
+                detail: format!("compat mode: content-types truncated ({depth} unclosed)"),
+            });
+            Ok(ContentTypes::default())
+        };
+    }
+    Ok(out)
+}
+
+/// `<Default Extension=… ContentType=…/>` / `<Override PartName=…
+/// ContentType=…/>` 属性对解析。`Ok(Ok((key, ct)))` = 正常；
+/// `Ok(Err(detail))` = schema 违反（缺必需属性/坏属性——调用面分派
+/// 严格拒或兼容跳条目）；`Err` = 坏属性值（两模式同拒——quick-xml
+/// 层错误非 schema 面）。
+fn parse_ct_entry(
+    e: &quick_xml::events::BytesStart<'_>,
+    reader: &quick_xml::Reader<&[u8]>,
+    key_attr: &[u8],
+) -> Result<Result<(String, String), String>, io::ReadError> {
+    let mut key = String::new();
+    let mut ct = String::new();
+    for attr in e.attributes() {
+        let attr = match attr {
+            Ok(a) => a,
+            Err(err) => return Ok(Err(format!("bad attribute: {err}"))),
+        };
+        let k = attr.key.local_name();
+        let k = k.as_ref();
+        let v = attr
+            .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, reader.decoder())
+            .map_err(|err| io::ReadError::InvalidPart {
+                part: "[Content_Types].xml".to_string(),
+                detail: format!("bad attribute value: {err}"),
+            })?
+            .into_owned();
+        if k == key_attr {
+            key = v;
+        } else if k == b"ContentType" {
+            ct = v;
+        }
+    }
+    let el = if key_attr == b"Extension" {
+        "Default"
+    } else {
+        "Override"
+    };
+    let key_name = String::from_utf8_lossy(key_attr);
+    if key.is_empty() {
+        return Ok(Err(format!("{el} missing {key_name} attribute")));
+    }
+    if ct.is_empty() {
+        return Ok(Err(format!("{el} missing ContentType attribute")));
+    }
+    Ok(Ok((key, ct)))
+}
+
 /// 包内部件路径词法归一化（`word/../x/y.xml` → `x/y.xml`）；越出
 /// 包根（`../` 弹空）返回 None——敌意路径逃逸面。
 fn normalize_part_path(path: &str) -> Option<String> {
@@ -544,6 +810,468 @@ fn build_rels_bundle<R: std::io::Read + std::io::Seek>(
         // 兼容降级（None）——表缺席，警告已记。
     }
     Ok(bundle)
+}
+
+// ---------------------------------------------------------------------------
+// 媒体清单（docx-r2 读面——容器级：word/media/* 枚举 + .rels 联接 +
+// 引擎 Drawing r:embed 引用计数；模型级无渲染语义）
+// ---------------------------------------------------------------------------
+//
+// 引擎读面三个静默怪癖在档（本清单不受影响——自有实现直读 zip 条目）：
+// ① 无 `image` 特性时非 PNG/非 EMF 媒体在 generate_image_previews=true
+//   默认路径静默丢弃（documents/mod.rs:291-327）；
+// ② 悬空 image 关系 read_zip Err 静默跳过（read_docx.rs:404-423）；
+// ③ 引擎 `Docx.images` 仅收 document rels 的 IMAGE_TYPE 关系（页眉图片
+//   字节不入）。
+// zip 8.6 重复条目名：by_name 最后条目胜（read/zip_archive.rs:49-51
+// IndexMap::insert 后胜）——本清单与引擎读路径同语义。
+
+/// 图像类型关系词尾（OPC officeDocument 关系命名空间）。
+const IMAGE_REL_TYPE_SUFFIX: &str = "/image";
+
+/// 媒体部件目录前缀（Word 约定——清单面固定 `word/media/`）。
+const MEDIA_DIR: &str = "word/media/";
+
+/// 单条图像引用关系（rid + 属主部件）。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ImageReference {
+    /// 关系 Id（如 `rIdImage1`——属主部件 .rels 内局部）。
+    pub rid: String,
+    /// 属主部件路径（如 `word/document.xml` / `word/header1.xml`）。
+    pub owner_part: String,
+}
+
+/// 单个媒体资产（容器级清单项）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageAsset {
+    /// 包内部件名（如 `word/media/rIdImage1.png`）。
+    pub part_name: String,
+    /// 内容类型（[Content_Types].xml Default/Override 解析；无声明
+    /// = None——严格模式整包拒，兼容模式保留 + 警告）。
+    pub content_type: Option<String>,
+    /// 原始字节（门 2 已验实际 ≤ 声明 ≤ 300MB/条）。
+    pub bytes: Vec<u8>,
+    /// 引用该媒体的关系集合（去重后按 (owner_part, rid) 排序——
+    /// 同媒体可被多部件引用；零引用 = 包内孤儿媒体，保留不警告）。
+    pub references: Vec<ImageReference>,
+    /// 正文/页眉/页脚 run 级 `a:blip r:embed` 解析到本资产的次数
+    /// （引擎读侧 Pic.id 透传 rid——reader/pic.rs:24-28；悬空 r:embed
+    /// 严格拒 / 兼容 BrokenReference 警告且不计入）。
+    pub body_uses: usize,
+}
+
+/// 构建媒体清单（门后字节；条目读取有界——门 2 已验证）。
+///
+/// 悬空 image 关系（r:id 无条目对侧不存在——目标部件缺失/越根）：
+/// 严格拒 / 兼容 BrokenReference 警告 + 资产不增；TargetMode=External
+/// 型 image 关系（链接图——无包内部件）不入清单不警告（登记）；
+/// 目标存在但非 `word/media/*` 部件：不联接不警告（登记观察）。
+fn build_image_inventory(
+    za: &mut zip::ZipArchive<std::io::Cursor<&std::vec::Vec<u8>>>,
+    bundle: &RelsBundle,
+    ct: &ContentTypes,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<ImageAsset>, io::ReadError> {
+    let reject = |detail: String| io::ReadError::InvalidPart {
+        part: "word/document.xml".to_string(),
+        detail,
+    };
+    let names: Vec<String> = za
+        .file_names()
+        .filter(|n| n.starts_with(MEDIA_DIR) && !n.ends_with('/'))
+        .map(str::to_string)
+        .collect();
+    let mut assets: Vec<ImageAsset> = Vec::with_capacity(names.len());
+    let mut by_part_name: HashMap<String, usize> = HashMap::new();
+    for name in &names {
+        let mut bytes = Vec::new();
+        let ok = za
+            .by_name(name)
+            .and_then(|mut zf| zf.read_to_end(&mut bytes).map(|_| ()).map_err(Into::into));
+        if let Err(e) = ok {
+            return Err(io::ReadError::ContainerCorrupt(format!(
+                "read media part {name}: {e}"
+            )));
+        }
+        // 内容类型（Override 优先于 Default）；无声明 = 严格拒 /
+        // 兼容 MalformedXml 警告 + content_type=None 保留（OPC：每部件
+        // 必须有内容类型——包结构违反，兼容容忍可见化）。
+        let content_type = ct.content_type_of(name);
+        let content_type = match content_type {
+            Some(t) => Some(t),
+            None => {
+                let detail = format!("media part '{name}' has no content type declaration");
+                if strict {
+                    return Err(reject(detail));
+                }
+                warnings.push(CompatibilityWarning {
+                    part: name.clone(),
+                    kind: WarningKind::MalformedXml,
+                    detail: format!("compat mode: {detail} (kept with content_type=None)"),
+                });
+                None
+            }
+        };
+        by_part_name.insert(name.clone(), assets.len());
+        assets.push(ImageAsset {
+            part_name: name.clone(),
+            content_type,
+            bytes,
+            references: Vec::new(),
+            body_uses: 0,
+        });
+    }
+
+    // 关系联接：全部 .rels 表（document 主表 + per-part 表）中 image 型
+    // 关系 → 目标媒体资产。迭代序非确定 → 收集后按 (owner, rid) 排序。
+    let mut owner_tables: Vec<(String, &RelationshipTable)> = Vec::new();
+    if let Some(t) = bundle.document.as_ref() {
+        owner_tables.push(("word/document.xml".to_string(), t));
+    }
+    for (owner, t) in &bundle.by_part {
+        owner_tables.push((owner.clone(), t));
+    }
+    for (owner, table) in owner_tables {
+        let owner_dir = owner.rsplit_once('/').map(|(d, _)| d.to_string());
+        for rel in table.iter() {
+            if !rel.rel_type.ends_with(IMAGE_REL_TYPE_SUFFIX) {
+                continue;
+            }
+            if rel.target_mode.is_some() {
+                // External 型 image 关系（链接图）——无包内部件，不入清单
+                // 不警告（与超链接 External 透传同族，登记）。
+                continue;
+            }
+            let Some(owner_dir) = &owner_dir else {
+                continue;
+            };
+            let Some(path) = normalize_part_path(&format!("{owner_dir}/{}", rel.target)) else {
+                let detail = format!(
+                    "image relationship target '{}' (owner {owner}) escapes package root",
+                    rel.target
+                );
+                if strict {
+                    return Err(reject(detail));
+                }
+                warnings.push(CompatibilityWarning {
+                    part: owner.clone(),
+                    kind: WarningKind::BrokenReference,
+                    detail,
+                });
+                continue;
+            };
+            let Some(&idx) = by_part_name.get(&path) else {
+                // 目标不在包内（悬空）或非 word/media/* 部件（在包内
+                // 但非清单面——登记观察，不警告不联接）。
+                if bundle.entries.contains(&path) {
+                    continue;
+                }
+                let detail = format!(
+                    "image relationship target part '{path}' (owner {owner}) missing from package"
+                );
+                if strict {
+                    return Err(reject(detail));
+                }
+                warnings.push(CompatibilityWarning {
+                    part: owner.clone(),
+                    kind: WarningKind::BrokenReference,
+                    detail,
+                });
+                continue;
+            };
+            assets[idx].references.push(ImageReference {
+                rid: rel.id.clone(),
+                owner_part: owner.clone(),
+            });
+        }
+    }
+    for a in &mut assets {
+        a.references.sort();
+        a.references.dedup();
+    }
+    Ok(assets)
+}
+
+/// 引擎模型 run 级 `a:blip r:embed` 引用收集（正文 + 六槽位页眉/
+/// 页脚；悬空 r:embed 严格拒 / 兼容 BrokenReference 警告且不计入）。
+fn count_image_uses(
+    docx: &docx_rs::Docx,
+    bundle: &RelsBundle,
+    media_parts: &HashMap<String, usize>,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<HashMap<String, usize>, io::ReadError> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut sink: Vec<CompatibilityWarning> = Vec::new(); // 丢弃面：槽位引用悬空警告已在提取层记
+
+    // 单个 rid 经属主表解析 → 目标媒体部件（悬空/越根/External：
+    // 严格拒 / 兼容警告跳过；非媒体目标：跳过）。
+    let mut resolve = |rid: &str,
+                       table: Option<&RelationshipTable>,
+                       owner: &str,
+                       owner_dir: &str,
+                       counts: &mut HashMap<String, usize>|
+     -> Result<(), io::ReadError> {
+        let Some(table) = table else {
+            return Ok(()); // 无表可验（降级警告已在解析层记）——静默
+        };
+        let Some(rel) = table.get(rid) else {
+            let detail = format!("image r:embed '{rid}' (owner {owner}) has no relationship entry");
+            if strict {
+                return Err(io::ReadError::InvalidPart {
+                    part: owner.to_string(),
+                    detail,
+                });
+            }
+            warnings.push(CompatibilityWarning {
+                part: owner.to_string(),
+                kind: WarningKind::BrokenReference,
+                detail,
+            });
+            return Ok(());
+        };
+        if rel.target_mode.is_some() {
+            return Ok(()); // External 链接图（登记）
+        }
+        let Some(path) = normalize_part_path(&format!("{owner_dir}/{}", rel.target)) else {
+            let detail = format!(
+                "image r:embed target '{}' (owner {owner}) escapes package root",
+                rel.target
+            );
+            if strict {
+                return Err(io::ReadError::InvalidPart {
+                    part: owner.to_string(),
+                    detail,
+                });
+            }
+            warnings.push(CompatibilityWarning {
+                part: owner.to_string(),
+                kind: WarningKind::BrokenReference,
+                detail,
+            });
+            return Ok(());
+        };
+        if media_parts.contains_key(&path) {
+            *counts.entry(path).or_insert(0) += 1;
+        }
+        // 目标在包内但非 word/media/* 部件：跳过（登记观察）。
+        Ok(())
+    };
+
+    // 正文（word/document.xml）。
+    let doc_table = bundle.document.as_ref();
+    for child in &docx.document.children {
+        match child {
+            docx_rs::DocumentChild::Paragraph(p) => {
+                collect_paragraph_image_rids(
+                    p,
+                    doc_table,
+                    "word/document.xml",
+                    "word",
+                    &mut resolve,
+                    &mut counts,
+                )?;
+            }
+            docx_rs::DocumentChild::Table(t) => {
+                collect_table_image_rids(
+                    t,
+                    doc_table,
+                    "word/document.xml",
+                    "word",
+                    &mut resolve,
+                    &mut counts,
+                )?;
+            }
+            _ => {}
+        }
+    }
+
+    // 六槽位页眉/页脚（各自 rels 联接——槽位路径经 slot_part_path
+    // 复算，悬空槽位静默跳过：提取层已警告）。
+    let sp = &docx.document.section_property;
+    enum SlotContent<'a> {
+        Header(&'a docx_rs::Header),
+        Footer(&'a docx_rs::Footer),
+    }
+    /// 页眉/页脚槽位对（default/first/even 三组——rid + 内容）。
+    type SlotPair<'a> = (
+        Option<&'a (String, docx_rs::Header)>,
+        Option<&'a (String, docx_rs::Footer)>,
+    );
+    let slots: [SlotPair<'_>; 3] = [
+        (sp.header.as_ref(), sp.footer.as_ref()),
+        (sp.first_header.as_ref(), sp.first_footer.as_ref()),
+        (sp.even_header.as_ref(), sp.even_footer.as_ref()),
+    ];
+    for (header, footer) in slots {
+        for (rid, content) in [
+            header.map(|(rid, h)| (rid, SlotContent::Header(h))),
+            footer.map(|(rid, f)| (rid, SlotContent::Footer(f))),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            sink.clear();
+            let Some(part) = slot_part_path(rid, bundle, false, &mut sink)? else {
+                continue;
+            };
+            let table = bundle.by_part.get(&part);
+            let Some(owner_dir) = part.rsplit_once('/').map(|(d, _)| d) else {
+                continue;
+            };
+            match content {
+                SlotContent::Header(h) => {
+                    for child in &h.children {
+                        match child {
+                            docx_rs::HeaderChild::Paragraph(p) => {
+                                collect_paragraph_image_rids(
+                                    p,
+                                    table,
+                                    &part,
+                                    owner_dir,
+                                    &mut resolve,
+                                    &mut counts,
+                                )?;
+                            }
+                            docx_rs::HeaderChild::Table(t) => {
+                                collect_table_image_rids(
+                                    t,
+                                    table,
+                                    &part,
+                                    owner_dir,
+                                    &mut resolve,
+                                    &mut counts,
+                                )?;
+                            }
+                            // StructuredDataTag 等——面外。
+                            _ => {}
+                        }
+                    }
+                }
+                SlotContent::Footer(f) => {
+                    for child in &f.children {
+                        match child {
+                            docx_rs::FooterChild::Paragraph(p) => {
+                                collect_paragraph_image_rids(
+                                    p,
+                                    table,
+                                    &part,
+                                    owner_dir,
+                                    &mut resolve,
+                                    &mut counts,
+                                )?;
+                            }
+                            docx_rs::FooterChild::Table(t) => {
+                                collect_table_image_rids(
+                                    t,
+                                    table,
+                                    &part,
+                                    owner_dir,
+                                    &mut resolve,
+                                    &mut counts,
+                                )?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(counts)
+}
+
+/// 段落内 run 级 Drawing r:embed 收集（含超链接内 run；表格递归）。
+#[allow(clippy::too_many_arguments)]
+fn collect_paragraph_image_rids(
+    p: &docx_rs::Paragraph,
+    table: Option<&RelationshipTable>,
+    owner: &str,
+    owner_dir: &str,
+    resolve: &mut impl FnMut(
+        &str,
+        Option<&RelationshipTable>,
+        &str,
+        &str,
+        &mut HashMap<String, usize>,
+    ) -> Result<(), io::ReadError>,
+    counts: &mut HashMap<String, usize>,
+) -> Result<(), io::ReadError> {
+    for child in &p.children {
+        match child {
+            docx_rs::ParagraphChild::Run(r) => {
+                collect_run_image_rids(r, table, owner, owner_dir, resolve, counts)?;
+            }
+            docx_rs::ParagraphChild::Hyperlink(h) => {
+                for c in &h.children {
+                    if let docx_rs::ParagraphChild::Run(r) = c {
+                        collect_run_image_rids(r, table, owner, owner_dir, resolve, counts)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// 表内段落级 Drawing r:embed 收集（单元格段落递归）。
+#[allow(clippy::too_many_arguments)]
+fn collect_table_image_rids(
+    t: &docx_rs::Table,
+    table: Option<&RelationshipTable>,
+    owner: &str,
+    owner_dir: &str,
+    resolve: &mut impl FnMut(
+        &str,
+        Option<&RelationshipTable>,
+        &str,
+        &str,
+        &mut HashMap<String, usize>,
+    ) -> Result<(), io::ReadError>,
+    counts: &mut HashMap<String, usize>,
+) -> Result<(), io::ReadError> {
+    for row in &t.rows {
+        let docx_rs::TableChild::TableRow(r) = row;
+        for cell in &r.cells {
+            let docx_rs::TableRowChild::TableCell(c) = cell;
+            for content in &c.children {
+                if let docx_rs::TableCellContent::Paragraph(p) = content {
+                    collect_paragraph_image_rids(p, table, owner, owner_dir, resolve, counts)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// run 内 Drawing r:embed 收集（引擎读侧 Pic.id 透传 rid）。
+#[allow(clippy::too_many_arguments)]
+fn collect_run_image_rids(
+    r: &docx_rs::Run,
+    table: Option<&RelationshipTable>,
+    owner: &str,
+    owner_dir: &str,
+    resolve: &mut impl FnMut(
+        &str,
+        Option<&RelationshipTable>,
+        &str,
+        &str,
+        &mut HashMap<String, usize>,
+    ) -> Result<(), io::ReadError>,
+    counts: &mut HashMap<String, usize>,
+) -> Result<(), io::ReadError> {
+    for child in &r.children {
+        if let docx_rs::RunChild::Drawing(d) = child {
+            if let Some(docx_rs::DrawingData::Pic(pic)) = &d.data {
+                if !pic.id.is_empty() {
+                    resolve(&pic.id, table, owner, owner_dir, counts)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -622,7 +1350,8 @@ pub struct HeaderFooterData {
     pub blocks: Vec<Block>,
 }
 
-/// 整档提取结果：块序 + 页眉页脚 + 结构化警告（容器门面，与 XLSX 一致）。
+/// 整档提取结果：块序 + 页眉页脚 + 媒体清单 + 结构化警告（容器门面，
+/// 与 XLSX 一致）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct DocxDocument {
     pub blocks: Vec<Block>,
@@ -631,6 +1360,9 @@ pub struct DocxDocument {
     pub headers: Vec<HeaderFooterData>,
     /// 页脚（同上）。
     pub footers: Vec<HeaderFooterData>,
+    /// 媒体清单（docx-r2：`word/media/*` 容器级枚举——字节/内容类型/
+    /// 引用关系/run 级引用计数；块序内图片位置不入块模型，登记）。
+    pub images: Vec<ImageAsset>,
     pub warnings: Vec<CompatibilityWarning>,
 }
 
@@ -665,8 +1397,9 @@ pub fn read_docx_from_bytes_with_options(
 
 /// 门结构：门 1（prescan）→ 门 2+3 融合趟（尺寸 + 部件良构——
 /// 复用 XLSX 读路径同一实现）→ **自有 OPC 关系层**（先于引擎——
-/// 上限两模式恒拒；词汇表/schema 严格拒兼容降级）→ docx-rs 模型
-/// 解析 → 关系联接提取。
+/// 上限两模式恒拒；词汇表/schema 严格拒兼容降级）→ [Content_Types].xml
+/// 解析 + 媒体清单 → docx-rs 模型解析 → 关系联接提取 + run 级图片
+/// 引用计数。
 fn read_bytes_gated(bytes: Vec<u8>, opts: &ReadOptions) -> Result<DocxDocument, DocxError> {
     let strict = !opts.compat;
     let cursor = std::io::Cursor::new(&bytes);
@@ -678,21 +1411,63 @@ fn read_bytes_gated(bytes: Vec<u8>, opts: &ReadOptions) -> Result<DocxDocument, 
     io::verify_gates(&mut za, strict, &mut warnings)?;
     drop(za);
 
-    // OPC 关系层（同一门后字节——零门绕过）。
-    let bundle = {
+    // OPC 关系层 + 内容类型 + 媒体清单（同一门后字节——零门绕过）。
+    let (bundle, images) = {
         let cursor = std::io::Cursor::new(&bytes);
         let mut za = zip::ZipArchive::new(cursor)
             .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
-        build_rels_bundle(&mut za, strict, &mut warnings)?
+        let bundle = build_rels_bundle(&mut za, strict, &mut warnings)?;
+        // [Content_Types].xml：部件缺失 = 严格拒 / 兼容降级空表（引擎
+        // 随后将拒——read_docx.rs:101 硬依赖，两模式最终同拒，诚实警告）。
+        let content_types = match za.by_name("[Content_Types].xml") {
+            Ok(mut zf) => {
+                let mut data = Vec::new();
+                let r = zf
+                    .read_to_end(&mut data)
+                    .map_err(|e| io::ReadError::ContainerCorrupt(format!("{e}")))?;
+                let _ = r;
+                parse_content_types(&data, strict, &mut warnings)?
+            }
+            Err(e) => {
+                let detail = format!("[Content_Types].xml part missing ({e})");
+                if strict {
+                    return Err(DocxError::Container(io::ReadError::InvalidPart {
+                        part: "[Content_Types].xml".to_string(),
+                        detail,
+                    }));
+                }
+                warnings.push(CompatibilityWarning {
+                    part: "[Content_Types].xml".to_string(),
+                    kind: WarningKind::MalformedXml,
+                    detail: format!("compat mode: {detail} (inventory empty; engine will reject)"),
+                });
+                ContentTypes::default()
+            }
+        };
+        let images =
+            build_image_inventory(&mut za, &bundle, &content_types, strict, &mut warnings)?;
+        (bundle, images)
     };
 
     let docx = docx_rs::read_docx(&bytes).map_err(|e| DocxError::Parse(format!("{e}")))?;
     let blocks = extract_blocks(&docx, &bundle, strict, &mut warnings)?;
     let (headers, footers) = extract_headers_footers(&docx, &bundle, strict, &mut warnings)?;
+    // run 级图片引用计数（悬空 r:embed 严格拒 / 兼容警告）。
+    let media_parts: HashMap<String, usize> = images
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (a.part_name.clone(), i))
+        .collect();
+    let mut images = images;
+    let uses = count_image_uses(&docx, &bundle, &media_parts, strict, &mut warnings)?;
+    for a in &mut images {
+        a.body_uses = uses.get(&a.part_name).copied().unwrap_or(0);
+    }
     Ok(DocxDocument {
         blocks,
         headers,
         footers,
+        images,
         warnings,
     })
 }
@@ -1048,6 +1823,17 @@ fn extract_headers_footers(
 // 写 API（新建语义——DocxWriter）
 // ---------------------------------------------------------------------------
 
+/// 简单域代码（docx-r2 写面）：PAGE / NUMPAGES 两面（引擎元素族
+/// 其余域 = TOC[文档级]/PAGEREF[书签面]/HYPERLINK[`todo!()` 崩溃面
+/// instr_text.rs:32]——登记不暴露）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldSpec {
+    /// 当前页码域（`<w:instrText>PAGE</w:instrText>`）。
+    Page,
+    /// 总页数域（`<w:instrText>NUMPAGES</w:instrText>`）。
+    NumPages,
+}
+
 /// 富文本 run 规格（写侧输入模型）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunSpec {
@@ -1058,6 +1844,17 @@ pub struct RunSpec {
     /// TargetMode="External"——引擎写面 "Now support external only"
     /// [documents/mod.rs:1209]，锚点写面不暴露）。
     pub link: Option<String>,
+    /// 脚注内容（docx-r2；Some = 本 run 为脚注引用 marker——`text`/
+    /// `bold`/`italic`/`link` 域值**忽略**：引擎 `add_footnote_reference`
+    /// 重置 run_property 为 FootnoteReference 字符样式
+    /// [documents/elements/run.rs:363-369]，marker 无用户样式面；
+    /// 脚注内容 = 单段纯文本，发射进 word/footnotes.xml）。读面引擎
+    /// 受限（CAPABILITY_NOTES §5）——XML 级断言见 tests/docx_roundtrip.rs。
+    pub footnote: Option<String>,
+    /// 简单域（docx-r2；Some = 本 run 展开为 fldChar begin/instrText/
+    /// fldChar end 三连——无缓存结果文本：域值是渲染期计算面，
+    /// 读回文本不含域值）。
+    pub field: Option<FieldSpec>,
 }
 
 impl RunSpec {
@@ -1067,6 +1864,8 @@ impl RunSpec {
             bold: false,
             italic: false,
             link: None,
+            footnote: None,
+            field: None,
         }
     }
 
@@ -1076,6 +1875,8 @@ impl RunSpec {
             bold,
             italic,
             link: None,
+            footnote: None,
+            field: None,
         }
     }
 
@@ -1087,6 +1888,45 @@ impl RunSpec {
             bold: false,
             italic: false,
             link: Some(url.into()),
+            footnote: None,
+            field: None,
+        }
+    }
+
+    /// 脚注引用 marker run（`note` = 脚注内容单段纯文本；样式面忽略
+    /// ——见字段文档）。
+    pub fn footnote(note: impl Into<String>) -> Self {
+        Self {
+            text: String::new(),
+            bold: false,
+            italic: false,
+            link: None,
+            footnote: Some(note.into()),
+            field: None,
+        }
+    }
+
+    /// 当前页码域 run（`PAGE`）。
+    pub fn field_page() -> Self {
+        Self {
+            text: String::new(),
+            bold: false,
+            italic: false,
+            link: None,
+            footnote: None,
+            field: Some(FieldSpec::Page),
+        }
+    }
+
+    /// 总页数域 run（`NUMPAGES`）。
+    pub fn field_num_pages() -> Self {
+        Self {
+            text: String::new(),
+            bold: false,
+            italic: false,
+            link: None,
+            footnote: None,
+            field: Some(FieldSpec::NumPages),
         }
     }
 }
@@ -1150,19 +1990,41 @@ impl DocxWriter {
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
     }
 
-    /// 默认页眉（单段 run 序——run 级加粗/斜体/链接）。**default
-    /// 槽位，重复调用 = 原位替换**（引擎公开 `Docx::header` 按调用
+    /// 默认页眉（单段 run 序——run 级加粗/斜体/链接/脚注/域）。
+    /// **default 槽位，重复调用 = 原位替换**（引擎公开 `Docx::header` 按调用
     /// 次数递增 rels 计数——重复调用会发射 rIdHeader{n+1} 关系而无
     /// 对应部件[自产悬空引用，documents/mod.rs:576-589 计数语义]；
     /// 本包装层改为原位替换保持包自洽——同 XLSX 流式纪律的包装层
-    /// 防御先例）；first/even 槽位引擎支持、本面未暴露（登记——
-    /// 未实测不暴露）。
+    /// 防御先例）。
     pub fn header(&mut self, runs: &[RunSpec]) {
         let h = docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs));
         if self.docx.document.section_property.header.is_some() {
-            replace_default_header(&mut self.docx, h);
+            replace_slot_header(&mut self.docx, SlotKind::Default, h);
         } else {
             self.docx = std::mem::take(&mut self.docx).header(h);
+        }
+    }
+
+    /// 首页页眉（docx-r2；引擎自动置 titlePg 激活——
+    /// section_property.rs:95；重复调用 = 原位替换保持原槽 rid）。
+    pub fn first_header(&mut self, runs: &[RunSpec]) {
+        let h = docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs));
+        if self.docx.document.section_property.first_header.is_some() {
+            replace_slot_header(&mut self.docx, SlotKind::First, h);
+        } else {
+            self.docx = std::mem::take(&mut self.docx).first_header(h);
+        }
+    }
+
+    /// 偶数页页眉（docx-r2；引擎自动置 settings evenAndOddHeaders
+    /// 激活——documents/mod.rs:613-616；重复调用 = 原位替换保持原槽
+    /// rid）。
+    pub fn even_header(&mut self, runs: &[RunSpec]) {
+        let h = docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs));
+        if self.docx.document.section_property.even_header.is_some() {
+            replace_slot_header(&mut self.docx, SlotKind::Even, h);
+        } else {
+            self.docx = std::mem::take(&mut self.docx).even_header(h);
         }
     }
 
@@ -1170,10 +2032,60 @@ impl DocxWriter {
     pub fn footer(&mut self, runs: &[RunSpec]) {
         let f = docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs));
         if self.docx.document.section_property.footer.is_some() {
-            replace_default_footer(&mut self.docx, f);
+            replace_slot_footer(&mut self.docx, SlotKind::Default, f);
         } else {
             self.docx = std::mem::take(&mut self.docx).footer(f);
         }
+    }
+
+    /// 首页页脚（docx-r2；同 [`Self::first_header`]——titlePg 激活 +
+    /// 原位替换）。
+    pub fn first_footer(&mut self, runs: &[RunSpec]) {
+        let f = docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs));
+        if self.docx.document.section_property.first_footer.is_some() {
+            replace_slot_footer(&mut self.docx, SlotKind::First, f);
+        } else {
+            self.docx = std::mem::take(&mut self.docx).first_footer(f);
+        }
+    }
+
+    /// 偶数页页脚（docx-r2；同 [`Self::even_header`]——evenAndOddHeaders
+    /// 激活 + 原位替换）。
+    pub fn even_footer(&mut self, runs: &[RunSpec]) {
+        let f = docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs));
+        if self.docx.document.section_property.even_footer.is_some() {
+            replace_slot_footer(&mut self.docx, SlotKind::Even, f);
+        } else {
+            self.docx = std::mem::take(&mut self.docx).even_footer(f);
+        }
+    }
+
+    /// 内联 PNG 图片段（docx-r2；单图单段，包级媒体部件 + 正文关系
+    /// + `<a:blip r:embed>` 引用——读回经 [`DocxDocument::images`] 清单全环）。
+    ///
+    /// **PNG-only 面**：引擎媒体部件恒 `*.png` 命名
+    /// （image_collector.rs:137 `media/{id}.png`；zipper/mod.rs:118 注释
+    /// 「For now only png supported」）——非 PNG 签名字节 typed 拒；
+    /// 自动转码/尺寸推断面 = `Pic::new` 需 `image` 特性（+23 crate
+    /// 依赖树——登记不启用），本面要求显式像素尺寸（EMU 换算引擎
+    /// 内建 `from_px` = px × 9525 @96dpi）。
+    pub fn image(&mut self, png: &[u8], width_px: u32, height_px: u32) -> Result<(), DocxError> {
+        const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        if png.len() < 8 || png[..8] != PNG_SIGNATURE {
+            return Err(DocxError::Parse(format!(
+                "image must be PNG (signature mismatch, {} bytes)",
+                png.len()
+            )));
+        }
+        if width_px == 0 || height_px == 0 {
+            return Err(DocxError::Parse(format!(
+                "image dimensions must be positive, got {width_px}x{height_px}"
+            )));
+        }
+        let pic = docx_rs::Pic::new_with_dimensions(png.to_vec(), width_px, height_px);
+        let p = docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_image(pic));
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        Ok(())
     }
 
     /// 文本表格（行 × 单元格文本；首行不特殊化——表头样式属渲染面）。
@@ -1218,10 +2130,35 @@ impl DocxWriter {
 }
 
 /// run 规格序列 → 引擎段落（链接 run → 引擎超链接元素[rels 由引擎
-/// 打包收集]；普通 run 直挂）。
+/// 打包收集]；脚注 marker run → 引擎脚注引用[footnotes.xml 由引擎
+/// 打包收集]；域 run → fldChar begin/instrText/end 三连；普通 run
+/// 直挂）。
 fn specs_to_paragraph(runs: &[RunSpec]) -> docx_rs::Paragraph {
     let mut p = docx_rs::Paragraph::new();
     for spec in runs {
+        // 脚注 marker（样式面忽略——引擎 add_footnote_reference 重置
+        // run_property，见 RunSpec::footnote 文档）。
+        if let Some(note) = &spec.footnote {
+            let mut footnote = docx_rs::Footnote::new();
+            footnote.add_content(
+                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(note.as_str())),
+            );
+            p = p.add_run(docx_rs::Run::new().add_footnote_reference(footnote));
+            continue;
+        }
+        // 简单域（begin/instrText/end 三连——引擎 add_tc 同构先例
+        // run.rs:202-208）。
+        if let Some(field) = spec.field {
+            let instr = match field {
+                FieldSpec::Page => docx_rs::InstrText::PAGE(docx_rs::InstrPAGE::new()),
+                FieldSpec::NumPages => docx_rs::InstrText::NUMPAGES(docx_rs::InstrNUMPAGES::new()),
+            };
+            p = p
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
+                .add_run(docx_rs::Run::new().add_instr_text(instr))
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
+            continue;
+        }
         let mut run = docx_rs::Run::new().add_text(spec.text.as_str());
         let mut rp = docx_rs::RunProperty::new();
         if spec.bold {
@@ -1243,23 +2180,75 @@ fn specs_to_paragraph(runs: &[RunSpec]) -> docx_rs::Paragraph {
     p
 }
 
-/// 原位替换 default 页眉槽位（保持 `rIdHeader1` + rels 计数不变——
-/// 替代引擎重复调用计数递增的自产悬空引用行为；rId 格式锚 =
-/// documents/header_id.rs `create_header_rid`）。
-fn replace_default_header(docx: &mut docx_rs::Docx, h: docx_rs::Header) {
-    let sp = &mut docx.document.section_property;
-    let rid = docx_rs::create_header_rid(1);
-    sp.header = Some((rid.clone(), h));
-    sp.header_reference = Some(docx_rs::HeaderReference::new("default", rid));
+/// 页眉槽位标记（原位替换目标）。
+#[derive(Debug, Clone, Copy)]
+enum SlotKind {
+    Default,
+    First,
+    Even,
 }
 
-/// 原位替换 default 页脚槽位（同 [`replace_default_header`]——
-/// documents/footer_id.rs `create_footer_rid`）。
-fn replace_default_footer(docx: &mut docx_rs::Docx, f: docx_rs::Footer) {
+impl SlotKind {
+    fn type_str(self) -> &'static str {
+        match self {
+            SlotKind::Default => "default",
+            SlotKind::First => "first",
+            SlotKind::Even => "even",
+        }
+    }
+}
+
+/// 原位替换页眉槽位（**保持原槽 rid**——docx-r2 修复：r1 无条件
+/// rIdHeader1 在多槽组合下会踩踏[先 first 后 default 时 default 槽
+/// 实为 rIdHeader2]；rid 保持 = rels 计数不变 + 无跨槽碰撞；
+/// titlePg 激活位随槽保持——first 槽置位时引擎已设，防御性重申）。
+fn replace_slot_header(docx: &mut docx_rs::Docx, slot: SlotKind, h: docx_rs::Header) {
     let sp = &mut docx.document.section_property;
-    let rid = docx_rs::create_footer_rid(1);
-    sp.footer = Some((rid.clone(), f));
-    sp.footer_reference = Some(docx_rs::FooterReference::new("default", rid));
+    let existing = match slot {
+        SlotKind::Default => sp.header.as_ref().map(|(r, _)| r.clone()),
+        SlotKind::First => sp.first_header.as_ref().map(|(r, _)| r.clone()),
+        SlotKind::Even => sp.even_header.as_ref().map(|(r, _)| r.clone()),
+    };
+    let rid = existing.unwrap_or_else(|| docx_rs::create_header_rid(1));
+    match slot {
+        SlotKind::Default => sp.header = Some((rid.clone(), h)),
+        SlotKind::First => {
+            sp.first_header = Some((rid.clone(), h));
+            sp.title_pg = true;
+        }
+        SlotKind::Even => sp.even_header = Some((rid.clone(), h)),
+    }
+    let reference = docx_rs::HeaderReference::new(slot.type_str(), rid);
+    match slot {
+        SlotKind::Default => sp.header_reference = Some(reference),
+        SlotKind::First => sp.first_header_reference = Some(reference),
+        SlotKind::Even => sp.even_header_reference = Some(reference),
+    }
+}
+
+/// 原位替换页脚槽位（同 [`replace_slot_header`]——footer 侧对称）。
+fn replace_slot_footer(docx: &mut docx_rs::Docx, slot: SlotKind, f: docx_rs::Footer) {
+    let sp = &mut docx.document.section_property;
+    let existing = match slot {
+        SlotKind::Default => sp.footer.as_ref().map(|(r, _)| r.clone()),
+        SlotKind::First => sp.first_footer.as_ref().map(|(r, _)| r.clone()),
+        SlotKind::Even => sp.even_footer.as_ref().map(|(r, _)| r.clone()),
+    };
+    let rid = existing.unwrap_or_else(|| docx_rs::create_footer_rid(1));
+    match slot {
+        SlotKind::Default => sp.footer = Some((rid.clone(), f)),
+        SlotKind::First => {
+            sp.first_footer = Some((rid.clone(), f));
+            sp.title_pg = true;
+        }
+        SlotKind::Even => sp.even_footer = Some((rid.clone(), f)),
+    }
+    let reference = docx_rs::FooterReference::new(slot.type_str(), rid);
+    match slot {
+        SlotKind::Default => sp.footer_reference = Some(reference),
+        SlotKind::First => sp.first_footer_reference = Some(reference),
+        SlotKind::Even => sp.even_footer_reference = Some(reference),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1288,6 +2277,8 @@ mod tests {
                 bold: false,
                 italic: false,
                 link: None,
+                footnote: None,
+                field: None,
             }
         );
         assert!(RunSpec::styled("a", true, false).bold);
@@ -1298,8 +2289,226 @@ mod tests {
                 bold: false,
                 italic: false,
                 link: Some("https://x.example/".into()),
+                footnote: None,
+                field: None,
             }
         );
+        // docx-r2 构造器：脚注 marker / 两个简单域。
+        assert_eq!(
+            RunSpec::footnote("注"),
+            RunSpec {
+                text: String::new(),
+                bold: false,
+                italic: false,
+                link: None,
+                footnote: Some("注".into()),
+                field: None,
+            }
+        );
+        assert_eq!(RunSpec::field_page().field, Some(FieldSpec::Page));
+        assert_eq!(RunSpec::field_num_pages().field, Some(FieldSpec::NumPages));
+        assert_eq!(RunSpec::field_page().text, "");
+    }
+
+    /// specs_to_paragraph 展开：脚注 marker（引擎 FootnoteReference
+    /// 变体 + 内容在脚注内 + marker 无文本）。
+    #[test]
+    fn specs_expand_footnote_marker() {
+        let p = specs_to_paragraph(&[
+            RunSpec::text("前文"),
+            RunSpec::footnote("脚注内容"),
+            RunSpec::text("后文"),
+        ]);
+        let mut texts = Vec::new();
+        let mut footnote_refs = 0;
+        for child in &p.children {
+            if let docx_rs::ParagraphChild::Run(r) = child {
+                for c in &r.children {
+                    match c {
+                        docx_rs::RunChild::Text(t) => texts.push(t.text.clone()),
+                        docx_rs::RunChild::FootnoteReference(f) => {
+                            footnote_refs += 1;
+                            assert_eq!(f.content.len(), 1, "脚注内容单段");
+                            assert!(matches!(
+                                &f.content[0].children[0],
+                                docx_rs::ParagraphChild::Run(rr)
+                                    if matches!(&rr.children[0],
+                                        docx_rs::RunChild::Text(t) if t.text == "脚注内容")
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert_eq!(texts, vec!["前文", "后文"], "marker 无文本 run");
+        assert_eq!(footnote_refs, 1);
+    }
+
+    /// specs_to_paragraph 展开：简单域三连（begin/instrText/end——
+    /// 引擎模型级断言）。
+    #[test]
+    fn specs_expand_simple_fields() {
+        let p = specs_to_paragraph(&[RunSpec::field_page(), RunSpec::field_num_pages()]);
+        let mut fld_chars = Vec::new();
+        let mut instr = Vec::new();
+        for child in &p.children {
+            if let docx_rs::ParagraphChild::Run(r) = child {
+                for c in &r.children {
+                    match c {
+                        docx_rs::RunChild::FieldChar(f) => {
+                            fld_chars.push(format!("{:?}", f.field_char_type))
+                        }
+                        docx_rs::RunChild::InstrText(i) => instr.push(match i.as_ref() {
+                            docx_rs::InstrText::PAGE(_) => "PAGE".to_string(),
+                            docx_rs::InstrText::NUMPAGES(_) => "NUMPAGES".to_string(),
+                            other => format!("{other:?}"),
+                        }),
+                        other => panic!("域 run 意外子元素: {other:?}"),
+                    }
+                }
+            }
+        }
+        assert_eq!(fld_chars, vec!["Begin", "End", "Begin", "End"]);
+        assert_eq!(instr, vec!["PAGE", "NUMPAGES"]);
+    }
+
+    /// 图片写面验证：非 PNG 签名 / 零尺寸 typed 拒；正常 PNG 过
+    /// （引擎 Pic 尺寸换算 from_px = px × 9525）。
+    #[test]
+    fn image_write_validation() {
+        let mut w = DocxWriter::new();
+        assert!(matches!(
+            w.image(b"JFIF-looks-like-jpeg", 10, 10),
+            Err(DocxError::Parse(m)) if m.contains("PNG")
+        ));
+        assert!(matches!(
+            w.image(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0], 0, 10),
+            Err(DocxError::Parse(m)) if m.contains("positive")
+        ));
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4];
+        w.image(&png, 320, 240).unwrap();
+        // 引擎模型级：单段单 run 单 Drawing（Pic 尺寸 EMU 换算）。
+        let children = &w.docx.document.children;
+        let docx_rs::DocumentChild::Paragraph(p) = &children[0] else {
+            panic!("首块应为段落");
+        };
+        let docx_rs::ParagraphChild::Run(r) = &p.children[0] else {
+            panic!("首子元素应为 run");
+        };
+        let docx_rs::RunChild::Drawing(d) = &r.children[0] else {
+            panic!("run 应含 Drawing");
+        };
+        let Some(docx_rs::DrawingData::Pic(pic)) = &d.data else {
+            panic!("Drawing 应含 Pic");
+        };
+        assert_eq!(pic.size, (320 * 9525, 240 * 9525));
+        assert_eq!(pic.image, png.to_vec());
+    }
+
+    /// [Content_Types].xml 解析：Default/Override + 查表优先级
+    /// （Override > Default）+ 扩展名小写归一。
+    #[test]
+    fn content_types_parse_and_lookup() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="PNG" ContentType="image/png"/>
+<Default Extension="jpeg" ContentType="image/jpeg"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/media/special.bin" ContentType="application/x-custom"/>
+</Types>"#;
+        let mut w = Vec::new();
+        let ct = parse_content_types(xml, true, &mut w).unwrap();
+        assert_eq!(w.len(), 0);
+        assert_eq!(
+            ct.content_type_of("word/media/a.PnG").as_deref(),
+            Some("image/png"),
+            "扩展名小写归一查 Default"
+        );
+        assert_eq!(
+            ct.content_type_of("word/media/b.jpeg").as_deref(),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            ct.content_type_of("word/document.xml").as_deref(),
+            Some(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+            ),
+            "Override 命中"
+        );
+        assert_eq!(
+            ct.content_type_of("word/media/special.bin").as_deref(),
+            Some("application/x-custom"),
+            "Override 优先于扩展名 Default"
+        );
+        assert_eq!(ct.content_type_of("word/media/c.tiff"), None, "无声明");
+        assert_eq!(ct.content_type_of("word/media/noext"), None, "无扩展名");
+    }
+
+    /// [Content_Types].xml 词汇表外元素：严格拒 / 兼容警告 + 跳过
+    /// （合法条目保留）。
+    #[test]
+    fn content_types_unknown_element_strict_compat() {
+        let xml = br#"<Types><Default Extension="png" ContentType="image/png"/><zzz/></Types>"#;
+        let mut w = Vec::new();
+        match parse_content_types(xml, true, &mut w) {
+            Err(io::ReadError::InvalidPart { detail, .. }) => {
+                assert!(detail.contains("unknown element"), "{detail}")
+            }
+            other => panic!("strict 应拒, got {other:?}"),
+        }
+        let mut w = Vec::new();
+        let ct = parse_content_types(xml, false, &mut w).unwrap();
+        assert_eq!(ct.content_type_of("a.png").as_deref(), Some("image/png"));
+        assert!(w
+            .iter()
+            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
+    }
+
+    /// [Content_Types].xml 缺属性条目 + 重复条目：严格拒 / 兼容跳过
+    /// 或首胜。
+    #[test]
+    fn content_types_missing_and_duplicate_entries() {
+        let missing = br#"<Types><Default Extension="png"/><Default Extension="gif" ContentType="image/gif"/></Types>"#;
+        let mut w = Vec::new();
+        match parse_content_types(missing, true, &mut w) {
+            Err(io::ReadError::InvalidPart { detail, .. }) => {
+                assert!(detail.contains("missing ContentType"), "{detail}")
+            }
+            other => panic!("strict 应拒, got {other:?}"),
+        }
+        let mut w = Vec::new();
+        let ct = parse_content_types(missing, false, &mut w).unwrap();
+        assert_eq!(ct.content_type_of("a.gif").as_deref(), Some("image/gif"));
+        assert_eq!(ct.content_type_of("a.png"), None, "缺属性条目跳过");
+        assert_eq!(
+            w.iter()
+                .filter(|x| x.kind == WarningKind::MalformedXml)
+                .count(),
+            1
+        );
+        let dup = br#"<Types><Default Extension="png" ContentType="image/png"/><Default Extension="png" ContentType="image/x-other"/></Types>"#;
+        let mut w = Vec::new();
+        assert!(parse_content_types(dup, true, &mut w).is_err());
+        let mut w = Vec::new();
+        let ct = parse_content_types(dup, false, &mut w).unwrap();
+        assert_eq!(
+            ct.content_type_of("a.png").as_deref(),
+            Some("image/png"),
+            "首胜"
+        );
+    }
+
+    /// [Content_Types].xml 垃圾/截断：严格拒 / 兼容降级空表。
+    #[test]
+    fn content_types_garbage_strict_rejects_compat_degrades() {
+        let truncated = b"<Types><Default Extensio"; // 标签内截断
+        let mut w = Vec::new();
+        assert!(parse_content_types(truncated, true, &mut w).is_err());
+        let mut w = Vec::new();
+        let ct = parse_content_types(truncated, false, &mut w).unwrap();
+        assert_eq!(ct.content_type_of("a.png"), None, "降级空表");
+        assert!(!w.is_empty());
     }
 
     /// .rels 解析：正常四属性（实体补偿：&amp; → &）。
