@@ -35,8 +35,25 @@
 //! ——wasm 桥消费面（wasm32 无文件系统），门结构与路径入口恒等
 //! （门 1/门 2+3/全部上限两模式恒同）；五面提取抽出共享核
 //! `extract_sheets`（两入口同一实现——行为单一真源）。
+//!
+//! **r4-t1 增量（2026-10-17，Round 4 T1——XLSX 类型推断与转换规则，
+//! 用户裁决落地）**：读面新增**类型化单元格值模型**（[`CellData`] /
+//! [`CellGrid`] / [`SheetData::typed`]）——三分纪律：**原始值**（枚举
+//! 载荷 = 存储面事实）/ **推断类型**（变体即 kind，日期类携带依据）/
+//! **显式转换**（[`CellData::as_iso_datetime`] 等——消费方明确调用，
+//! 映射层不做静默语义转换）。kind 判定 = calamine 存储类型 + numFmt
+//! 证据的忠实转译（**零新增推断**）：纯序列数无 numFmt 证据不认定
+//! 日期；前导零/数字文本原样保留不转数字；错误格保留码文本；公式格
+//! = 缓存值（[`SheetData::values`] / [`SheetData::typed`]）与公式文本
+//! （[`SheetData::formulas`] / [`SheetData::formula_at`]）**两通道明确
+//! 区分**（禁止把缓存值误当公式文本）。读-改-重建类型保持联接 =
+//! [`SheetData::replay_cell`]（kind 分派 + 纪元换算 + numFmt 样式
+//! 配对单调用点）。规则依据表 = 分析仓 xlsx-r1/FIDELITY.md 类型规则
+//! 节 + xlsx-r2/REPORT.md r4-t1 节（每条规则一行：规则/依据/测试锚点）。
 
-use calamine::{Data, Dimensions, Hyperlink, Range, Reader, Xlsx};
+use calamine::{
+    Data, Dimensions, ExcelDateTime, ExcelDateTimeType, Hyperlink, Range, Reader, Xlsx,
+};
 
 // ---------------------------------------------------------------------------
 // §3 限额常量（SECURITY_POLICY v1 接线——xlsx 族；后续可移配置面）
@@ -428,10 +445,327 @@ pub(crate) fn verify_gates<R: std::io::Read + std::io::Seek>(
 }
 
 // ---------------------------------------------------------------------------
+// 类型化单元格值模型（r4-t1：原始值 / 推断类型 / 显式转换三分）
+// ---------------------------------------------------------------------------
+
+/// 读面类型化单元格值（r4-t1——office-io 自有模型，calamine 类型不出
+/// 此面；与写侧 [`crate::write::CellValue`] 对偶）。
+///
+/// 三分纪律：**原始值**（本枚举载荷 = 存储面事实）+ **推断类型**
+/// （变体即 kind，日期类携带依据）+ **显式转换**（[`CellData::
+/// as_iso_datetime`] / [`CellData::as_iso_duration`]——消费方明确
+/// 调用，映射层不做静默语义转换）。显示面（t17 Display 语义）经
+/// [`CellData::display`]。
+///
+/// ## kind 判定依据表（一手核验 calamine 0.36.1 cells_reader.rs
+/// `read_v` + formats.rs；**本层零新增推断**——kind = 存储类型 +
+/// numFmt 证据的忠实转译；实测钉定 = tests/cell_types.rs）
+///
+/// | 变体 | 依据 |
+/// |------|------|
+/// | [`Text`] | 存储类型 = 字符串（t="s" 共享串 / t="str" 公式文本结果 / inlineStr / 无 t 非数字回退）——标识符/前导零/数字文本**原样保留，绝不转数字**（用户裁决默认值） |
+/// | [`Number`] | 存储类型 = 数字（t="n" / 无 t 可解析 f64）——xlsx 数值面恒 IEEE 754 double（`Data::Int` 仅 pivot 路径不可达）；**>2^53 整数精度边界**（9007199254740993 落盘即 9007199254740992——Excel 自身同限） |
+/// | [`Boolean`] | t="b" 存储 |
+/// | [`DateTime`] | **numFmt 日期证据**：styles.xml cellXfs numFmtId = builtin 14-22/45/47 或自定义格式码含 d/m/h/y/s 计 token（formats.rs 判定，非「Float+猜测」）；serial = Excel 序列数（天数自 1899-12-30），is_1904 = workbookPr date1904 纪元。**纯 Float 无证据 → [`Number`]，不认定日期** |
+/// | [`DateTimeIso`] | t="d" 显式 ISO 8601 存储（文件生产者定型——第二类明确依据） |
+/// | [`Duration`] | numFmt TimeDelta 证据（builtin 46 `[h]:mm:ss` 或自定义 `[…]` 时长格式码）；serial = 天分数 |
+/// | [`DurationIso`] | ODS 路径变体——**xlsx 读路径不可达**（t="d" 恒产 DateTimeIso；防御性承载保 kind 完整性） |
+/// | [`Error`] | t="e" 存储——错误码文本保留（#DIV/0! / #N/A / #NAME? / #NULL! / #NUM! / #REF! / #VALUE! / #DATA!），可诊断不丢弃不 panic |
+/// | [`Empty`] | 无值格（缺格 / 空 `<v>`） |
+///
+/// [`Text`]: CellData::Text
+/// [`Number`]: CellData::Number
+/// [`Boolean`]: CellData::Boolean
+/// [`DateTime`]: CellData::DateTime
+/// [`DateTimeIso`]: CellData::DateTimeIso
+/// [`Duration`]: CellData::Duration
+/// [`DurationIso`]: CellData::DurationIso
+/// [`Error`]: CellData::Error
+/// [`Empty`]: CellData::Empty
+#[derive(Debug, Clone, PartialEq)]
+pub enum CellData {
+    /// 文本（含前导零/数字文本/标识符——原样保留）。
+    Text(String),
+    /// 数值（xlsx 存储面 f64；display = Rust 格式化——t17 显示面同源）。
+    Number(f64),
+    /// 布尔。
+    Boolean(bool),
+    /// 日期/日期时间：序列数 + numFmt 证据 + 纪元（见依据表）。
+    DateTime { serial: f64, is_1904: bool },
+    /// ISO 8601 日期/日期时间串（t="d" 存储，原串）。
+    DateTimeIso(String),
+    /// 时长：序列数（天分数）+ TimeDelta numFmt 证据。
+    Duration { serial: f64, is_1904: bool },
+    /// ISO 8601 时长串（xlsx 不可达——防御性承载）。
+    DurationIso(String),
+    /// 错误格（错误码文本保留——可诊断）。
+    Error(String),
+    /// 空格。
+    Empty,
+}
+
+/// [`CellData::to_write_parts`] 的 DateTime kind 保持 numFmt 格式码
+/// （写回后读面经 numFmt 日期证据再判 DateTime——kind 往返钉定见
+/// tests/cell_types.rs `kind_preserving_replay_roundtrip`）。
+pub const DATE_REPLAY_FORMAT: &str = "yyyy-mm-dd hh:mm:ss";
+/// Duration kind 保持 numFmt 格式码（TimeDelta 证据往返）。
+pub const DURATION_REPLAY_FORMAT: &str = "[h]:mm:ss";
+
+/// 1904 → 1900 纪元换算（写面引擎恒 1900 纪元——rust_xlsxwriter 包装
+/// 无 1904 开关；1462 = 两纪元天数差，与 calamine
+/// EXCEL_1900_1904_DIFF 同值）：历法日期保持，序列数换算。
+fn epoch_to_1900(serial: f64, is_1904: bool) -> f64 {
+    if is_1904 {
+        serial + 1462.0
+    } else {
+        serial
+    }
+}
+
+impl CellData {
+    /// 显示面（t17 Display 语义同源——与 calamine `Data::to_string`
+    /// 逐字等值，tests/cell_types.rs 全格等值钉定）：文本原样 / 数值
+    /// Rust f64 格式化 / 布尔 / 日期与时长 = 裸序列数
+    /// （`ExcelDateTime` Display = value） / ISO 串原样 / 错误码 /
+    /// 空 = `""`。
+    pub fn display(&self) -> String {
+        match self {
+            CellData::Text(s) => s.clone(),
+            CellData::Number(v) => format!("{v}"),
+            CellData::Boolean(b) => format!("{b}"),
+            CellData::DateTime { serial, .. } | CellData::Duration { serial, .. } => {
+                format!("{serial}")
+            }
+            CellData::DateTimeIso(s) | CellData::DurationIso(s) => s.clone(),
+            CellData::Error(code) => code.clone(),
+            CellData::Empty => String::new(),
+        }
+    }
+
+    /// **显式转换**：日期/日期时间 → ISO 8601 字符串
+    /// （`YYYY-MM-DDTHH:MM:SS[.mmm]`；毫秒非零才输出小数位）。
+    ///
+    /// - [`CellData::DateTime`]：序列数 → 历法组件（calamine
+    ///   `ExcelDateTime::to_ymd_hms_milli`——1900/1904 双纪元与 Excel
+    ///   1900 闰年怪癖由引擎实现承载）；
+    /// - [`CellData::DateTimeIso`]：原串直返（已是 ISO）；
+    /// - 其余变体 → `None`（**无据转换不发生**——纯 Number 序列数
+    ///   不具备日期依据，裁决「日期转换必须有明确依据」）。
+    pub fn as_iso_datetime(&self) -> Option<String> {
+        match self {
+            CellData::DateTime { serial, is_1904 } => {
+                let (y, mo, d, h, mi, s, ms) =
+                    ExcelDateTime::new(*serial, ExcelDateTimeType::DateTime, *is_1904)
+                        .to_ymd_hms_milli();
+                if ms == 0 {
+                    Some(format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}"))
+                } else {
+                    Some(format!(
+                        "{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{ms:03}"
+                    ))
+                }
+            }
+            CellData::DateTimeIso(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    /// **显式转换**：时长 → ISO 8601 时长串（`PT…H…M…S`；序列数按
+    /// 天分数 × 86400 秒换算，秒级舍入）。[`CellData::Duration`] 与
+    /// [`CellData::DurationIso`]（原串直返）之外 → `None`（无据不转换）。
+    pub fn as_iso_duration(&self) -> Option<String> {
+        match self {
+            CellData::Duration { serial, .. } => {
+                let total_secs = (serial * 86_400.0).round() as i64;
+                let (h, m, s) = (total_secs / 3600, (total_secs % 3600) / 60, total_secs % 60);
+                Some(format!("PT{h}H{m}M{s}S"))
+            }
+            CellData::DurationIso(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    /// **kind 分派 → 写面值 + 配套样式**（值面联接——读-改-重建路径
+    /// 的类型保持基础；完整单格联接（含公式通道）见 [`SheetData::
+    /// replay_cell`]）。返回 `None` = 不落格（[`CellData::Empty`]）。
+    ///
+    /// | kind | 写面落点 | kind 保持 |
+    /// |------|----------|-----------|
+    /// | Text | `Text` 原样 | ✓（前导零零损） |
+    /// | Number | `Number(f64)` | ✓（>2^53 精度边界随 Excel 存储面恒在） |
+    /// | Boolean | `Boolean` | ✓ |
+    /// | DateTime | `Number(serial)` + [`DATE_REPLAY_FORMAT`] 样式（1904 纪元换算 +1462，见 `epoch_to_1900`） | ✓（读面经 numFmt 证据再判 DateTime） |
+    /// | Duration | `Number(serial)` + [`DURATION_REPLAY_FORMAT`] 样式 | ✓（TimeDelta 证据往返） |
+    /// | DateTimeIso / DurationIso | `Text` 原串 | **降级登记**（写面引擎无 t="d" 面——值保持，kind 降为文本） |
+    /// | Error | `Text(码文本)` | **降级登记**（写面引擎无错误格——码文本可诊断保留） |
+    /// | Empty | 不落格 | — |
+    pub fn to_write_parts(
+        &self,
+    ) -> Option<(crate::write::CellValue, Option<crate::write::CellStyle>)> {
+        use crate::write::{CellStyle, CellValue as WriteValue, NumFmt};
+        let date_style = || {
+            Some(CellStyle {
+                num_fmt: Some(NumFmt::Custom(DATE_REPLAY_FORMAT.to_string())),
+                ..Default::default()
+            })
+        };
+        let duration_style = || {
+            Some(CellStyle {
+                num_fmt: Some(NumFmt::Custom(DURATION_REPLAY_FORMAT.to_string())),
+                ..Default::default()
+            })
+        };
+        match self {
+            CellData::Text(s) => Some((WriteValue::Text(s.clone()), None)),
+            CellData::Number(v) => Some((WriteValue::Number(*v), None)),
+            CellData::Boolean(b) => Some((WriteValue::Boolean(*b), None)),
+            CellData::DateTime { serial, is_1904 } => Some((
+                WriteValue::Number(epoch_to_1900(*serial, *is_1904)),
+                date_style(),
+            )),
+            CellData::Duration { serial, .. } => {
+                Some((WriteValue::Number(*serial), duration_style()))
+            }
+            CellData::DateTimeIso(s) | CellData::DurationIso(s) => {
+                Some((WriteValue::Text(s.clone()), None))
+            }
+            CellData::Error(code) => Some((WriteValue::Text(code.clone()), None)),
+            CellData::Empty => None,
+        }
+    }
+}
+
+/// calamine `Data` → [`CellData`]（crate 内单点转译——kind 依据表的
+/// 实现面；is_1904 来自 `Xlsx::has_1904_epoch()`[构造期 eager 解析]）。
+fn cell_data_from(d: &Data, is_1904: bool) -> CellData {
+    match d {
+        Data::Empty => CellData::Empty,
+        Data::String(s) => CellData::Text(s.clone()),
+        Data::Float(v) => CellData::Number(*v),
+        // xlsx 读路径不可达（worksheet 数值恒 Float；Int 仅 pivot 缓存
+        // 记录路径）——防御性承载：i64 直落 f64（精度边界随存储面）。
+        Data::Int(v) => CellData::Number(*v as f64),
+        Data::Bool(b) => CellData::Boolean(*b),
+        Data::DateTime(dt) => {
+            if dt.is_duration() {
+                CellData::Duration {
+                    serial: dt.as_f64(),
+                    is_1904,
+                }
+            } else {
+                CellData::DateTime {
+                    serial: dt.as_f64(),
+                    is_1904,
+                }
+            }
+        }
+        Data::DateTimeIso(s) => CellData::DateTimeIso(s.clone()),
+        Data::DurationIso(s) => CellData::DurationIso(s.clone()),
+        Data::Error(e) => CellData::Error(e.to_string()),
+    }
+}
+
+/// 类型化值矩阵（r4-t1）——与 [`SheetData::values`] **同一使用区包围盒、
+/// 同一相对坐标系**（单点派生自 values，形状恒一致；空表同 values
+/// 高宽 0）。坐标系双面暴露：[`CellGrid::get`] 相对 start 锚（与
+/// `Range::get` 同语义——in-range 缺格 = [`CellData::Empty`]）；
+/// [`CellGrid::get_abs`] 绝对坐标（跨面配对建议恒绝对坐标——
+/// range_anchor_pinned.rs 锚定语义的免坑面）。
+#[derive(Debug, Default, Clone)]
+pub struct CellGrid {
+    start: (u32, u32),
+    end: (u32, u32),
+    inner: Vec<CellData>,
+}
+
+impl CellGrid {
+    /// values Range → 类型化网格（crate 内单点派生）。
+    fn from_values(values: &Range<Data>, is_1904: bool) -> Self {
+        if values.is_empty() {
+            return Self::default();
+        }
+        let start = values.start().expect("non-empty range has start");
+        let end = values.end().expect("non-empty range has end");
+        let height = values.height();
+        let width = values.width();
+        let mut inner = Vec::with_capacity(height * width);
+        for r in 0..height {
+            for c in 0..width {
+                let cell = values
+                    .get((r, c))
+                    .map(|d| cell_data_from(d, is_1904))
+                    .unwrap_or(CellData::Empty);
+                inner.push(cell);
+            }
+        }
+        Self { start, end, inner }
+    }
+
+    /// 使用区左上锚（绝对坐标；空表 `None`——与 `Range::start` 同一
+    /// 语义）。
+    pub fn start(&self) -> Option<(u32, u32)> {
+        if self.inner.is_empty() {
+            None
+        } else {
+            Some(self.start)
+        }
+    }
+
+    /// 使用区右下角（绝对坐标；空表 `None`）。
+    pub fn end(&self) -> Option<(u32, u32)> {
+        if self.inner.is_empty() {
+            None
+        } else {
+            Some(self.end)
+        }
+    }
+
+    /// 行数（空表 0）。
+    pub fn height(&self) -> usize {
+        if self.inner.is_empty() {
+            0
+        } else {
+            (self.end.0 - self.start.0 + 1) as usize
+        }
+    }
+
+    /// 列数（空表 0）。
+    pub fn width(&self) -> usize {
+        if self.inner.is_empty() {
+            0
+        } else {
+            (self.end.1 - self.start.1 + 1) as usize
+        }
+    }
+
+    /// 相对坐标（相对 start 锚）——in-range 恒 `Some`（缺格 =
+    /// [`CellData::Empty`]），越界 `None`（与 `Range::get` 同语义）。
+    pub fn get(&self, pos: (usize, usize)) -> Option<&CellData> {
+        let (row, col) = pos;
+        let (height, width) = (self.height(), self.width());
+        if col >= width || row >= height {
+            None
+        } else {
+            self.inner.get(row * width + col)
+        }
+    }
+
+    /// 绝对坐标（工作表 0 基行列）。
+    pub fn get_abs(&self, row: u32, col: u32) -> Option<&CellData> {
+        let (start, end) = (self.start, self.end);
+        if self.inner.is_empty() || row < start.0 || col < start.1 || row > end.0 || col > end.1 {
+            return None;
+        }
+        self.get(((row - start.0) as usize, (col - start.1) as usize))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // calamine 读取包装（五 API 面）
 // ---------------------------------------------------------------------------
 
-/// 单表快照：值矩阵（含缓存值）/ 公式文本 / 合并范围 / 超链接（v2）。
+/// 单表快照：值矩阵（含缓存值）/ 公式文本 / 合并范围 / 超链接（v2）/
+/// 类型化值矩阵（r4-t1）。
 #[derive(Debug, Default)]
 pub struct SheetData {
     pub name: String,
@@ -440,6 +774,89 @@ pub struct SheetData {
     pub merges: Vec<Dimensions>,
     /// 超链接（v2）：calamine Hyperlink 四字段，已过 IO 边界实体补偿。
     pub hyperlinks: Vec<Hyperlink>,
+    /// 类型化值矩阵（r4-t1）——`values` 的类型化转译（同一包围盒/
+    /// 坐标系，单点派生）；kind 依据与显式转换见 [`CellData`]。
+    pub typed: CellGrid,
+}
+
+impl SheetData {
+    /// 公式文本（**独立通道**——与值面缓存值明确区分，r4-t1 安全联接
+    /// 面：绝对坐标入参，公式范围锚定换算在本方法内完成，消费方免于
+    /// range_anchor_pinned.rs 锚定语义的配对陷阱）。`None` = 该格无
+    /// 公式文本（非公式格 / 坐标越界 / 空公式面）。
+    ///
+    /// 公式文本形态：**不带 `=` 前缀**（calamine 读侧行为，FIDELITY
+    /// §1 在档；写面 [`crate::write::CellValue::Formula`] 接受带/不带
+    /// 前缀——往返一致性由写面规范化承载）。
+    pub fn formula_at(&self, row: u32, col: u32) -> Option<&str> {
+        let start = self.formulas.start()?;
+        let r = usize::try_from(row.checked_sub(start.0)?).ok()?;
+        let c = usize::try_from(col.checked_sub(start.1)?).ok()?;
+        match self.formulas.get((r, c)) {
+            Some(f) if !f.is_empty() => Some(f),
+            _ => None,
+        }
+    }
+
+    /// **读-改-重建单格类型保持联接**（r4-t1——kind 分派 + 公式两通道
+    /// 联接的单一安全调用点）。绝对坐标入参。
+    ///
+    /// - 公式格（[`Self::formula_at`] 命中）：值 = **缓存计算结果**，
+    ///   公式文本独立通道——写面落 `Formula { text, cached }`（缓存
+    ///   值 ≠ 公式文本，两通道区分）；缓存 kind 映射：Number/Boolean/
+    ///   Text 直传，DateTime/Duration → 序列数缓存 + 日期 numFmt 样式
+    ///   （纪元换算），DateTimeIso/DurationIso → 文本缓存（值保持），
+    ///   Empty（无缓存）→ `None`（读回 Float(0.0) 两义性在档——
+    ///   FIDELITY §1），Error → 码文本缓存（kind 降级登记）。
+    /// - 非公式格：[`CellData::to_write_parts`] kind 分派。
+    /// - `None` = 不落格（越界 / [`CellData::Empty`] 且非公式格）。
+    pub fn replay_cell(
+        &self,
+        row: u32,
+        col: u32,
+    ) -> Option<(crate::write::CellValue, Option<crate::write::CellStyle>)> {
+        let value = self.typed.get_abs(row, col)?;
+        if let Some(text) = self.formula_at(row, col) {
+            use crate::write::FormulaCache;
+            let (cached, style) = match value {
+                CellData::Number(v) => (Some(FormulaCache::Number(*v)), None),
+                CellData::Boolean(b) => (Some(FormulaCache::Boolean(*b)), None),
+                CellData::Text(t) => (Some(FormulaCache::Text(t.clone())), None),
+                CellData::DateTime { serial, is_1904 } => (
+                    Some(FormulaCache::Number(epoch_to_1900(*serial, *is_1904))),
+                    Some(crate::write::CellStyle {
+                        num_fmt: Some(crate::write::NumFmt::Custom(DATE_REPLAY_FORMAT.to_string())),
+                        ..Default::default()
+                    }),
+                ),
+                CellData::Duration { serial, .. } => (
+                    Some(FormulaCache::Number(*serial)),
+                    Some(crate::write::CellStyle {
+                        num_fmt: Some(crate::write::NumFmt::Custom(
+                            DURATION_REPLAY_FORMAT.to_string(),
+                        )),
+                        ..Default::default()
+                    }),
+                ),
+                // ISO 串缓存：文本形态值保持（写面无 t="d" 缓存型）。
+                CellData::DateTimeIso(s) | CellData::DurationIso(s) => {
+                    (Some(FormulaCache::Text(s.clone())), None)
+                }
+                // 无缓存（读回 Float(0.0) 两义性在档）/ 错误码文本缓存
+                //（写面缓存无错误型——kind 降级登记）。
+                CellData::Empty => (None, None),
+                CellData::Error(code) => (Some(FormulaCache::Text(code.clone())), None),
+            };
+            return Some((
+                crate::write::CellValue::Formula {
+                    text: text.to_string(),
+                    cached,
+                },
+                style,
+            ));
+        }
+        value.to_write_parts()
+    }
 }
 
 /// 整档提取：表序 + 逐表四面（v2：+超链接；C1 读取能力产品面）
@@ -532,17 +949,20 @@ pub fn read_book_from_bytes_with_options(
 
 /// calamine 五面提取共享核（路径/字节两入口同一实现——单一行为
 /// 真源，t17 抽出；提取逻辑与 xlsx-r2 Phase 2 起的 [`read_book`]
-/// 逐行相同）。
+/// 逐行相同）。r4-t1：逐表附建类型化值矩阵（`typed`——values 的
+/// 单点派生；纪元来自 `has_1904_epoch`，workbookPr 构造期已解析）。
 fn extract_sheets<R: std::io::Read + std::io::Seek>(
     book: &mut Xlsx<R>,
     warnings: Vec<CompatibilityWarning>,
 ) -> Result<Book, ReadError> {
+    let is_1904 = book.has_1904_epoch();
     let names = book.sheet_names().to_vec();
     let mut sheets = Vec::with_capacity(names.len());
     for name in &names {
         let values = book
             .worksheet_range(name)
             .map_err(|e| ReadError::ParseError(format!("range[{name}]: {e}")))?;
+        let typed = CellGrid::from_values(&values, is_1904);
         let formulas = book
             .worksheet_formula(name)
             .map_err(|e| ReadError::ParseError(format!("formula[{name}]: {e}")))?;
@@ -574,6 +994,7 @@ fn extract_sheets<R: std::io::Read + std::io::Seek>(
             formulas,
             merges,
             hyperlinks,
+            typed,
         });
     }
     Ok(Book { sheets, warnings })

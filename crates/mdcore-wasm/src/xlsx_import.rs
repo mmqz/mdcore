@@ -46,11 +46,15 @@
 //! - **使用区（used range）**：calamine 值矩阵的包围盒（含仅格式空格
 //!   的扩张——Excel 使用区语义）；**首个使用行 = GFM 表头行**，其余
 //!   为体行；
-//! - **单元格值**：[`calamine::Data`] 的 Display 值面——文本原样/
-//!   数值 Rust 格式化（`4.5`、`9`）/布尔 `true`/`false`/错误码
-//!   （`#DIV/0!` 等）/ISO 日期时长原串/Excel 序列数日期（`45943.5`——
-//!   numFmt 显示形态不宣称，值面语义）；清洗：`|` → `\|` 转义、
-//!   `\n`/`\r` → 空格（GFM 单元格不承载换行）、首尾空白去；
+//! - **单元格值**：office-io 类型化模型 [`mdc_office_io::io::CellData`]
+//!   的 `display()` 显示面（r4-t1 切换——与 calamine `Data` Display
+//!   逐字等值，office-io tests/cell_types.rs 全格等值钉定；本模块
+//!   自此零 calamine 面接触）：文本原样/数值 Rust 格式化（`4.5`、
+//!   `9`）/布尔 `true`/`false`/错误码（`#DIV/0!` 等）/ISO 日期时长
+//!   原串/Excel 序列数日期（`45943.5`——numFmt 显示形态不宣称，值面
+//!   语义；**kind 不改显示面**：前导零文本 `00123` 逐字、日期格 =
+//!   序列数）；清洗：`|` → `\|` 转义、`\n`/`\r` → 空格（GFM 单元格
+//!   不承载换行）、首尾空白去；
 //! - **公式格 = 缓存值**（Excel 显示语义——`values` 面即含缓存值的
 //!   值矩阵）：**公式文本不导入**，计数入 stats（`formulas_flattened`）。
 //!   依据：office-io 写面模块文档登记「cached = None 读回
@@ -160,8 +164,8 @@ fn compat_options() -> ReadOptions {
 }
 
 // ---------------------------------------------------------------------------
-// 纯映射内核（原生可测——消费面只经 office-io 公开类型，calamine
-// 类型零具名：单元格值经 Display 值面渲染）
+// 纯映射内核（原生可测——r4-t1 起消费面只经 office-io 公开类型，
+// calamine 类型零接触：单元格值经 CellData::display 显示面）
 // ---------------------------------------------------------------------------
 
 /// 单元格清洗：`|` 转义（GFM 列分隔符冲突）、`\n`/`\r` → 空格
@@ -246,12 +250,13 @@ fn sheet_to_section(sheet: &SheetData) -> SheetOutcome {
     for r in 0..rows {
         let mut cells: Vec<String> = Vec::with_capacity(cols);
         for c in 0..cols {
-            // Data 的 Display 值面（Empty → ""；数值 Rust 格式化；
-            // 错误码/ISO 串原样——见模块文档映射规则）。
+            // r4-t1：类型化模型显示面（CellData::display——与 calamine
+            // Data Display 逐字等值，office-io tests/cell_types.rs 钉定；
+            // Empty → ""；显示面兼容 = 既有断言即钉定）。
             let text = sheet
-                .values
+                .typed
                 .get((r, c))
-                .map(|d| d.to_string())
+                .map(|d| d.display())
                 .unwrap_or_default();
             if !text.is_empty() {
                 non_empty_cells += 1;
@@ -529,6 +534,45 @@ mod tests {
         assert_eq!(
             md,
             "## V\n\n| T | N | B | P |\n| --- | --- | --- | --- |\n| a b | -0.25 | false | x |"
+        );
+    }
+
+    /// r4-t1：类型化模型显示面（CellData::display 切换后）——kind 不改
+    /// 显示面：前导零文本逐字（默认保留裁决）、日期格 = 序列数值面
+    /// （numFmt 显示形态不宣称——C1 口径）、数值/布尔与 t17 语义同源。
+    #[test]
+    fn typed_display_face_kinds_preserve_text_semantics() {
+        use mdc_office_io::write::{CellStyle, CellValue, NumFmt, WorkbookWriter};
+        let mut w = WorkbookWriter::new();
+        {
+            let mut s = w.add_sheet("T").expect("sheet");
+            let date_style = CellStyle {
+                num_fmt: Some(NumFmt::Custom("yyyy-mm-dd".into())),
+                ..Default::default()
+            };
+            s.write_row(
+                0,
+                &[
+                    CellValue::Text("code".into()),
+                    CellValue::Text("qty".into()),
+                    CellValue::Text("ok".into()),
+                    CellValue::Text("day".into()),
+                ],
+            )
+            .expect("header");
+            s.write(1, 0, CellValue::Text("00123".into()), None)
+                .expect("leading-zero text");
+            s.write(1, 1, CellValue::Number(4.5), None).expect("number");
+            s.write(1, 2, CellValue::Boolean(true), None).expect("bool");
+            s.write(1, 3, CellValue::Number(44927.0), Some(&date_style))
+                .expect("date serial + numFmt");
+        }
+        let payload = import_json(&w.save_to_vec().expect("save"));
+        let md = payload["markdown"].as_str().expect("markdown");
+        assert_eq!(
+            md,
+            "## T\n\n| code | qty | ok | day |\n| --- | --- | --- | --- |\n| 00123 | 4.5 | true | 44927 |",
+            "前导零逐字 + 日期格 = 序列数（kind 进 office-io 模型，显示面不变）"
         );
     }
 
