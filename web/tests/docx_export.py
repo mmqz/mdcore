@@ -6,6 +6,12 @@ zip validity ([Content_Types].xml / word/document.xml), string-level
 document.xml mapping evidence (style_probe precedent), degraded-block
 tolerance, empty-document minimal docx, editor state untouched by export
 (read-only), and full circle export -> __importDocx -> content compare.
+
+t20 extension (de-degradation XML faces): list numbering (numPr +
+numbering.xml abstract + rels wiring), quote (w:ind + pBdr left), hr
+(pBdr bottom), block code dual-channel monospace (rFonts Courier New);
+status line simplified count is code_block only now (lang/fence remains
+registered; blockquote/list_item/thematic_break fully expressed).
 Evidence -> results/results_docx_export.json
 """
 
@@ -174,6 +180,8 @@ def main() -> int:
                   "tbl marker + cells")
 
             # ---- 降级块不破导出 + 编辑器现状零触碰（导出只读）----
+            # t20：quote/list/hr 已全表达（不再是 simplified 计数面）；
+            # code_block 等宽已表达但 lang/fence 仍降级 → 1 simplified。
             page.evaluate("(s) => window.__inject(s)", DEGRADED_MD)
             page.wait_for_function("window.__blockCount() === 6", timeout=15000)
             md_before = page.evaluate("window.__md()")
@@ -185,9 +193,40 @@ def main() -> int:
             check("degraded_blocks_survive_export",
                   r2["ok"] is True and "let x = 1;" in doc_xml2
                   and "quoted line" in doc_xml2 and "list item" in doc_xml2 and "nested" in doc_xml2
-                  and "5 simplified" in degraded_status
+                  and "1 simplified" in degraded_status
                   and page.evaluate("window.__md()") == md_before,
                   json.dumps({"status": degraded_status, "md_same": True}))
+
+            # ---- t20 消降级 XML 面 ①：列表 numbering（numPr 配对 +
+            #      numbering.xml bullet 抽象 + rels 接线——悬空 numPr
+            #      陷阱的反证）----
+            num_xml2 = zip_part(zf2, "word/numbering.xml")
+            rels2 = zip_part(zf2, "word/_rels/document.xml.rels")
+            check("t20_list_numbering_xml",
+                  '<w:numId w:val="101" /><w:ilvl w:val="0" />' in doc_xml2
+                  and '<w:numId w:val="101" /><w:ilvl w:val="1" />' in doc_xml2
+                  and 'w:abstractNumId="101"' in num_xml2
+                  and 'w:numFmt w:val="bullet"' in num_xml2
+                  and "relationships/numbering" in rels2,
+                  "bullet numPr ilvl 0/1 + 抽象 + rels")
+
+            # ---- t20 消降级 XML 面 ②：引用（ind 左缩进 + pBdr 左边框）----
+            check("t20_quote_indent_border_xml",
+                  'w:ind w:left="720"' in doc_xml2
+                  and '<w:pBdr><w:left w:val="single" w:space="4" w:sz="12" w:color="auto" /></w:pBdr>' in doc_xml2,
+                  "quote ind 720 + left border")
+
+            # ---- t20 消降级 XML 面 ③：水平线（空段下边框）----
+            check("t20_hr_bottom_border_xml",
+                  '<w:pBdr><w:bottom w:val="single" w:space="1" w:sz="6" w:color="auto" /></w:pBdr>' in doc_xml2,
+                  "hr pBdr bottom")
+
+            # ---- t20 消降级 XML 面 ④：块级 code 双通道等宽（段落级
+            #      pPr>rPr>rFonts + run 级 rFonts，Courier New）----
+            check("t20_code_block_mono_rfonts_xml",
+                  '<w:pPr><w:rPr><w:rFonts w:ascii="Courier New"' in doc_xml2
+                  and '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />' in doc_xml2,
+                  "code dual-channel rFonts")
 
             # ---- 空文档 = 最小合法 docx ----
             page.evaluate("window.__inject('')")

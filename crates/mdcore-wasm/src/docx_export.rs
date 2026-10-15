@@ -7,6 +7,12 @@
 //! 三域纪律唯一新边沿用 t16/t17 的 mdcore-wasm → office-io（消费方
 //! 边界；office-io 对 mdcore 零依赖不变）。
 //!
+//! **t20 增量（2026-10-15）**：office-io 写面五面扩（底稿 = 分析仓
+//! `office-line/docx-r1/WRITE_FACE_PROBE.md` §4 映射草案）后，t18
+//! 登记的四件降级 + 块级 code 等宽 + 行内 del·u **整批消解**；
+//! 残余降级 = code lang/fence（库无语法高亮/元数据面）与 link
+//! mark（模型 [`MarkSpan`] 无 URL 载荷——mdcore MD 域上游缺口）。
+//!
 //! ## 暴露面（[`WasmCore::export_docx`]——既有类增量方法，状态面零变化）
 //!
 //! - 入参：无（导出 `self` 当前块树——宿主编辑器文档本体）。
@@ -18,19 +24,19 @@
 //!
 //! | code | 含义 |
 //! |---|---|
-//! | `docx_build` | 引擎写/打包错误（[`DocxError::Io`] 打包失败为唯一现实路径；[`DocxError::Parse`] = heading 级越界，映射层恒钳位 1-9 故不可达，完备性仍映射）。**映射层是全函数——降级永不报错**；`Container` 变体只在读面产生，写侧不可达（完备性登记）。 |
+//! | `docx_build` | 引擎写/打包错误（[`DocxError::Io`] 打包失败为唯一现实路径；[`DocxError::Parse`] = heading 级越界 / list ilvl 越界，映射层恒钳位故不可达，完备性仍映射）。**映射层是全函数——降级永不报错**；`Container` 变体只在读面产生，写侧不可达（完备性登记）。 |
 //!
 //! ## 映射表（BlockKind → DocxWriter；模型级，非保真渲染）
 //!
 //! | mdcore 块 | DocxWriter 调用 | 降级（不可表达面，显式登记） |
 //! |---|---|---|
 //! | `Heading`（attrs.level，缺省/不可解析 → 1；钳 1-9） | [`DocxWriter::heading`]（Heading1-9 样式 + outline 级） | 模型 level 可为任意 usize（op 面），>9 钳 9；**标题 marks 丢弃**（[`DocxWriter::heading`] 纯文本面——html.rs 导入可产带 marks 的标题） |
-//! | `Paragraph`（text + marks） | [`DocxWriter::paragraph`] run 序 | mark kind 自由字符串：`strong`/`bold` → 加粗、`em`/`italic` → 斜体（html.rs 规范 = strong/em，spike 测试 = bold，双拼写并收）；**`code`/`del`/`u` 及未知 kind → 纯文本**（RunSpec 无等宽/删除线/下面线面）；**link kind → 纯文本**——模型 [`MarkSpan`] 无 URL 载荷，目标不可表达（html.rs 亦无 `<a>` 处理面——模型级无链接表示） |
-//! | `CodeBlock`（attrs.lang + text） | 每行一个纯文本段 | **等宽/字体面、lang、fence 结构全部丢弃**（RunSpec 无字体面；DocxWriter 仅预置 Heading1-9 样式）；文本逐字保留 |
+//! | `Paragraph`（text + marks） | [`DocxWriter::paragraph`] / 引用上下文 [`DocxWriter::quote_paragraph`] run 序 | mark kind 自由字符串：`strong`/`bold` → 加粗、`em`/`italic` → 斜体、`code` → 等宽（Consolas rFonts）、`del` → 删除线、`u` → 下画线（t20 消解）；**link kind → 纯文本**——模型 [`MarkSpan`] 无 URL 载荷，目标不可表达（html.rs 亦无 `<a>` 处理面——模型级无链接表示）；未知 kind → 纯文本 |
+//! | `CodeBlock`（attrs.lang + text） | 每行 [`DocxWriter::code_line`] 双通道等宽（段落级+run 级 Courier New） | **等宽面已表达（t20 消解）；lang、fence 结构仍丢弃**（docx-rs 无语法高亮/元数据面——库层不可达，登记维持）；文本逐字保留 |
 //! | `Table`（text = 规范管道行） | [`DocxWriter::table`] | 第 2 行分隔行剔除（GFM 语义位）；`\|` 反转义 → `\|`；单元格内 `\n`/`\r` → 空格（GFM 单元格单行面，t17 同向）；孤立 `\` 原样透传（模型无内联转义层——t16 同边界登记）；单元格内 marks 本就不可承载（Table = 扁平文本面，html.rs 同边界）；0 行表跳过（空 `w:tbl` 非 OOXML 合法形——防御，markdown 解析不产空表） |
-//! | `Blockquote` | 子块平铺递归 | 引用容器/缩进丢失；空引用（无子且 text 非空）镜像 markdown.rs 序列化语义（L90-93）按 text 发射 |
-//! | `ListItem`（attrs.marker/depth） | item text 富段 + 子块递归 | **marker/depth（列表结构）丢弃**（t14 已登记 office-io 列表写面未暴露；富文档语义不注入 `- ` 伪 markdown）；嵌套项 = 各自段落，次序保持 |
-//! | `ThematicBreak` | 空段落 | 无水平线面；空段 = 分隔视觉提示 |
+//! | `Blockquote` | 引用面 [`DocxWriter::quote_paragraph`]（ind 720×depth 钳 8 + 左边框，嵌套步进）；子块递归（段落/嵌套引用承载引用面——markdown 解析器产出的唯一形态） | 空引用（无子且 text 非空）按 text 发射（markdown.rs 序列化语义镜像）；**引用上下文中的 heading/table/code/list/hr 子块不挂 ind/pBdr**（markdown 解析器不产此形态——attach 恒挂 root；op 面可构造，防御递归保持 t18 平铺行为，登记） |
+//! | `ListItem`（attrs.marker/depth） | [`DocxWriter::list_item`]：marker 判序（数字型 → Ordered，`-`/`*`/`+`/缺失 → Bullet）+ depth→ilvl（钳 0-8；ilvl 越界防御：>8 钳 8——映射层全函数） | **列表结构已表达（t20 消解）**；多行 item 文本（op 面可构造，markdown 解析单行）首行 = 编号段 + 余行普通段（续行不重复编号、无同级缩进对齐——登记）；子块递归保持 |
+//! | `ThematicBreak` | [`DocxWriter::horizontal_rule`]（空段下边框） | 无降级（t20 消解；OOXML 无原生 hr——下边框为惯用表达） |
 //!
 //! 文本行处理（全局规则）：块文本按 `\n` 分行、每行剥一个行尾 `\r`
 //! （CRLF 容忍——markdown.rs `split('\n')` 保留 `\r`），多行文本 →
@@ -40,8 +46,13 @@
 //!
 //! ## 已知边界（登记，非缺陷）
 //!
-//! - run 相邻同 (bold,italic) 合并（docx 段落 run 边界不承载模型语义，
-//!   t16 导入侧同款合并登记的反向）；空 run 不发射；
+//! - run 相邻同 (bold,italic,mono,strike,underline) 合并（docx 段落
+//!   run 边界不承载模型语义，t16 导入侧同款合并登记的反向；t20
+//!   合并键扩至五位）；空 run 不发射；
+//! - **导出→t16 重导入的读面承载边界**：numPr/pBdr/ind/rFonts 不入
+//!   office-io 读模型（[`RunData`] 无字体/删除线/下画线字段，段落无
+//!   缩进/边框/编号字段）——**不宣称 list/quote/hr/等宽的往返等值**；
+//!   本模块测试 = 导出 XML 面直断言 + 既有文本面回归（文本零损）；
 //! - 导出的 heading 样式读回 = `Heading1`..`Heading9`（office-io 读面
 //!   样式 ID 透传）——全环断言见本模块测试；
 //! - 不暴露面（DocxWriter 能力中本切片未接线）：页眉/页脚槽位、PNG
@@ -49,13 +60,14 @@
 //!   无源可映射）、脚注、域。
 //!
 //! 纯内核（[`export_docx_core`]）不触碰 JsValue → 原生 cargo test
-//! 直测（写→`read_docx_from_bytes`→模型断言，t16/t17 同款写读全环
-//! 纪律）；wasm 壳由 wasm32 check + web 三件套门禁背书。
+//! 直测（写→`read_docx_from_bytes`→模型断言 + XML 面 zip 本地头遍历
+//! 直断言，t16/t17/t18 同款写读全环纪律）；wasm 壳由 wasm32 check +
+//! web 三件套门禁背书。
 
 use crate::WasmCore;
 #[cfg(test)]
 use mdc_office_io::docx::read_docx_from_bytes;
-use mdc_office_io::docx::{DocxError, DocxWriter, RunSpec};
+use mdc_office_io::docx::{DocxError, DocxWriter, ListKind, RunSpec};
 use mdcore::tree::{Attrs, BlockKind, BlockTree, MarkSpan, NodeId};
 use wasm_bindgen::prelude::*;
 
@@ -88,24 +100,36 @@ fn heading_level(attrs: &Attrs) -> u8 {
         .clamp(1, 9) as u8
 }
 
-/// mark kind → (bold, italic)。模型 kind 为自由字符串（op.rs SetMark）：
-/// `strong`/`bold`（html.rs 规范 / spike 命名）→ 加粗；`em`/`italic` →
-/// 斜体；其余（code/del/u/未知/link）→ 无 docx run 面可表达 → 纯文本。
-fn mark_style(kind: &str) -> (bool, bool) {
+/// mark kind → (bold, italic, mono, strike, underline) 五位。模型 kind
+/// 为自由字符串（op.rs SetMark）：`strong`/`bold`（html.rs 规范 /
+/// spike 命名）→ 加粗；`em`/`italic` → 斜体；`code` → 等宽（t20
+/// 消解）；`del` → 删除线（t20 消解）；`u` → 下画线（t20 消解）；
+/// 其余（link/未知）→ 无面可表达 → 纯文本（link = 模型无 URL 载荷，
+/// 上游缺口登记）。
+fn mark_style(kind: &str) -> (bool, bool, bool, bool, bool) {
     match kind {
-        "strong" | "bold" => (true, false),
-        "em" | "italic" => (false, true),
-        _ => (false, false),
+        "strong" | "bold" => (true, false, false, false, false),
+        "em" | "italic" => (false, true, false, false, false),
+        "code" => (false, false, true, false, false),
+        "del" => (false, false, false, true, false),
+        "u" => (false, false, false, false, true),
+        _ => (false, false, false, false, false),
     }
 }
 
-/// 单行文本 + char 偏移 marks → run 序（边界集分段 + 相邻同
-/// (bold,italic) 合并 + 空段跳过）。空文本 → 空 run 序。
+/// 单行文本 + char 偏移 marks → run 序（边界集分段 + 相邻同五位
+/// (bold,italic,mono,strike,underline) 合并 + 空段跳过）。空文本 →
+/// 空 run 序。
 fn runs_from(text: &str, marks: &[MarkSpan]) -> Vec<RunSpec> {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
+    // 五位覆盖区间集（mark 交叠 = 位叠加——t18 bold/italic 交叠语义
+    // 的 t20 扩面）。
     let mut bold: Vec<(usize, usize)> = Vec::new();
     let mut italic: Vec<(usize, usize)> = Vec::new();
+    let mut mono: Vec<(usize, usize)> = Vec::new();
+    let mut strike: Vec<(usize, usize)> = Vec::new();
+    let mut underline: Vec<(usize, usize)> = Vec::new();
     for m in marks {
         // 防御钳位（op 面写入时已校验 ≤ len_chars；adjust_marks 维护不变量）
         let s = m.start.min(len);
@@ -113,16 +137,32 @@ fn runs_from(text: &str, marks: &[MarkSpan]) -> Vec<RunSpec> {
         if s == e {
             continue;
         }
-        let (b, i) = mark_style(&m.kind);
+        let (b, i, mo, st, u) = mark_style(&m.kind);
         if b {
             bold.push((s, e));
         }
         if i {
             italic.push((s, e));
         }
+        if mo {
+            mono.push((s, e));
+        }
+        if st {
+            strike.push((s, e));
+        }
+        if u {
+            underline.push((s, e));
+        }
     }
     let mut points: Vec<usize> = vec![0, len];
-    points.extend(bold.iter().chain(italic.iter()).flat_map(|&(s, e)| [s, e]));
+    points.extend(
+        bold.iter()
+            .chain(italic.iter())
+            .chain(mono.iter())
+            .chain(strike.iter())
+            .chain(underline.iter())
+            .flat_map(|&(s, e)| [s, e]),
+    );
     points.sort_unstable();
     points.dedup();
     let covers = |spans: &[(usize, usize)], x: usize| spans.iter().any(|&(s, e)| s <= x && x < e);
@@ -133,15 +173,29 @@ fn runs_from(text: &str, marks: &[MarkSpan]) -> Vec<RunSpec> {
             continue;
         }
         let (bold_seg, italic_seg) = (covers(&bold, a), covers(&italic, a));
+        let (mono_seg, strike_seg, underline_seg) =
+            (covers(&mono, a), covers(&strike, a), covers(&underline, a));
         let seg: String = chars[a..b].iter().collect();
         // 相邻同样式合并（模型无链接 run——link 恒 None，样式同即并）
         if let Some(last) = runs.last_mut() {
-            if last.bold == bold_seg && last.italic == italic_seg {
+            if last.bold == bold_seg
+                && last.italic == italic_seg
+                && last.mono == mono_seg
+                && last.strike == strike_seg
+                && last.underline == underline_seg
+            {
                 last.text.push_str(&seg);
                 continue;
             }
         }
-        runs.push(RunSpec::styled(seg, bold_seg, italic_seg));
+        runs.push(RunSpec::styled_full(
+            seg,
+            bold_seg,
+            italic_seg,
+            mono_seg,
+            strike_seg,
+            underline_seg,
+        ));
     }
     runs
 }
@@ -156,10 +210,13 @@ pub(crate) fn text_lines(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// 富文本（可多行）→ 每行一个 docx 段落。mark 的 char 偏移按行区间
-/// 裁剪平移到行内坐标（多行切分不丢格式）。
-fn emit_rich_paragraphs(w: &mut DocxWriter, text: &str, marks: &[MarkSpan]) {
+/// 富文本（可多行）→ (行, 行内 marks) 序列：'\n' 分行 + 行尾 '\r'
+/// 仅在发射面剥除 + mark char 偏移按行区间裁剪平移（多行切分不丢
+/// 格式）。行切分 + mark 平移的单一真源（ListItem 首行/余行分道与
+/// 引用段落共用）。
+fn rich_lines(text: &str, marks: &[MarkSpan]) -> Vec<(String, Vec<MarkSpan>)> {
     let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
     let mut start = 0usize;
     loop {
         let nl = chars[start..]
@@ -189,12 +246,46 @@ fn emit_rich_paragraphs(w: &mut DocxWriter, text: &str, marks: &[MarkSpan]) {
                 }
             })
             .collect();
-        w.paragraph(&runs_from(&line, &line_marks));
+        out.push((line, line_marks));
         if nl == chars.len() {
             break;
         }
         start = nl + 1;
     }
+    out
+}
+
+/// 富文本（可多行）→ 每行一个 docx 段落；`quote_depth > 0` 时走引用面
+///（ind + 左边框，嵌套步进语义由调用方传深度）。
+fn emit_rich_paragraphs(w: &mut DocxWriter, text: &str, marks: &[MarkSpan], quote_depth: usize) {
+    for (line, line_marks) in rich_lines(text, marks) {
+        let runs = runs_from(&line, &line_marks);
+        if quote_depth > 0 {
+            w.quote_paragraph(&runs, quote_depth);
+        } else {
+            w.paragraph(&runs);
+        }
+    }
+}
+
+/// ListItem attrs → (列表类型, ilvl)：marker 首字符为 ASCII 数字 →
+/// Ordered（markdown.rs `1.`/`1)` 两形态）；`-`/`*`/`+`/缺失/其他 →
+/// Bullet（缺失 = op 面防御缺省，登记）。depth（1 基，markdown.rs
+/// indent/2+1）→ ilvl = depth-1 钳 0-8（九级抽象域；越界防御钳位——
+/// 映射全函数）。
+fn list_shape(attrs: &Attrs) -> (ListKind, usize) {
+    let marker = attrs.get("marker").map(|s| s.as_str()).unwrap_or("");
+    let kind = if marker.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        ListKind::Ordered
+    } else {
+        ListKind::Bullet
+    };
+    let depth = attrs
+        .get("depth")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
+    (kind, (depth - 1).min(8))
 }
 
 /// 单管道行 → 单元格序列：前导/尾随 `|` 剥离；未转义 `|` 分隔；
@@ -265,15 +356,22 @@ pub(crate) fn table_rows(text: &str) -> Vec<Vec<String>> {
     out
 }
 
-/// 单块发射（先序递归；降级语义见模块文档映射表）。
-fn emit_block(tree: &BlockTree, id: NodeId, w: &mut DocxWriter) -> Result<(), ExportError> {
+/// 单块发射（先序递归；降级语义见模块文档映射表）。`quote_depth` =
+/// 引用上下文深度（0 = 无引用面；Blockquote 子块递归传 depth+1 嵌套
+/// 步进——仅段落/嵌套引用承载 ind/pBdr，其余子块登记见模块文档）。
+fn emit_block(
+    tree: &BlockTree,
+    id: NodeId,
+    w: &mut DocxWriter,
+    quote_depth: usize,
+) -> Result<(), ExportError> {
     let node = tree.node(id);
     let text = node.text.to_string();
     match node.kind {
         // 虚根透明递归（top_level 已绕过；op 面禁止 Document 子块——防御）
         BlockKind::Document => {
             for &c in &node.children {
-                emit_block(tree, c, w)?;
+                emit_block(tree, c, w, quote_depth)?;
             }
         }
         BlockKind::Heading => {
@@ -282,10 +380,11 @@ fn emit_block(tree: &BlockTree, id: NodeId, w: &mut DocxWriter) -> Result<(), Ex
                 w.heading(level, line).map_err(|e| map_error(&e))?;
             }
         }
-        BlockKind::Paragraph => emit_rich_paragraphs(w, &text, &node.marks),
+        BlockKind::Paragraph => emit_rich_paragraphs(w, &text, &node.marks, quote_depth),
         BlockKind::CodeBlock => {
+            // 双通道等宽（t20 消解）；lang/fence 降级登记见模块文档。
             for line in text_lines(&text) {
-                w.paragraph_text(line);
+                w.code_line(line);
             }
         }
         BlockKind::Table => {
@@ -295,24 +394,36 @@ fn emit_block(tree: &BlockTree, id: NodeId, w: &mut DocxWriter) -> Result<(), Ex
             }
         }
         BlockKind::Blockquote => {
-            // 空引用（无子）按 text 发射——镜像 markdown.rs 序列化语义
+            // 引用面（t20 消解）：嵌套步进 depth+1；空引用（无子）按
+            // text 发射——镜像 markdown.rs 序列化语义。
+            let d = quote_depth + 1;
             if node.children.is_empty() {
-                emit_rich_paragraphs(w, &text, &node.marks);
+                emit_rich_paragraphs(w, &text, &node.marks, d);
             }
             for &c in &node.children {
-                emit_block(tree, c, w)?;
+                emit_block(tree, c, w, d)?;
             }
         }
         BlockKind::ListItem => {
-            // marker/depth 丢弃（列表写面未暴露——模块文档登记）
-            emit_rich_paragraphs(w, &text, &node.marks);
+            // 列表结构（t20 消解）：marker 判序 + depth→ilvl；首行 =
+            // 编号段（marks 面保持），余行（op 面多行防御）= 普通段；
+            // 子块递归（嵌套 item 各自编号段，次序保持）。
+            let (kind, ilvl) = list_shape(&node.attrs);
+            let lines = rich_lines(&text, &node.marks);
+            if let Some((first, first_marks)) = lines.first() {
+                w.list_item(&runs_from(first, first_marks), kind, ilvl)
+                    .map_err(|e| map_error(&e))?;
+            }
+            for (line, line_marks) in lines.iter().skip(1) {
+                w.paragraph(&runs_from(line, line_marks));
+            }
             for &c in &node.children {
-                emit_block(tree, c, w)?;
+                emit_block(tree, c, w, quote_depth)?;
             }
         }
         BlockKind::ThematicBreak => {
-            // 无水平线面：空段 = 分隔视觉提示
-            w.paragraph(&[]);
+            // 水平线（t20 消解）：空段下边框。
+            w.horizontal_rule();
         }
     }
     Ok(())
@@ -323,7 +434,7 @@ fn emit_block(tree: &BlockTree, id: NodeId, w: &mut DocxWriter) -> Result<(), Ex
 pub fn export_docx_core(tree: &BlockTree) -> Result<Vec<u8>, ExportError> {
     let mut w = DocxWriter::new();
     for &child in tree.top_level() {
-        emit_block(tree, child, &mut w)?;
+        emit_block(tree, child, &mut w, 0)?;
     }
     w.save_to_vec().map_err(|e| map_error(&e))
 }
@@ -411,6 +522,39 @@ mod tests {
                 .map(|r| (r.text.clone(), r.bold, r.italic))
                 .collect(),
         )
+    }
+
+    /// zip 本地头遍历取部件（t20 XML 面断言辅助）：docx-rs 打包恒
+    /// `CompressionMethod::Stored` 无压缩（zipper/mod.rs:80-81）→ 本地
+    /// 头记录的 size 即数据长度，直接切片零解压。office-io zip 依赖
+    /// 不进 mdc-wasm（Cargo.lock 零 diff 纪律）——本遍历为测试面专用
+    /// 最小实现（PK\x03\x04 签名步进：偏移 18/22 尺寸、26/28 名长）。
+    fn zip_stored_part(bytes: &[u8], name: &str) -> String {
+        let mut i = 0usize;
+        while i + 30 <= bytes.len() {
+            if &bytes[i..i + 4] != b"PK\x03\x04" {
+                break; // 中央目录/EOCD 起点或非 zip——终止
+            }
+            let size =
+                u32::from_le_bytes([bytes[i + 18], bytes[i + 19], bytes[i + 20], bytes[i + 21]])
+                    as usize;
+            let name_len = u16::from_le_bytes([bytes[i + 26], bytes[i + 27]]) as usize;
+            let extra_len = u16::from_le_bytes([bytes[i + 28], bytes[i + 29]]) as usize;
+            let entry_name =
+                String::from_utf8_lossy(&bytes[i + 30..i + 30 + name_len]).into_owned();
+            let data_start = i + 30 + name_len + extra_len;
+            if entry_name == name {
+                return String::from_utf8_lossy(&bytes[data_start..data_start + size]).into_owned();
+            }
+            i = data_start + size;
+        }
+        panic!("part {name} not found");
+    }
+
+    /// 导出字节 → document.xml（XML 面断言便捷面）。
+    fn doc_xml(tree: &BlockTree) -> String {
+        let bytes = export_docx_core(tree).expect("export");
+        zip_stored_part(&bytes, "word/document.xml")
     }
 
     #[test]
@@ -507,8 +651,13 @@ mod tests {
         );
     }
 
+    /// t20 翻转（原 t18 `unsupported_inline_marks_degrade_to_plain`）：
+    /// code/del/u 三 mark 降级已消解——XML 面直接断言（rFonts/strike/u）
+    /// 与文本面回归（拼接零损；读模型 [`RunData`] 无字体/删除线/下画线
+    /// 载荷——读面 run 分段不宣称往返等值，登记见模块文档）；
+    /// link 维持纯文本（模型无 URL 载荷——上游缺口非降级）。
     #[test]
-    fn unsupported_inline_marks_degrade_to_plain() {
+    fn inline_mono_del_u_expressed_link_plain() {
         let tree = single(
             BlockKind::Paragraph,
             "mono del u link",
@@ -520,12 +669,33 @@ mod tests {
                 span(5, 8, "link"),
             ],
         );
+        // XML 面：code → rFonts 三槽 Consolas；del → w:strike；u → w:u single。
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(r#"<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas" />"#)
+                .count(),
+            1,
+            "code 段等宽面"
+        );
+        assert_eq!(xml.matches("<w:strike />").count(), 1, "del 段删除线");
+        assert_eq!(
+            xml.matches(r#"<w:u w:val="single" />"#).count(),
+            4,
+            "u 全段下画线（四 run 逐段）"
+        );
+        // 文本面：拼接零损；读模型不分段承载新位（四 run 均无 bold/italic）。
         let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps[0].text(), "mono del u link", "文本零损");
         let (_, runs) = para_tuples(&ps[0]);
         assert_eq!(
             runs,
-            vec![("mono del u link".into(), false, false)],
-            "code/del/u/link 无 docx run 面 → 纯文本（文本零损）"
+            vec![
+                ("mono".into(), false, false),
+                (" ".into(), false, false),
+                ("del".into(), false, false),
+                (" u link".into(), false, false),
+            ],
+            "读模型无新位载荷——分段可见但不宣称往返等值（登记）"
         );
     }
 
@@ -557,9 +727,164 @@ mod tests {
         let ps = paras(&roundtrip(&tree));
         assert_eq!(ps.len(), 2);
         for (p, t) in ps.iter().zip(["fn main() {}", "let x = 1;"]) {
-            assert_eq!(p.style, None, "lang/等宽面丢弃 → 无样式段");
+            assert_eq!(
+                p.style, None,
+                "lang 丢弃 → 无样式段（等宽面已表达但非样式通道）"
+            );
             assert_eq!(p.text(), t);
         }
+    }
+
+    /// t20：块级 code 双通道等宽——XML 面直断言（段落级 pPr>rPr>rFonts
+    /// 与每 run rFonts，Courier New）；文本面回归 = 既有
+    /// `code_block_degrades_to_plain_paragraphs`（读模型无字体面）。
+    #[test]
+    fn code_block_mono_dual_channel_xml() {
+        let tree = markdown_to_tree("```rust\nfn main() {}\nlet x = 1;\n```");
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(
+                r#"<w:pPr><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />"#
+            )
+            .count(),
+            2,
+            "段落级通道 ×2 行"
+        );
+        assert_eq!(
+            xml.matches(
+                r#"<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />"#
+            )
+            .count(),
+            2,
+            "run 级通道 ×2 行（每行单 run）"
+        );
+        // 空行 code 块：空段也走双通道（行级哲学零例外）。
+        let empty = markdown_to_tree("```\n\n```");
+        let xml = doc_xml(&empty);
+        assert!(xml.contains(r#"<w:pPr><w:rPr><w:rFonts w:ascii="Courier New""#));
+    }
+
+    /// t20：列表结构消解——marker 判序（数字型→Ordered，`-`→Bullet）
+    /// + depth→ilvl；numPr 精确配对 + numbering.xml 双抽象（XML 面）
+    /// + 文本面回归（次序保持）。
+    #[test]
+    fn list_mapping_numbering_xml() {
+        let tree = markdown_to_tree("1. a\n2. b\n- c\n  - nested");
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="100" /><w:ilvl w:val="0" />"#)
+                .count(),
+            2,
+            "有序 ilvl=0 ×2"
+        );
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="101" /><w:ilvl w:val="0" />"#)
+                .count(),
+            1,
+            "无序 ilvl=0 ×1"
+        );
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="101" /><w:ilvl w:val="1" />"#)
+                .count(),
+            1,
+            "嵌套无序 ilvl=1 ×1（depth 2 → ilvl 1）"
+        );
+        // 文本面：次序保持。
+        let ps = paras(&roundtrip(&tree));
+        let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
+        assert_eq!(texts, vec!["a", "b", "c", "nested"]);
+    }
+
+    /// t20：marker 形态面 + depth 钳位（直构 attrs——`1)` 形 / 深度越界
+    /// / 缺失防御缺省）。
+    #[test]
+    fn list_marker_forms_and_depth_clamp() {
+        // `1)` 形 → Ordered。
+        let mut attrs = Attrs::new();
+        attrs.insert("marker".into(), "1)".into());
+        attrs.insert("depth".into(), "1".into());
+        let paren = single(BlockKind::ListItem, "p", attrs, vec![]);
+        let xml = doc_xml(&paren);
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="100" /><w:ilvl w:val="0" />"#)
+                .count(),
+            1,
+            "`1)` 形数字 marker → Ordered"
+        );
+        // depth 99 → ilvl 钳 8（映射层全函数，不报错）。
+        let mut attrs = Attrs::new();
+        attrs.insert("marker".into(), "-".into());
+        attrs.insert("depth".into(), "99".into());
+        let deep = single(BlockKind::ListItem, "d", attrs, vec![]);
+        let xml = doc_xml(&deep);
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="101" /><w:ilvl w:val="8" />"#)
+                .count(),
+            1,
+            "depth 99 → ilvl 钳 8"
+        );
+        // attrs 全缺失 → Bullet + ilvl 0（防御缺省）。
+        let bare = single(BlockKind::ListItem, "x", Attrs::new(), vec![]);
+        let xml = doc_xml(&bare);
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="101" /><w:ilvl w:val="0" />"#)
+                .count(),
+            1,
+            "缺失 attrs → Bullet ilvl=0"
+        );
+    }
+
+    /// t20：多行 item 文本（op 面可构造；markdown 解析单行）——首行
+    /// 编号段 + 余行普通段（续行不重复编号，登记见模块文档）。
+    #[test]
+    fn list_multiline_item_first_numbered_rest_plain() {
+        let tree = single(
+            BlockKind::ListItem,
+            "head line\ntail line",
+            attr("marker", "-"),
+            vec![],
+        );
+        let ps = paras(&roundtrip(&tree));
+        let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
+        assert_eq!(texts, vec!["head line", "tail line"]);
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="101" /><w:ilvl w:val="0" />"#)
+                .count(),
+            1,
+            "仅首行编号（numPr ×1）"
+        );
+    }
+
+    /// t20：引用面 + hr 消解——ind 720×depth 嵌套步进 + 左边框 +
+    /// 空段下边框（XML 面）+ 文本面回归（次序保持）。
+    #[test]
+    fn quote_and_hr_mapping_xml() {
+        let tree = markdown_to_tree("> q\n>> deep\n---");
+        let xml = doc_xml(&tree);
+        assert!(xml.contains(r#"w:ind w:left="720""#), "引用 depth 1");
+        assert!(
+            xml.contains(r#"w:ind w:left="1440""#),
+            "嵌套引用 depth 2 步进"
+        );
+        assert_eq!(
+            xml.matches(
+                r#"<w:pBdr><w:left w:val="single" w:space="4" w:sz="12" w:color="auto" /></w:pBdr>"#
+            )
+            .count(),
+            2,
+            "两引用段各带左边框"
+        );
+        assert!(
+            xml.contains(
+                r#"<w:pBdr><w:bottom w:val="single" w:space="1" w:sz="6" w:color="auto" /></w:pBdr>"#
+            ),
+            "hr 空段下边框"
+        );
+        // 文本面：次序保持（hr = 空段）。
+        let ps = paras(&roundtrip(&tree));
+        let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
+        assert_eq!(texts, vec!["q", "deep", ""]);
     }
 
     #[test]

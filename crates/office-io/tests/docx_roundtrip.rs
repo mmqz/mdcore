@@ -17,7 +17,7 @@
 
 use mdc_office_io::docx::{
     read_docx, read_docx_from_bytes_with_options, Block, DocxWriter, HeaderFooterVariant,
-    HyperlinkTarget, RunSpec,
+    HyperlinkTarget, ListKind, RunSpec,
 };
 use mdc_office_io::io::{ReadOptions, WarningKind};
 use std::io::Write as _;
@@ -1391,4 +1391,246 @@ fn first_even_header_footer_roundtrip() {
     }
     assert!(doc.warnings.is_empty());
     let _ = std::fs::remove_file(&p);
+}
+
+// ---------------------------------------------------------------------------
+// t20 写面五面扩（numbering / 等宽 run / 块级 code 双通道 / hr / quote）
+// —— spike 探针 16 断言集（office-line/docx_write_probe.rs）的产品 API
+// 移植 + 写读全环文本面回归（读模型不承载 numPr/pBdr/ind/rFonts——
+// 文本零损为读面断言边界，结构面 = XML 级直断言）。
+// ---------------------------------------------------------------------------
+
+/// t20 五面 XML 结构断言（探针同款输入面 + 嵌套 quote 步进扩展）。
+#[test]
+fn t20_write_faces_xml_level() {
+    let p = tmp("t20_faces");
+    let mut w = DocxWriter::new();
+    // 列表：有序 ×2（ilvl 0）+ 同 numId 嵌套 ilvl 1 + 无序 ×2。
+    w.list_item(&[RunSpec::text("first ordered item")], ListKind::Ordered, 0)
+        .unwrap();
+    w.list_item(
+        &[RunSpec::text("second ordered item")],
+        ListKind::Ordered,
+        0,
+    )
+    .unwrap();
+    w.list_item(
+        &[RunSpec::text("nested level-1 item")],
+        ListKind::Ordered,
+        1,
+    )
+    .unwrap();
+    w.list_item(&[RunSpec::text("first bullet item")], ListKind::Bullet, 0)
+        .unwrap();
+    w.list_item(&[RunSpec::text("second bullet item")], ListKind::Bullet, 0)
+        .unwrap();
+    // 行内等宽：plain + mono + plain。
+    w.paragraph(&[
+        RunSpec::text("before "),
+        RunSpec::styled_full("inline_code", false, false, true, false, false),
+        RunSpec::text(" after"),
+    ]);
+    // hr：空段下边框。
+    w.horizontal_rule();
+    // quote：depth 1（720）+ depth 3（2160 嵌套步进）。
+    w.quote_paragraph(
+        &[RunSpec::text(
+            "quoted text with left indent and left border",
+        )],
+        1,
+    );
+    w.quote_paragraph(&[RunSpec::text("deep quote")], 3);
+    // 块级 code：双通道等宽 ×2 行。
+    w.code_line("let x = 1;");
+    w.code_line("let y = 2; // second line");
+    w.save_to_path(&p).unwrap();
+
+    // ① zip 结构：numbering.xml part + rels 接线（has_numbering 链——
+    //    Paragraph::numbering 方法路径的打包面证据）。
+    let f = std::fs::File::open(&p).unwrap();
+    let za = zip::ZipArchive::new(f).unwrap();
+    let names: Vec<String> = za.file_names().map(str::to_string).collect();
+    drop(za);
+    assert!(names.iter().any(|n| n == "word/numbering.xml"), "{names:?}");
+    let rels =
+        String::from_utf8(zip_read_entry(&p, "word/_rels/document.xml.rels").unwrap()).unwrap();
+    assert!(
+        rels.contains("relationships/numbering") && rels.contains("numbering.xml"),
+        "numbering 关系（悬空 numPr 陷阱的反证）: {rels}"
+    );
+
+    // ② numbering.xml：ordered/bullet 两抽象 + num 桥 + 9 级 + 多级 lvlText。
+    let numbering = String::from_utf8(zip_read_entry(&p, "word/numbering.xml").unwrap()).unwrap();
+    assert!(
+        numbering.contains(r#"<w:abstractNum w:abstractNumId="100""#),
+        "ordered 抽象"
+    );
+    assert!(numbering.contains(r#"w:numFmt w:val="decimal""#));
+    assert!(numbering.contains(r#"w:lvlText w:val="%1.""#));
+    assert!(
+        numbering.contains(r#"<w:abstractNum w:abstractNumId="101""#),
+        "bullet 抽象"
+    );
+    assert!(numbering.contains(r#"w:numFmt w:val="bullet""#));
+    assert!(numbering.contains("\u{2022}"), "• 字形");
+    assert!(
+        numbering.contains(r#"<w:num w:numId="100"><w:abstractNumId w:val="100" /></w:num>"#)
+            && numbering
+                .contains(r#"<w:num w:numId="101"><w:abstractNumId w:val="101" /></w:num>"#),
+        "num 桥"
+    );
+    assert!(
+        numbering.contains(r#"w:lvlText w:val="%1.%2.""#),
+        "多级拼号"
+    );
+    assert!(numbering.contains(r#"w:ilvl="8""#), "9 级（ilvl 0-8）");
+
+    // ③ document.xml：numPr 精确配对（numId+ilvl 邻接计数）。
+    let doc_xml = String::from_utf8(zip_read_entry(&p, "word/document.xml").unwrap()).unwrap();
+    assert_eq!(
+        doc_xml
+            .matches(r#"<w:numId w:val="100" /><w:ilvl w:val="0" />"#)
+            .count(),
+        2,
+        "ordered ilvl=0 ×2"
+    );
+    assert_eq!(
+        doc_xml
+            .matches(r#"<w:numId w:val="100" /><w:ilvl w:val="1" />"#)
+            .count(),
+        1,
+        "ordered 嵌套 ilvl=1 ×1"
+    );
+    assert_eq!(
+        doc_xml
+            .matches(r#"<w:numId w:val="101" /><w:ilvl w:val="0" />"#)
+            .count(),
+        2,
+        "bullet ilvl=0 ×2"
+    );
+
+    // ④ 行内等宽：run 层 rFonts 三槽 Consolas。
+    assert!(
+        doc_xml.contains(r#"<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas" />"#),
+        "行内 mono 通道"
+    );
+
+    // ⑤ hr：pBdr 下边框（with_empty 单边——四边全画陷阱的反证）。
+    assert!(
+        doc_xml.contains(
+            r#"<w:pBdr><w:bottom w:val="single" w:space="1" w:sz="6" w:color="auto" /></w:pBdr>"#
+        ),
+        "hr 下边框"
+    );
+
+    // ⑥ quote：ind 左缩进（720×depth）+ 左边框。
+    assert!(doc_xml.contains(r#"w:ind w:left="720""#), "depth 1 缩进");
+    assert!(
+        doc_xml.contains(r#"w:ind w:left="2160""#),
+        "depth 3 嵌套步进"
+    );
+    assert!(
+        doc_xml.contains(
+            r#"<w:pBdr><w:left w:val="single" w:space="4" w:sz="12" w:color="auto" /></w:pBdr>"#
+        ),
+        "quote 左边框"
+    );
+
+    // ⑦ 块级 code 双通道：段落级 pPr>rPr>rFonts + run 级 rFonts。
+    assert!(
+        doc_xml.contains(
+            r#"<w:pPr><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />"#
+        ),
+        "段落级通道"
+    );
+    assert!(
+        doc_xml
+            .matches(
+                r#"<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />"#
+            )
+            .count()
+            >= 2,
+        "run 级通道 ×2 行"
+    );
+
+    // ⑧ 写读全环文本面（读模型无 numPr/pBdr/ind/rFonts 载荷——文本零损）。
+    let doc = read_docx(&p).unwrap();
+    let texts: Vec<String> = doc
+        .blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::Paragraph(pd) => Some(pd.text()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            "first ordered item".to_string(),
+            "second ordered item".to_string(),
+            "nested level-1 item".to_string(),
+            "first bullet item".to_string(),
+            "second bullet item".to_string(),
+            "before inline_code after".to_string(),
+            String::new(),
+            "quoted text with left indent and left border".to_string(),
+            "deep quote".to_string(),
+            "let x = 1;".to_string(),
+            "let y = 2; // second line".to_string(),
+        ],
+        "5 列表段 + 行内段 + hr 空段 + 2 引用段 + 2 code 段（文本零损）"
+    );
+    assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    let _ = std::fs::remove_file(&p);
+}
+
+/// t20：numbering 惰性注册面——无列表文档的 numbering.xml 保持引擎
+/// 内建形态（无 100/101 抽象）；save_to_vec 后写器基态重置（续写新
+/// 档重新注册——幂等语义钉定）。
+#[test]
+fn t20_numbering_lazy_registration_and_reset() {
+    let mut w = DocxWriter::new();
+    w.paragraph_text("no lists here");
+    let bytes = w.save_to_vec().unwrap();
+    let cursor = std::io::Cursor::new(&bytes[..]);
+    let mut za = zip::ZipArchive::new(cursor).unwrap();
+    let numbering = {
+        let mut entry = za.by_name("word/numbering.xml").unwrap();
+        let mut v = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut v).unwrap();
+        String::from_utf8(v).unwrap()
+    };
+    drop(za);
+    assert!(
+        !numbering.contains(r#"w:abstractNumId="100""#)
+            && !numbering.contains(r#"w:abstractNumId="101""#),
+        "无列表档 = 内建抽象独占: {numbering}"
+    );
+    assert!(
+        numbering.contains(r#"w:abstractNumId="1""#),
+        "引擎内建抽象恒在"
+    );
+
+    // 续写新档：save 后首个 list_item 重新注册（基态重置钉定）。
+    w.list_item(&[RunSpec::text("after reset")], ListKind::Bullet, 0)
+        .unwrap();
+    let bytes2 = w.save_to_vec().unwrap();
+    let cursor = std::io::Cursor::new(&bytes2[..]);
+    let mut za = zip::ZipArchive::new(cursor).unwrap();
+    let numbering2 = {
+        let mut entry = za.by_name("word/numbering.xml").unwrap();
+        let mut v = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut v).unwrap();
+        String::from_utf8(v).unwrap()
+    };
+    drop(za);
+    assert!(
+        numbering2.contains(r#"w:abstractNumId="101""#),
+        "重注册在位"
+    );
+    let doc = read_docx_from_bytes_with_options(&bytes2, &ReadOptions::default()).unwrap();
+    match &doc.blocks[0] {
+        Block::Paragraph(pd) => assert_eq!(pd.text(), "after reset"),
+        other => panic!("应为段落, got {other:?}"),
+    }
 }

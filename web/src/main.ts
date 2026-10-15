@@ -1671,14 +1671,17 @@ setupXlsxImport();
 // docx_export.rs 模块文档单一真源）→ Blob + a.download 下载
 // document.docx。状态行 = 大小 + 块数 + 降级块计数（__blocks 现场面，
 // 不新增 wasm 面）。与 t16 导入合流 = DOCX 往返闭环。
+// t20：office-io 写面五面扩后 blockquote/list_item/thematic_break 全
+// 表达（不再计数）；code_block 等宽面已表达但 lang/fence 仍降级
+// （docx-rs 无语法高亮/元数据面——登记维持，详见模块文档）。
 // ---------------------------------------------------------------------------
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
-/** 降级块计数（映射表中无 docx 表达面的块型——code_block/blockquote/
- * list_item/thematic_break；详见 docx_export.rs 模块文档）。 */
+/** 降级块计数（t20 后仅 code_block——lang/fence 结构仍丢弃；blockquote/
+ * list_item/thematic_break 已全表达不计数；详见 docx_export.rs 模块文档）。 */
 function degradedBlockCount(): number {
   if (typeof window.__blocks !== 'function') return 0; // 启动竞态防御
-  const degraded = new Set(['code_block', 'blockquote', 'list_item', 'thematic_break']);
+  const degraded = new Set(['code_block']);
   return window.__blocks().filter((b) => degraded.has(b.type)).length;
 }
 

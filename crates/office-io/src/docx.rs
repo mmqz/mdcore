@@ -54,6 +54,29 @@
 //!   evenAndOddHeaders）；同槽重复调用 = 原位替换（**保持原槽 rid**
 //!   ——r1 的无条件 rIdHeader1 在多槽组合下会踩踏，本轮修复）。
 //!
+//! **t20 增量（2026-10-15）**：主题 = **写面五面扩——列表/等宽/
+//! 水平线/引用/行内删除线下画线**（底稿 = 分析仓 `office-line/docx-r1/
+//! WRITE_FACE_PROBE.md`——docx-rs 0.4.22 一手源码核验 + spike 探针
+//! 16/16 双通道实证；t18 四件登记降级 + 块级 code 等宽 + 行内 del·u
+//! 整批消解）：
+//! - **numbering（列表）**：[`DocxWriter::list_item`]——两个 abstractNum
+//!   （ordered decimal 9 级 / bullet `•` 9 级）+ num 桥 + 段落
+//!   `Paragraph::numbering`（numId 100/101，避开引擎内建 numId=1）；
+//!   **必须走 `Paragraph::numbering` 方法**——同置 `has_numbering`
+//!   → document.xml.rels 接线；`numbering_property` 路径不置位 →
+//!   rels 缺关系 → 悬空 numPr（WRITE_FACE_PROBE §2.1 陷阱）；
+//! - **等宽 run**：[`RunSpec`] 扩 `mono`/`strike`/`underline` 三位
+//!   （`Run::fonts`[rFonts 三槽]/`strike`/`underline`）；
+//! - **块级 code**：[`DocxWriter::code_line`] 双通道等宽（段落级
+//!   `pPr>rPr>rFonts` + run 级 rFonts——run 级保真 + 段落级扈段标记）；
+//! - **水平线**：[`DocxWriter::horizontal_rule`]——空段下边框
+//!   （**`ParagraphBorders::with_empty().set` 单边——`new()` 四边全
+//!   Single 陷阱**，WRITE_FACE_PROBE §2.3）；
+//! - **引用**：[`DocxWriter::quote_paragraph`]——左缩进 720×depth
+//!   （钳 8）+ 左边框（无内建 Quote 样式可引——直接格式）。
+//!   读面 numPr/pBdr/ind/rFonts 的模型承载未核（读模型无对应字段
+//!   ——XML 级断言见 tests/docx_roundtrip.rs，读面登记维持）。
+//!
 //! ## 模块边界（CAPABILITIES.md §2 裁决——DOCX 独立模块）
 //!
 //! - 与 XLSX 模块（[`crate::io`]/[`crate::write`]）**不共用领域模型、
@@ -118,8 +141,11 @@
 //! 写侧**不支持**（引擎能力在[docx-rs 写面远大于本切片]，未实测
 //! 不暴露）：图片自动转码（`Pic::new` 需 `image` 特性 = +23 crate
 //! 依赖树——登记，PNG 显式尺寸面已暴露）、非 PNG 图片、浮动定位/
-//! 旋转图片、表格样式、TOC/PAGEREF/HYPERLINK 域、目录、编号列表、
+//! 旋转图片、表格样式、TOC/PAGEREF/HYPERLINK 域、目录、
 //! 页眉页脚内表格、锚点写面（引擎均支持——CAPABILITY_NOTES）。
+//! 列表写面 t20 已暴露（[`DocxWriter::list_item`]——ordered/bullet
+//! 两抽象 × 9 级；多列族混排/自定义编号格式/级别覆盖未暴露，引擎
+//! 能力在——按需增量）。
 //!
 //! 证据链：tests/docx_roundtrip.rs（写→读全环 + 门结构复用 + 敌意
 //! 输入钉定 + .rels 敌意面 + 引擎崩溃面直探针）+ 本模块内联单测。
@@ -1834,12 +1860,50 @@ pub enum FieldSpec {
     NumPages,
 }
 
+// ---------------------------------------------------------------------------
+// t20 写面常量（公开 = 写面契约的一部分——消费方 XML 级断言可依赖）
+// ---------------------------------------------------------------------------
+
+/// 有序列表 numId（= abstractNumId；**避开引擎内建 numId=1**——
+/// numberings.rs:49-176 无条件内置 decimal 9 级抽象）。
+pub const ORDERED_NUM_ID: usize = 100;
+/// 无序列表 numId（= abstractNumId；同上避开内建）。
+pub const BULLET_NUM_ID: usize = 101;
+/// 列表抽象层级数（ilvl 0-8——与引擎内建抽象同为 9 级）。
+pub const MAX_LIST_LEVEL: usize = 8;
+/// 行内等宽字体（[`RunSpec::mono`] 位 = true 时 rFonts 三槽值）。
+pub const MONO_FONT: &str = "Consolas";
+/// 块级代码等宽字体（[`DocxWriter::code_line`] 双通道；与行内分名
+/// ——XML 断言可区分两条通道）。
+pub const CODE_FONT: &str = "Courier New";
+/// 引用左缩进步进（twips：720 = 0.5 英寸/深度）。
+pub const QUOTE_INDENT_STEP: i32 = 720;
+/// 引用嵌套深度上限（左缩进钳制——8×720=5760 twips=4 英寸，
+/// 防溢出版心；超限静默钳位，见 [`DocxWriter::quote_paragraph`]）。
+pub const MAX_QUOTE_DEPTH: usize = 8;
+
+/// 列表类型（t20 列表面——numbering 定义面二选一）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListKind {
+    /// 有序（decimal `1.` / `1.1.` … outline 式 9 级）。
+    Ordered,
+    /// 无序（`•` 项目符号 9 级）。
+    Bullet,
+}
+
 /// 富文本 run 规格（写侧输入模型）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunSpec {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
+    /// 等宽字体位（t20——true = `w:rFonts` 三槽 [`MONO_FONT`]：
+    /// ascii/hAnsi/cs）。行内 code mark 的 docx 表达面。
+    pub mono: bool,
+    /// 删除线位（t20——true = `w:strike` 单删除线）。行内 del mark。
+    pub strike: bool,
+    /// 下画线位（t20——true = `w:u w:val="single"`）。行内 u mark。
+    pub underline: bool,
     /// 外部超链接目标（None = 普通 run；写侧经引擎关系面发射
     /// TargetMode="External"——引擎写面 "Now support external only"
     /// [documents/mod.rs:1209]，锚点写面不暴露）。
@@ -1863,6 +1927,9 @@ impl RunSpec {
             text: text.into(),
             bold: false,
             italic: false,
+            mono: false,
+            strike: false,
+            underline: false,
             link: None,
             footnote: None,
             field: None,
@@ -1874,6 +1941,32 @@ impl RunSpec {
             text: text.into(),
             bold,
             italic,
+            mono: false,
+            strike: false,
+            underline: false,
+            link: None,
+            footnote: None,
+            field: None,
+        }
+    }
+
+    /// 全样式位构造（t20——mono/strike/underline 三位扩面；
+    /// 调用方按 mark 语义置位）。
+    pub fn styled_full(
+        text: impl Into<String>,
+        bold: bool,
+        italic: bool,
+        mono: bool,
+        strike: bool,
+        underline: bool,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            bold,
+            italic,
+            mono,
+            strike,
+            underline,
             link: None,
             footnote: None,
             field: None,
@@ -1887,6 +1980,9 @@ impl RunSpec {
             text: text.into(),
             bold: false,
             italic: false,
+            mono: false,
+            strike: false,
+            underline: false,
             link: Some(url.into()),
             footnote: None,
             field: None,
@@ -1900,6 +1996,9 @@ impl RunSpec {
             text: String::new(),
             bold: false,
             italic: false,
+            mono: false,
+            strike: false,
+            underline: false,
             link: None,
             footnote: Some(note.into()),
             field: None,
@@ -1912,6 +2011,9 @@ impl RunSpec {
             text: String::new(),
             bold: false,
             italic: false,
+            mono: false,
+            strike: false,
+            underline: false,
             link: None,
             footnote: None,
             field: Some(FieldSpec::Page),
@@ -1924,6 +2026,9 @@ impl RunSpec {
             text: String::new(),
             bold: false,
             italic: false,
+            mono: false,
+            strike: false,
+            underline: false,
             link: None,
             footnote: None,
             field: Some(FieldSpec::NumPages),
@@ -1940,6 +2045,10 @@ impl RunSpec {
 #[derive(Debug, Default)]
 pub struct DocxWriter {
     docx: docx_rs::Docx,
+    /// t20：numbering 定义面惰性注册位（首个 [`Self::list_item`] 时
+    /// 注入 ordered/bullet 两抽象 + num 桥——无列表文档的 numbering.xml
+    /// 保持引擎内建形态；`save_to_vec` 后随基态重置）。
+    numbering_registered: bool,
 }
 
 impl DocxWriter {
@@ -1960,7 +2069,10 @@ impl DocxWriter {
                 .outline_lvl((level - 1) as usize);
             docx = docx.add_style(style);
         }
-        Self { docx }
+        Self {
+            docx,
+            numbering_registered: false,
+        }
     }
 
     /// 标题段（level 1-9；样式引用 + outline 级双通道——样式被剥除
@@ -2123,16 +2235,124 @@ impl DocxWriter {
             .pack(&mut cursor)
             .map_err(|e| DocxError::Io(format!("pack: {e}")))?;
         // build() 消费 self.docx —— 重建基态（写器可续写：幂等语义，
-        // 已写内容已在 built 内落盘，续写 = 新档）。
-        self.docx = Self::new().docx;
+        // 已写内容已在 built 内落盘，续写 = 新档；numbering 惰性位
+        // 随之重置——新档首个 list_item 重新注册）。
+        *self = Self::new();
         Ok(cursor.into_inner())
+    }
+
+    /// 列表段（t20 列表面）：`kind` 选 ordered/bullet 抽象，`ilvl` 选
+    /// 级（**0-8**，typed 验证——抽象 9 级）；run 序同
+    /// [`Self::paragraph`]（加粗/斜体/等宽/删除线/下画线/链接全位）。
+    ///
+    /// **接线陷阱（WRITE_FACE_PROBE §2.1）**：必须经引擎
+    /// `Paragraph::numbering`（同置 `has_numbering` → 打包时
+    /// document.xml.rels 发射 numbering 关系）；`ParagraphProperty::
+    /// numbering_property` 直挂路径不置位 → rels 缺关系 → **悬空
+    /// numPr**（合法包但 Word 无列表渲染）。
+    pub fn list_item(
+        &mut self,
+        runs: &[RunSpec],
+        kind: ListKind,
+        ilvl: usize,
+    ) -> Result<(), DocxError> {
+        if ilvl > MAX_LIST_LEVEL {
+            return Err(DocxError::Parse(format!(
+                "list ilvl must be 0-{MAX_LIST_LEVEL}, got {ilvl}"
+            )));
+        }
+        self.ensure_numberings();
+        let num_id = match kind {
+            ListKind::Ordered => ORDERED_NUM_ID,
+            ListKind::Bullet => BULLET_NUM_ID,
+        };
+        let p = specs_to_paragraph(runs).numbering(
+            docx_rs::NumberingId::new(num_id),
+            docx_rs::IndentLevel::new(ilvl),
+        );
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        Ok(())
+    }
+
+    /// 代码行段（t20 等宽面·块级）：**双通道等宽**——段落级
+    /// `pPr>rPr>rFonts`（段落标记 + 段内缺省面）+ run 级 rFonts
+    /// [`CODE_FONT`]（文本保真主通道）。调用方负责行切分（本方法
+    /// 单行语义——每行一段，模型行级哲学）。
+    pub fn code_line(&mut self, text: &str) {
+        let mut p = specs_to_paragraph(&[RunSpec {
+            text: text.to_string(),
+            mono: true,
+            ..RunSpec::text("")
+        }]);
+        p = p.fonts(mono_fonts(CODE_FONT));
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+    }
+
+    /// 水平线段（t20 hr 面）：空段 + 下边框（OOXML 无原生 hr 的惯用
+    /// 表达；`size=6` = 0.75pt、`space=1`——WRITE_FACE_PROBE §2.3
+    /// 探针参数）。
+    ///
+    /// **陷阱**：`ParagraphBorders::new()`/`Default` = 四边全 Single
+    /// （paragraph_borders.rs:117-127）——会画整框而非水平线；本面
+    /// 恒 `with_empty().set(单边)`。
+    pub fn horizontal_rule(&mut self) {
+        let mut p = docx_rs::Paragraph::new();
+        p.property = p.property.clone().set_borders(
+            docx_rs::ParagraphBorders::with_empty().set(
+                docx_rs::ParagraphBorder::new(docx_rs::ParagraphBorderPosition::Bottom)
+                    .size(6)
+                    .space(1)
+                    .color("auto"),
+            ),
+        );
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+    }
+
+    /// 引用段（t20 quote 面）：左缩进 `QUOTE_INDENT_STEP × depth`
+    ///（**depth 钳 [`MAX_QUOTE_DEPTH`]——防溢出版心，超限静默钳位**）
+    /// 与左边框（`size=12` = 1.5pt、`space=4`）；run 序全位同
+    /// [`Self::paragraph`]。无内建 `Quote` 段落样式可引（引擎
+    /// preset_styles 仅 toc——`Paragraph::style("Quote")` 只产悬空
+    /// pStyle 引用），故为直接格式（与 t18 REPORT §8 预判一致）。
+    pub fn quote_paragraph(&mut self, runs: &[RunSpec], depth: usize) {
+        let left = QUOTE_INDENT_STEP * depth.min(MAX_QUOTE_DEPTH) as i32;
+        let mut p = specs_to_paragraph(runs).indent(Some(left), None, None, None);
+        p.property = p.property.clone().set_borders(
+            docx_rs::ParagraphBorders::with_empty().set(
+                docx_rs::ParagraphBorder::new(docx_rs::ParagraphBorderPosition::Left)
+                    .size(12)
+                    .space(4)
+                    .color("auto"),
+            ),
+        );
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+    }
+
+    /// numbering 定义面惰性注册（幂等）：ordered（decimal outline 式
+    /// 9 级——lvlText `%1.` / `%1.%2.` / …；left = 720×(i+1)、悬挂 360）
+    /// 与 bullet（`•` 9 级同构）两抽象 + num 桥（numId = abstractNumId
+    /// = 100/101，避开内建 1）。
+    fn ensure_numberings(&mut self) {
+        if self.numbering_registered {
+            return;
+        }
+        let ordered = ordered_abstract();
+        let bullet = bullet_abstract();
+        let docx = std::mem::take(&mut self.docx);
+        self.docx = docx
+            .add_abstract_numbering(ordered)
+            .add_abstract_numbering(bullet)
+            .add_numbering(docx_rs::Numbering::new(ORDERED_NUM_ID, ORDERED_NUM_ID))
+            .add_numbering(docx_rs::Numbering::new(BULLET_NUM_ID, BULLET_NUM_ID));
+        self.numbering_registered = true;
     }
 }
 
 /// run 规格序列 → 引擎段落（链接 run → 引擎超链接元素[rels 由引擎
 /// 打包收集]；脚注 marker run → 引擎脚注引用[footnotes.xml 由引擎
 /// 打包收集]；域 run → fldChar begin/instrText/end 三连；普通 run
-/// 直挂）。
+/// 直挂）。t20：mono/strike/underline 三位 → rFonts 三槽 / w:strike /
+/// w:u single。
 fn specs_to_paragraph(runs: &[RunSpec]) -> docx_rs::Paragraph {
     let mut p = docx_rs::Paragraph::new();
     for spec in runs {
@@ -2167,6 +2387,15 @@ fn specs_to_paragraph(runs: &[RunSpec]) -> docx_rs::Paragraph {
         if spec.italic {
             rp = rp.italic();
         }
+        if spec.strike {
+            rp = rp.strike();
+        }
+        if spec.underline {
+            rp = rp.underline("single");
+        }
+        if spec.mono {
+            rp = rp.fonts(mono_fonts(MONO_FONT));
+        }
         run.run_property = rp;
         if let Some(url) = &spec.link {
             p = p.add_hyperlink(
@@ -2178,6 +2407,66 @@ fn specs_to_paragraph(runs: &[RunSpec]) -> docx_rs::Paragraph {
         }
     }
     p
+}
+
+/// 等宽 rFonts 三槽（ascii/hAnsi/cs——`w:ascii` 覆盖首 128 码位、
+/// `w:hAnsi` 高 ANSI、`w:cs` 复杂文种；run_fonts.rs:39-87）。
+fn mono_fonts(font: &str) -> docx_rs::RunFonts {
+    docx_rs::RunFonts::new().ascii(font).hi_ansi(font).cs(font)
+}
+
+/// 有序（decimal outline 式）9 级抽象——lvlText 逐级拼号
+///（`%1.` / `%1.%2.` / … `%1.%2.%3.%4.%5.%6.%7.%8.%9.`）；
+/// left = 720×(i+1) + 悬挂 360（WRITE_FACE_PROBE §2.1 探针参数
+/// 同构）。
+fn ordered_abstract() -> docx_rs::AbstractNumbering {
+    let mut a = docx_rs::AbstractNumbering::new(ORDERED_NUM_ID);
+    for i in 0..=MAX_LIST_LEVEL {
+        let lvl_text: String = (1..=i + 1)
+            .map(|k| format!("%{k}"))
+            .collect::<Vec<_>>()
+            .join(".");
+        a = a.add_level(
+            docx_rs::Level::new(
+                i,
+                docx_rs::Start::new(1),
+                docx_rs::NumberFormat::new("decimal"),
+                docx_rs::LevelText::new(format!("{lvl_text}.")),
+                docx_rs::LevelJc::new("left"),
+            )
+            .indent(
+                Some(QUOTE_INDENT_STEP * (i as i32 + 1)),
+                Some(docx_rs::SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
+        );
+    }
+    a
+}
+
+/// 无序（`•`）9 级抽象——各级同字形（Word 原生逐级变字形惯例不
+/// 采用——均匀 • 即消解降级的最小诚实面）；缩进同 ordered。
+fn bullet_abstract() -> docx_rs::AbstractNumbering {
+    let mut a = docx_rs::AbstractNumbering::new(BULLET_NUM_ID);
+    for i in 0..=MAX_LIST_LEVEL {
+        a = a.add_level(
+            docx_rs::Level::new(
+                i,
+                docx_rs::Start::new(1),
+                docx_rs::NumberFormat::new("bullet"),
+                docx_rs::LevelText::new("\u{2022}"),
+                docx_rs::LevelJc::new("left"),
+            )
+            .indent(
+                Some(QUOTE_INDENT_STEP * (i as i32 + 1)),
+                Some(docx_rs::SpecialIndentType::Hanging(360)),
+                None,
+                None,
+            ),
+        );
+    }
+    a
 }
 
 /// 页眉槽位标记（原位替换目标）。
@@ -2276,6 +2565,9 @@ mod tests {
                 text: "a".into(),
                 bold: false,
                 italic: false,
+                mono: false,
+                strike: false,
+                underline: false,
                 link: None,
                 footnote: None,
                 field: None,
@@ -2288,6 +2580,9 @@ mod tests {
                 text: "a".into(),
                 bold: false,
                 italic: false,
+                mono: false,
+                strike: false,
+                underline: false,
                 link: Some("https://x.example/".into()),
                 footnote: None,
                 field: None,
@@ -2300,6 +2595,9 @@ mod tests {
                 text: String::new(),
                 bold: false,
                 italic: false,
+                mono: false,
+                strike: false,
+                underline: false,
                 link: None,
                 footnote: Some("注".into()),
                 field: None,
@@ -2308,6 +2606,72 @@ mod tests {
         assert_eq!(RunSpec::field_page().field, Some(FieldSpec::Page));
         assert_eq!(RunSpec::field_num_pages().field, Some(FieldSpec::NumPages));
         assert_eq!(RunSpec::field_page().text, "");
+        // t20 三布尔位：既有构造器恒 false（零漂移）；styled_full 全位。
+        assert!(
+            !RunSpec::text("a").mono && !RunSpec::text("a").strike && !RunSpec::text("a").underline
+        );
+        assert!(!RunSpec::styled("a", true, true).mono);
+        assert!(
+            RunSpec::styled_full("a", false, false, true, true, true).mono
+                && RunSpec::styled_full("a", false, false, true, true, true).strike
+                && RunSpec::styled_full("a", false, false, true, true, true).underline
+        );
+        assert!(!RunSpec::styled_full("a", false, false, true, true, true).bold);
+    }
+
+    /// t20：list_item ilvl typed 验证（0-8 过 / 9 拒——与 heading
+    /// 级验证同族）。
+    #[test]
+    fn list_item_ilvl_validation() {
+        let mut w = DocxWriter::new();
+        assert!(w
+            .list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
+            .is_ok());
+        assert!(w
+            .list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
+            .is_ok());
+        assert!(matches!(
+            w.list_item(&[RunSpec::text("a")], ListKind::Bullet, MAX_LIST_LEVEL + 1),
+            Err(DocxError::Parse(m)) if m.contains("ilvl")
+        ));
+    }
+
+    /// t20：specs_to_paragraph 三新位引擎接线（模型级——rFonts/strike/
+    /// underline 落 RunProperty）。
+    #[test]
+    fn specs_expand_mono_strike_underline() {
+        let p = specs_to_paragraph(&[
+            RunSpec::styled_full("code", false, false, true, false, false),
+            RunSpec::styled_full("gone", false, false, false, true, false),
+            RunSpec::styled_full("ul", false, false, false, false, true),
+            RunSpec::text("plain"),
+        ]);
+        let mut runs = Vec::new();
+        for child in &p.children {
+            let docx_rs::ParagraphChild::Run(r) = child else {
+                panic!("应为 run");
+            };
+            runs.push(r);
+        }
+        assert_eq!(runs.len(), 4);
+        // mono → rFonts 三槽 Consolas（ascii/hAnsi/cs）。
+        assert_eq!(runs[0].run_property.fonts, Some(mono_fonts(MONO_FONT)));
+        assert!(runs[0].run_property.strike.is_none() && runs[0].run_property.underline.is_none());
+        // strike → w:strike（val=true）。
+        assert_eq!(runs[1].run_property.strike, Some(docx_rs::Strike::new()));
+        assert!(runs[1].run_property.fonts.is_none() && runs[1].run_property.underline.is_none());
+        // underline → w:u val="single"。
+        assert_eq!(
+            runs[2].run_property.underline,
+            Some(docx_rs::Underline::new("single"))
+        );
+        assert!(runs[2].run_property.strike.is_none() && runs[2].run_property.fonts.is_none());
+        // plain run 零新位（既有面零漂移）。
+        assert!(
+            runs[3].run_property.fonts.is_none()
+                && runs[3].run_property.strike.is_none()
+                && runs[3].run_property.underline.is_none()
+        );
     }
 
     /// specs_to_paragraph 展开：脚注 marker（引擎 FootnoteReference
