@@ -13,6 +13,13 @@
 //! 残余降级 = code lang/fence（库无语法高亮/元数据面）与 link
 //! mark（模型 [`MarkSpan`] 无 URL 载荷——mdcore MD 域上游缺口）。
 //!
+//! **t22 增量（2026-10-16）**：多行 item 续行缩进（t20 登记残余
+//! 翻转为已表达）——office-io 新面 [`DocxWriter::list_item_lines`]：
+//! 一个列表项 = 一个 OOXML 段落（行间 `w:br w:type="textWrapping"`
+//! 软换行）+ 段落级 hanging `w:ind`（left = 720×(ilvl+1)、hanging
+//! 360——与编号抽象层级同值）→ **续行与首行文字列对齐**；单行项
+//! 既有路径字节级零变化（纯增量路径）。
+//!
 //! ## 暴露面（[`WasmCore::export_docx`]——既有类增量方法，状态面零变化）
 //!
 //! - 入参：无（导出 `self` 当前块树——宿主编辑器文档本体）。
@@ -35,12 +42,14 @@
 //! | `CodeBlock`（attrs.lang + text） | 每行 [`DocxWriter::code_line`] 双通道等宽（段落级+run 级 Courier New） | **等宽面已表达（t20 消解）；lang、fence 结构仍丢弃**（docx-rs 无语法高亮/元数据面——库层不可达，登记维持）；文本逐字保留 |
 //! | `Table`（text = 规范管道行） | [`DocxWriter::table`] | 第 2 行分隔行剔除（GFM 语义位）；`\|` 反转义 → `\|`；单元格内 `\n`/`\r` → 空格（GFM 单元格单行面，t17 同向）；孤立 `\` 原样透传（模型无内联转义层——t16 同边界登记）；单元格内 marks 本就不可承载（Table = 扁平文本面，html.rs 同边界）；0 行表跳过（空 `w:tbl` 非 OOXML 合法形——防御，markdown 解析不产空表） |
 //! | `Blockquote` | 引用面 [`DocxWriter::quote_paragraph`]（ind 720×depth 钳 8 + 左边框，嵌套步进）；子块递归（段落/嵌套引用承载引用面——markdown 解析器产出的唯一形态） | 空引用（无子且 text 非空）按 text 发射（markdown.rs 序列化语义镜像）；**引用上下文中的 heading/table/code/list/hr 子块不挂 ind/pBdr**（markdown 解析器不产此形态——attach 恒挂 root；op 面可构造，防御递归保持 t18 平铺行为，登记） |
-//! | `ListItem`（attrs.marker/depth） | [`DocxWriter::list_item`]：marker 判序（数字型 → Ordered，`-`/`*`/`+`/缺失 → Bullet）+ depth→ilvl（钳 0-8；ilvl 越界防御：>8 钳 8——映射层全函数） | **列表结构已表达（t20 消解）**；多行 item 文本（op 面可构造，markdown 解析单行）首行 = 编号段 + 余行普通段（续行不重复编号、无同级缩进对齐——登记）；子块递归保持 |
+//! | `ListItem`（attrs.marker/depth） | 单行：[`DocxWriter::list_item`]：marker 判序（数字型 → Ordered，`-`/`*`/`+`/缺失 → Bullet）+ depth→ilvl（钳 0-8；ilvl 越界防御：>8 钳 8——映射层全函数）；多行（t22 消解）：[`DocxWriter::list_item_lines`]——单段落 + 行间 `w:br` + 段落级 hanging `w:ind`（left = 720×(ilvl+1)、hanging 360，与编号抽象层级同值）→ 续行与首行文字列对齐 | **列表结构已表达（t20 消解）；多行续行缩进已表达（t22 消解——行内 marks 经 rich_lines 逐行平移保持）**；子块递归保持 |
 //! | `ThematicBreak` | [`DocxWriter::horizontal_rule`]（空段下边框） | 无降级（t20 消解；OOXML 无原生 hr——下边框为惯用表达） |
 //!
 //! 文本行处理（全局规则）：块文本按 `\n` 分行、每行剥一个行尾 `\r`
 //! （CRLF 容忍——markdown.rs `split('\n')` 保留 `\r`），多行文本 →
-//! 每行一个 docx 段落（mdcore 行级哲学，t16 w:br→`\n` 同向登记）；
+//! 每行一个 docx 段落（mdcore 行级哲学，t16 w:br→`\n` 同向登记；
+//! **例外**：ListItem 多行 = 单段 + 行间 `w:br`——t22 续行缩进面，
+//! 项内软换行语义，读面 br→`\n` 约定对称）；
 //! 行内孤立 `\r` 原样透传。mark 偏移单位 = char（op.rs SetMark 契约），
 //! 多行切分时按行区间裁剪平移。
 //!
@@ -405,17 +414,26 @@ fn emit_block(
             }
         }
         BlockKind::ListItem => {
-            // 列表结构（t20 消解）：marker 判序 + depth→ilvl；首行 =
-            // 编号段（marks 面保持），余行（op 面多行防御）= 普通段；
-            // 子块递归（嵌套 item 各自编号段，次序保持）。
+            // 列表结构（t20 消解）：marker 判序 + depth→ilvl。多行 item
+            // 文本（t22 消解）：单行 → 编号段（既有面，字节级零变化）；
+            // 多行 → [`DocxWriter::list_item_lines`]——一个列表项 = 一个
+            // OOXML 段落（行间 w:br 软换行 + 段落级 hanging ind），
+            // 续行与首行文字列对齐（每行 run 序由 rich_lines 平移行内
+            // marks）。子块递归（嵌套 item 各自编号段，次序保持）。
             let (kind, ilvl) = list_shape(&node.attrs);
             let lines = rich_lines(&text, &node.marks);
-            if let Some((first, first_marks)) = lines.first() {
-                w.list_item(&runs_from(first, first_marks), kind, ilvl)
+            let line_runs: Vec<Vec<RunSpec>> = lines
+                .iter()
+                .map(|(line, line_marks)| runs_from(line, line_marks))
+                .collect();
+            if line_runs.len() <= 1 {
+                // 单行：既有 list_item 路径不动（无显式 ind——稳定面）。
+                if let Some(first) = line_runs.first() {
+                    w.list_item(first, kind, ilvl).map_err(|e| map_error(&e))?;
+                }
+            } else {
+                w.list_item_lines(&line_runs, kind, ilvl)
                     .map_err(|e| map_error(&e))?;
-            }
-            for (line, line_marks) in lines.iter().skip(1) {
-                w.paragraph(&runs_from(line, line_marks));
             }
             for &c in &node.children {
                 emit_block(tree, c, w, quote_depth)?;
@@ -834,25 +852,103 @@ mod tests {
         );
     }
 
-    /// t20：多行 item 文本（op 面可构造；markdown 解析单行）——首行
-    /// 编号段 + 余行普通段（续行不重复编号，登记见模块文档）。
+    /// t22 翻转（原 t20 `list_multiline_item_first_numbered_rest_plain`
+    /// 平铺断言）：多行 item 续行缩进已表达——一个列表项 = 一个 OOXML
+    /// 段落（numPr 单点 + 行间 w:br + 段落级 hanging ind，续行与首行
+    /// 文字列对齐）。读面 br → `\n`（t16 约定）→ 单段文本零损；列表
+    /// kind 往返等值仍不宣称（读模型无 numPr——登记维持）。
+    /// CRLF：行尾 `\r` 在发射面剥除（rich_lines），br 替位 `\n`。
     #[test]
-    fn list_multiline_item_first_numbered_rest_plain() {
+    fn list_multiline_item_single_paragraph_br_hanging() {
         let tree = single(
             BlockKind::ListItem,
             "head line\ntail line",
             attr("marker", "-"),
             vec![],
         );
-        let ps = paras(&roundtrip(&tree));
-        let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
-        assert_eq!(texts, vec!["head line", "tail line"]);
+        // XML 面：单段 numPr（邻接串 = 同段性）+ br 软换行 + 段落级
+        // hanging ind（left=720、hanging=360——与编号抽象层级同值）。
         let xml = doc_xml(&tree);
         assert_eq!(
-            xml.matches(r#"<w:numId w:val="101" /><w:ilvl w:val="0" />"#)
+            xml.matches(r#"<w:numPr><w:numId w:val="101" /><w:ilvl w:val="0" /></w:numPr><w:ind w:left="720" w:right="0" w:hanging="360" />"#)
                 .count(),
             1,
-            "仅首行编号（numPr ×1）"
+            "多行项 = 单段（numPr→ind 邻接）"
+        );
+        assert_eq!(
+            xml.matches(r#"<w:br w:type="textWrapping" />"#).count(),
+            1,
+            "两行一 br"
+        );
+        // 文本面：读回单段含 `\n`（br→\n），非平铺两段。
+        let ps = paras(&roundtrip(&tree));
+        let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
+        assert_eq!(texts, vec!["head line\ntail line"]);
+
+        // CRLF 容忍："x\r\ny" → br 单段（\r 剥除）。
+        let crlf = single(BlockKind::ListItem, "x\r\ny", attr("marker", "-"), vec![]);
+        let ps = paras(&roundtrip(&crlf));
+        assert_eq!(ps.len(), 1, "CRLF 多行同为单段");
+        assert_eq!(ps[0].text(), "x\ny");
+
+        // 单行项零漂移对照：无段落级 ind（既有 list_item 面）。
+        let single_line = single(BlockKind::ListItem, "solo", attr("marker", "-"), vec![]);
+        let xml = doc_xml(&single_line);
+        assert_eq!(
+            xml.matches(
+                r#"<w:numPr><w:numId w:val="101" /><w:ilvl w:val="0" /></w:numPr></w:pPr>"#
+            )
+            .count(),
+            1,
+            "单行项 pPr 止于 numPr（无 ind）"
+        );
+        assert_eq!(xml.matches("<w:br").count(), 0, "单行无 br");
+    }
+
+    /// t22：嵌套多行 item（depth 2 → ilvl 1）——ind 步进 1440、
+    /// hanging 同值 360；三行（含空行）→ br ×2；行内 marks 跨行
+    /// 平移保持（rich_lines 单一真源——多行列表路径接线验证）。
+    #[test]
+    fn list_multiline_item_nested_depth_and_marks() {
+        // "top\n\nbottom"：中空行；strong 覆盖第二行前 4 char。
+        let mut attrs = Attrs::new();
+        attrs.insert("marker".into(), "1.".into());
+        attrs.insert("depth".into(), "2".into());
+        let tree = single(
+            BlockKind::ListItem,
+            "top\n\nbottom",
+            attrs,
+            vec![span(5, 9, "strong")],
+        );
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(
+                r#"<w:numPr><w:numId w:val="100" /><w:ilvl w:val="1" /></w:numPr><w:ind w:left="1440" w:right="0" w:hanging="360" />"#
+            )
+            .count(),
+            1,
+            "depth 2 → ilvl 1：ind left = 720×(1+1) = 1440"
+        );
+        assert_eq!(
+            xml.matches(r#"<w:br w:type="textWrapping" />"#).count(),
+            2,
+            "三行（空行居中）→ br ×2"
+        );
+        // 文本面：单段 "top\n\nbottom"；第二行 strong 平移（bold run）。
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].text(), "top\n\nbottom");
+        let (_, runs) = para_tuples(&ps[0]);
+        assert_eq!(
+            runs,
+            vec![
+                ("top".into(), false, false),
+                ("\n".into(), false, false),
+                ("\n".into(), false, false),
+                ("bott".into(), true, false),
+                ("om".into(), false, false),
+            ],
+            "strong[5,9] → 第二行 [0,4]（char 平移），br run 读为独立 \\n"
         );
     }
 

@@ -12,6 +12,12 @@ numbering.xml abstract + rels wiring), quote (w:ind + pBdr left), hr
 (pBdr bottom), block code dual-channel monospace (rFonts Courier New);
 status line simplified count is code_block only now (lang/fence remains
 registered; blockquote/list_item/thematic_break fully expressed).
+
+t22 extension: multiline list item continuation indent (single paragraph
++ w:br soft breaks + paragraph-level hanging w:ind = the numbering
+level geometry -> continuation lines align with first-line text column;
+multiline item text constructed via op face replace_text, markdown parse
+is single-line only).
 Evidence -> results/results_docx_export.json
 """
 
@@ -227,6 +233,33 @@ def main() -> int:
                   '<w:pPr><w:rPr><w:rFonts w:ascii="Courier New"' in doc_xml2
                   and '<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />' in doc_xml2,
                   "code dual-channel rFonts")
+
+            # ---- t22 消降级 XML 面 ⑤：多行 item 续行缩进（单段 + w:br +
+            #      段落级 hanging ind——与编号抽象层级同值悬挂几何，
+            #      续行与首行文字列对齐）。多行 item 文本 = op 面构造
+            #      （markdown 解析单行：注入单行 item 后 replace_text
+            #      插 \n——op.rs 无换行校验，防御面登记）----
+            page.evaluate("(s) => window.__inject(s)", "- item text")
+            page.wait_for_function("window.__blockCount() === 1", timeout=15000)
+            op_json = json.dumps([
+                {"t": "replace_text", "path": [0], "start": 9, "end": 9,
+                 "insert": "\nsecond line"}
+            ])
+            page.evaluate("(o) => window.__core.apply_ops(o, 'view', 't22-multiline')",
+                          op_json)
+            r5 = page.evaluate("window.__exportDocx()")
+            raw5 = as_bytes(r5["bytes"])
+            zf5 = zipfile.ZipFile(io.BytesIO(raw5))
+            doc_xml5 = zip_part(zf5, "word/document.xml")
+            check("t22_multiline_item_br_hanging_xml",
+                  r5["ok"] is True
+                  and page.evaluate("window.__blockCount()") == 1
+                  and '<w:br w:type="textWrapping" />' in doc_xml5
+                  and '<w:numPr><w:numId w:val="101" /><w:ilvl w:val="0" /></w:numPr>'
+                      '<w:ind w:left="720" w:right="0" w:hanging="360" />' in doc_xml5
+                  and doc_xml5.count("<w:numPr>") == 1
+                  and "item text" in doc_xml5 and "second line" in doc_xml5,
+                  "multiline item: single-paragraph numPr + br + hanging ind")
 
             # ---- 空文档 = 最小合法 docx ----
             page.evaluate("window.__inject('')")

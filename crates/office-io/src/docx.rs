@@ -77,6 +77,13 @@
 //!   读面 numPr/pBdr/ind/rFonts 的模型承载未核（读模型无对应字段
 //!   ——XML 级断言见 tests/docx_roundtrip.rs，读面登记维持）。
 //!
+//! **t22 增量（2026-10-16）**：[`DocxWriter::list_item_lines`]——多行
+//! 列表项续行缩进面（t20 登记残余翻转为已表达）：一个列表项 = 一个
+//! OOXML 段落（行间 `w:br w:type="textWrapping"` 软换行）+ 段落级
+//! `w:ind`（left = 720×(ilvl+1)、hanging [`LIST_HANGING_INDENT`]——与
+//! 编号抽象层级同值的悬挂几何）→ 续行与首行文字列对齐；单行项
+//! [`DocxWriter::list_item`] 字节级零变化（只增不改）。
+//!
 //! ## 模块边界（CAPABILITIES.md §2 裁决——DOCX 独立模块）
 //!
 //! - 与 XLSX 模块（[`crate::io`]/[`crate::write`]）**不共用领域模型、
@@ -1881,6 +1888,11 @@ pub const QUOTE_INDENT_STEP: i32 = 720;
 /// 引用嵌套深度上限（左缩进钳制——8×720=5760 twips=4 英寸，
 /// 防溢出版心；超限静默钳位，见 [`DocxWriter::quote_paragraph`]）。
 pub const MAX_QUOTE_DEPTH: usize = 8;
+/// 列表悬挂缩进（twips：360 = 0.25 英寸——编号列宽）。t20 编号抽象
+/// 层级与 [`DocxWriter::list_item_lines`] 段落级 ind 的单一真源
+///（两侧同值：marker 列 = left−360、文字列 = left——悬挂几何见
+/// [`DocxWriter::list_item_lines`] 模块文档）。
+pub const LIST_HANGING_INDENT: i32 = 360;
 
 /// 列表类型（t20 列表面——numbering 定义面二选一）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2274,6 +2286,50 @@ impl DocxWriter {
         Ok(())
     }
 
+    /// 多行列表项段（t22 续行缩进面）：**一个列表项 = 一个 OOXML 段落**
+    /// ——`line_runs` 每元素 = 一行的 run 序（全位同 [`Self::paragraph`]），
+    /// 行间 `w:br w:type="textWrapping"` 软换行（`Run::add_break`
+    /// run.rs:247 + `BreakType::TextWrapping`——一手源码核验）；
+    /// **续行与首行文字列对齐** = 段落级 `w:ind`（left =
+    /// [`QUOTE_INDENT_STEP`]×(ilvl+1)、hanging [`LIST_HANGING_INDENT`]）
+    /// 与编号抽象层级同值（numbering.xml 层级本有同几何——marker 列 =
+    /// left−360、首行文字列 = left；直接 pPr 优先但同值 = 同几何，
+    /// Word 自产文档惯例形态；显式直挂使 document.xml 自含几何，
+    /// 对 numbering 层级 pPr 应用不全的渲染器更鲁棒）。
+    /// br 续行/自动换行行起于段落 left → 与首行文字列（tab 后到位）
+    /// 精确同列。单行项应走 [`Self::list_item`]（无显式 ind——字节级
+    /// 稳定面）。ilvl typed 验证与 numbering 接线陷阱同 [`Self::list_item`]。
+    pub fn list_item_lines(
+        &mut self,
+        line_runs: &[Vec<RunSpec>],
+        kind: ListKind,
+        ilvl: usize,
+    ) -> Result<(), DocxError> {
+        if ilvl > MAX_LIST_LEVEL {
+            return Err(DocxError::Parse(format!(
+                "list ilvl must be 0-{MAX_LIST_LEVEL}, got {ilvl}"
+            )));
+        }
+        self.ensure_numberings();
+        let num_id = match kind {
+            ListKind::Ordered => ORDERED_NUM_ID,
+            ListKind::Bullet => BULLET_NUM_ID,
+        };
+        let p = spec_lines_to_paragraph(line_runs)
+            .numbering(
+                docx_rs::NumberingId::new(num_id),
+                docx_rs::IndentLevel::new(ilvl),
+            )
+            .indent(
+                Some(QUOTE_INDENT_STEP * (ilvl as i32 + 1)),
+                Some(docx_rs::SpecialIndentType::Hanging(LIST_HANGING_INDENT)),
+                None,
+                None,
+            );
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        Ok(())
+    }
+
     /// 代码行段（t20 等宽面·块级）：**双通道等宽**——段落级
     /// `pPr>rPr>rFonts`（段落标记 + 段内缺省面）+ run 级 rFonts
     /// [`CODE_FONT`]（文本保真主通道）。调用方负责行切分（本方法
@@ -2356,54 +2412,76 @@ impl DocxWriter {
 fn specs_to_paragraph(runs: &[RunSpec]) -> docx_rs::Paragraph {
     let mut p = docx_rs::Paragraph::new();
     for spec in runs {
-        // 脚注 marker（样式面忽略——引擎 add_footnote_reference 重置
-        // run_property，见 RunSpec::footnote 文档）。
-        if let Some(note) = &spec.footnote {
-            let mut footnote = docx_rs::Footnote::new();
-            footnote.add_content(
-                docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(note.as_str())),
-            );
-            p = p.add_run(docx_rs::Run::new().add_footnote_reference(footnote));
-            continue;
+        p = add_spec_to_paragraph(p, spec);
+    }
+    p
+}
+
+/// 单个 [`RunSpec`] 的 run 构造挂接（[`specs_to_paragraph`] 的逐 spec
+/// 步进——t22 抽出共享：脚注 marker / 简单域三连 / 普通 run + 链接
+/// 包裹三分支原样搬移，行为零变化）。
+fn add_spec_to_paragraph(p: docx_rs::Paragraph, spec: &RunSpec) -> docx_rs::Paragraph {
+    let mut p = p;
+    // 脚注 marker（样式面忽略——引擎 add_footnote_reference 重置
+    // run_property，见 RunSpec::footnote 文档）。
+    if let Some(note) = &spec.footnote {
+        let mut footnote = docx_rs::Footnote::new();
+        footnote.add_content(
+            docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(note.as_str())),
+        );
+        p = p.add_run(docx_rs::Run::new().add_footnote_reference(footnote));
+        return p;
+    }
+    // 简单域（begin/instrText/end 三连——引擎 add_tc 同构先例
+    // run.rs:202-208）。
+    if let Some(field) = spec.field {
+        let instr = match field {
+            FieldSpec::Page => docx_rs::InstrText::PAGE(docx_rs::InstrPAGE::new()),
+            FieldSpec::NumPages => docx_rs::InstrText::NUMPAGES(docx_rs::InstrNUMPAGES::new()),
+        };
+        return p
+            .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
+            .add_run(docx_rs::Run::new().add_instr_text(instr))
+            .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
+    }
+    let mut run = docx_rs::Run::new().add_text(spec.text.as_str());
+    let mut rp = docx_rs::RunProperty::new();
+    if spec.bold {
+        rp = rp.bold();
+    }
+    if spec.italic {
+        rp = rp.italic();
+    }
+    if spec.strike {
+        rp = rp.strike();
+    }
+    if spec.underline {
+        rp = rp.underline("single");
+    }
+    if spec.mono {
+        rp = rp.fonts(mono_fonts(MONO_FONT));
+    }
+    run.run_property = rp;
+    if let Some(url) = &spec.link {
+        p.add_hyperlink(
+            docx_rs::Hyperlink::new(url.as_str(), docx_rs::HyperlinkType::External).add_run(run),
+        )
+    } else {
+        p.add_run(run)
+    }
+}
+
+/// 多行 run 序列（每元素 = 一行的 run 组）→ 单引擎段落：行间
+/// `w:br w:type="textWrapping"` 软换行 run（t22 续行缩进面——一个
+/// 列表项 = 一个段落语义）。空行 = 空 run 组（仅 br 分隔，无文本 run）。
+fn spec_lines_to_paragraph(line_runs: &[Vec<RunSpec>]) -> docx_rs::Paragraph {
+    let mut p = docx_rs::Paragraph::new();
+    for (i, line) in line_runs.iter().enumerate() {
+        if i > 0 {
+            p = p.add_run(docx_rs::Run::new().add_break(docx_rs::BreakType::TextWrapping));
         }
-        // 简单域（begin/instrText/end 三连——引擎 add_tc 同构先例
-        // run.rs:202-208）。
-        if let Some(field) = spec.field {
-            let instr = match field {
-                FieldSpec::Page => docx_rs::InstrText::PAGE(docx_rs::InstrPAGE::new()),
-                FieldSpec::NumPages => docx_rs::InstrText::NUMPAGES(docx_rs::InstrNUMPAGES::new()),
-            };
-            p = p
-                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
-                .add_run(docx_rs::Run::new().add_instr_text(instr))
-                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
-            continue;
-        }
-        let mut run = docx_rs::Run::new().add_text(spec.text.as_str());
-        let mut rp = docx_rs::RunProperty::new();
-        if spec.bold {
-            rp = rp.bold();
-        }
-        if spec.italic {
-            rp = rp.italic();
-        }
-        if spec.strike {
-            rp = rp.strike();
-        }
-        if spec.underline {
-            rp = rp.underline("single");
-        }
-        if spec.mono {
-            rp = rp.fonts(mono_fonts(MONO_FONT));
-        }
-        run.run_property = rp;
-        if let Some(url) = &spec.link {
-            p = p.add_hyperlink(
-                docx_rs::Hyperlink::new(url.as_str(), docx_rs::HyperlinkType::External)
-                    .add_run(run),
-            );
-        } else {
-            p = p.add_run(run);
+        for spec in line {
+            p = add_spec_to_paragraph(p, spec);
         }
     }
     p
@@ -2436,7 +2514,7 @@ fn ordered_abstract() -> docx_rs::AbstractNumbering {
             )
             .indent(
                 Some(QUOTE_INDENT_STEP * (i as i32 + 1)),
-                Some(docx_rs::SpecialIndentType::Hanging(360)),
+                Some(docx_rs::SpecialIndentType::Hanging(LIST_HANGING_INDENT)),
                 None,
                 None,
             ),
@@ -2460,7 +2538,7 @@ fn bullet_abstract() -> docx_rs::AbstractNumbering {
             )
             .indent(
                 Some(QUOTE_INDENT_STEP * (i as i32 + 1)),
-                Some(docx_rs::SpecialIndentType::Hanging(360)),
+                Some(docx_rs::SpecialIndentType::Hanging(LIST_HANGING_INDENT)),
                 None,
                 None,
             ),
@@ -2634,6 +2712,73 @@ mod tests {
             w.list_item(&[RunSpec::text("a")], ListKind::Bullet, MAX_LIST_LEVEL + 1),
             Err(DocxError::Parse(m)) if m.contains("ilvl")
         ));
+    }
+
+    /// t22：list_item_lines 验证面与模型级（单段落、br run 行边界
+    /// 分隔、pPr numbering/ind 双挂）。XML 面（`w:br w:type` / ind
+    /// 值直断）见 tests/docx_roundtrip.rs `t22_list_item_multiline_xml_level`。
+    #[test]
+    fn list_item_lines_model_level() {
+        let mut w = DocxWriter::new();
+        // ilvl 越界拒（与 list_item 同族 typed 验证）。
+        assert!(matches!(
+            w.list_item_lines(&[vec![RunSpec::text("a")]], ListKind::Bullet, MAX_LIST_LEVEL + 1),
+            Err(DocxError::Parse(m)) if m.contains("ilvl")
+        ));
+        w.list_item_lines(
+            &[
+                vec![
+                    RunSpec::text("head"),
+                    RunSpec::styled_full("b", true, false, false, false, false),
+                ],
+                vec![],
+                vec![RunSpec::text("tail")],
+            ],
+            ListKind::Bullet,
+            1,
+        )
+        .unwrap();
+        // 单段：一个列表项 = 一个 OOXML 段落。
+        assert_eq!(w.docx.document.children.len(), 1);
+        let docx_rs::DocumentChild::Paragraph(p) = &w.docx.document.children[0] else {
+            panic!("应为段落");
+        };
+        // pPr：numbering（numId 101 / ilvl 1）+ ind（left = 720×2、
+        // hanging 360——与抽象层级同值悬挂几何）。
+        let np = p.property.numbering_property.as_ref().expect("numPr");
+        assert_eq!(
+            np.id.as_ref().map(|i| i.id),
+            Some(BULLET_NUM_ID),
+            "bullet numId"
+        );
+        assert_eq!(np.level.as_ref().map(|l| l.val), Some(1), "ilvl 1");
+        let ind = p.property.indent.as_ref().expect("段落级 ind");
+        assert_eq!(
+            ind.start,
+            Some(QUOTE_INDENT_STEP * 2),
+            "left = 720×(ilvl+1)"
+        );
+        assert_eq!(
+            ind.special_indent,
+            Some(docx_rs::SpecialIndentType::Hanging(LIST_HANGING_INDENT)),
+            "hanging = 编号列宽"
+        );
+        // run 子序：head / b / br /（空行无 run）/ br / tail——br 恒在
+        // 行边界（空行仅贡献 br）。
+        let mut seq = Vec::new();
+        for child in &p.children {
+            let docx_rs::ParagraphChild::Run(r) = child else {
+                panic!("应为 run");
+            };
+            for c in &r.children {
+                seq.push(match c {
+                    docx_rs::RunChild::Text(t) => format!("t:{}", t.text),
+                    docx_rs::RunChild::Break(_) => "br".to_string(),
+                    other => format!("other:{other:?}"),
+                });
+            }
+        }
+        assert_eq!(seq, vec!["t:head", "t:b", "br", "br", "t:tail"]);
     }
 
     /// t20：specs_to_paragraph 三新位引擎接线（模型级——rFonts/strike/

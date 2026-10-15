@@ -1634,3 +1634,106 @@ fn t20_numbering_lazy_registration_and_reset() {
         other => panic!("应为段落, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// t22 多行列表项续行缩进（单段落 + w:br + 段落级 hanging ind——与编号
+// 抽象层级同值悬挂几何；t20 登记残余翻转为已表达）
+// ---------------------------------------------------------------------------
+
+/// t22：XML 面——一个列表项 = 一个 OOXML 段落（numPr 单点 + 行间
+/// `w:br w:type="textWrapping"`），段落级 `w:ind`（left = 720×(ilvl+1)、
+/// hanging 360）显式直挂（Word 自产文档惯例形态；直接 pPr 优先但与
+/// numbering.xml 层级同值 = 同几何）→ br 续行起于段落 left = 首行
+/// 文字列（marker 列 = left−360、tab 后文字到位）——续行对齐的
+/// 结构证据。单行项既有面零漂移（无显式 ind）；写读全环 br → `\n`
+///（t16 读面约定）单段文本零损。
+#[test]
+fn t22_list_item_multiline_xml_level() {
+    let p = tmp("t22_list_multiline");
+    let mut w = DocxWriter::new();
+    // 单行项（既有 list_item 面——本测试的零漂移对照）。
+    w.list_item(&[RunSpec::text("single")], ListKind::Bullet, 0)
+        .unwrap();
+    // 多行项（新面）：bullet ilvl 0（ind 720/360）。
+    w.list_item_lines(
+        &[
+            vec![RunSpec::text("first line of item")],
+            vec![RunSpec::text("second line")],
+        ],
+        ListKind::Bullet,
+        0,
+    )
+    .unwrap();
+    // 嵌套多行（ordered ilvl 1）：ind 步进 1440；三行含空行 → br ×2。
+    w.list_item_lines(
+        &[
+            vec![RunSpec::text("nested head")],
+            vec![],
+            vec![RunSpec::text("nested tail")],
+        ],
+        ListKind::Ordered,
+        1,
+    )
+    .unwrap();
+    w.save_to_path(&p).unwrap();
+
+    let doc_xml = String::from_utf8(zip_read_entry(&p, "word/document.xml").unwrap()).unwrap();
+    // ① 单段落 numPr 单点：一个列表项 = 一个 OOXML 段落（非平铺多段）。
+    assert_eq!(
+        doc_xml.matches("<w:numPr>").count(),
+        3,
+        "三个列表段 = 三个项（1 单行 + 2 多行各一段）"
+    );
+    // ② br 软换行计数：bullet 两行 ×1 + ordered 三行（空行也 br）×2。
+    assert_eq!(
+        doc_xml.matches(r#"<w:br w:type="textWrapping" />"#).count(),
+        3,
+        "br = 行数 − 项数（空行无 run 仅 br）"
+    );
+    // ③ ilvl 0：numPr + 段落级 hanging ind 同段共存（邻接串断言 =
+    //    同段落性证明），left = 720×(0+1)、hanging = 360。
+    assert!(
+        doc_xml.contains(
+            r#"<w:numPr><w:numId w:val="101" /><w:ilvl w:val="0" /></w:numPr><w:ind w:left="720" w:right="0" w:hanging="360" />"#
+        ),
+        "bullet 多行项：numPr→ind 邻接（pPr 子序）"
+    );
+    // ④ ilvl 1 步进：left = 720×(1+1) = 1440，hanging 同值。
+    assert!(
+        doc_xml.contains(
+            r#"<w:numPr><w:numId w:val="100" /><w:ilvl w:val="1" /></w:numPr><w:ind w:left="1440" w:right="0" w:hanging="360" />"#
+        ),
+        "ordered 嵌套多行项：ind 步进"
+    );
+    // ⑤ 单行项零漂移：pPr 止于 numPr（无 ind）——既有 list_item 输出
+    //    面字节级不变（对照形态锚定）。
+    assert_eq!(
+        doc_xml
+            .matches(r#"<w:numPr><w:numId w:val="101" /><w:ilvl w:val="0" /></w:numPr></w:pPr>"#)
+            .count(),
+        1,
+        "单行项 pPr 无 ind（多行项的 ind 紧随 numPr，不命中此形）"
+    );
+    // ⑥ 写读全环：br → `\n`（读面约定，docx.rs:1633）——单段文本零损
+    //    （空行 = 连续两 br → `\n\n`）。
+    let doc = read_docx(&p).unwrap();
+    let texts: Vec<String> = doc
+        .blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::Paragraph(pd) => Some(pd.text()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            "single".to_string(),
+            "first line of item\nsecond line".to_string(),
+            "nested head\n\nnested tail".to_string(),
+        ],
+        "多行项读回 = 单段含 \\n（行边界保持）；列表 kind 往返不宣称（读模型无 numPr）"
+    );
+    assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    let _ = std::fs::remove_file(&p);
+}
