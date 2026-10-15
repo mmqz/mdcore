@@ -17,7 +17,8 @@
 
 use mdc_office_io::docx::{
     read_docx, read_docx_from_bytes_with_options, Block, DocxWriter, HeaderFooterVariant,
-    HyperlinkTarget, ListKind, RunSpec,
+    HyperlinkTarget, ListKind, ParagraphIndent, ParagraphIndentSpecial, ParagraphNumbering,
+    RunSpec,
 };
 use mdc_office_io::io::{ReadOptions, WarningKind};
 use std::io::Write as _;
@@ -1736,4 +1737,612 @@ fn t22_list_item_multiline_xml_level() {
     );
     assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
     let _ = std::fs::remove_file(&p);
+}
+
+// ---------------------------------------------------------------------------
+// r4-t3 DOCX 读写保真：numPr/ind 读面承载 + 悬空纪律 + 读-改-写全链
+// （方案与完整矩阵 = 分析仓 office-line/docx-r1/FIDELITY.md）
+// ---------------------------------------------------------------------------
+
+/// r4-t3：numPr/ind 写读全环承载（自有写面产线 → 读面模型断言）。
+/// 列表段（ordered 两级 + bullet + 多行项）承载 num_id/ilvl/kind/format；
+/// 多行项与引用段承载 ind（left/right/hanging——注意引擎发射面
+/// `w:right="0"` 恒在 → 读回 right=Some(0)，写面 None ≠ 读回 Some(0)
+/// 的序列化不对称如实钉定）。
+#[test]
+fn r4t3_numbering_and_indent_read_carry() {
+    let p = tmp("r4t3_carry");
+    let mut w = DocxWriter::new();
+    w.list_item(&[RunSpec::text("一")], ListKind::Ordered, 0)
+        .unwrap();
+    w.list_item(&[RunSpec::text("嵌套")], ListKind::Ordered, 1)
+        .unwrap();
+    w.list_item(&[RunSpec::text("圆")], ListKind::Bullet, 0)
+        .unwrap();
+    w.list_item_lines(
+        &[vec![RunSpec::text("多行首")], vec![RunSpec::text("多行尾")]],
+        ListKind::Ordered,
+        0,
+    )
+    .unwrap();
+    w.quote_paragraph(&[RunSpec::text("被引用")], 2);
+    w.paragraph_text("普通段");
+    w.save_to_path(&p).unwrap();
+
+    let doc = read_docx(&p).unwrap();
+    assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    let paras: Vec<_> = doc
+        .blocks
+        .iter()
+        .map(|b| match b {
+            Block::Paragraph(pd) => pd.clone(),
+            other => panic!("应为段落, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(paras.len(), 6);
+    // ① 有序 ilvl 0：自有抽象 100 全四字段承载。
+    assert_eq!(
+        paras[0].numbering,
+        Some(ParagraphNumbering {
+            num_id: 100,
+            ilvl: 0,
+            kind: Some(ListKind::Ordered),
+            format: Some("decimal".to_string()),
+        })
+    );
+    assert_eq!(
+        paras[0].indent, None,
+        "单行列表项无显式 ind（t22 零漂移面）"
+    );
+    // ② 有序嵌套 ilvl 1。
+    assert_eq!(
+        paras[1].numbering,
+        Some(ParagraphNumbering {
+            num_id: 100,
+            ilvl: 1,
+            kind: Some(ListKind::Ordered),
+            format: Some("decimal".to_string()),
+        })
+    );
+    // ③ 无序 ilvl 0。
+    assert_eq!(
+        paras[2].numbering,
+        Some(ParagraphNumbering {
+            num_id: 101,
+            ilvl: 0,
+            kind: Some(ListKind::Bullet),
+            format: Some("bullet".to_string()),
+        })
+    );
+    // ④ 多行项：numPr + 段落级 hanging ind（t22 几何）双承载 + br → \n。
+    assert_eq!(
+        paras[3].numbering.as_ref().unwrap().kind,
+        Some(ListKind::Ordered)
+    );
+    assert_eq!(
+        paras[3].indent,
+        Some(ParagraphIndent {
+            left: Some(720),
+            right: Some(0),
+            special: Some(ParagraphIndentSpecial::Hanging(360)),
+        }),
+        "多行项悬挂几何读回（right=Some(0)——引擎发射面恒写 w:right）"
+    );
+    assert_eq!(paras[3].text(), "多行首\n多行尾");
+    // ⑤ 引用段：无编号 + 左缩进 720×depth（right 同为发射面恒写）。
+    assert_eq!(paras[4].numbering, None);
+    assert_eq!(
+        paras[4].indent,
+        Some(ParagraphIndent {
+            left: Some(1440),
+            right: Some(0),
+            special: None,
+        })
+    );
+    // ⑥ 普通段：双承载皆 None。
+    assert_eq!(paras[5].numbering, None);
+    assert_eq!(paras[5].indent, None);
+    let _ = std::fs::remove_file(&p);
+}
+
+/// r4-t3：悬空 numPr（numId 无 numbering.xml 条目）严格拒/兼容警告 +
+/// 结构承载；自定义 numFmt（lowerLetter）解析与降级可诊断性；外源
+/// `w:ind` 形态（firstLine——写面不产的形态）注入承载。净室注入：
+/// document.xml sectPr 前追加悬空编号段（带 firstLine ind）+
+/// numbering.xml `decimal` → `lowerLetter` 改写。
+#[test]
+fn r4t3_numbering_dangling_custom_format_injected_ind() {
+    let p = tmp("r4t3_dangle");
+    let mut w = DocxWriter::new();
+    w.paragraph_text("基准段");
+    w.list_item(&[RunSpec::text("有序项")], ListKind::Ordered, 0)
+        .unwrap();
+    w.save_to_path(&p).unwrap();
+
+    // ① 悬空 numPr 注入（末段——sectPr 前）。
+    let mut xml = String::from_utf8(zip_read_entry(&p, "word/document.xml").unwrap()).unwrap();
+    let pos = xml.find("<w:sectPr>").expect("sectPr 在位");
+    xml.insert_str(
+        pos,
+        "<w:p><w:pPr><w:numPr><w:numId w:val=\"777\" /><w:ilvl w:val=\"2\" /></w:numPr>\
+         <w:ind w:left=\"360\" w:right=\"120\" w:firstLine=\"480\" /></w:pPr>\
+         <w:r><w:t>悬空编号段</w:t></w:r></w:p>",
+    );
+    let p2 = tmp("r4t3_dangle2");
+    rebuild_with_part_to(&p, &p2, "word/document.xml", xml.as_bytes());
+
+    // 严格：typed 拒（与超链接/页眉页脚悬空引用同族纪律）。
+    match read_docx(&p2) {
+        Err(mdc_office_io::docx::DocxError::Container(
+            mdc_office_io::io::ReadError::InvalidPart { part, detail },
+        )) => {
+            assert_eq!(part, "word/document.xml");
+            assert!(
+                detail.contains("numId '777'") && detail.contains("dangling"),
+                "{detail}"
+            );
+        }
+        other => panic!("严格应拒悬空 numId, got {other:?}"),
+    }
+    // 兼容：BrokenReference 警告 + kind=None 结构承载（num_id/ilvl 不丢）
+    // + firstLine ind 承载 + 文本保留。
+    let compat = ReadOptions { compat: true };
+    let doc = read_docx_with(&p2, &compat).unwrap();
+    assert!(
+        doc.warnings
+            .iter()
+            .any(|w| w.kind == WarningKind::BrokenReference
+                && w.detail.contains("numId '777'")
+                && w.detail.contains("dangling")),
+        "{:?}",
+        doc.warnings
+    );
+    let last = match doc.blocks.last().unwrap() {
+        Block::Paragraph(pd) => pd.clone(),
+        other => panic!("应为段落, got {other:?}"),
+    };
+    assert_eq!(
+        last.numbering,
+        Some(ParagraphNumbering {
+            num_id: 777,
+            ilvl: 2,
+            kind: None,
+            format: None,
+        }),
+        "结构承载（kind 解析不可达 = 降级可诊断）"
+    );
+    assert_eq!(
+        last.indent,
+        Some(ParagraphIndent {
+            left: Some(360),
+            right: Some(120),
+            special: Some(ParagraphIndentSpecial::FirstLine(480)),
+        }),
+        "外源 w:ind（firstLine 形态——写面不产的形态）承载"
+    );
+    assert_eq!(last.text(), "悬空编号段");
+
+    // ② 自定义 numFmt：numbering.xml 的 decimal 全量改写为 lowerLetter
+    //    → 有序项 kind 仍 Ordered（解析成功），format = lowerLetter
+    //    （写回经自有抽象降级为 decimal——format 字段使降级可诊断）。
+    let numbering = String::from_utf8(zip_read_entry(&p, "word/numbering.xml").unwrap()).unwrap();
+    let custom = numbering.replace(
+        r#"w:numFmt w:val="decimal""#,
+        r#"w:numFmt w:val="lowerLetter""#,
+    );
+    assert_ne!(numbering, custom, "改写命中（抽象含 decimal 级）");
+    let p3 = tmp("r4t3_custom");
+    rebuild_with_part_to(&p, &p3, "word/numbering.xml", custom.as_bytes());
+    let doc3 = read_docx(&p3).unwrap();
+    assert!(doc3.warnings.is_empty(), "{:?}", doc3.warnings);
+    match &doc3.blocks[1] {
+        Block::Paragraph(pd) => assert_eq!(
+            pd.numbering,
+            Some(ParagraphNumbering {
+                num_id: 100,
+                ilvl: 0,
+                kind: Some(ListKind::Ordered),
+                format: Some("lowerLetter".to_string()),
+            }),
+            "自定义 numFmt 解析（kind 归 Ordered 域；format 保留原生值）"
+        ),
+        other => panic!("应为段落, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&p);
+    let _ = std::fs::remove_file(&p2);
+    let _ = std::fs::remove_file(&p3);
+}
+
+/// r4-t3 验证链主测试：读 → **真实修改**（改一个 run 的文本）→ 写 →
+/// 重读 → 断言目标特性保真（numPr 结构 kind/ilvl/format + ind）+
+/// 非目标内容不意外删除（ZIP 部件对比 + 关系对比——预期丢失集恰为
+/// 登记面：图片媒体部件/图片关系 + 脚注关系〔模型不承载其内容〕；
+/// footnotes.xml 部件本身引擎恒发——内容降级为空壳，脚注内容丢失
+/// 在内容面断言）。
+#[test]
+fn r4t3_roundtrip_read_modify_write() {
+    use mdc_office_io::docx::HeaderFooterVariant;
+
+    // ---- 阶段 1：fixture（含登记丢失成员——脚注与图片）。----
+    let p = tmp("r4t3_rt");
+    let mut w = DocxWriter::new();
+    w.heading(1, "RT 标题").unwrap();
+    w.paragraph(&[
+        RunSpec::text("前 "),
+        RunSpec::styled("粗斜", true, true),
+        RunSpec::link("站", "https://rt.example/a?x=1&y=2"),
+        RunSpec::text(" 后"),
+    ]);
+    w.paragraph_text("MUTATE_ME 段");
+    w.quote_paragraph(&[RunSpec::text("被引用")], 2);
+    w.list_item(&[RunSpec::text("一")], ListKind::Ordered, 0)
+        .unwrap();
+    w.list_item(&[RunSpec::text("嵌套")], ListKind::Ordered, 1)
+        .unwrap();
+    w.list_item(&[RunSpec::text("圆")], ListKind::Bullet, 0)
+        .unwrap();
+    w.list_item_lines(
+        &[vec![RunSpec::text("多行首")], vec![RunSpec::text("多行尾")]],
+        ListKind::Ordered,
+        0,
+    )
+    .unwrap();
+    w.table(&[
+        vec!["a".to_string(), "b".to_string()],
+        vec!["c".to_string(), "d".to_string()],
+    ]);
+    // 登记丢失成员：脚注（读面引擎不读 footnotes.xml 内容）与图片
+    //（清单面在但块序位置无承载 → 不回放）。
+    w.paragraph(&[RunSpec::footnote("脚注内容甲")]);
+    w.image(&TINY_PNG, 1, 1).unwrap();
+    w.header(&[RunSpec::text("页眉甲")]);
+    w.footer(&[RunSpec::text("页脚甲")]);
+    w.save_to_path(&p).unwrap();
+
+    // ---- 阶段 2：读取 + 模型断言（承载面）。----
+    let mut doc = read_docx(&p).unwrap();
+    assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    assert_eq!(
+        doc.blocks.len(),
+        11,
+        "9 内容块 + 脚注 marker 空段 + 图片空锚段"
+    );
+    let para = |i: usize| match &doc.blocks[i] {
+        Block::Paragraph(pd) => pd.clone(),
+        other => panic!("blocks[{i}] 应为段落, got {other:?}"),
+    };
+    assert_eq!(para(0).style.as_deref(), Some("Heading1"));
+    assert_eq!(para(1).runs.len(), 4);
+    assert!(para(1).runs[1].bold && para(1).runs[1].italic);
+    assert_eq!(
+        para(1).runs[2].hyperlink,
+        Some(HyperlinkTarget::External {
+            target: "https://rt.example/a?x=1&y=2".into()
+        })
+    );
+    assert_eq!(para(2).text(), "MUTATE_ME 段");
+    assert_eq!(
+        para(3).indent.map(|i| i.left),
+        Some(Some(1440)),
+        "引用 ind 承载"
+    );
+    assert_eq!(
+        para(4).numbering.as_ref().unwrap().kind,
+        Some(ListKind::Ordered)
+    );
+    assert_eq!(para(4).numbering.as_ref().unwrap().ilvl, 0);
+    assert_eq!(para(5).numbering.as_ref().unwrap().ilvl, 1, "嵌套层级承载");
+    assert_eq!(
+        para(6).numbering.as_ref().unwrap().kind,
+        Some(ListKind::Bullet)
+    );
+    assert_eq!(para(7).text(), "多行首\n多行尾", "br → \\n 行边界保持");
+    assert!(matches!(&doc.blocks[8], Block::Table(t) if t.rows.len() == 2 && t.rows[0][0] == "a"));
+    // 脚注 marker 段（引擎读面不解析 w:footnoteReference → run 在而
+    // 无内容面）与图片锚段（Drawing 面外 → 空文本 run）——同为
+    // 「块序在位、载荷空」的读面登记形态。
+    assert_eq!(para(9).runs.len(), 1);
+    assert_eq!(
+        para(9).runs[0].text,
+        "",
+        "脚注 marker run 文本空（面外登记）"
+    );
+    assert_eq!(para(10).runs.len(), 1);
+    assert_eq!(
+        para(10).runs[0].text,
+        "",
+        "图片锚段 run 文本空（Drawing 面外）"
+    );
+    assert_eq!(doc.images.len(), 1);
+    assert_eq!(doc.images[0].body_uses, 1);
+    assert_eq!(doc.headers.len(), 1);
+    assert_eq!(doc.headers[0].variant, HeaderFooterVariant::Default);
+    assert_eq!(doc.footers.len(), 1);
+
+    // ---- 阶段 3：真实修改（一个 run 的文本）。----
+    doc.blocks[2] = Block::Paragraph({
+        let mut pd = para(2);
+        pd.runs[0].text = "MUTATED 就绪".to_string();
+        pd
+    });
+    let doc = &doc;
+
+    // ---- 阶段 4：模型 → DocxWriter 重建（消费方映射示范）。----
+    fn runs_to_specs(runs: &[mdc_office_io::docx::RunData]) -> Vec<RunSpec> {
+        runs.iter()
+            .map(|r| {
+                let mut s = RunSpec::styled_full(&r.text, r.bold, r.italic, false, false, false);
+                if let Some(HyperlinkTarget::External { target }) = &r.hyperlink {
+                    s.link = Some(target.clone());
+                }
+                s
+            })
+            .collect()
+    }
+    let mut w2 = DocxWriter::new();
+    for block in &doc.blocks {
+        match block {
+            Block::Paragraph(pd) => {
+                if pd.runs.is_empty() || pd.text().is_empty() {
+                    // 空载荷段不回放（脚注 marker 段/图片锚段——内容 =
+                    // 登记丢失集；本 fixture 中源文档无其他空段）。
+                    continue;
+                }
+                // 列表段：kind/ilvl 承载驱动回放（多行项按 \n 切行）。
+                if let Some(n) = &pd.numbering {
+                    let kind = n.kind.unwrap_or(ListKind::Ordered); // 未解析回退面（本 fixture 恒 Some）
+                    let ilvl = n.ilvl.min(mdc_office_io::docx::MAX_LIST_LEVEL);
+                    if pd.text().contains('\n') {
+                        let lines: Vec<Vec<RunSpec>> = pd
+                            .text()
+                            .split('\n')
+                            .map(|l| vec![RunSpec::text(l)])
+                            .collect();
+                        w2.list_item_lines(&lines, kind, ilvl).unwrap();
+                    } else {
+                        w2.list_item(&runs_to_specs(&pd.runs), kind, ilvl).unwrap();
+                    }
+                    continue;
+                }
+                // 标题段（样式 ID 语义解释 = 消费方责任面的示范）。
+                if let Some(style) = &pd.style {
+                    if let Some(level) = style
+                        .strip_prefix("Heading")
+                        .and_then(|s| s.parse::<u8>().ok())
+                    {
+                        w2.heading(level, &pd.text()).unwrap();
+                        continue;
+                    }
+                }
+                // 引用段（ind 承载驱动：left = 720×depth——本 fixture 几何）。
+                if let Some(ind) = &pd.indent {
+                    if ind.left == Some(1440) {
+                        w2.quote_paragraph(&runs_to_specs(&pd.runs), 2);
+                        continue;
+                    }
+                }
+                w2.paragraph(&runs_to_specs(&pd.runs));
+            }
+            Block::Table(t) => w2.table(&t.rows),
+        }
+    }
+    for h in &doc.headers {
+        match h.variant {
+            HeaderFooterVariant::Default => {
+                let specs: Vec<RunSpec> = h
+                    .blocks
+                    .iter()
+                    .flat_map(|b| match b {
+                        Block::Paragraph(pd) => runs_to_specs(&pd.runs),
+                        _ => vec![],
+                    })
+                    .collect();
+                w2.header(&specs);
+            }
+            other => panic!("fixture 仅 default 槽, got {other:?}"),
+        }
+    }
+    for f in &doc.footers {
+        let specs: Vec<RunSpec> = f
+            .blocks
+            .iter()
+            .flat_map(|b| match b {
+                Block::Paragraph(pd) => runs_to_specs(&pd.runs),
+                _ => vec![],
+            })
+            .collect();
+        w2.footer(&specs);
+    }
+    let p_out = tmp("r4t3_rt_out");
+    w2.save_to_path(&p_out).unwrap();
+
+    // ---- 阶段 5：重读断言（目标特性保真）。----
+    let doc2 = read_docx(&p_out).unwrap();
+    assert!(doc2.warnings.is_empty(), "{:?}", doc2.warnings);
+    let para2 = |i: usize| match &doc2.blocks[i] {
+        Block::Paragraph(pd) => pd.clone(),
+        other => panic!("blocks[{i}] 应为段落, got {other:?}"),
+    };
+    assert_eq!(doc2.blocks.len(), 9, "9 块（脚注/图片锚段不回放）");
+    assert_eq!(para2(0).style.as_deref(), Some("Heading1"), "标题结构保持");
+    assert_eq!(para2(0).text(), "RT 标题");
+    assert_eq!(para2(1).text(), "前 粗斜站 后", "行内文本零损");
+    assert!(
+        para2(1).runs[1].bold && para2(1).runs[1].italic,
+        "行内格式保持"
+    );
+    assert_eq!(
+        para2(1).runs[2].hyperlink,
+        Some(HyperlinkTarget::External {
+            target: "https://rt.example/a?x=1&y=2".into()
+        }),
+        "超链接目标保持"
+    );
+    assert_eq!(para2(2).text(), "MUTATED 就绪", "真实修改生效且落盘往返");
+    assert_eq!(
+        para2(3).indent.map(|i| i.left),
+        Some(Some(1440)),
+        "引用 ind 往返"
+    );
+    // numPr 全四字段往返（自有抽象 numId 100/101 + decimal/bullet 域）。
+    assert_eq!(
+        para2(4).numbering,
+        Some(ParagraphNumbering {
+            num_id: 100,
+            ilvl: 0,
+            kind: Some(ListKind::Ordered),
+            format: Some("decimal".to_string()),
+        })
+    );
+    assert_eq!(para2(5).numbering.as_ref().unwrap().ilvl, 1, "嵌套层级往返");
+    assert_eq!(
+        para2(6).numbering.as_ref().unwrap().kind,
+        Some(ListKind::Bullet),
+        "列表 kind 往返"
+    );
+    assert_eq!(para2(7).text(), "多行首\n多行尾", "多行项行边界往返");
+    assert_eq!(
+        para2(7).indent,
+        Some(ParagraphIndent {
+            left: Some(720),
+            right: Some(0),
+            special: Some(ParagraphIndentSpecial::Hanging(360)),
+        }),
+        "多行项悬挂几何往返"
+    );
+    assert!(matches!(&doc2.blocks[8], Block::Table(t) if t.rows.len() == 2 && t.rows[0][0] == "a"));
+    assert_eq!(doc2.headers.len(), 1, "页眉块回放");
+    assert_eq!(
+        match &doc2.headers[0].blocks[0] {
+            Block::Paragraph(pd) => pd.text(),
+            other => panic!("应为段落, got {other:?}"),
+        },
+        "页眉甲"
+    );
+    assert_eq!(
+        match &doc2.footers[0].blocks[0] {
+            Block::Paragraph(pd) => pd.text(),
+            other => panic!("应为段落, got {other:?}"),
+        },
+        "页脚甲"
+    );
+    assert!(doc2.images.is_empty(), "图片未回放（位置无承载——登记）");
+
+    // ---- 阶段 6：ZIP 部件对比（预期丢失集恰 = 登记面）。----
+    let parts_of = |path: &str| -> Vec<String> {
+        let f = std::fs::File::open(path).unwrap();
+        let za = zip::ZipArchive::new(f).unwrap();
+        let mut v: Vec<String> = za
+            .file_names()
+            .filter(|n| !n.ends_with('/'))
+            .map(str::to_string)
+            .collect();
+        v.sort();
+        v
+    };
+    let orig_parts = parts_of(&p);
+    let rebuilt_parts = parts_of(&p_out);
+    // 丢失 = 恰图片媒体部件（脚注部件引擎恒发不丢——内容面另行断言）。
+    let lost: Vec<String> = orig_parts
+        .iter()
+        .filter(|n| !rebuilt_parts.contains(n))
+        .cloned()
+        .collect();
+    assert_eq!(lost.len(), 1, "预期丢失集恰为媒体部件: {lost:?}");
+    assert!(lost[0].starts_with("word/media/"), "{lost:?}");
+    // 新增部件 = 零（重建不引入模型外内容）。
+    let added: Vec<String> = rebuilt_parts
+        .iter()
+        .filter(|n| !orig_parts.contains(n))
+        .cloned()
+        .collect();
+    assert_eq!(added, Vec::<String>::new(), "无新增部件");
+
+    // ---- 阶段 7：关系对比（(Type, Target) 对——Id 引擎全局计数不比）。----
+    let rels_pairs_of = |path: &str| -> Vec<(String, String)> {
+        let rels = String::from_utf8(
+            zip_read_entry(path, "word/_rels/document.xml.rels").expect("rels 在位"),
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        for line in rels.split("><") {
+            // split("><") 剥离了分隔符——关系条目段以 `Relationship Id=` 起
+            //（无前导 `<`），以 Type 属性存在性过滤（根元素段无 Type）。
+            if !line.contains("Type=\"") {
+                continue;
+            }
+            let ty = line
+                .split("Type=\"")
+                .nth(1)
+                .and_then(|s| s.split('"').next())
+                .unwrap_or_default()
+                .to_string();
+            let tg = line
+                .split("Target=\"")
+                .nth(1)
+                .and_then(|s| s.split('"').next())
+                .unwrap_or_default()
+                .to_string();
+            out.push((ty, tg));
+        }
+        out.sort();
+        out
+    };
+    let orig_rels = rels_pairs_of(&p);
+    let rebuilt_rels = rels_pairs_of(&p_out);
+    let mut lost_rels: Vec<_> = orig_rels
+        .iter()
+        .filter(|r| !rebuilt_rels.contains(r))
+        .cloned()
+        .collect();
+    lost_rels.sort();
+    assert_eq!(
+        lost_rels.len(),
+        2,
+        "预期关系丢失集 = 图片关系 + 脚注关系: {lost_rels:?}"
+    );
+    assert!(
+        lost_rels.iter().any(|(t, _)| t.ends_with("/image")),
+        "{lost_rels:?}"
+    );
+    assert!(
+        lost_rels.iter().any(|(t, _)| t.ends_with("/footnotes")),
+        "{lost_rels:?}"
+    );
+    let added_rels: Vec<_> = rebuilt_rels
+        .iter()
+        .filter(|r| !orig_rels.contains(r))
+        .cloned()
+        .collect();
+    assert_eq!(added_rels, Vec::<(String, String)>::new(), "无新增关系");
+    // 超链接/numbering/header/footer 关系保持（逐对在位）。
+    // rels 属性值 = XML 原文（实体形 `&amp;`——读面联接时的实体补偿
+    // 是另一层语义，hyperlink_roundtrip_external 已钉定；此处按原文比）。
+    for (t, tg) in [
+        ("hyperlink", "https://rt.example/a?x=1&amp;y=2"),
+        ("numbering", "numbering.xml"),
+        ("header", "header1.xml"),
+        ("footer", "footer1.xml"),
+    ] {
+        assert!(
+            rebuilt_rels
+                .iter()
+                .any(|(ty, target)| ty.ends_with(t) && target == tg),
+            "{t} 关系保持: {rebuilt_rels:?}"
+        );
+    }
+
+    // ---- 阶段 8：登记丢失的内容面诊断（非静默——断言其恰在预期处
+    //      丢失）：原档脚注内容在 footnotes.xml；重建档空壳无内容。----
+    let orig_fn = String::from_utf8(zip_read_entry(&p, "word/footnotes.xml").unwrap()).unwrap();
+    assert!(orig_fn.contains("脚注内容甲"), "原档脚注内容在位（对照）");
+    let rebuilt_fn =
+        String::from_utf8(zip_read_entry(&p_out, "word/footnotes.xml").unwrap()).unwrap();
+    assert!(
+        !rebuilt_fn.contains("脚注内容甲"),
+        "重建档脚注空壳（内容丢失 = 读面登记面，FIDELITY 矩阵行）"
+    );
+
+    let _ = std::fs::remove_file(&p);
+    let _ = std::fs::remove_file(&p_out);
 }

@@ -76,6 +76,8 @@
 //!   （钳 8）+ 左边框（无内建 Quote 样式可引——直接格式）。
 //!   读面 numPr/pBdr/ind/rFonts 的模型承载未核（读模型无对应字段
 //!   ——XML 级断言见 tests/docx_roundtrip.rs，读面登记维持）。
+//!   **r4-t3 追记**：其中 numPr/ind 两面已落地读面承载（见下方
+//!   r4-t3 增量节）；pBdr/rFonts 维持登记（引擎值私有，见增量节）。
 //!
 //! **t22 增量（2026-10-16）**：[`DocxWriter::list_item_lines`]——多行
 //! 列表项续行缩进面（t20 登记残余翻转为已表达）：一个列表项 = 一个
@@ -83,6 +85,31 @@
 //! `w:ind`（left = 720×(ilvl+1)、hanging [`LIST_HANGING_INDENT`]——与
 //! 编号抽象层级同值的悬挂几何）→ 续行与首行文字列对齐；单行项
 //! [`DocxWriter::list_item`] 字节级零变化（只增不改）。
+//!
+//! **r4-t3 增量（2026-10-18，DOCX 读写保真）**：读面**段落结构双承载**
+//! ——t20-a 遗留④「numPr/pBdr/ind/rFonts 读面往返承载」中可承载
+//! 两面落地（完整矩阵与方案论证 = 分析仓 `office-line/docx-r1/
+//! FIDELITY.md`）：
+//! - **numPr 承载**（[`ParagraphData::numbering`] → [`ParagraphNumbering`]）：
+//!   num_id/ilvl 透传 + **语义解析**（numId → num 桥 → abstractNum →
+//!   该 ilvl 级 numFmt——引擎模型全链 pub，见 [`NumberingIndex`]；
+//!   lvlOverride 并入）→ kind（bullet → [`ListKind::Bullet`]，其余
+//!   → Ordered）+ format（原生 numFmt 值）。**写回降级可诊断**：
+//!   写面经自有抽象 100/101 重定义（非 decimal/bullet 的原生格式
+//!   降级——format 字段使消费方可比对诊断，登记）；num 桥悬空 =
+//!   严格拒 / 兼容 BrokenReference 警告 + kind=None 结构承载；
+//!   numId=0（OOXML 去编号惯例）/无 numId → 非列表段；
+//! - **w:ind 承载**（[`ParagraphData::indent`] → [`ParagraphIndent`]）：
+//!   left/right/firstLine/hanging twips 透传（Chars 字符单位变体登记
+//!   不承载）；写面无任意 ind 面（仅经列表/引用抽象间接表达——
+//!   写入降级登记）。
+//!
+//! 同轮**维持登记不承载**（引擎值私有——presence 对显式关闭形态会
+//! 误报，不做不诚实承载）：行内 rFonts/strike/underline
+//! （RunFonts/Strike.val/Underline.val 无公开取值面）、段落边框 pBdr
+//! （ParagraphBorders 六槽私有）、bold/italic 的 `w:val="false"`
+//! 显式关闭变体（Bold.val/Italic.val 私有——presence 语义为既有行为
+//! 维持，登记）。详见 FIDELITY.md 矩阵行锚点。
 //!
 //! ## 模块边界（CAPABILITIES.md §2 裁决——DOCX 独立模块）
 //!
@@ -105,8 +132,9 @@
 //! 模型解析 → 自有模型提取（关系联接）：
 //! - **块序**（段落/表，文档体顺序）；段落 = 样式 ID 透传（如
 //!   `Heading1`——语义判定归消费方，模型级不做标题解释）+ run 序
-//!   （文本/加粗/斜体/**超链接目标**）；表 = 行 × 单元格拼接文本
-//!   （单元格内多段落以 `\n` 连接）；
+//!   （文本/加粗/斜体/**超链接目标**）+ **编号/缩进承载**（r4-t3：
+//!   [`ParagraphData::numbering`]/[`ParagraphData::indent`]）；表 =
+//!   行 × 单元格拼接文本（单元格内多段落以 `\n` 连接）；
 //! - **页眉/页脚**：六槽位中实际挂接的（引用悬空时：严格拒 /
 //!   兼容警告 + 槽位跳过）；
 //! - Tab → `\t`、Break → `\n`、CarriageReturn → `\r`（文本模型
@@ -140,10 +168,22 @@
 //! - 节属性（page size/margin 等——页眉页脚引用面已暴露，其余
 //!   节语义面外）；first/even 页眉页脚槽位的**激活设置语义**
 //!   （titlePg/evenAndOddHeaders——变体透传，激活判定归消费方）；
-//! - 编号/列表语义（列表段落文本保留，编号结构丢弃）；
+//! - **编号语义已承载（r4-t3 翻转）**：numPr → [`ParagraphNumbering`]
+//!   （num_id/ilvl/kind/format——解析链悬空处置见 [`NumberingIndex`]）；
+//!   **编号定义原始抽象不承载**（自定义 numFmt/lvlText/glyphs——
+//!   写回经自有抽象 100/101 降级，format 字段可诊断）；
+//! - **行内 rFonts/strike/underline 与段落边框 pBdr 读面不承载**
+//!   （r4-t3 维持登记——引擎解析入模型但值字段私有无取值面；
+//!   presence-only 对 `w:u w:val="none"`/`w:val="false"` 显式关闭
+//!   形态会误报，不做不诚实承载——完整论证 = docx-r1/FIDELITY.md）；
+//!   bold/italic 为 presence 语义（`w:val="false"` 关闭变体不可区分
+//!   ——引擎 Bold.val/Italic.val 私有，既有行为维持登记）；
+//! - **缩进已承载（r4-t3 翻转）**：w:ind → [`ParagraphIndent`]（twips；
+//!   Chars 字符单位变体登记不承载；写面无任意 ind 面——写入降级）；
+//!   **段落边框 pBdr 不承载**（ParagraphBorders 六槽字段私有）；
 //! - 域指令文本（instrText 引擎入模型字符串，提取面外——登记；
 //!   写面简单域 PAGE/NUMPAGES 已暴露，域结果文本不入读回文本——
-//!   域值是渲染期计算面）。
+//!   域值是渲染期计算面；域**缓存结果文本以普通文本呈现**）；
 //!
 //! 写侧**不支持**（引擎能力在[docx-rs 写面远大于本切片]，未实测
 //! 不暴露）：图片自动转码（`Pic::new` 需 `image` 特性 = +23 crate
@@ -1368,12 +1408,66 @@ pub struct RunData {
     pub hyperlink: Option<HyperlinkTarget>,
 }
 
-/// 段落：样式 ID 透传 + run 序。
+/// 段落编号承载（r4-t3 读面：numPr 透传 + 语义解析）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParagraphNumbering {
+    /// 原 numId 透传（标识列表成员归属；写面回放**不使用原 numId**——
+    /// 经自有抽象 [`ORDERED_NUM_ID`]/[`BULLET_NUM_ID`] 重定义，见
+    /// [`ListKind`]）。
+    pub num_id: usize,
+    /// 原 ilvl 透传（0 基；OOXML 缺省 0——`w:ilvl` 缺席时按 0 承载；
+    /// 读面不钳位，钳位属写面策略〔[`DocxWriter::list_item`] 0-8〕）。
+    pub ilvl: usize,
+    /// 语义解析结果（numId → num 桥 → abstractNum → 该 ilvl 级
+    /// numFmt）：`"bullet"` → [`ListKind::Bullet`]；其余（decimal/
+    /// lowerLetter/upperRoman/…）→ [`ListKind::Ordered`]。**None =
+    /// 解析链不可达**（num 桥悬空〔严格拒/兼容 BrokenReference 警告〕
+    /// 或抽象层级缺定义〔numStyleLink / ilvl 超出定义域——兼容
+    /// BrokenReference 警告〕）——结构面（num_id/ilvl）仍承载。
+    pub kind: Option<ListKind>,
+    /// 原生 numFmt 值（解析成功时，如 `"decimal"`/`"bullet"`/
+    /// `"lowerLetter"`/`"none"`）。写面回放经自有抽象时非
+    /// `"decimal"`/`"bullet"` 的格式**降级**（有序恒 decimal outline、
+    /// 无序恒 `•`）——此字段使降级**可诊断**（消费方可比对）。
+    pub format: Option<String>,
+}
+
+/// 段落缩进承载（r4-t3 读面：`w:ind` 透传，单位 twips；Chars 字符
+/// 单位变体登记不承载）。写面无任意 ind 面——仅经列表抽象
+/// （[`DocxWriter::list_item_lines`] 悬挂几何）与引用抽象
+/// （[`DocxWriter::quote_paragraph`] 步进缩进）间接表达（写入降级，
+/// 登记见模块文档）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParagraphIndent {
+    /// 左缩进（`w:ind/@w:left` 或 `@w:start`——引擎读面归一为 start）。
+    pub left: Option<i32>,
+    /// 右缩进（`w:ind/@w:right` 或 `@w:end`——引擎读面归一为 end）。
+    pub right: Option<i32>,
+    /// 首行特殊缩进（`@w:firstLine` / `@w:hanging`）。
+    pub special: Option<ParagraphIndentSpecial>,
+}
+
+/// 首行特殊缩进变体（`w:ind` 的 `w:firstLine`/`w:hanging` 两形态，
+/// twips 值）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParagraphIndentSpecial {
+    /// 首行额外缩进（`w:firstLine`）。
+    FirstLine(i32),
+    /// 悬挂缩进（`w:hanging`——首行回退，续行起于 left）。
+    Hanging(i32),
+}
+
+/// 段落：样式 ID 透传 + run 序 + 编号/缩进承载（r4-t3）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParagraphData {
     /// 样式 ID（如 `Heading1`/`Normal`）——语义判定归消费方。
     pub style: Option<String>,
     pub runs: Vec<RunData>,
+    /// 段落编号（r4-t3 读面承载——None = 非列表段；`w:numId w:val="0"`
+    /// 的 OOXML 去编号惯例同样 → None）。
+    pub numbering: Option<ParagraphNumbering>,
+    /// 段落缩进（r4-t3 读面承载——None = 无 `w:ind`）。
+    pub indent: Option<ParagraphIndent>,
 }
 
 impl ParagraphData {
@@ -1533,8 +1627,12 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     };
 
     let docx = docx_rs::read_docx(bytes).map_err(|e| DocxError::Parse(format!("{e}")))?;
-    let blocks = extract_blocks(&docx, &bundle, strict, &mut warnings)?;
-    let (headers, footers) = extract_headers_footers(&docx, &bundle, strict, &mut warnings)?;
+    // r4-t3：numbering.xml 解析索引（numId → ilvl 级 numFmt——引擎
+    // 读面 numberings 模型全链 pub，见 NumberingIndex 文档）。
+    let numbering_index = NumberingIndex::build(&docx.numberings);
+    let blocks = extract_blocks(&docx, &bundle, &numbering_index, strict, &mut warnings)?;
+    let (headers, footers) =
+        extract_headers_footers(&docx, &bundle, &numbering_index, strict, &mut warnings)?;
     // run 级图片引用计数（悬空 r:embed 严格拒 / 兼容警告）。
     let media_parts: HashMap<String, usize> = images
         .iter()
@@ -1624,6 +1722,7 @@ fn resolve_hyperlink(
 fn extract_blocks(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
+    index: &NumberingIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<Vec<Block>, io::ReadError> {
@@ -1632,11 +1731,12 @@ fn extract_blocks(
     for child in &docx.document.children {
         match child {
             docx_rs::DocumentChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                extract_paragraph(p, table, "word/document.xml", strict, warnings)?,
+                extract_paragraph(p, table, index, "word/document.xml", strict, warnings)?,
             )),
             docx_rs::DocumentChild::Table(t) => blocks.push(Block::Table(extract_table(
                 t,
                 table,
+                index,
                 "word/document.xml",
                 strict,
                 warnings,
@@ -1648,15 +1748,152 @@ fn extract_blocks(
     Ok(blocks)
 }
 
-/// 段落提取：样式透传 + run 序（Run + Hyperlink 内 run[目标联接]）。
+/// numId → 各 ilvl 级 numFmt 解析索引（r4-t3——numbering.xml 链的
+/// 读面消费：num 桥 → abstractNum 层级 → lvlOverride 并入；引擎模型
+/// 全链 pub——Numbering.id/abstract_num_id、AbstractNumbering.levels、
+/// Level.level/format.val、LevelOverride.override_level）。位于
+/// [`extract_blocks`] 前定义以就近服务提取层。
+///
+/// ilvl 键仅收**已定义级**（HashMap 形态——敌意 `w:ilvl` 巨值不触发
+/// 分配，越定义域查询 → None → 软警告路径）。
+#[derive(Debug, Default)]
+struct NumberingIndex {
+    /// numId → (ilvl → 原生 numFmt 值)。
+    by_num_id: HashMap<usize, HashMap<usize, String>>,
+}
+
+impl NumberingIndex {
+    fn build(numberings: &docx_rs::Numberings) -> Self {
+        let mut index = NumberingIndex::default();
+        for num in &numberings.numberings {
+            let mut levels: HashMap<usize, String> = HashMap::new();
+            if let Some(a) = numberings
+                .abstract_nums
+                .iter()
+                .find(|a| a.id == num.abstract_num_id)
+            {
+                for l in &a.levels {
+                    levels.insert(l.level, l.format.val.clone());
+                }
+            }
+            // lvlOverride 并入（override_level 形态——startOnly 覆盖无
+            // format 面不并入）。
+            for o in &num.level_overrides {
+                if let Some(ol) = &o.override_level {
+                    levels.insert(o.level, ol.format.val.clone());
+                }
+            }
+            index.by_num_id.insert(num.id, levels);
+        }
+        index
+    }
+}
+
+/// numPr → 承载（r4-t3）：
+/// - numId 缺席（仅 ilvl 或空 numPr）→ None（OOXML 语义：非列表段）；
+/// - `w:numId w:val="0"` → None（OOXML 去编号惯例——样式继承编号的
+///   显式去除，非列表段）；
+/// - num 桥悬空（numbering.xml 无该 numId）→ **严格拒** / 兼容
+///   BrokenReference 警告 + kind=None 结构承载（num_id/ilvl 不丢——
+///   与超链接/页眉页脚悬空引用同族纪律）；
+/// - 抽象层级缺定义（numStyleLink 无层级 / ilvl 超出定义域）→
+///   BrokenReference 警告（**两模式非致命**——合法但解析深度外）+
+///   kind=None 结构承载；
+/// - 解析成功 → kind（`bullet` → Bullet，其余 → Ordered）+ format
+///   （原生 numFmt 值——写面降级可诊断）。
+fn carry_numbering(
+    np: &docx_rs::NumberingProperty,
+    index: &NumberingIndex,
+    part: &str,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Option<ParagraphNumbering>, io::ReadError> {
+    let Some(num_id) = np.id.as_ref().map(|n| n.id) else {
+        return Ok(None);
+    };
+    if num_id == 0 {
+        return Ok(None);
+    }
+    let ilvl = np.level.as_ref().map(|l| l.val).unwrap_or(0);
+    let Some(levels) = index.by_num_id.get(&num_id) else {
+        let detail =
+            format!("numbering reference numId '{num_id}' has no numbering definition (dangling)");
+        if strict {
+            return Err(io::ReadError::InvalidPart {
+                part: part.to_string(),
+                detail,
+            });
+        }
+        warnings.push(CompatibilityWarning {
+            part: part.to_string(),
+            kind: WarningKind::BrokenReference,
+            detail: format!("{detail} (kind unresolved; num_id/ilvl carried)"),
+        });
+        return Ok(Some(ParagraphNumbering {
+            num_id,
+            ilvl,
+            kind: None,
+            format: None,
+        }));
+    };
+    let Some(format) = levels.get(&ilvl) else {
+        let detail = format!(
+            "numbering numId '{num_id}' has no level definition at ilvl {ilvl} (numStyleLink or level beyond definitions)"
+        );
+        warnings.push(CompatibilityWarning {
+            part: part.to_string(),
+            kind: WarningKind::BrokenReference,
+            detail: format!("{detail} (kind unresolved; num_id/ilvl carried)"),
+        });
+        return Ok(Some(ParagraphNumbering {
+            num_id,
+            ilvl,
+            kind: None,
+            format: None,
+        }));
+    };
+    let kind = if format == "bullet" {
+        ListKind::Bullet
+    } else {
+        ListKind::Ordered
+    };
+    Ok(Some(ParagraphNumbering {
+        num_id,
+        ilvl,
+        kind: Some(kind),
+        format: Some(format.clone()),
+    }))
+}
+
+/// `w:ind` → 承载（r4-t3：twips 透传——引擎 Indent 字段全 pub；
+/// Chars 字符单位变体〔hangingChars/firstLineChars〕登记不承载）。
+fn carry_indent(ind: &docx_rs::Indent) -> ParagraphIndent {
+    ParagraphIndent {
+        left: ind.start,
+        right: ind.end,
+        special: ind.special_indent.as_ref().map(|s| match s {
+            docx_rs::SpecialIndentType::FirstLine(v) => ParagraphIndentSpecial::FirstLine(*v),
+            docx_rs::SpecialIndentType::Hanging(v) => ParagraphIndentSpecial::Hanging(*v),
+        }),
+    }
+}
+
+/// 段落提取：样式透传 + run 序（Run + Hyperlink 内 run[目标联接]）+
+/// 编号/缩进承载（r4-t3）。
 fn extract_paragraph(
     p: &docx_rs::Paragraph,
     table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
     part: &str,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<ParagraphData, io::ReadError> {
     let style = p.property.style.as_ref().map(|s| s.val.clone());
+    let numbering = match &p.property.numbering_property {
+        Some(np) => carry_numbering(np, index, part, strict, warnings)?,
+        None => None,
+    };
+    let indent = p.property.indent.as_ref().map(carry_indent);
     let mut runs = Vec::new();
     for child in &p.children {
         match child {
@@ -1676,7 +1913,12 @@ fn extract_paragraph(
             _ => {}
         }
     }
-    Ok(ParagraphData { style, runs })
+    Ok(ParagraphData {
+        style,
+        runs,
+        numbering,
+        indent,
+    })
 }
 
 /// run 提取：文本三源（Text/Tab/Break+CarriageReturn）+ 加粗斜体
@@ -1703,10 +1945,13 @@ fn extract_run(r: &docx_rs::Run) -> RunData {
 
 /// 表提取：行 × 单元格拼接文本（单元格内多段落 `\n` 连接；嵌套表/
 /// 内容控件跳过——登记）。单元格内超链接目标丢弃（TableData 扁平
-/// 文本面——登记），但悬空引用仍按严格/兼容纪律处置（包完整性）。
+/// 文本面——登记），但悬空引用仍按严格/兼容纪律处置（包完整性）；
+/// 单元格段落的 numPr/ind 同为扁平面外承载（提取后弃置——TableData
+/// 无结构载荷，登记）。
 fn extract_table(
     t: &docx_rs::Table,
     table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
     part: &str,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
@@ -1723,7 +1968,7 @@ fn extract_table(
             let mut parts = Vec::new();
             for content in &c.children {
                 if let docx_rs::TableCellContent::Paragraph(p) = content {
-                    let pd = extract_paragraph(p, table, part, strict, warnings)?;
+                    let pd = extract_paragraph(p, table, index, part, strict, warnings)?;
                     parts.push(pd.text());
                 }
             }
@@ -1800,10 +2045,12 @@ fn slot_part_path(
 
 /// 页眉/页脚提取（六槽位：default/first/even × header/footer——
 /// 仅实际挂接的；引用在而内容挂接失败 = 严格拒 / 兼容警告 + 跳过）。
-/// 页眉/页脚部件自身的 rels 联接其内部超链接目标（CAPABILITY_NOTES §2）。
+/// 页眉/页脚部件自身的 rels 联接其内部超链接目标（CAPABILITY_NOTES §2）；
+/// numPr/ind 承载与正文同路径（r4-t3——页眉/页脚内列表段同样可见）。
 fn extract_headers_footers(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
+    index: &NumberingIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<(Vec<HeaderFooterData>, Vec<HeaderFooterData>), io::ReadError> {
@@ -1845,10 +2092,10 @@ fn extract_headers_footers(
         for child in &header.children {
             match child {
                 docx_rs::HeaderChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                    extract_paragraph(p, table, part_name, strict, warnings)?,
+                    extract_paragraph(p, table, index, part_name, strict, warnings)?,
                 )),
                 docx_rs::HeaderChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t, table, part_name, strict, warnings,
+                    t, table, index, part_name, strict, warnings,
                 )?)),
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}
@@ -1888,10 +2135,10 @@ fn extract_headers_footers(
         for child in &footer.children {
             match child {
                 docx_rs::FooterChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                    extract_paragraph(p, table, part_name, strict, warnings)?,
+                    extract_paragraph(p, table, index, part_name, strict, warnings)?,
                 )),
                 docx_rs::FooterChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t, table, part_name, strict, warnings,
+                    t, table, index, part_name, strict, warnings,
                 )?)),
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}
@@ -3587,5 +3834,181 @@ mod tests {
             }
             other => panic!("expected docx family prescan reject, got {other:?}"),
         }
+    }
+
+    /// r4-t3：NumberingIndex 构建 + carry_numbering 五路径
+    ///（解析有序/无序、numId=0、无 numId、num 桥悬空、层级缺定义）。
+    /// 索引级断言——端到端（写读全环/悬空包注入）见
+    /// tests/docx_roundtrip.rs 本轮新测试。
+    #[test]
+    fn numbering_index_and_carry_paths() {
+        use docx_rs::{
+            AbstractNumbering, IndentLevel, Level, LevelJc, LevelOverride, LevelText, NumberFormat,
+            Numbering, NumberingId, NumberingProperty, Start,
+        };
+        // 抽象 5：0 级 decimal；抽象 6：0-1 级 bullet。
+        let a5 = AbstractNumbering::new(5).add_level(Level::new(
+            0,
+            Start::new(1),
+            NumberFormat::new("decimal"),
+            LevelText::new("%1."),
+            LevelJc::new("left"),
+        ));
+        let a6 = AbstractNumbering::new(6)
+            .add_level(Level::new(
+                0,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("\u{2022}"),
+                LevelJc::new("left"),
+            ))
+            .add_level(Level::new(
+                1,
+                Start::new(1),
+                NumberFormat::new("bullet"),
+                LevelText::new("\u{25E6}"),
+                LevelJc::new("left"),
+            ));
+        // num 桥 50→5（lvlOverride 覆盖 0 级为 lowerLetter）；51→6。
+        let mut o0 = LevelOverride::new(0);
+        o0.override_level = Some(Level::new(
+            0,
+            Start::new(1),
+            NumberFormat::new("lowerLetter"),
+            LevelText::new("%1."),
+            LevelJc::new("left"),
+        ));
+        let n50 = Numbering::new(50, 5).add_override(o0);
+        let n51 = Numbering::new(51, 6);
+        let engine_numberings = docx_rs::Numberings::new()
+            .add_abstract_numbering(a5)
+            .add_abstract_numbering(a6)
+            .add_numbering(n50)
+            .add_numbering(n51);
+        let index = NumberingIndex::build(&engine_numberings);
+        // lvlOverride 并入：50 的 0 级 = lowerLetter（非 decimal）。
+        assert!(index.by_num_id[&50].get(&0).map(String::as_str) == Some("lowerLetter"));
+        assert!(index.by_num_id[&51].get(&1).map(String::as_str) == Some("bullet"));
+
+        let part = "word/document.xml";
+        let mut warnings = Vec::new();
+        let carry = |np: NumberingProperty, warnings: &mut Vec<CompatibilityWarning>| {
+            let mut w = std::mem::take(warnings);
+            let r = carry_numbering(&np, &index, part, false, &mut w);
+            *warnings = w;
+            r.unwrap()
+        };
+
+        // ① 解析有序（numId 50 ilvl 0——override 后 lowerLetter → Ordered
+        //    + format 可诊断降级）。
+        let np = NumberingProperty::new().add_num(NumberingId::new(50), IndentLevel::new(0));
+        let c = carry(np, &mut warnings);
+        assert_eq!(
+            c,
+            Some(ParagraphNumbering {
+                num_id: 50,
+                ilvl: 0,
+                kind: Some(ListKind::Ordered),
+                format: Some("lowerLetter".to_string()),
+            })
+        );
+        // ② 解析无序（numId 51 ilvl 1）。
+        let np = NumberingProperty::new().add_num(NumberingId::new(51), IndentLevel::new(1));
+        let c = carry(np, &mut warnings).unwrap();
+        assert_eq!(c.kind, Some(ListKind::Bullet));
+        assert_eq!(c.format.as_deref(), Some("bullet"));
+        // ③ numId=0（OOXML 去编号惯例）→ None。
+        let np = NumberingProperty::new().add_num(NumberingId::new(0), IndentLevel::new(0));
+        assert_eq!(carry(np, &mut warnings), None);
+        // ④ 无 numId（仅 ilvl——引擎构造器 level 为私有，直接字段置入）。
+        let mut np = NumberingProperty::new();
+        np.level = Some(IndentLevel::new(3));
+        assert_eq!(carry(np, &mut warnings), None);
+        // ⑤ num 桥悬空（兼容）：警告 + kind=None 结构承载。
+        let np = NumberingProperty::new().add_num(NumberingId::new(777), IndentLevel::new(2));
+        let c = carry(np, &mut warnings);
+        assert_eq!(
+            c,
+            Some(ParagraphNumbering {
+                num_id: 777,
+                ilvl: 2,
+                kind: None,
+                format: None,
+            })
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.kind == WarningKind::BrokenReference && w.detail.contains("dangling")),
+            "{warnings:?}"
+        );
+        warnings.clear();
+        // ⑥ 层级缺定义（numId 51 ilvl 9 超定义域）：软警告 + 结构承载。
+        let np = NumberingProperty::new().add_num(NumberingId::new(51), IndentLevel::new(9));
+        let c = carry(np, &mut warnings).unwrap();
+        assert_eq!(c.num_id, 51);
+        assert_eq!(c.ilvl, 9);
+        assert_eq!(c.kind, None);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.kind == WarningKind::BrokenReference
+                    && w.detail.contains("no level definition")),
+            "{warnings:?}"
+        );
+        // ⑦ num 桥悬空（严格）：typed 拒。
+        let mut sink = Vec::new();
+        let np = NumberingProperty::new().add_num(NumberingId::new(777), IndentLevel::new(0));
+        match carry_numbering(&np, &index, part, true, &mut sink) {
+            Err(io::ReadError::InvalidPart { detail, .. }) => {
+                assert!(detail.contains("dangling"), "{detail}")
+            }
+            other => panic!("strict should reject dangling numId, got {other:?}"),
+        }
+    }
+
+    /// r4-t3：w:ind → ParagraphIndent 映射（left/right/Hanging/FirstLine）。
+    #[test]
+    fn indent_carry_variants() {
+        let hanging = carry_indent(&docx_rs::Indent::new(
+            Some(720),
+            Some(docx_rs::SpecialIndentType::Hanging(360)),
+            Some(120),
+            None,
+        ));
+        assert_eq!(
+            hanging,
+            ParagraphIndent {
+                left: Some(720),
+                right: Some(120),
+                special: Some(ParagraphIndentSpecial::Hanging(360)),
+            }
+        );
+        let first_line = carry_indent(&docx_rs::Indent::new(
+            Some(360),
+            Some(docx_rs::SpecialIndentType::FirstLine(480)),
+            None,
+            None,
+        ));
+        assert_eq!(
+            first_line,
+            ParagraphIndent {
+                left: Some(360),
+                right: None,
+                special: Some(ParagraphIndentSpecial::FirstLine(480)),
+            }
+        );
+        let bare = carry_indent(&docx_rs::Indent::new(Some(720), None, None, None));
+        assert_eq!(
+            bare,
+            ParagraphIndent {
+                left: Some(720),
+                right: None,
+                special: None,
+            }
+        );
+        // 引擎 BuildXML 形态交叉验证：Start 空时引擎发射 w:right="0"
+        //（indent.rs 测试 test_left）——读面模型承载的是解析值非发射形。
+        assert_eq!(bare.right, None);
     }
 }

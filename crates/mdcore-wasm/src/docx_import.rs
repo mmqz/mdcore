@@ -393,6 +393,10 @@ mod tests {
         Block::Paragraph(ParagraphData {
             style: style.map(str::to_string),
             runs,
+            // r4-t3 模型扩面构造点机械补齐（新增两字段默认 None——
+            // 语义零变化：该 helper 的既有断言全部面向 style/runs）。
+            numbering: None,
+            indent: None,
         })
     }
 
