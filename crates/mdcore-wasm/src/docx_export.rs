@@ -1069,4 +1069,42 @@ mod tests {
             assert_eq!(map_error(&err).code, code);
         }
     }
+
+    /// r5-t2 探针④：**链接形态文本的导出面**——mdcore 行级 markdown
+    /// 解析不产行内 marks（markdown.rs 模块文档「marks 不写入 MD」；
+    /// `[t](url)` 行入树 = 段落字面文本）→ 导出 DOCX：
+    /// (a) XML 面**零 `w:hyperlink`**（无 RunSpec.link 源——mark 面
+    ///     `inline_mono_del_u_expressed_link_plain` 已钉 link mark 降
+    ///     纯文本；本探针钉 markdown 字面文本路径）；
+    /// (b) 字面 `[t](url)` 文本逐字保留（URL 以文本形态存活——
+    ///     非结构化）；
+    /// (c) 重导入（office-io 读面）文本零损——链接形态文本的
+    ///     「文本层往返」成立，「超链接层往返」不成立（MarkSpan 无
+    ///     URL 载荷 = mdcore MD 域上游缺口，t20 登记 + 本探针留证）。
+    #[test]
+    fn r5t2_markdown_link_literal_text_not_hyperlink() {
+        let tree = markdown_to_tree("See [docs](https://x.example/) and [top](#sec1).");
+        // 前置：树面 = 单段字面文本（无 marks——行级解析边界）。
+        let bytes = export_docx_core(&tree).expect("export");
+        let xml = zip_stored_part(&bytes, "word/document.xml");
+        assert_eq!(
+            xml.matches("<w:hyperlink").count(),
+            0,
+            "无链接载荷源 → 零 w:hyperlink 元素"
+        );
+        // 引擎对 `( )` 括号不转义——字面串原样在 XML。
+        assert!(
+            xml.contains("See [docs](https://x.example/) and [top](#sec1)."),
+            "链接形态字面文本逐字保留: {xml}"
+        );
+        // 文本层往返：读回文本零损（无 hyperlink 挂接）。
+        let doc = read_docx_from_bytes(&bytes).expect("read back");
+        let ps = paras(&doc.blocks);
+        assert_eq!(ps.len(), 1);
+        assert_eq!(
+            ps[0].text(),
+            "See [docs](https://x.example/) and [top](#sec1)."
+        );
+        assert_eq!(ps[0].runs[0].hyperlink, None, "纯文本 run——无目标");
+    }
 }

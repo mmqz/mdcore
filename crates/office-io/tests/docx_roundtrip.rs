@@ -2346,3 +2346,298 @@ fn r4t3_roundtrip_read_modify_write() {
     let _ = std::fs::remove_file(&p);
     let _ = std::fs::remove_file(&p_out);
 }
+
+// ---------------------------------------------------------------------------
+// r5-t2 探针：超链接四类目标 + 书签定义的读面行为钉定（T2.2 证据基座
+// ——锚点写回裁决的「未实测不宣称」底稿；全部只增，不改既有断言）
+// ---------------------------------------------------------------------------
+
+/// 探针①：**包内目标链接**（关系无 TargetMode）。引擎自身只收带
+/// TargetMode 的超链接关系进 `Docx.hyperlinks`（CAPABILITY_NOTES §1
+/// 「仅 TargetMode 属性存在的关入表」），但本层读面走自有 rels 层
+/// （RelationshipTable 全量收条目）——整包面钉定：r:id → 无
+/// TargetMode 关系 → [`HyperlinkTarget::Internal`]（目标原样透传，
+/// 不解析为包绝对路径）。函数级分派已有内联单测
+///（docx.rs `hyperlink_resolution_dispatch`），此处为全链包级证据。
+#[test]
+fn r5t2_hyperlink_internal_target_read() {
+    let p = tmp("r5t2_int");
+    let mut w = DocxWriter::new();
+    w.paragraph(&[RunSpec::link("包内链", "https://placeholder.example/")]);
+    w.save_to_path(&p).unwrap();
+
+    // 改写 rels：Target 改包内相对路径 + 剥 TargetMode（外部关系 →
+    // 包内目标关系；OPC TargetMode 缺省语义 = Internal）。
+    let rels =
+        String::from_utf8(zip_read_entry(&p, "word/_rels/document.xml.rels").expect("rels 在位"))
+            .unwrap();
+    let patched = rels
+        .replace("https://placeholder.example/", "glossary.docx#term")
+        .replace(" TargetMode=\"External\"", "");
+    assert_ne!(
+        patched, rels,
+        "改写生效前置：占位目标与 TargetMode 均在原文中"
+    );
+    let p2 = tmp("r5t2_int2");
+    rebuild_with_part_to(&p, &p2, "word/_rels/document.xml.rels", patched.as_bytes());
+
+    // 严格模式即过（TargetMode 可选——OPC 合法形，非降级面）。
+    let doc = read_docx(&p2).unwrap();
+    assert!(doc.warnings.is_empty(), "合法包零警告: {:?}", doc.warnings);
+    match &doc.blocks[0] {
+        Block::Paragraph(pd) => assert_eq!(
+            pd.runs[0].hyperlink,
+            Some(HyperlinkTarget::Internal {
+                target: "glossary.docx#term".into()
+            }),
+            "无 TargetMode 关系 → Internal（罕见面：Word 常规外链均带 External）"
+        ),
+        other => panic!("应为段落, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&p);
+    let _ = std::fs::remove_file(&p2);
+}
+
+/// 探针②：**锚点优先于 r:id**（同元素双属性）。引擎读面先查
+/// `w:anchor`（reader/hyperlink.rs:14-20——`anchor.is_some()` 分支在
+/// 前），r:id 即使可解析（关系在位）也被忽略——钉定该优先序 + 零
+/// 警告（双属性形非畸形）。
+#[test]
+fn r5t2_hyperlink_anchor_wins_over_rid() {
+    let p = tmp("r5t2_prec");
+    let mut w = DocxWriter::new();
+    // 先写一个真外链（产生可解析的 hyperlink 关系条目），再注入
+    // 双属性超链接段引用同一 rId。
+    w.paragraph(&[RunSpec::link("真外链", "https://real.example/")]);
+    w.save_to_path(&p).unwrap();
+
+    let rels =
+        String::from_utf8(zip_read_entry(&p, "word/_rels/document.xml.rels").expect("rels 在位"))
+            .unwrap();
+    let hl_rid = rels
+        .lines()
+        .find_map(|l| {
+            if l.contains("relationships/hyperlink") {
+                let start = l.find("Id=\"")? + 4;
+                let end = l[start..].find('"')? + start;
+                Some(l[start..end].to_string())
+            } else {
+                None
+            }
+        })
+        .expect("超链接关系在位");
+
+    let doc_xml = zip_read_entry(&p, "word/document.xml").unwrap();
+    let mut xml = String::from_utf8(doc_xml.clone()).unwrap();
+    let sect = "<w:sectPr>";
+    let pos = xml.find(sect).expect("sectPr 在位");
+    xml.insert_str(
+        pos,
+        &format!(
+            "<w:p><w:hyperlink w:anchor=\"top\" r:id=\"{hl_rid}\" w:history=\"1\">\
+             <w:r><w:t>双属性链</w:t></w:r></w:hyperlink></w:p>"
+        ),
+    );
+    let p2 = rebuild_with_part(&p, "word/document.xml", xml.as_bytes());
+
+    let doc = read_docx(&p2).unwrap();
+    assert!(
+        doc.warnings.is_empty(),
+        "双属性形非畸形零警告: {:?}",
+        doc.warnings
+    );
+    let last = doc.blocks.last().expect("注入段在位");
+    match last {
+        Block::Paragraph(pd) => {
+            assert_eq!(pd.runs[0].text, "双属性链");
+            assert_eq!(
+                pd.runs[0].hyperlink,
+                Some(HyperlinkTarget::Anchor {
+                    anchor: "top".into()
+                }),
+                "w:anchor 优先——可解析 r:id 亦被忽略（引擎行为镜像）"
+            );
+        }
+        other => panic!("应为段落, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&p);
+    let _ = std::fs::remove_file(&p2);
+}
+
+/// 探针③：**书签定义读面行为**（w:bookmarkStart/End）。三面钉定：
+/// (a) 书签定义本身静默丢弃（引擎解析进模型 reader/paragraph.rs:56-65，
+///     本层 extract_paragraph 跳过 docx.rs:1912——文本保留、零警告、
+///     无模型字段）；(b) 锚点链接目标存在与否**读面不可辨**——
+///     Anchor 变体恒为字符串透传（引擎无书签存在性校验，OOXML 悬空
+///     锚点合法形）；(c) 被书签包裹的 run 文本零损。
+#[test]
+fn r5t2_bookmark_definitions_dropped_anchor_carried() {
+    let p = tmp("r5t2_bm");
+    sample_writer().save_to_path(&p).unwrap();
+    let doc_xml = zip_read_entry(&p, "word/document.xml").unwrap();
+    let mut xml = String::from_utf8(doc_xml.clone()).unwrap();
+    let sect = "<w:sectPr>";
+    let pos = xml.find(sect).expect("sectPr 在位");
+    // 三段注入：书签定义段（Word 常规形：书签包裹 run）+ 指向存在
+    // 书签的锚点链 + 指向不存在书签的悬空锚点链。
+    xml.insert_str(
+        pos,
+        "<w:p><w:bookmarkStart w:id=\"7\" w:name=\"sec1\" />\
+         <w:r><w:t>被书签段落</w:t></w:r>\
+         <w:bookmarkEnd w:id=\"7\" /></w:p>\
+         <w:p><w:hyperlink w:anchor=\"sec1\" w:history=\"1\">\
+         <w:r><w:t>到节一</w:t></w:r></w:hyperlink></w:p>\
+         <w:p><w:hyperlink w:anchor=\"no_such_bookmark\" w:history=\"1\">\
+         <w:r><w:t>悬空锚</w:t></w:r></w:hyperlink></w:p>",
+    );
+    let p2 = rebuild_with_part(&p, "word/document.xml", xml.as_bytes());
+
+    let doc = read_docx(&p2).unwrap();
+    // (a) 书签 = 合法 OOXML：零警告（非降级面——静默跳过，登记面）。
+    assert!(
+        doc.warnings.is_empty(),
+        "书签为合法形零警告: {:?}",
+        doc.warnings
+    );
+    let n = doc.blocks.len();
+    let tail: Vec<&Block> = doc.blocks[n - 3..].iter().collect();
+    // 注入序（文档序）：被书签段落 / 到节一 / 悬空锚。
+    match tail[0] {
+        Block::Paragraph(pd) => {
+            // (c) 被书签包裹的 run 文本零损；无目标挂接。
+            assert_eq!(pd.runs.len(), 1);
+            assert_eq!(pd.runs[0].text, "被书签段落");
+            assert_eq!(pd.runs[0].hyperlink, None, "书签定义不产目标");
+            // (a) 模型无书签字段——可断言面 = 段落数与文本（定义本身
+            // 无残留通道；读取丢失登记 FIDELITY §3）。
+        }
+        other => panic!("应为段落, got {other:?}"),
+    }
+    // (b) 目标存在 vs 不存在 → 读面同形（Anchor 字符串透传）。
+    for (i, anchor) in [(1usize, "sec1"), (2, "no_such_bookmark")] {
+        match tail[i] {
+            Block::Paragraph(pd) => {
+                assert_eq!(pd.runs[0].text, if i == 1 { "到节一" } else { "悬空锚" });
+                assert_eq!(
+                    pd.runs[0].hyperlink,
+                    Some(HyperlinkTarget::Anchor {
+                        anchor: anchor.into()
+                    }),
+                    "锚点链接恒 Anchor 透传——目标存在性读面不可辨"
+                );
+            }
+            other => panic!("应为段落, got {other:?}"),
+        }
+    }
+    let _ = std::fs::remove_file(&p);
+    let _ = std::fs::remove_file(&p2);
+}
+
+/// 探针⑤（引擎直构 spike——r5-t2 锚点写回裁决的一手风险排除）：
+/// docx-rs 引擎写面直构（**不经 DocxWriter**——公开模型不扩的红线
+/// 下，先证引擎面可行性；同 t20 WRITE_FACE_PROBE spike 纪律的产品
+/// 测试内嵌版）。三段：外链对照 / 锚点链接 / 书签定义段。四面断言：
+/// (a) 锚点链接 XML = `w:anchor` 属性形（**无 r:id**）；
+/// (b) 锚点**不进 rels**——update_dependencies 只收 External 进
+///     hyperlink_map（documents/mod.rs:1014-1017），rels 超链接条目
+///     数 = 恰 1（外链对照）；锚点写 = 自含面（无懒注册/rels 接线
+///     陷阱——比 t20 numbering 面简单）；
+/// (c) 书签定义 XML = `w:bookmarkStart/End` 对（id 配对 + name）；
+/// (d) 引擎产出整包过**本层读面**：Anchor 透传 + 书签段零警告 +
+///     文本零损——「引擎写 → 自有读」全环可行（RunSpec 扩面的实施
+///     面 = 纯包装层胶水，无引擎障碍、无 HYPERLINK 域 todo!() 面
+///     〔t14 红线——w:anchor 属性形与域形是两条不相交路径〕）。
+#[test]
+fn r5t2_engine_anchor_and_bookmark_write_spike() {
+    let ext_link_para = docx_rs::Paragraph::new().add_hyperlink(
+        docx_rs::Hyperlink::new("https://ext.example/", docx_rs::HyperlinkType::External)
+            .add_run(docx_rs::Run::new().add_text("外链")),
+    );
+    let anchor_link_para = docx_rs::Paragraph::new().add_hyperlink(
+        docx_rs::Hyperlink::new("sec1", docx_rs::HyperlinkType::Anchor)
+            .add_run(docx_rs::Run::new().add_text("到节一")),
+    );
+    // 书签包裹段（引擎 API 尾插语义：调用序 = children 序）。
+    let bookmarked_para = docx_rs::Paragraph::new()
+        .add_bookmark_start(7, "sec1")
+        .add_run(docx_rs::Run::new().add_text("被书签段落"))
+        .add_bookmark_end(7);
+
+    let engine_doc = docx_rs::Docx::new()
+        .add_paragraph(ext_link_para)
+        .add_paragraph(anchor_link_para)
+        .add_paragraph(bookmarked_para);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    engine_doc.pack(&mut cursor).expect("engine pack");
+    let bytes = cursor.into_inner();
+    let p = tmp("r5t2_spike");
+    std::fs::write(&p, &bytes).unwrap();
+
+    // (a) 锚点 XML 形：w:anchor 属性、无 r:id。
+    let xml = String::from_utf8(zip_read_entry(&p, "word/document.xml").unwrap()).unwrap();
+    assert!(
+        xml.contains(r#"<w:hyperlink w:anchor="sec1" w:history="1">"#),
+        "锚点形 = w:anchor 属性（引擎 BuildXML 测试同构）: {xml}"
+    );
+    // (c) 书签定义 XML 对。
+    assert!(
+        xml.contains(r#"<w:bookmarkStart w:id="7" w:name="sec1" />"#)
+            && xml.contains(r#"<w:bookmarkEnd w:id="7" />"#),
+        "书签 Start/End 配对发射: {xml}"
+    );
+    // (b) rels 自含性：超链接条目恰 1（外链对照）——锚点零 rels 面。
+    let rels =
+        String::from_utf8(zip_read_entry(&p, "word/_rels/document.xml.rels").expect("rels 在位"))
+            .unwrap();
+    let hyperlink_rels = rels
+        .lines()
+        .filter(|l| l.contains("relationships/hyperlink"))
+        .count();
+    assert_eq!(
+        hyperlink_rels, 1,
+        "锚点不进 rels（外链对照恰 1 条）: {rels}"
+    );
+    assert!(!rels.contains("sec1"), "锚点名不出现在关系面: {rels}");
+
+    // (d) 引擎写 → 本层读全环：三段承载 + 零警告。
+    let doc = read_docx(&p).unwrap();
+    assert!(
+        doc.warnings.is_empty(),
+        "引擎自产包零警告: {:?}",
+        doc.warnings
+    );
+    assert_eq!(doc.blocks.len(), 3);
+    let targets: Vec<Option<HyperlinkTarget>> = doc
+        .blocks
+        .iter()
+        .map(|b| match b {
+            Block::Paragraph(pd) => pd.runs[0].hyperlink.clone(),
+            other => panic!("应为段落, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        targets[0],
+        Some(HyperlinkTarget::External {
+            target: "https://ext.example/".into()
+        }),
+        "外链对照经 rels 联接"
+    );
+    assert_eq!(
+        targets[1],
+        Some(HyperlinkTarget::Anchor {
+            anchor: "sec1".into()
+        }),
+        "锚点写 → 读 Anchor 透传（全环可行）"
+    );
+    assert_eq!(targets[2], None, "书签定义不产链接目标");
+    let texts: Vec<String> = doc
+        .blocks
+        .iter()
+        .map(|b| match b {
+            Block::Paragraph(pd) => pd.text(),
+            other => panic!("应为段落, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(texts, vec!["外链", "到节一", "被书签段落"]);
+    let _ = std::fs::remove_file(&p);
+}
