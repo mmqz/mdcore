@@ -235,7 +235,10 @@ fn five_face_full_circle() {
 // 2. 流式表全环
 // ---------------------------------------------------------------------------
 
+// t21：wasm32 结构性缺席，native 全跑（add_sheet_streaming = 引擎
+// tempfile 背书，wasm32 无文件系统——write.rs 模块文档 t19 注记）。
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn streaming_sheet_full_circle() {
     let p = tmp("stream");
     let mut w = WorkbookWriter::new();
@@ -279,10 +282,13 @@ fn streaming_sheet_full_circle() {
 }
 
 /// 非空格计数（SheetData 私有辅助的同构——读面非空格断言用）。
+// t21：唯一消费方 = streaming 测试（上），随其 wasm32 门控防 dead_code。
+#[cfg(not(target_arch = "wasm32"))]
 trait NonEmpty {
     fn non_empty_cells_count(&self) -> usize;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl NonEmpty for mdc_office_io::io::SheetData {
     fn non_empty_cells_count(&self) -> usize {
         self.values

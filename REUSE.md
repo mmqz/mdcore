@@ -60,6 +60,12 @@ cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf  # 109 + 6i
 cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf --test pdfc_perf -- --ignored  # 6/6
 bash compliance/scan.sh                    # 0 hits
 cargo check --workspace --target wasm32-unknown-unknown
+# t21 起收严：wasm32 测试面（--all-targets）进门禁——t20-review 登记
+# 观察项（write_roundtrip streaming 测试未同步 cfg → E0599）已修：
+# 测试面 cfg 化（wasm32 结构性缺席，native 全跑）；此后 wasm32 结构性
+# 缺席面（如 add_sheet_streaming，t19 tempfile 背书）API 与测试 cfg 须同步
+cargo check --workspace --target wasm32-unknown-unknown --all-targets
+cargo clippy --workspace --target wasm32-unknown-unknown --all-targets
 # clippy 四面 --all-targets（gates.md PDF-e 起口径；t8 曾收窄为 --workspace
 # 漏检测试面 1 条，已回退修复）——2 条 wasm 在档基线，四面零新增
 cargo clippy --workspace --all-targets
