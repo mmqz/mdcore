@@ -50,25 +50,85 @@
 //! [`SheetData::replay_cell`]（kind 分派 + 纪元换算 + numFmt 样式
 //! 配对单调用点）。规则依据表 = 分析仓 xlsx-r1/FIDELITY.md 类型规则
 //! 节 + xlsx-r2/REPORT.md r4-t1 节（每条规则一行：规则/依据/测试锚点）。
+//!
+//! **r4-t2 增量（2026-10-17，Round 4 T2——导入/导出资源上限与安全
+//! 边界）**：读面五类资源上限补面（分析仓 SECURITY_POLICY v1.2 §3
+//! 全量校准——每项带执行点锚点 + 测试锚点）：
+//! - **输入字节上限**（[`LIMIT_INPUT_BYTES`]；docx 族同构
+//!   [`LIMIT_INPUT_BYTES_DOCX`]）：四入口（xlsx/docx × path/bytes）
+//!   在**任何全量内存分配或解析之前**拒绝超限输入——DOCX 路径入口
+//!   此前 `fs::read` 全量入内存无前置检查（真实内存面）；xlsx 路径
+//!   惰性读无分配面，同限统一（前缀垃圾面拒绝——office 文档无 SFX
+//!   合法形态）。
+//! - **族分化声明限**（[`LIMIT_TOTAL_DECLARED_DOCX`] = 50MB）：此前
+//!   DOCX 读路径误用 xlsx 族 300MB 常量（SECURITY_POLICY §3 docx
+//!   族 50MB 行无执行点），本轮经 [`prescan_docx`] 对齐 office-b
+//!   checkInputLimits 格式族分档（条目数/路径逃逸/谎言头两族共享）。
+//! - **稠密包围盒格总数上限**（[`LIMIT_TOTAL_CELLS`]）：**稀疏包围盒
+//!   炸弹实证闭项**——calamine 0.36.1 `Range::from_sparse` 按实际
+//!   单元格**包围盒稠密化**（`vec![T::default(); cols×rows]`），
+//!   1588 字节输入（A1 + XFD1048576 两格）实测触发 **549,755,813,888
+//!   字节（~550GB）分配 → 进程 abort**（分析仓 spike sparse_bomb
+//!   探针，2026-10-17）。修复 = 门 3 融合趟内**坐标流式扫描**
+//!   （[`GridScan`]——镜像 calamine cells_reader 的位置语义：row/@r
+//!   显式定位 + 行结束 +1 + c/@r 显式定位 + 列游标推进 + 载荷格 =
+//!   有 v/is/f 子元素[值格与公式格的并集上界——styled 空格 calamine
+//!   两面均不收，无假阳]）→ 单部件稠密面积检查先于 calamine；
+//!   [`extract_sheets`] 再做全簿累计（多表名指向同部件的倍增面）。
+//! - **工作表数量上限**（[`LIMIT_SHEET_COUNT`]）：空表名洪水 CPU 面
+//!   （workbook.xml ≤300MB 可载 ~1200 万个 `<sheet>` 名，逐表重解析
+//!   部件）在提取循环之前检查。
+//! - 全部新限 **严格/兼容两模式恒等**（安全上限不随兼容放松），typed
+//!   [`ReadError::PrescanRejected`]（安全拒绝类——与容器损坏[格式]
+//!   /解析错误三分可区分）。
 
 use calamine::{
     Data, Dimensions, ExcelDateTime, ExcelDateTimeType, Hyperlink, Range, Reader, Xlsx,
 };
 
 // ---------------------------------------------------------------------------
-// §3 限额常量（SECURITY_POLICY v1 接线——xlsx 族；后续可移配置面）
+// §3 限额常量（SECURITY_POLICY 接线——r4-t2 起全量校准，v1.2）
 // ---------------------------------------------------------------------------
 
 /// zip 声明总量上限（xlsx 族 300MB；office-b default.json 一手参照）。
 pub const LIMIT_TOTAL_DECLARED: u64 = 300 * 1024 * 1024;
 /// 单条目声明尺寸上限（= 族总量上限，对称设计）。
 pub const LIMIT_SINGLE_ENTRY: u64 = LIMIT_TOTAL_DECLARED;
+/// zip 声明总量上限（docx 族 50MB；office-b checkInputLimits 格式族
+/// 分档同构——r4-t2：此前 docx 路径误用 xlsx 族常量，本轮族分化
+/// 对齐 SECURITY_POLICY §3）。
+pub const LIMIT_TOTAL_DECLARED_DOCX: u64 = 50 * 1024 * 1024;
+/// 输入字节上限的 zip 结构开销边距（r4-t2）：本地文件头 30B + 中央
+/// 目录 46B + 名字/数据描述 ≈ 116B/条 × [`LIMIT_ENTRY_COUNT`] 上限
+/// ≈ 1.16MB + EOCD 注释 ≤64KB → 2MB 覆盖合法满额档的结构开销。
+pub const LIMIT_INPUT_MARGIN: u64 = 2 * 1024 * 1024;
+/// 输入字节上限（xlsx 族，r4-t2）：= 族声明总量 + 结构边距——STORED
+/// 条目（压缩后 = 声明值）的合法满额档 ≈ 声明总量 + 边距以内；超限
+/// 即前缀垃圾/伪装载荷（office 文档无 SFX 合法形态）。四入口统一
+/// （xlsx/docx × path/bytes），拒于任何全量读/解析之前。
+pub const LIMIT_INPUT_BYTES: u64 = LIMIT_TOTAL_DECLARED + LIMIT_INPUT_MARGIN;
+/// 输入字节上限（docx 族，r4-t2）：= docx 族声明总量 + 结构边距。
+pub const LIMIT_INPUT_BYTES_DOCX: u64 = LIMIT_TOTAL_DECLARED_DOCX + LIMIT_INPUT_MARGIN;
 /// 条目数上限（v1 新设 10,000；mal6d 实测校准）。
 pub const LIMIT_ENTRY_COUNT: usize = 10_000;
 /// XML 部件元素嵌套深度上限（门 3，Phase 2）。真实 xlsx 部件深度
 /// 个位到十位级（worksheet/共享字符串嵌套）；嵌套炸弹面在此截断
 /// （quick-xml 拉取式无栈溢出风险，上限防下游消费面）。
 pub const LIMIT_XML_DEPTH: usize = 1_000;
+/// 工作表数量上限（读面语义层，r4-t2）：workbook.xml ≤300MB 可载
+/// ~1200 万个 `<sheet>` 名（每名 ~25B）——逐表重解析部件的 CPU 面
+/// （空表名洪水）；提取循环之前检查。真实工作簿百表级以内；wasm
+/// 渲染层 16 表（mdcore-wasm MAX_SHEETS）为消费子集，两层关系
+/// 登记（读面全提取 = C1 大档能力宣称面）。
+pub const LIMIT_SHEET_COUNT: usize = 1_000;
+/// 稠密包围盒格总数上限（读面语义层，r4-t2）：calamine
+/// `Range::from_sparse` 按实际单元格包围盒**稠密化**（sparse_bomb
+/// 探针：1588B 输入 → ~550GB 分配 abort）——本限界单部件稠密面积
+/// （门 3 扫描）与全簿累计提取面积。值 = C1 宣称面（50 万格）的
+/// 8× 边距；三网格（values/typed/formulas）× ~96B/格 ≈ 峰值预算
+/// ~400MB 级（examples/bench_limits.rs 可复现基准在档，不设性能
+/// 门禁阈值）。
+pub const LIMIT_TOTAL_CELLS: u64 = 4_000_000;
 
 // ---------------------------------------------------------------------------
 // 统一错误面
@@ -114,6 +174,22 @@ impl std::fmt::Display for ReadError {
 impl std::error::Error for ReadError {}
 
 // ---------------------------------------------------------------------------
+// 输入字节上限（四入口共享——r4-t2）
+// ---------------------------------------------------------------------------
+
+/// 输入字节检查（xlsx/docx × path/bytes 四入口单点：`len > limit` 即
+/// 安全拒绝——拒于任何全量读/解析之前）。
+fn check_input_size(len: u64, limit: u64) -> Result<(), ReadError> {
+    if len > limit {
+        return Err(ReadError::PrescanRejected {
+            reason: "input size over limit",
+            entry: None,
+        });
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // 容器预扫门（零条目数据读取）
 // ---------------------------------------------------------------------------
 
@@ -125,10 +201,28 @@ pub struct PrescanReport {
     pub max_single_declared: u64,
 }
 
-/// 容器预扫：条目数 → 逐条目（单尺寸/路径逃逸，单趟）→ 求和总量。
-/// 全部基于 zip 中央目录声明值，零条目数据读取。
+/// 容器预扫（xlsx 族限额）：条目数 → 逐条目（单尺寸/路径逃逸，单趟）
+/// → 求和总量。全部基于 zip 中央目录声明值，零条目数据读取。
 pub fn prescan<R: std::io::Read + std::io::Seek>(
     za: &mut zip::ZipArchive<R>,
+) -> Result<PrescanReport, ReadError> {
+    prescan_family(za, LIMIT_TOTAL_DECLARED, LIMIT_SINGLE_ENTRY)
+}
+
+/// 容器预扫（docx 族限额——r4-t2 族分化：单条目 = 族总量对称设计；
+/// 条目数/路径逃逸两族共享）。crate 内消费 = docx 读管线
+/// （[`crate::docx`]）。pub(crate)：docx 族限额常量的执行点即此。
+pub(crate) fn prescan_docx<R: std::io::Read + std::io::Seek>(
+    za: &mut zip::ZipArchive<R>,
+) -> Result<PrescanReport, ReadError> {
+    prescan_family(za, LIMIT_TOTAL_DECLARED_DOCX, LIMIT_TOTAL_DECLARED_DOCX)
+}
+
+/// 预扫共享核（单点实现——xlsx/docx 两族仅限额数字不同，检查面恒同）。
+fn prescan_family<R: std::io::Read + std::io::Seek>(
+    za: &mut zip::ZipArchive<R>,
+    total_limit: u64,
+    single_limit: u64,
 ) -> Result<PrescanReport, ReadError> {
     if za.len() > LIMIT_ENTRY_COUNT {
         return Err(ReadError::PrescanRejected {
@@ -143,7 +237,7 @@ pub fn prescan<R: std::io::Read + std::io::Seek>(
             .by_index(i)
             .map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
         let declared = zf.size();
-        if declared > LIMIT_SINGLE_ENTRY {
+        if declared > single_limit {
             return Err(ReadError::PrescanRejected {
                 reason: "single entry declared size over limit",
                 entry: Some(zf.name().to_string()),
@@ -158,7 +252,7 @@ pub fn prescan<R: std::io::Read + std::io::Seek>(
         max_single = max_single.max(declared);
         total = total.saturating_add(declared);
     }
-    if total > LIMIT_TOTAL_DECLARED {
+    if total > total_limit {
         return Err(ReadError::PrescanRejected {
             reason: "total declared size over limit",
             entry: None,
@@ -271,7 +365,13 @@ impl<R: std::io::Read> std::io::Read for CountingReader<'_, R> {
 /// 十亿笑声面免疫）：标签配对（quick-xml check_end_names 默认 true）/
 /// 根元素在位且唯一 / EOF 未闭合元素（截断） / 深度上限
 /// （[`LIMIT_XML_DEPTH`]）。
-fn validate_xml_structure<R: std::io::BufRead>(reader: R) -> Result<(), String> {
+///
+/// r4-t2：同一趟事件流上附带 [`GridScan`] 坐标扫描（稀疏包围盒炸弹
+/// 面——零额外解压成本；语义镜像见 GridScan 文档）。
+fn validate_xml_structure<R: std::io::BufRead>(
+    reader: R,
+    grid: &mut GridScan,
+) -> Result<(), String> {
     let mut xml = quick_xml::Reader::from_reader(reader);
     let mut buf = Vec::with_capacity(8 * 1024);
     let mut depth: usize = 0;
@@ -279,7 +379,8 @@ fn validate_xml_structure<R: std::io::BufRead>(reader: R) -> Result<(), String> 
     use quick_xml::events::Event;
     loop {
         match xml.read_event_into(&mut buf) {
-            Ok(Event::Start(_)) => {
+            Ok(Event::Start(e)) => {
+                grid.on_start(&e);
                 if saw_root && depth == 0 {
                     return Err("multiple root elements".into());
                 }
@@ -290,12 +391,15 @@ fn validate_xml_structure<R: std::io::BufRead>(reader: R) -> Result<(), String> 
                 }
             }
             Ok(Event::Empty(_)) => {
+                // calamine cells_reader 只见 Start 形态的 row/c（自闭合
+                // 不产 Cell 记录）——GridScan 同语义，Empty 不入扫描。
                 if saw_root && depth == 0 {
                     return Err("multiple root elements".into());
                 }
                 saw_root = true;
             }
-            Ok(Event::End(_)) => {
+            Ok(Event::End(e)) => {
+                grid.on_end(&e);
                 if depth == 0 {
                     return Err("unbalanced end tag".into());
                 }
@@ -314,6 +418,233 @@ fn validate_xml_structure<R: std::io::BufRead>(reader: R) -> Result<(), String> 
         return Err(format!("truncated: {depth} unclosed element(s) at EOF"));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 稠密包围盒坐标扫描（r4-t2——稀疏包围盒炸弹面）
+// ---------------------------------------------------------------------------
+
+/// 行引用属性解析（镜像 calamine `RawAttributes::raw_attr(b"r")` +
+/// `get_row`：完整键名精确匹配——带命名空间前缀的 `x:r` 不匹配；
+/// 前导字母忽略、数字 1 基 → 0 基；不可解析 → None）。
+fn row_attr_ref(e: &quick_xml::events::BytesStart<'_>) -> Option<u32> {
+    for attr in e.attributes() {
+        let a = attr.ok()?;
+        if a.key.as_ref() == b"r" {
+            return parse_row_ref(&a.value);
+        }
+    }
+    None
+}
+
+/// 格引用属性解析（镜像 `raw_attr(b"r")` + `get_row_column`：字母列
+/// bijective base-26 [A=1] + 数字行，双 1 基 → 0 基；不可解析 → None）。
+fn cell_attr_ref(e: &quick_xml::events::BytesStart<'_>) -> Option<(u32, u32)> {
+    for attr in e.attributes() {
+        let a = attr.ok()?;
+        if a.key.as_ref() == b"r" {
+            return parse_cell_ref(&a.value);
+        }
+    }
+    None
+}
+
+/// 行引用解析（前导字母忽略、数字部分 1 基 → 0 基）。
+fn parse_row_ref(v: &[u8]) -> Option<u32> {
+    let mut i = 0;
+    while i < v.len() && v[i].is_ascii_alphabetic() {
+        i += 1;
+    }
+    let mut row: u32 = 0;
+    let mut digits = 0;
+    while i < v.len() {
+        let b = v[i];
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        row = row.checked_mul(10)?.checked_add((b - b'0') as u32)?;
+        digits += 1;
+        i += 1;
+    }
+    if digits == 0 {
+        return None;
+    }
+    row.checked_sub(1)
+}
+
+/// 格引用解析（镜像 calamine `get_row_column`：字母列 bijective base-26
+/// [A=1] + 数字行，双 1 基 → 0 基；缺字母列/不可解析 → None）。
+fn parse_cell_ref(v: &[u8]) -> Option<(u32, u32)> {
+    let mut i = 0;
+    let mut col: u32 = 0;
+    let mut letters = 0;
+    while i < v.len() {
+        let b = v[i];
+        if b.is_ascii_uppercase() {
+            col = col.checked_mul(26)?.checked_add((b - b'A') as u32 + 1)?;
+        } else if b.is_ascii_lowercase() {
+            col = col.checked_mul(26)?.checked_add((b - b'a') as u32 + 1)?;
+        } else {
+            break;
+        }
+        letters += 1;
+        i += 1;
+    }
+    if letters == 0 {
+        return None; // RangeWithoutColumnComponent 同语义
+    }
+    let mut row: u32 = 0;
+    let mut digits = 0;
+    while i < v.len() {
+        let b = v[i];
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        row = row.checked_mul(10)?.checked_add((b - b'0') as u32)?;
+        digits += 1;
+        i += 1;
+    }
+    if digits == 0 {
+        return None;
+    }
+    Some((row.checked_sub(1)?, col.checked_sub(1)?))
+}
+
+/// 工作表稠密包围盒坐标扫描（r4-t2——镜像 calamine 0.36.1
+/// `cells_reader.rs` `next_cell`/`next_formula` 的位置语义，单点同源
+/// 纪律：calamine 升版时此镜像须复核）：
+///
+/// - `<row>` Start 带 `r` → `row_index = r`（0 基）；`</row>` →
+///   `row_index += 1`、`col_index = 0`；
+/// - `<c>` Start 带 `r` → `pos = (row, col)` 且 `col_index = col`；
+///   不带 → `pos = (row_index, col_index)`；格结束后 `col_index += 1`；
+/// - **格体内部**（Start(c)…End(c)）不更新行/列游标（calamine 内层
+///   循环只认载荷子元素与 End(c)）；
+/// - 载荷格 = 有 `v`/`is`/`f` 任一子元素的格——值面网格
+///   （`next_cell` 收非 Empty 值格：有 v/is）与公式面网格
+///   （`next_formula` 收公式文本格：有 f）的**并集上界**；styled
+///   空格（仅 s 属性）calamine 两面均不收 → 扫描亦不收（无假阳）；
+/// - `</sheetData>` 后 calamine 停读（done）；自闭合 `<c/>`/`<row/>`
+///   calamine 不见（忽略）。
+///
+/// 面积语义 = from_sparse 的稠密化：`(max_r−min_r+1) × (max_c−min_c+1)`
+/// ——两格 A1 + XFD1048576 = 17,179,869,184 格。
+struct GridScan {
+    row_index: u32,
+    col_index: u32,
+    in_cell: bool,
+    cell_pos: (u32, u32),
+    has_payload: bool,
+    min_r: u32,
+    max_r: u32,
+    min_c: u32,
+    max_c: u32,
+    saw: bool,
+    done: bool,
+}
+
+impl GridScan {
+    fn new() -> Self {
+        Self {
+            row_index: 0,
+            col_index: 0,
+            in_cell: false,
+            cell_pos: (0, 0),
+            has_payload: false,
+            min_r: 0,
+            max_r: 0,
+            min_c: 0,
+            max_c: 0,
+            saw: false,
+            done: false,
+        }
+    }
+
+    fn absorb(&mut self, pos: (u32, u32)) {
+        if !self.saw {
+            self.min_r = pos.0;
+            self.max_r = pos.0;
+            self.min_c = pos.1;
+            self.max_c = pos.1;
+            self.saw = true;
+        } else {
+            self.min_r = self.min_r.min(pos.0);
+            self.max_r = self.max_r.max(pos.0);
+            self.min_c = self.min_c.min(pos.1);
+            self.max_c = self.max_c.max(pos.1);
+        }
+    }
+
+    fn on_start(&mut self, e: &quick_xml::events::BytesStart<'_>) {
+        if self.done {
+            return;
+        }
+        let local = e.name().local_name();
+        let local = local.as_ref();
+        if self.in_cell {
+            // calamine 内层循环：载荷子元素标记（v=值/is=内联串/f=公式）。
+            if local == b"v" || local == b"is" || local == b"f" {
+                self.has_payload = true;
+            }
+            return;
+        }
+        match local {
+            b"row" => {
+                if let Some(row) = row_attr_ref(e) {
+                    self.row_index = row;
+                }
+            }
+            b"c" => {
+                let pos = match cell_attr_ref(e) {
+                    Some((row, col)) => {
+                        self.col_index = col;
+                        (row, col)
+                    }
+                    None => (self.row_index, self.col_index),
+                };
+                self.cell_pos = pos;
+                self.has_payload = false;
+                self.in_cell = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn on_end(&mut self, e: &quick_xml::events::BytesEnd<'_>) {
+        if self.done {
+            return;
+        }
+        let local = e.name().local_name();
+        let local = local.as_ref();
+        if self.in_cell {
+            if local == b"c" {
+                self.in_cell = false;
+                if self.has_payload {
+                    self.absorb(self.cell_pos);
+                }
+                self.col_index = self.col_index.wrapping_add(1);
+            }
+            return;
+        }
+        match local {
+            b"row" => {
+                self.row_index = self.row_index.wrapping_add(1);
+                self.col_index = 0;
+            }
+            b"sheetData" => self.done = true,
+            _ => {}
+        }
+    }
+
+    /// 稠密包围盒面积（u64 饱和——故意的敌意极值不溢出）。
+    fn area(&self) -> u64 {
+        if !self.saw {
+            return 0;
+        }
+        let rows = (self.max_r - self.min_r + 1) as u64;
+        let cols = (self.max_c - self.min_c + 1) as u64;
+        rows.saturating_mul(cols)
+    }
 }
 
 /// 门 2+3 融合单趟：逐条目有界读取计数（实际 > 声明即拒——谎言头
@@ -337,8 +668,9 @@ fn verify_pass<R: std::io::Read + std::io::Seek>(
         let is_xml = validate_parts && (name.ends_with(".xml") || name.ends_with(".rels"));
         let mut counting = CountingReader::new(&mut zf, declared, is_xml);
         if is_xml {
+            let mut grid = GridScan::new();
             let mut br = std::io::BufReader::new(&mut counting);
-            let parse = validate_xml_structure(&mut br);
+            let parse = validate_xml_structure(&mut br, &mut grid);
             // 解析中止（错误）时未读尽：补完谎言检查（有界——lied
             // 即停；成功路径 BufReader 已到 EOF 为 no-op）。
             let drain = drain_bounded(&mut br);
@@ -348,6 +680,16 @@ fn verify_pass<R: std::io::Read + std::io::Seek>(
             if counting.lied {
                 return Err(ReadError::PrescanRejected {
                     reason: "actual size exceeds declared (lie header)",
+                    entry: Some(name),
+                });
+            }
+            // 稠密包围盒面积上限（r4-t2，安全上限——先于 calamine 的
+            // from_sparse 稠密化分配，且在 strict/compat 分派之前：
+            // 两模式恒拒，不随兼容降级）。
+            let area = grid.area();
+            if area > LIMIT_TOTAL_CELLS {
+                return Err(ReadError::PrescanRejected {
+                    reason: "worksheet dense grid area over limit",
                     entry: Some(name),
                 });
             }
@@ -891,9 +1233,11 @@ impl Book {
 /// 读入口（严格模式默认）：预扫门 → 尺寸/部件融合验证 → calamine
 /// 全量提取（五面）。
 ///
-/// 门在前（敌意输入零解析层接触）：①prescan 声明值四检查；
+/// 门在前（敌意输入零解析层接触）：⓪输入字节上限（r4-t2——元数据
+/// 检查，拒于任何全量读/解析之前）；①prescan 声明值四检查；
 /// ②尺寸诚实性 + 部件良构性融合趟（门 2+3，单次解压——Phase 2
-/// 起畸形 XML 部件 typed reject，mal7e 类静默空/部分数据闭环）。
+/// 起畸形 XML 部件 typed reject，mal7e 类静默空/部分数据闭环；
+/// r4-t2 同趟附稠密包围盒坐标扫描）。
 /// 门过后错误归 ParseError。
 pub fn read_book(path: &str) -> Result<Book, ReadError> {
     read_book_with_options(path, &ReadOptions::default())
@@ -903,13 +1247,19 @@ pub fn read_book(path: &str) -> Result<Book, ReadError> {
 /// 畸形部件降级为结构化警告（数据照常提取，门 1/门 2/安全上限
 /// 恒不放松）；默认严格行为同 [`read_book`]。
 pub fn read_book_with_options(path: &str, opts: &ReadOptions) -> Result<Book, ReadError> {
+    // 门 0（r4-t2）：输入字节上限——元数据检查先于打开/读取
+    //（xlsx 读面惰性 Seek 无全量分配，本限统一四入口字节纪律：
+    // 前缀垃圾面拒绝）。
+    let meta =
+        std::fs::metadata(path).map_err(|e| ReadError::ContainerCorrupt(format!("stat: {e}")))?;
+    check_input_size(meta.len(), LIMIT_INPUT_BYTES)?;
     let f =
         std::fs::File::open(path).map_err(|e| ReadError::ContainerCorrupt(format!("open: {e}")))?;
     let mut za =
         zip::ZipArchive::new(f).map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
     prescan(&mut za)?; // 门 1：声明值四检查
     let mut warnings = Vec::new();
-    // 门 2+3 融合趟：尺寸诚实性 + 部件良构性（单次解压）。
+    // 门 2+3 融合趟：尺寸诚实性 + 部件良构性 + 稠密包围盒扫描（单次解压）。
     verify_pass(&mut za, true, !opts.compat, &mut warnings)?;
     drop(za);
 
@@ -933,12 +1283,14 @@ pub fn read_book_from_bytes_with_options(
     bytes: &[u8],
     opts: &ReadOptions,
 ) -> Result<Book, ReadError> {
+    // 门 0（r4-t2）：输入字节上限（字节入口同限——四入口统一）。
+    check_input_size(bytes.len() as u64, LIMIT_INPUT_BYTES)?;
     let cursor = std::io::Cursor::new(bytes);
     let mut za =
         zip::ZipArchive::new(cursor).map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
     prescan(&mut za)?; // 门 1：声明值四检查
     let mut warnings = Vec::new();
-    // 门 2+3 融合趟：尺寸诚实性 + 部件良构性（单次解压）。
+    // 门 2+3 融合趟：尺寸诚实性 + 部件良构性 + 稠密包围盒扫描（单次解压）。
     verify_pass(&mut za, true, !opts.compat, &mut warnings)?;
     drop(za);
 
@@ -951,21 +1303,46 @@ pub fn read_book_from_bytes_with_options(
 /// 真源，t17 抽出；提取逻辑与 xlsx-r2 Phase 2 起的 [`read_book`]
 /// 逐行相同）。r4-t1：逐表附建类型化值矩阵（`typed`——values 的
 /// 单点派生；纪元来自 `has_1904_epoch`，workbookPr 构造期已解析）。
+///
+/// r4-t2 提取期资源上限（安全类——typed 安全拒绝，先于 typed 网格
+/// 分配以控瞬态）：①表数上限（[`LIMIT_SHEET_COUNT`]——空表名洪水
+/// CPU 面，循环之前检查）；②全簿累计稠密面积上限
+/// （[`LIMIT_TOTAL_CELLS`]——多表名指向同部件的倍增保留面：门 3
+/// 单部件扫描无法覆盖跨名累计，此处按已提取网格实际面积累计）。
 fn extract_sheets<R: std::io::Read + std::io::Seek>(
     book: &mut Xlsx<R>,
     warnings: Vec<CompatibilityWarning>,
 ) -> Result<Book, ReadError> {
     let is_1904 = book.has_1904_epoch();
     let names = book.sheet_names().to_vec();
+    if names.len() > LIMIT_SHEET_COUNT {
+        return Err(ReadError::PrescanRejected {
+            reason: "sheet count over limit",
+            entry: None,
+        });
+    }
+    let mut total_grid_area: u64 = 0;
     let mut sheets = Vec::with_capacity(names.len());
     for name in &names {
         let values = book
             .worksheet_range(name)
             .map_err(|e| ReadError::ParseError(format!("range[{name}]: {e}")))?;
-        let typed = CellGrid::from_values(&values, is_1904);
         let formulas = book
             .worksheet_formula(name)
             .map_err(|e| ReadError::ParseError(format!("formula[{name}]: {e}")))?;
+        // 累计稠密面积（values + formulas 两网格——typed 为 values 的
+        // 同面积拷贝不另计）：超限即拒，先于本表 typed 分配。
+        total_grid_area =
+            total_grid_area.saturating_add((values.width() as u64) * (values.height() as u64));
+        total_grid_area =
+            total_grid_area.saturating_add((formulas.width() as u64) * (formulas.height() as u64));
+        if total_grid_area > LIMIT_TOTAL_CELLS {
+            return Err(ReadError::PrescanRejected {
+                reason: "cumulative grid area over limit",
+                entry: Some(name.clone()),
+            });
+        }
+        let typed = CellGrid::from_values(&values, is_1904);
         let merges = book
             .merge_cells_by_sheet_name(name)
             .map_err(|e| ReadError::ParseError(format!("merge[{name}]: {e}")))?;
@@ -1589,5 +1966,435 @@ mod tests {
             Err(ReadError::ContainerCorrupt(_)) => {}
             other => panic!("expected ContainerCorrupt for truncated, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // r4-t2 资源上限（输入字节 / 表数 / 稠密包围盒面积 / docx 族分化）
+    // -----------------------------------------------------------------
+
+    /// 列名（0 基 → Excel 字母，bijective base-26——边界坐标测试内自算）。
+    fn col_name(mut c0: u32) -> String {
+        let mut s = Vec::new();
+        loop {
+            s.push(b'A' + (c0 % 26) as u8);
+            if c0 < 26 {
+                break;
+            }
+            c0 = c0 / 26 - 1;
+        }
+        s.reverse();
+        String::from_utf8(s).unwrap()
+    }
+
+    /// 两载荷格工作表 XML（A1 + 远角格——稀疏包围盒形态；远角格坐标
+    /// 由 c@r 显式定位，镜像 calamine 语义）。
+    fn sparse_sheet_xml(far_row: u32, far_col0: u32) -> String {
+        let far = format!("{}{}", col_name(far_col0), far_row + 1);
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c></row><row r="{row}"><c r="{far}" t="inlineStr"><is><t>b</t></is></c></row></sheetData></worksheet>"#,
+            row = far_row + 1,
+        )
+    }
+
+    /// R11 门 3 面积上限——**稀疏包围盒炸弹**（a 轮探针实证：1588B
+    /// 输入 → calamine `Range::from_sparse` 尝试 549,755,813,888 字节
+    ///（~550GB）分配 → 进程 abort）。两载荷格 A1 + XFD1048576 →
+    /// 稠密面积 17,179,869,184 > LIMIT_TOTAL_CELLS → 门 3 typed 拒
+    ///（先于 calamine 分配），strict/compat 两模式恒拒（安全上限
+    /// 不随兼容放松）。
+    #[test]
+    fn sparse_grid_bomb_rejected_both_modes() {
+        let mut entries = minimal_xlsx("unused");
+        for (n, d) in entries.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                // 两格同排（c@r 显式定位行 1048576——row 元素行号被
+                // 格自身 r 覆盖，calamine 同语义）。
+                *d = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="XFD1048576" t="inlineStr"><is><t>b</t></is></c></row></sheetData></worksheet>"#.to_vec();
+            }
+        }
+        let p = tmp("sparsebomb");
+        write_zip(&p, &entries);
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_book_with_options(&p, &opts) {
+                Err(ReadError::PrescanRejected { reason, entry }) => {
+                    assert_eq!(reason, "worksheet dense grid area over limit");
+                    assert_eq!(entry.as_deref(), Some("xl/worksheets/sheet1.xml"));
+                }
+                other => panic!("expected grid area reject, got {other:?}"),
+            }
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// R11 边界对测（门 3 面积 + extract Σ 累计同一比较的两面）：
+    /// 载荷格 (0,0)+(1999,1999) → 稠密面积恰 = LIMIT_TOTAL_CELLS
+    ///（2000×2000 = 4,000,000）→ 门 3 过 + 全提取（from_sparse 稠密化
+    /// 4M 格——debug 峰值 ~300MB，发布面可复现基准 =
+    /// examples/bench_limits.rs）；(0,0)+(1999,2000) → 2000×2001 →
+    /// 门 3 拒。Σ「恰=限过」同比较语义（单表 values 4M + formulas 0
+    /// → total == LIMIT → 不拒）由本测试通过面覆盖。
+    #[test]
+    fn grid_area_boundary_exact_limit_passes_over_rejected() {
+        // 限 + 1 列 → 门 3 typed 拒（strict/compat 同）。
+        let mut entries = minimal_xlsx("unused");
+        for (n, d) in entries.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                *d = sparse_sheet_xml(1999, 2000).into_bytes();
+            }
+        }
+        let p = tmp("gridover");
+        write_zip(&p, &entries);
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_book_with_options(&p, &opts) {
+                Err(ReadError::PrescanRejected { reason, .. }) => {
+                    assert_eq!(reason, "worksheet dense grid area over limit");
+                }
+                other => panic!("expected grid area reject, got {other:?}"),
+            }
+        }
+        let _ = std::fs::remove_file(&p);
+
+        // 恰 = 限 → 全程通过（门 3 + Σ + typed 网格分配）。
+        let mut entries = minimal_xlsx("unused");
+        for (n, d) in entries.iter_mut() {
+            if n == "xl/worksheets/sheet1.xml" {
+                *d = sparse_sheet_xml(1999, 1999).into_bytes();
+            }
+        }
+        let p2 = tmp("gridexact");
+        write_zip(&p2, &entries);
+        let book = read_book(&p2).unwrap();
+        assert_eq!(book.sheets.len(), 1);
+        assert_eq!(book.non_empty_cells(), 2, "两载荷格保持可见");
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    /// R11 extract Σ（跨名倍增面——门 3 单部件扫描覆盖不了多表累计）：
+    /// S1 面积 1,999,396（1414²）+ S2 面积 2,002,225（1415²）→
+    /// Σ = 4,001,621 > 4M → S2 提取处 typed 拒（entry = 表名，可诊断）。
+    #[test]
+    fn cumulative_grid_area_over_limit_rejected() {
+        let two_sheets = |s1: String, s2: String| {
+            vec![
+                (
+                    "[Content_Types].xml".into(),
+                    br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#.to_vec(),
+                ),
+                (
+                    "_rels/.rels".into(),
+                    br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.to_vec(),
+                ),
+                (
+                    "xl/workbook.xml".into(),
+                    br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S1" sheetId="1" r:id="rId1"/><sheet name="S2" sheetId="2" r:id="rId2"/></sheets></workbook>"#.to_vec(),
+                ),
+                (
+                    "xl/_rels/workbook.xml.rels".into(),
+                    br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>"#.to_vec(),
+                ),
+                ("xl/worksheets/sheet1.xml".into(), s1.into_bytes()),
+                ("xl/worksheets/sheet2.xml".into(), s2.into_bytes()),
+            ]
+        };
+        let entries = two_sheets(sparse_sheet_xml(1413, 1413), sparse_sheet_xml(1414, 1414));
+        let p = tmp("cumul");
+        write_zip(&p, &entries);
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_book_with_options(&p, &opts) {
+                Err(ReadError::PrescanRejected { reason, entry }) => {
+                    assert_eq!(reason, "cumulative grid area over limit");
+                    assert_eq!(entry.as_deref(), Some("S2"), "拒于第二表，表名可诊断");
+                }
+                other => panic!("expected cumulative reject, got {other:?}"),
+            }
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// R10 表数上限：恰 1,000 表全读通过（每表 1 格——C1 大档能力
+    /// 面）；1,001 → 提取循环之前 typed 拒（空表名洪水 CPU 面）；
+    /// compat 同限。表数为语义计数非声明值——无「极端声明」类
+    ///（边界即诊断面，登记）。
+    #[test]
+    fn sheet_count_limit_enforced() {
+        let multi_sheet_xlsx = |n: usize| {
+            let mut overrides = String::new();
+            let mut sheets = String::new();
+            let mut rels = String::new();
+            for i in 1..=n {
+                overrides.push_str(&format!(
+                    r#"<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>"#
+                ));
+                sheets.push_str(&format!(
+                    r#"<sheet name="S{i}" sheetId="{i}" r:id="rId{i}"/>"#
+                ));
+                rels.push_str(&format!(
+                    r#"<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>"#
+                ));
+            }
+            let mut entries = vec![
+                (
+                    "[Content_Types].xml".to_string(),
+                    format!(
+                        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>{overrides}</Types>"#
+                    )
+                    .into_bytes(),
+                ),
+                (
+                    "_rels/.rels".to_string(),
+                    br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.to_vec(),
+                ),
+                (
+                    "xl/workbook.xml".to_string(),
+                    format!(
+                        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>{sheets}</sheets></workbook>"#
+                    )
+                    .into_bytes(),
+                ),
+                (
+                    "xl/_rels/workbook.xml.rels".to_string(),
+                    format!(
+                        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{rels}</Relationships>"#
+                    )
+                    .into_bytes(),
+                ),
+            ];
+            let one_cell = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>v</t></is></c></row></sheetData></worksheet>"#;
+            for i in 1..=n {
+                entries.push((format!("xl/worksheets/sheet{i}.xml"), one_cell.to_vec()));
+            }
+            entries
+        };
+
+        // 恰 = 限：1,000 表全读通过。
+        let p = tmp("sheets1000");
+        write_zip(&p, &multi_sheet_xlsx(LIMIT_SHEET_COUNT));
+        let book = read_book(&p).unwrap();
+        assert_eq!(book.sheets.len(), LIMIT_SHEET_COUNT);
+        assert_eq!(book.non_empty_cells(), LIMIT_SHEET_COUNT);
+        let _ = std::fs::remove_file(&p);
+
+        // 限 + 1：提取前 typed 拒（strict/compat 同）。
+        let p2 = tmp("sheets1001");
+        write_zip(&p2, &multi_sheet_xlsx(LIMIT_SHEET_COUNT + 1));
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_book_with_options(&p2, &opts) {
+                Err(ReadError::PrescanRejected { reason, .. }) => {
+                    assert_eq!(reason, "sheet count over limit");
+                }
+                other => panic!("expected sheet count reject, got {other:?}"),
+            }
+        }
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    /// R1 输入字节上限（path 入口）：元数据检查先于打开/读取——
+    /// 恰 = LIMIT_INPUT_BYTES 过门 0（零字节稀疏档非 zip → 后续
+    /// ContainerCorrupt，可区分）；限 + 1 与极端 4× → typed 拒；
+    /// compat 同限。稀疏文件（set_len）构造——零实际磁盘写。
+    #[test]
+    fn input_size_limit_path_entry() {
+        let p = tmp("inputsize");
+        let set_len = |n: u64| {
+            let f = std::fs::File::create(&p).unwrap();
+            f.set_len(n).unwrap();
+        };
+        // 恰 = 限：过门 0，败于 zip 结构（ContainerCorrupt ≠ prescan 拒）。
+        set_len(LIMIT_INPUT_BYTES);
+        match read_book(&p) {
+            Err(ReadError::ContainerCorrupt(_)) => {}
+            other => panic!("expected container corrupt at exact limit, got {other:?}"),
+        }
+        // 限 + 1：两模式同拒。
+        set_len(LIMIT_INPUT_BYTES + 1);
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_book_with_options(&p, &opts) {
+                Err(ReadError::PrescanRejected { reason, .. }) => {
+                    assert_eq!(reason, "input size over limit");
+                }
+                other => panic!("expected input size reject, got {other:?}"),
+            }
+        }
+        // 极端：4× 限（前缀垃圾/伪装载荷面）。
+        set_len(LIMIT_INPUT_BYTES * 4);
+        match read_book(&p) {
+            Err(ReadError::PrescanRejected { reason, .. }) => {
+                assert_eq!(reason, "input size over limit");
+            }
+            other => panic!("expected input size reject, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// R2 输入字节上限（bytes 入口）——四入口统一同限。
+    #[test]
+    fn input_size_limit_bytes_entry() {
+        // 恰 = 限：过门 0，败于 zip 结构。
+        let at = vec![0u8; LIMIT_INPUT_BYTES as usize];
+        match read_book_from_bytes(&at) {
+            Err(ReadError::ContainerCorrupt(_)) => {}
+            other => panic!("expected container corrupt at exact limit, got {other:?}"),
+        }
+        drop(at);
+        // 限 + 1：两模式同拒。
+        let over = vec![0u8; LIMIT_INPUT_BYTES as usize + 1];
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_book_from_bytes_with_options(&over, &opts) {
+                Err(ReadError::PrescanRejected { reason, .. }) => {
+                    assert_eq!(reason, "input size over limit");
+                }
+                other => panic!("expected input size reject, got {other:?}"),
+            }
+        }
+    }
+
+    /// 伪造声明尺寸的原始 zip（STORED、零数据——prescan 只读中央
+    /// 目录，条目数据无需在位；LFH/CD 声明一致，非谎言头面）。
+    fn forged_declared_zip(entries: &[(&str, u64)]) -> Vec<u8> {
+        let mut z = Vec::new();
+        let mut offsets = Vec::new();
+        for (name, declared) in entries {
+            offsets.push(z.len() as u32);
+            z.extend_from_slice(b"PK\x03\x04");
+            z.extend_from_slice(&20u16.to_le_bytes());
+            z.extend_from_slice(&0u16.to_le_bytes()); // flags
+            z.extend_from_slice(&0u16.to_le_bytes()); // STORED
+            z.extend_from_slice(&0u16.to_le_bytes()); // time
+            z.extend_from_slice(&0u16.to_le_bytes()); // date
+            z.extend_from_slice(&0u32.to_le_bytes()); // crc
+            z.extend_from_slice(&(*declared as u32).to_le_bytes()); // csize
+            z.extend_from_slice(&(*declared as u32).to_le_bytes()); // usize
+            z.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            z.extend_from_slice(&0u16.to_le_bytes()); // extra
+            z.extend_from_slice(name.as_bytes());
+        }
+        let cd_off = z.len() as u32;
+        for ((name, declared), off) in entries.iter().zip(&offsets) {
+            z.extend_from_slice(b"PK\x01\x02");
+            z.extend_from_slice(&20u16.to_le_bytes());
+            z.extend_from_slice(&20u16.to_le_bytes());
+            z.extend_from_slice(&0u16.to_le_bytes());
+            z.extend_from_slice(&0u16.to_le_bytes()); // STORED
+            z.extend_from_slice(&0u16.to_le_bytes()); // time
+            z.extend_from_slice(&0u16.to_le_bytes()); // date
+            z.extend_from_slice(&0u32.to_le_bytes()); // crc
+            z.extend_from_slice(&(*declared as u32).to_le_bytes());
+            z.extend_from_slice(&(*declared as u32).to_le_bytes());
+            z.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            z.extend_from_slice(&0u16.to_le_bytes()); // extra
+            z.extend_from_slice(&0u16.to_le_bytes()); // comment
+            z.extend_from_slice(&0u16.to_le_bytes()); // disk
+            z.extend_from_slice(&0u16.to_le_bytes()); // iattr
+            z.extend_from_slice(&0u32.to_le_bytes()); // eattr
+            z.extend_from_slice(&off.to_le_bytes());
+            z.extend_from_slice(name.as_bytes());
+        }
+        let cd_size = z.len() as u32 - cd_off;
+        z.extend_from_slice(b"PK\x05\x06");
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        z.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        z.extend_from_slice(&cd_size.to_le_bytes());
+        z.extend_from_slice(&cd_off.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z
+    }
+
+    /// D3 docx 族声明限（prescan_docx——族分化执行点，r4-t2）：
+    /// 单条目 > 50MB 拒；两分条目 Σ > 50MB 拒；恰 = 50MB 过门 1
+    ///（PrescanReport 带真实求和）。xlsx 族 300MB 既有锚点 =
+    /// harness mal6c（zip64 声明 320MB）+ T3——不重复造。
+    #[test]
+    fn prescan_docx_family_limits() {
+        fn open(z: &[u8]) -> zip::ZipArchive<std::io::Cursor<&[u8]>> {
+            zip::ZipArchive::new(std::io::Cursor::new(z)).expect("zip openable")
+        }
+        // 单条目 > 族限 → 单条目门拒。
+        let z = forged_declared_zip(&[("blob.bin", LIMIT_TOTAL_DECLARED_DOCX + 1)]);
+        let mut za = open(&z);
+        match prescan_docx(&mut za) {
+            Err(ReadError::PrescanRejected { reason, entry }) => {
+                assert_eq!(reason, "single entry declared size over limit");
+                assert_eq!(entry.as_deref(), Some("blob.bin"));
+            }
+            other => panic!("expected single-entry reject, got {other:?}"),
+        }
+        // 两分条目各 ≤ 族限、Σ > 族限 → 总量门拒。
+        let half = LIMIT_TOTAL_DECLARED_DOCX / 2 + 1; // 26,214,401 × 2 = 52,428,802 > 52,428,800
+        let z2 = forged_declared_zip(&[("a.bin", half), ("b.bin", half)]);
+        let mut za2 = open(&z2);
+        match prescan_docx(&mut za2) {
+            Err(ReadError::PrescanRejected { reason, .. }) => {
+                assert_eq!(reason, "total declared size over limit");
+            }
+            other => panic!("expected total reject, got {other:?}"),
+        }
+        // 恰 = 族限 → 过门（report 求和 == 族限）。
+        let z3 = forged_declared_zip(&[("ok.bin", LIMIT_TOTAL_DECLARED_DOCX)]);
+        let mut za3 = open(&z3);
+        let report = prescan_docx(&mut za3).expect("exact limit passes");
+        assert_eq!(report.total_declared, LIMIT_TOTAL_DECLARED_DOCX);
+        assert_eq!(report.max_single_declared, LIMIT_TOTAL_DECLARED_DOCX);
+    }
+
+    /// R11 GridScan 位置语义镜像锚定（calamine 0.36.1 cells_reader
+    /// next_cell/next_formula——单点同源纪律；升版复核锚点）：
+    /// 显式 r 定位 / 缺 r 顺序游标 / 行结束推进 / 载荷判定（v/is/f
+    /// 并集上界）/ styled 空格不计 / sheetData 后停读 / 自闭合不计
+    /// / 巨型引用解析与边界。
+    #[test]
+    fn grid_scan_mirror_semantics() {
+        // ① 显式定位：C5（0 基 (4,2)）单格 → 面积 1；</sheetData> 后
+        //    的 row/c（镜像 done 停读）不吸收。
+        let xml1 = br#"<worksheet><sheetData><row r="3"><c r="C5" t="inlineStr"><is><t>x</t></is></c></row></sheetData><row r="9"><c r="A9"><v>1</v></c></row></worksheet>"#;
+        let mut g = GridScan::new();
+        validate_xml_structure(&xml1[..], &mut g).unwrap();
+        assert_eq!(g.area(), 1);
+
+        // ② 缺 r 顺序游标：首行 c1=(0,0) c2=(0,1)（v 载荷）；
+        //    </row> → row_index+1、col 归零；次行 c=(1,0)（f 载荷）。
+        let xml2 = br#"<worksheet><sheetData><row><c><v>1</v></c><c><v>2</v></c></row><row><c><f>SUM(A1:A2)</f></c></row></sheetData></worksheet>"#;
+        let mut g2 = GridScan::new();
+        validate_xml_structure(&xml2[..], &mut g2).unwrap();
+        assert_eq!(g2.area(), 4, "两行两列包围盒");
+        assert_eq!((g2.min_r, g2.min_c, g2.max_r, g2.max_c), (0, 0, 1, 1));
+
+        // ③ styled 空格不计（仅 s 属性无 v/is/f 子——calamine 两面
+        //    均不收）：纯 styled 空表 → 面积 0；载荷格不受 styled
+        //    邻居扩包围盒。
+        let xml3a = br#"<worksheet><sheetData><row r="1"><c r="XFD1048576" s="7"></c></row></sheetData></worksheet>"#;
+        let mut g3a = GridScan::new();
+        validate_xml_structure(&xml3a[..], &mut g3a).unwrap();
+        assert_eq!(g3a.area(), 0, "纯 styled 空表零面积");
+        let xml3 = br#"<worksheet><sheetData><row r="1"><c r="B2" s="7"></c><c r="C3" s="7"><v>5</v></c></row></sheetData></worksheet>"#;
+        let mut g3 = GridScan::new();
+        validate_xml_structure(&xml3[..], &mut g3).unwrap();
+        assert_eq!(g3.area(), 1, "仅载荷格 (2,2) 入包围盒");
+
+        // ④ 自闭合 c/row 不入扫描（calamine Empty 形态不见——无假阳
+        //    反面：自闭合 styled 格不扩包围盒）。
+        let xml4 = br#"<worksheet><sheetData><row r="1"><c r="A1"><is><t>a</t></is></c><c r="XFD1048576" s="1"/></row></sheetData></worksheet>"#;
+        let mut g4 = GridScan::new();
+        validate_xml_structure(&xml4[..], &mut g4).unwrap();
+        assert_eq!(g4.area(), 1, "自闭合格不吸收");
+
+        // ⑤ 稀疏炸弹形态（探针复刻）：面积 = 全表稠密化 17,179,869,184。
+        let xml5 = br#"<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="XFD1048576" t="inlineStr"><is><t>b</t></is></c></row></sheetData></worksheet>"#;
+        let mut g5 = GridScan::new();
+        validate_xml_structure(&xml5[..], &mut g5).unwrap();
+        assert_eq!(g5.area(), 17_179_869_184);
+
+        // ⑥ 引用解析边界：小写列同值 / 行引用前导字母忽略 / 不可
+        //    解析（无数字/溢出/行 0）→ None（顺序游标兜底，不 panic）。
+        assert_eq!(parse_cell_ref(b"a1"), Some((0, 0)));
+        assert_eq!(parse_cell_ref(b"XFD1048576"), Some((1048575, 16383)));
+        assert_eq!(parse_cell_ref(b"1048576"), None, "缺字母列");
+        assert_eq!(parse_cell_ref(b"A"), None, "缺数字行");
+        assert_eq!(parse_cell_ref(b"A0"), None, "行 0 不可解析（1 基）");
+        assert_eq!(parse_cell_ref(b"AAAA0"), None, "列溢出 u32");
+        assert_eq!(parse_row_ref(b"42"), Some(41));
+        assert_eq!(parse_row_ref(b"r42"), Some(41), "前导字母忽略");
+        assert_eq!(parse_row_ref(b"abc"), None);
     }
 }

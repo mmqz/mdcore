@@ -166,7 +166,8 @@ use std::io::Read as _;
 // 错误面（DOCX 自有——按格式独立演进纪律）
 // ---------------------------------------------------------------------------
 
-/// DOCX 读/写统一错误。
+/// DOCX 读/写统一错误（四分：容器安全拒 / 解析 / IO / 写面资源限
+/// [r4-t2]）。
 #[derive(Debug)]
 pub enum DocxError {
     /// 容器门/关系层拒绝（门 1/2/3 + .rels 结构校验——与 XLSX 同一
@@ -176,6 +177,10 @@ pub enum DocxError {
     Parse(String),
     /// 文件 IO 错误。
     Io(String),
+    /// 写面资源上限拒绝（r4-t2：[`MAX_PARAGRAPHS`] / [`MAX_RUNS`] ——
+    /// 安全类，与解析[格式]错误可区分；save 面统一漏斗 typed 拒，
+    /// 超限调用无产物返回）。
+    Limit(String),
 }
 
 impl std::fmt::Display for DocxError {
@@ -184,6 +189,7 @@ impl std::fmt::Display for DocxError {
             DocxError::Container(e) => write!(f, "container: {e}"),
             DocxError::Parse(m) => write!(f, "parse error: {m}"),
             DocxError::Io(m) => write!(f, "io error: {m}"),
+            DocxError::Limit(m) => write!(f, "resource limit: {m}"),
         }
     }
 }
@@ -220,6 +226,30 @@ impl From<io::ReadError> for DocxError {
 /// 单个 `.rels` 部件关系条目数上限（与门 1 条目上限同量级——
 /// 安全上限恒等两模式）。
 pub const LIMIT_RELATIONSHIPS: usize = 10_000;
+
+/// 写面段落数上限（r4-t2 资源面：引擎 docx-rs 段落 Vec 无内建上限
+/// ——一手核验；计段等价物 = 发射调用累计[含表格单元格与页眉页脚槽
+/// 位，替换槽位按每次调用计——上界语义]，save 面统一漏斗 typed 拒）。
+/// 值与 XLSX 写面 [`crate::write::MAX_CELLS`] 同量级（百万级——
+/// 基准见 examples/bench_limits.rs）。
+pub const MAX_PARAGRAPHS: u64 = 1_000_000;
+/// 写面 run 数上限（r4-t2；计 run = 发射调用累计，同上界语义；
+/// 脚注内容段计 +1 段 +1 run）。
+pub const MAX_RUNS: u64 = 4_000_000;
+
+/// 写面规模检查（r4-t2——消费方 preflight 与 save 面共用的单点比较；
+/// `MAX_PARAGRAPHS`/`MAX_RUNS` 的公开执行面）。
+pub fn check_document_scale(paragraphs: u64, runs: u64) -> Result<(), DocxError> {
+    if paragraphs > MAX_PARAGRAPHS {
+        return Err(DocxError::Limit(format!(
+            "paragraph count over limit {MAX_PARAGRAPHS}"
+        )));
+    }
+    if runs > MAX_RUNS {
+        return Err(DocxError::Limit(format!("run count over limit {MAX_RUNS}")));
+    }
+    Ok(())
+}
 
 /// 单条 OPC 关系（`.rels` 部件 `<Relationship>` 条目）。
 #[derive(Debug, Clone, PartialEq)]
@@ -900,7 +930,7 @@ pub struct ImageAsset {
 /// 型 image 关系（链接图——无包内部件）不入清单不警告（登记）；
 /// 目标存在但非 `word/media/*` 部件：不联接不警告（登记观察）。
 fn build_image_inventory(
-    za: &mut zip::ZipArchive<std::io::Cursor<&std::vec::Vec<u8>>>,
+    za: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
     bundle: &RelsBundle,
     ct: &ContentTypes,
     strict: bool,
@@ -1410,9 +1440,21 @@ pub fn read_docx(path: &str) -> Result<DocxDocument, DocxError> {
 
 /// 读 DOCX 文件（带选项）。`opts.compat = true` 时畸形部件降级为
 /// 结构化警告（门 1/门 2/安全上限恒不放松——语义同 [`io::read_book_with_options`]）。
+///
+/// r4-t2：**输入字节上限前置**——`fs::read` 全量入内存之前先查元数据
+/// 尺寸（此前无前置检查 = 真实内存面：垃圾前缀大文件全量读入）；
+/// docx 族声明总量限 = 50MB（经 [`io::prescan_docx`]，此前误用 xlsx
+/// 族 300MB 常量）。
 pub fn read_docx_with_options(path: &str, opts: &ReadOptions) -> Result<DocxDocument, DocxError> {
+    let meta = std::fs::metadata(path).map_err(|e| DocxError::Io(format!("stat {path}: {e}")))?;
+    if meta.len() > io::LIMIT_INPUT_BYTES_DOCX {
+        return Err(DocxError::Container(io::ReadError::PrescanRejected {
+            reason: "input size over limit",
+            entry: None,
+        }));
+    }
     let bytes = std::fs::read(path).map_err(|e| DocxError::Io(format!("read {path}: {e}")))?;
-    read_bytes_gated(bytes, opts)
+    read_bytes_gated(&bytes, opts)
 }
 
 /// 读 DOCX 字节（容器三门同样适用——字节入口不绕过输入防线）。
@@ -1420,25 +1462,33 @@ pub fn read_docx_from_bytes(bytes: &[u8]) -> Result<DocxDocument, DocxError> {
     read_docx_from_bytes_with_options(bytes, &ReadOptions::default())
 }
 
-/// 读 DOCX 字节（带选项）。
+/// 读 DOCX 字节（带选项）。r4-t2：入参字节上限 + **全借用化**
+///（此前 `bytes.to_vec()` 复制一份——大档双倍峰值，去除）。
 pub fn read_docx_from_bytes_with_options(
     bytes: &[u8],
     opts: &ReadOptions,
 ) -> Result<DocxDocument, DocxError> {
-    read_bytes_gated(bytes.to_vec(), opts)
+    if bytes.len() as u64 > io::LIMIT_INPUT_BYTES_DOCX {
+        return Err(DocxError::Container(io::ReadError::PrescanRejected {
+            reason: "input size over limit",
+            entry: None,
+        }));
+    }
+    read_bytes_gated(bytes, opts)
 }
 
-/// 门结构：门 1（prescan）→ 门 2+3 融合趟（尺寸 + 部件良构——
-/// 复用 XLSX 读路径同一实现）→ **自有 OPC 关系层**（先于引擎——
-/// 上限两模式恒拒；词汇表/schema 严格拒兼容降级）→ [Content_Types].xml
-/// 解析 + 媒体清单 → docx-rs 模型解析 → 关系联接提取 + run 级图片
-/// 引用计数。
-fn read_bytes_gated(bytes: Vec<u8>, opts: &ReadOptions) -> Result<DocxDocument, DocxError> {
+/// 门结构：门 0（输入字节上限——r4-t2 前置于任何全量读/分配）→
+/// 门 1（prescan——**docx 族限额** [`io::prescan_docx`]，r4-t2 族分化）
+/// → 门 2+3 融合趟（尺寸 + 部件良构——复用 XLSX 读路径同一实现）
+/// → **自有 OPC 关系层**（先于引擎——上限两模式恒拒；词汇表/schema
+/// 严格拒兼容降级）→ [Content_Types].xml 解析 + 媒体清单 → docx-rs
+/// 模型解析 → 关系联接提取 + run 级图片引用计数。
+fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, DocxError> {
     let strict = !opts.compat;
-    let cursor = std::io::Cursor::new(&bytes);
+    let cursor = std::io::Cursor::new(bytes);
     let mut za = zip::ZipArchive::new(cursor)
         .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
-    io::prescan(&mut za)?;
+    io::prescan_docx(&mut za)?;
     let mut warnings = Vec::new();
     // 门 2+3 融合趟（io 私有实现经公开管道函数复用——见 io::read_book）。
     io::verify_gates(&mut za, strict, &mut warnings)?;
@@ -1446,7 +1496,7 @@ fn read_bytes_gated(bytes: Vec<u8>, opts: &ReadOptions) -> Result<DocxDocument, 
 
     // OPC 关系层 + 内容类型 + 媒体清单（同一门后字节——零门绕过）。
     let (bundle, images) = {
-        let cursor = std::io::Cursor::new(&bytes);
+        let cursor = std::io::Cursor::new(bytes);
         let mut za = zip::ZipArchive::new(cursor)
             .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
         let bundle = build_rels_bundle(&mut za, strict, &mut warnings)?;
@@ -1482,7 +1532,7 @@ fn read_bytes_gated(bytes: Vec<u8>, opts: &ReadOptions) -> Result<DocxDocument, 
         (bundle, images)
     };
 
-    let docx = docx_rs::read_docx(&bytes).map_err(|e| DocxError::Parse(format!("{e}")))?;
+    let docx = docx_rs::read_docx(bytes).map_err(|e| DocxError::Parse(format!("{e}")))?;
     let blocks = extract_blocks(&docx, &bundle, strict, &mut warnings)?;
     let (headers, footers) = extract_headers_footers(&docx, &bundle, strict, &mut warnings)?;
     // run 级图片引用计数（悬空 r:embed 严格拒 / 兼容警告）。
@@ -2061,6 +2111,11 @@ pub struct DocxWriter {
     /// 注入 ordered/bullet 两抽象 + num 桥——无列表文档的 numbering.xml
     /// 保持引擎内建形态；`save_to_vec` 后随基态重置）。
     numbering_registered: bool,
+    /// r4-t2：段等价物累计（含表单元格/页眉页脚槽位/脚注内容段；
+    /// 替换槽位按每次调用计——上界语义）。
+    paragraphs: u64,
+    /// r4-t2：run 累计（发射 run + 图片 run + 脚注内容 run）。
+    runs: u64,
 }
 
 impl DocxWriter {
@@ -2084,6 +2139,8 @@ impl DocxWriter {
         Self {
             docx,
             numbering_registered: false,
+            paragraphs: 0,
+            runs: 0,
         }
     }
 
@@ -2100,6 +2157,8 @@ impl DocxWriter {
             .add_run(docx_rs::Run::new().add_text(text));
         p.property = p.property.clone().outline_lvl((level - 1) as usize);
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
+        self.runs += 1;
         Ok(())
     }
 
@@ -2108,10 +2167,24 @@ impl DocxWriter {
         self.paragraph(&[RunSpec::text(text)]);
     }
 
-    /// 富文本段落（run 级加粗/斜体 + 外部超链接）。
+    /// 富文本段落（run 级加粗/斜体 + 外部超链接）。r4-t2：段/run 计数
+    /// （发射调用累计——脚注规格额外 +1 段 +1 run[内容段]）。
     pub fn paragraph(&mut self, runs: &[RunSpec]) {
         let p = specs_to_paragraph(runs);
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.count_specs(1, runs);
+    }
+
+    /// r4-t2：段/run 计数单点（paras 含本段；脚注规格 +1 段 +1 run）。
+    fn count_specs(&mut self, paras: u64, runs: &[RunSpec]) {
+        self.paragraphs += paras;
+        self.runs += runs.len() as u64;
+        for r in runs {
+            if r.footnote.is_some() {
+                self.paragraphs += 1;
+                self.runs += 1;
+            }
+        }
     }
 
     /// 默认页眉（单段 run 序——run 级加粗/斜体/链接/脚注/域）。
@@ -2122,6 +2195,7 @@ impl DocxWriter {
     /// 防御先例）。
     pub fn header(&mut self, runs: &[RunSpec]) {
         let h = docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs));
+        self.count_specs(1, runs);
         if self.docx.document.section_property.header.is_some() {
             replace_slot_header(&mut self.docx, SlotKind::Default, h);
         } else {
@@ -2133,6 +2207,7 @@ impl DocxWriter {
     /// section_property.rs:95；重复调用 = 原位替换保持原槽 rid）。
     pub fn first_header(&mut self, runs: &[RunSpec]) {
         let h = docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs));
+        self.count_specs(1, runs);
         if self.docx.document.section_property.first_header.is_some() {
             replace_slot_header(&mut self.docx, SlotKind::First, h);
         } else {
@@ -2145,6 +2220,7 @@ impl DocxWriter {
     /// rid）。
     pub fn even_header(&mut self, runs: &[RunSpec]) {
         let h = docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs));
+        self.count_specs(1, runs);
         if self.docx.document.section_property.even_header.is_some() {
             replace_slot_header(&mut self.docx, SlotKind::Even, h);
         } else {
@@ -2155,6 +2231,7 @@ impl DocxWriter {
     /// 默认页脚（单段 run 序——同 [`Self::header`]，重复调用 = 原位替换）。
     pub fn footer(&mut self, runs: &[RunSpec]) {
         let f = docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs));
+        self.count_specs(1, runs);
         if self.docx.document.section_property.footer.is_some() {
             replace_slot_footer(&mut self.docx, SlotKind::Default, f);
         } else {
@@ -2166,6 +2243,7 @@ impl DocxWriter {
     /// 原位替换）。
     pub fn first_footer(&mut self, runs: &[RunSpec]) {
         let f = docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs));
+        self.count_specs(1, runs);
         if self.docx.document.section_property.first_footer.is_some() {
             replace_slot_footer(&mut self.docx, SlotKind::First, f);
         } else {
@@ -2177,6 +2255,7 @@ impl DocxWriter {
     /// 激活 + 原位替换）。
     pub fn even_footer(&mut self, runs: &[RunSpec]) {
         let f = docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs));
+        self.count_specs(1, runs);
         if self.docx.document.section_property.even_footer.is_some() {
             replace_slot_footer(&mut self.docx, SlotKind::Even, f);
         } else {
@@ -2209,10 +2288,13 @@ impl DocxWriter {
         let pic = docx_rs::Pic::new_with_dimensions(png.to_vec(), width_px, height_px);
         let p = docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_image(pic));
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
+        self.runs += 1;
         Ok(())
     }
 
     /// 文本表格（行 × 单元格文本；首行不特殊化——表头样式属渲染面）。
+    /// r4-t2：单元格逐格计数（每格 = 引擎侧 1 段 + 1 run）。
     pub fn table(&mut self, rows: &[Vec<String>]) {
         let table_rows = rows
             .iter()
@@ -2231,6 +2313,9 @@ impl DocxWriter {
             .collect();
         let table = docx_rs::Table::new(table_rows);
         self.docx = std::mem::take(&mut self.docx).add_table(table);
+        let cells: u64 = rows.iter().map(|r| r.len() as u64).sum();
+        self.paragraphs += cells;
+        self.runs += cells;
     }
 
     /// 保存到文件路径。
@@ -2239,8 +2324,15 @@ impl DocxWriter {
         std::fs::write(path, &mut buf).map_err(|e| DocxError::Io(format!("write {path}: {e}")))
     }
 
-    /// 保存到内存缓冲（zip 容器字节）。
+    /// 保存到内存缓冲（zip 容器字节）。r4-t2：save 面统一漏斗——
+    /// [`MAX_PARAGRAPHS`]/[`MAX_RUNS`] 资源限在此 typed 拒（超限调用
+    /// **无产物返回**；计数为发射调用累计的上界语义，见
+    /// [`Self::paragraph`]）。发射方法的不可变签名（段落/表格/页眉
+    /// 页脚等返回 ()）是既有 API 契约——逐调用 typed 拒结构性不可用，
+    /// 资源限统一在本漏斗执行（消费面预检经
+    /// [`check_document_scale`] 共用同一单点比较）。
     pub fn save_to_vec(&mut self) -> Result<Vec<u8>, DocxError> {
+        check_document_scale(self.paragraphs, self.runs)?;
         let mut cursor = std::io::Cursor::new(Vec::new());
         let built = std::mem::take(&mut self.docx).build();
         built
@@ -2283,6 +2375,7 @@ impl DocxWriter {
             docx_rs::IndentLevel::new(ilvl),
         );
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.count_specs(1, runs);
         Ok(())
     }
 
@@ -2327,6 +2420,16 @@ impl DocxWriter {
                 None,
             );
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
+        for line in line_runs {
+            self.runs += line.len() as u64;
+            for r in line {
+                if r.footnote.is_some() {
+                    self.paragraphs += 1;
+                    self.runs += 1;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2342,6 +2445,8 @@ impl DocxWriter {
         }]);
         p = p.fonts(mono_fonts(CODE_FONT));
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
+        self.runs += 1;
     }
 
     /// 水平线段（t20 hr 面）：空段 + 下边框（OOXML 无原生 hr 的惯用
@@ -2362,6 +2467,7 @@ impl DocxWriter {
             ),
         );
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
     }
 
     /// 引用段（t20 quote 面）：左缩进 `QUOTE_INDENT_STEP × depth`
@@ -2382,6 +2488,7 @@ impl DocxWriter {
             ),
         );
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.count_specs(1, runs);
     }
 
     /// numbering 定义面惰性注册（幂等）：ordered（decimal outline 式
@@ -3257,5 +3364,228 @@ mod tests {
             HyperlinkTarget::Unresolved { rid: "rId9".into() }
         );
         assert!(w.iter().any(|x| x.kind == WarningKind::BrokenReference));
+    }
+
+    // -----------------------------------------------------------------
+    // r4-t2 资源上限（段落/run 计数漏斗 + 输入字节 + docx 族门）
+    // -----------------------------------------------------------------
+
+    /// W9/W10 边界（check_document_scale 单点比较——save 漏斗与消费
+    /// 方预检共用）：恰 = 限过；段落限 + 1 / run 限 + 1 → typed Limit
+    /// 且消息可诊断。
+    #[test]
+    fn document_scale_limit_boundaries() {
+        assert!(check_document_scale(MAX_PARAGRAPHS, MAX_RUNS).is_ok());
+        assert!(check_document_scale(0, 0).is_ok());
+        match check_document_scale(MAX_PARAGRAPHS + 1, 0) {
+            Err(DocxError::Limit(m)) => {
+                assert!(m.contains("paragraph count over limit"), "{m}");
+            }
+            other => panic!("expected paragraph Limit, got {other:?}"),
+        }
+        match check_document_scale(0, MAX_RUNS + 1) {
+            Err(DocxError::Limit(m)) => {
+                assert!(m.contains("run count over limit"), "{m}");
+            }
+            other => panic!("expected run Limit, got {other:?}"),
+        }
+    }
+
+    /// W9/W10 save 漏斗（发射方法不可变签名 → 资源限统一在 save 面
+    /// typed 拒）：私有计数直置超限（避免真实 1M 段构建——基准面在
+    /// examples/bench_limits.rs）→ save_to_vec Limit；**save_to_path
+    /// 错误路径零产物文件**（fs::write 只在成功 save 后执行——导出
+    /// 失败不留完整文件，API 形态核实）。
+    #[test]
+    fn docx_save_funnel_rejects_over_scale_no_artifact() {
+        let mut w = DocxWriter::new();
+        w.heading(1, "ok").unwrap();
+        w.paragraphs = MAX_PARAGRAPHS + 1;
+        match w.save_to_vec() {
+            Err(DocxError::Limit(m)) => {
+                assert!(m.contains("paragraph count over limit"), "{m}");
+            }
+            other => panic!("expected save Limit, got {other:?}"),
+        }
+        let p = std::env::temp_dir().join(format!(
+            "mdc_docx_test_noartifact_{}.docx",
+            std::process::id()
+        ));
+        let ps = p.to_string_lossy().into_owned();
+        assert!(w.save_to_path(&ps).is_err());
+        assert!(!p.exists(), "超限导出不得留产物文件");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// W9/W10 计数接线准确性（全部发射面）：heading/paragraph（含
+    /// 脚注 +1段+1run）/table（每格 1段+1run）/header/footer/code_line/
+    /// horizontal_rule（零 run）/quote/list_item/list_item_lines/image
+    /// ——限内正常保存。
+    #[test]
+    fn docx_paragraph_run_counting_wiring() {
+        let mut w = DocxWriter::new();
+        w.heading(1, "h").unwrap(); // 1p + 1r
+        w.paragraph(&[
+            // 1p + 3r + 脚注内容段 1p + 1r
+            RunSpec::text("a"),
+            RunSpec::text("b"),
+            RunSpec::footnote("n"),
+        ]);
+        w.table(&[
+            // 3 格 → 3p + 3r
+            vec!["a".to_string(), "b".to_string()],
+            vec!["c".to_string()],
+        ]);
+        w.header(&[RunSpec::text("H")]); // 1p + 1r
+        w.footer(&[RunSpec::text("F")]); // 1p + 1r
+        w.code_line("let x = 1;"); // 1p + 1r
+        w.horizontal_rule(); // 1p + 0r
+        w.quote_paragraph(&[RunSpec::text("q")], 1); // 1p + 1r
+        w.list_item(&[RunSpec::text("i")], ListKind::Bullet, 0)
+            .unwrap(); // 1p + 1r
+        w.list_item_lines(
+            &[
+                vec![RunSpec::text("l1"), RunSpec::text("l2")],
+                vec![RunSpec::text("l3")],
+            ],
+            ListKind::Ordered,
+            0,
+        )
+        .unwrap(); // 1p + 3r
+        w.image(
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4],
+            320,
+            240,
+        )
+        .unwrap(); // 1p + 1r
+                   // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
+                   // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
+        assert_eq!(w.paragraphs, 14);
+        // 17 run：heading 1 + paragraph 4（3 run + 脚注 1）+ table 3 +
+        // header 1 + footer 1 + code 1 + hr 0 + quote 1 + list_item 1 +
+        // list_item_lines 3 + image 1。
+        assert_eq!(w.runs, 17);
+        let bytes = w.save_to_vec().unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+    }
+
+    /// D1 输入字节上限（path 入口）：fs::read 全量入内存**之前**元
+    /// 数据检查（原无前置 = 真实内存面）——恰 = 限过门 0（败于 zip
+    /// 结构 Io 面）；限 + 1 / 极端 4× → typed 安全拒绝；compat 同限。
+    /// 稀疏文件构造零实际磁盘写。
+    #[test]
+    fn docx_input_size_limit_path_entry() {
+        let p = std::env::temp_dir().join(format!(
+            "mdc_docx_test_inputsize_{}.docx",
+            std::process::id()
+        ));
+        let ps = p.to_string_lossy().into_owned();
+        let set_len = |n: u64| {
+            let f = std::fs::File::create(&p).unwrap();
+            f.set_len(n).unwrap();
+        };
+        set_len(io::LIMIT_INPUT_BYTES_DOCX);
+        match read_docx(&ps) {
+            // 过门 0（元数据 ≤ 限），fs::read 后败于 zip 结构（容器面）。
+            Err(DocxError::Container(io::ReadError::ContainerCorrupt(_))) => {}
+            other => panic!("expected container corrupt at exact limit, got {other:?}"),
+        }
+        set_len(io::LIMIT_INPUT_BYTES_DOCX + 1);
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_docx_with_options(&ps, &opts) {
+                Err(DocxError::Container(io::ReadError::PrescanRejected { reason, .. })) => {
+                    assert_eq!(reason, "input size over limit");
+                }
+                other => panic!("expected input size reject, got {other:?}"),
+            }
+        }
+        set_len(io::LIMIT_INPUT_BYTES_DOCX * 4);
+        match read_docx(&ps) {
+            Err(DocxError::Container(io::ReadError::PrescanRejected { reason, .. })) => {
+                assert_eq!(reason, "input size over limit")
+            }
+            other => panic!("expected input size reject, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// D2 输入字节上限（bytes 入口）+ 借用化（r4-t2 去 to_vec 复制）
+    ///——与 path 同限（四入口统一）。
+    #[test]
+    fn docx_input_size_limit_bytes_entry() {
+        let at = vec![0u8; io::LIMIT_INPUT_BYTES_DOCX as usize];
+        match read_docx_from_bytes(&at) {
+            Err(DocxError::Container(io::ReadError::ContainerCorrupt(_))) => {}
+            other => panic!("expected container corrupt at exact limit, got {other:?}"),
+        }
+        drop(at);
+        let over = vec![0u8; io::LIMIT_INPUT_BYTES_DOCX as usize + 1];
+        for opts in [ReadOptions::default(), ReadOptions { compat: true }] {
+            match read_docx_from_bytes_with_options(&over, &opts) {
+                Err(DocxError::Container(io::ReadError::PrescanRejected { reason, .. })) => {
+                    assert_eq!(reason, "input size over limit");
+                }
+                other => panic!("expected input size reject, got {other:?}"),
+            }
+        }
+    }
+
+    /// D3 docx 族声明限端到端（read 管线经 prescan_docx——r4-t2 族
+    /// 分化，此前误用 xlsx 族 300MB 常量）：单条目 > 50MB → 容器门
+    /// typed 拒（DocxError::Container(PrescanRejected)）。
+    #[test]
+    fn docx_family_declared_limit_end_to_end() {
+        // 伪造声明尺寸原始 zip（STORED 零数据——prescan 只读中央目录）。
+        let mut z = Vec::new();
+        let declared = (io::LIMIT_TOTAL_DECLARED_DOCX + 1) as u32;
+        let name = b"word/document.xml";
+        z.extend_from_slice(b"PK\x03\x04");
+        z.extend_from_slice(&20u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes()); // STORED
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u32.to_le_bytes()); // crc
+        z.extend_from_slice(&declared.to_le_bytes());
+        z.extend_from_slice(&declared.to_le_bytes());
+        z.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(name);
+        let cd_off = z.len() as u32;
+        z.extend_from_slice(b"PK\x01\x02");
+        z.extend_from_slice(&20u16.to_le_bytes());
+        z.extend_from_slice(&20u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u32.to_le_bytes());
+        z.extend_from_slice(&declared.to_le_bytes());
+        z.extend_from_slice(&declared.to_le_bytes());
+        z.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u32.to_le_bytes());
+        z.extend_from_slice(&0u32.to_le_bytes());
+        z.extend_from_slice(name);
+        let cd_size = z.len() as u32 - cd_off;
+        z.extend_from_slice(b"PK\x05\x06");
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+        z.extend_from_slice(&1u16.to_le_bytes());
+        z.extend_from_slice(&1u16.to_le_bytes());
+        z.extend_from_slice(&cd_size.to_le_bytes());
+        z.extend_from_slice(&cd_off.to_le_bytes());
+        z.extend_from_slice(&0u16.to_le_bytes());
+
+        match read_docx_from_bytes(&z) {
+            Err(DocxError::Container(io::ReadError::PrescanRejected { reason, entry })) => {
+                assert_eq!(reason, "single entry declared size over limit");
+                assert_eq!(entry.as_deref(), Some("word/document.xml"));
+            }
+            other => panic!("expected docx family prescan reject, got {other:?}"),
+        }
     }
 }

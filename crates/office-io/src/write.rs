@@ -21,6 +21,27 @@
 //!   return，无类型化错误）——本包装层跟踪行高水位，回退写入提前
 //!   [`WriteError::InvalidInput`] 拒绝，**绝不静默丢数据**（与 Phase 2
 //!   mal7e 类「畸形输入不得静默变空数据」同一纪律的写侧对偶）。
+//! - **r4-t2 资源与格式上限（四件套：常量 + 执行点 + typed 错误 +
+//!   测试）**：
+//!   - [`MAX_SHEETS`]（表数）：引擎 `constant_memory` 特性下每表
+//!     急切 tempfile（fd 消耗 = 表数，含非流式表）；256 = b 轮实测
+//!     校准（a 轮 512 的单进程假设被双簿并发 EMFILE 证伪——双簿
+//!     并发 512 fd + 开销对软限 1024 余量 1.8×）+ 自产文件须过自身
+//!     读面条目数限（10,000）；
+//!   - [`MAX_CELLS`]（全簿单元格累计）：非流式引擎内存 Vec 与流式
+//!     tempfile 尺寸的无界增长面统一界（引擎无内建——一手核验）；
+//!     1,000,000 = T3 探针 100 万格 constant_memory 972ms 实测面，
+//!     基准见 examples/bench_limits.rs；值 < 2^20 保证本限先于
+//!     mdcore-wasm 导出面的防御截断触发；
+//!   - [`MAX_CELL_TEXT`] / [`MAX_FORMULA_TEXT`] / [`MAX_URL_TEXT`]
+//!     （格式面）：Excel 物理限 32767 字符/格（引擎 write_string 路径
+//!     同值内建但归 Engine 错误类且 cached 面不检——包装层统一前移
+//!     InvalidInput，含合并左上格与超链接显示文本）、公式 8192 字符
+//!     （Excel 规格）、超链接 url 2080（引擎 url.rs MAX_URL_LEN 镜像
+//!     ——b 轮实测校准，a 轮「url 同 32767」被引擎真值证伪）。
+//!   - 错误分类：资源限 → [`WriteError::Limit`]（wasm 码
+//!     `xlsx_limit`）；格式限 → [`WriteError::InvalidInput`]（`xlsx_build`
+//!     外可区分）；引擎/IO → [`WriteError::Engine`]。
 //!
 //! ## 新建 vs 编辑边界（与 CAPABILITIES.md C2/C3 对齐——唯一真源）
 //!
@@ -88,19 +109,60 @@ use rust_xlsxwriter::Workbook;
 pub const MAX_ROW: u32 = 1_048_575;
 /// 最大列号（0 基，含）——Excel 工作表物理边界 2^14 列。
 pub const MAX_COL: u16 = 16_383;
+/// 工作簿表数上限（r4-t2 资源面）：①fd 面——引擎 `constant_memory`
+/// 特性下 `Worksheet::new()` 对**每张表**（含非流式——t19 核验
+/// worksheet.rs:1742）急切 tempfile → fd 消耗 = 表数；**b 轮实测校准
+/// （2026-10-17）**：a 轮原值 512 的「进程其余 fd 需求 ≤ 数十」假设
+/// 被证伪——单簿 512 过（隔离 0.39s），但同进程两簿并发即达
+/// 1024 fd 软限 → EMFILE（code 24，TooManyOpenFiles）；本套件自身
+/// 门禁即两个 max-scale 写测试并发形态。256 使双簿并发 = 512 fd +
+/// 进程开销 ≈ 560，对软限 1024 余量 1.8×；②自产文件须过自身读面
+/// 条目数上限（io::LIMIT_ENTRY_COUNT = 10,000）：每表 ≥ 1 部件 +
+/// ~8 固定部件，256 表 ≈ 264 条目安全在内；真实工作簿百表级以内
+/// （读面 1,000 为 C1 大档能力面，写面独立限不镜像）。
+pub const MAX_SHEETS: usize = 256;
+/// 全簿单元格累计上限（r4-t2 资源面）：非流式引擎全内存模型 Vec
+/// 与流式 tempfile 尺寸的统一界（引擎无内建上限——一手核验）；
+/// 值 = T3 写面探针 100 万格实测面（constant_memory 972ms；非流式
+/// 基准见 examples/bench_limits.rs），且 < 2^20 保证本限先于
+/// mdcore-wasm 导出面 MAX_ROW 防御截断（静默降级）触发——资源限
+/// typed 拒绝优先于静默截断。
+pub const MAX_CELLS: u64 = 1_000_000;
+/// 单元格文本字符上限（r4-t2 格式面）：Excel 物理限 32767
+///（引擎 worksheet.rs MAX_STRING_LEN 同值内建于 write_string 路径；
+/// 公式缓存文本面引擎不检——包装层统一，含超链接显示文本）。
+pub const MAX_CELL_TEXT: usize = 32_767;
+/// 超链接 URL 字符上限（r4-t2 格式面）：**b 轮实测校准
+/// （2026-10-17）**——a 轮原设计「url 同 32767」被证伪：引擎
+/// write_url 路径**有**自己的限（url.rs:13 `MAX_URL_LEN` = 2_080
+///，Excel 规格限——探针实测 2080 过/2081 `MaxUrlLengthExceeded`），
+/// a 轮的 32767 检查在 2081-32767 区间永不触发（引擎先拒、落
+/// Engine 类）。本常量镜像引擎真值，包装层 typed InvalidInput 前移
+///（探针：恰 2080 过 / 2081 拒）。
+pub const MAX_URL_TEXT: usize = 2_080;
+/// 公式文本字符上限（r4-t2 格式面）：Excel 规格限 8192
+///（引擎不检——包装层 typed 前移）。
+pub const MAX_FORMULA_TEXT: usize = 8_192;
 
 // ---------------------------------------------------------------------------
 // 统一错误面（写侧二分：输入可修 / 引擎失败）
 // ---------------------------------------------------------------------------
 
-/// 写路径统一错误：输入验证失败（调用方可修输入重试）/ 引擎失败。
+/// 写路径统一错误三分：格式验证失败（调用方可修输入重试，
+/// [`WriteError::InvalidInput`]）/ 资源上限拒绝（[`WriteError::Limit`]
+/// ——r4-t2，安全类，与格式错误可区分）/ 引擎失败
+/// （[`WriteError::Engine`]）。
 #[derive(Debug)]
 pub enum WriteError {
-    /// 输入验证失败（表名/坐标/次序/流式纪律）——typed，可修输入重试。
+    /// 输入验证失败（表名/坐标/次序/流式纪律/文本格式限）——typed，
+    /// 可修输入重试。
     InvalidInput(String),
     /// 写引擎失败（IO 错误/URL 类型未知/引擎内部约束），消息含引擎
     /// 原始错误文本（诊断用，不承诺跨版本稳定）。
     Engine(String),
+    /// 资源上限拒绝（r4-t2：表数/全簿单元格累计——安全类，与格式
+    /// 错误可区分；消费方可修规模重试）。
+    Limit(String),
 }
 
 impl std::fmt::Display for WriteError {
@@ -108,6 +170,7 @@ impl std::fmt::Display for WriteError {
         match self {
             WriteError::InvalidInput(m) => write!(f, "invalid input: {m}"),
             WriteError::Engine(m) => write!(f, "engine error: {m}"),
+            WriteError::Limit(m) => write!(f, "resource limit: {m}"),
         }
     }
 }
@@ -264,6 +327,9 @@ pub struct HyperlinkSpec {
 pub struct WorkbookWriter {
     wb: Workbook,
     sheet_names: Vec<String>,
+    /// 全簿已写单元格累计（r4-t2 资源面——含合并范围填充格；与
+    /// [`MAX_CELLS`] 对应的非流式内存面与流式 tempfile 面统一界）。
+    cells_written: u64,
 }
 
 impl std::fmt::Debug for WorkbookWriter {
@@ -271,6 +337,7 @@ impl std::fmt::Debug for WorkbookWriter {
         // 引擎句柄不进 Debug（引擎内部结构非公开契约）。
         f.debug_struct("WorkbookWriter")
             .field("sheets", &self.sheet_names)
+            .field("cells_written", &self.cells_written)
             .finish()
     }
 }
@@ -286,6 +353,7 @@ impl WorkbookWriter {
         Self {
             wb: Workbook::new(),
             sheet_names: Vec::new(),
+            cells_written: 0,
         }
     }
 
@@ -311,6 +379,12 @@ impl WorkbookWriter {
         streaming: bool,
     ) -> Result<SheetWriter<'_>, WriteError> {
         validate_sheet_name(name, &self.sheet_names)?;
+        // r4-t2 表数资源限（typed Limit——先于引擎建表/建 tempfile）。
+        if self.sheet_names.len() >= MAX_SHEETS {
+            return Err(WriteError::Limit(format!(
+                "sheet count over limit {MAX_SHEETS}"
+            )));
+        }
         // wasm32：流式面结构性不可用（引擎 tempfile 背书，模块文档）——
         // add_sheet_streaming 已目标条件化缺席，此分支恒 false。
         #[cfg(target_arch = "wasm32")]
@@ -331,6 +405,7 @@ impl WorkbookWriter {
             streaming,
             high_water_row: 0,
             wrote_any: false,
+            cells: &mut self.cells_written,
         })
     }
 
@@ -399,6 +474,10 @@ pub struct SheetWriter<'a> {
     /// 在流式模式下 = 引擎静默丢弃路径 → 包装层 typed 拒绝。
     high_water_row: u32,
     wrote_any: bool,
+    /// 全簿单元格累计（r4-t2——借用工作簿计数器：非流式/流式两模式
+    /// 同界；合并范围按面积计——引擎对范围内格全部物化，一手核验
+    /// worksheet.rs merge_range）。
+    cells: &'a mut u64,
 }
 
 impl std::fmt::Debug for SheetWriter<'_> {
@@ -409,6 +488,27 @@ impl std::fmt::Debug for SheetWriter<'_> {
             .field("wrote_any", &self.wrote_any)
             .finish()
     }
+}
+
+/// 格式面长度检查（r4-t2——typed InvalidInput，可修输入重试）。
+fn check_text_len(len: usize, limit: usize, what: &str) -> Result<(), WriteError> {
+    if len > limit {
+        return Err(WriteError::InvalidInput(format!(
+            "{what} exceeds {limit} characters ({len})"
+        )));
+    }
+    Ok(())
+}
+
+/// 资源面单元格预算检查（r4-t2——typed Limit；增量制：本次写入前
+/// 已达上限即拒，恰好 = 上限的写入通过）。
+fn check_cell_budget(cells: u64, increment: u64) -> Result<(), WriteError> {
+    if cells.saturating_add(increment) > MAX_CELLS {
+        return Err(WriteError::Limit(format!(
+            "total cell count over limit {MAX_CELLS}"
+        )));
+    }
+    Ok(())
 }
 
 impl SheetWriter<'_> {
@@ -440,7 +540,9 @@ impl SheetWriter<'_> {
         self.wrote_any = true;
     }
 
-    /// 写单元格（值 + 可选样式）。
+    /// 写单元格（值 + 可选样式）。r4-t2：格式面长度限（单元格文本/
+    /// 公式文本/缓存文本——typed InvalidInput）与资源面全簿单元格
+    /// 累计限（typed Limit）均在引擎调用之前。
     pub fn write(
         &mut self,
         row: u32,
@@ -449,6 +551,17 @@ impl SheetWriter<'_> {
         style: Option<&CellStyle>,
     ) -> Result<(), WriteError> {
         self.check_coord(row, col)?;
+        check_cell_budget(*self.cells, 1)?;
+        match &value {
+            CellValue::Text(s) => check_text_len(s.chars().count(), MAX_CELL_TEXT, "cell text")?,
+            CellValue::Formula { text, cached } => {
+                check_text_len(text.chars().count(), MAX_FORMULA_TEXT, "formula text")?;
+                if let Some(FormulaCache::Text(s)) = cached {
+                    check_text_len(s.chars().count(), MAX_CELL_TEXT, "formula cached text")?;
+                }
+            }
+            _ => {}
+        }
         match value {
             CellValue::Text(s) => {
                 if let Some(st) = style {
@@ -502,6 +615,7 @@ impl SheetWriter<'_> {
                 }
             }
         }
+        *self.cells += 1;
         self.advance_water(row);
         Ok(())
     }
@@ -538,15 +652,26 @@ impl SheetWriter<'_> {
         // 静默丢弃影响）。
         self.check_coord(first_row, first_col)?;
         self.check_coord(last_row, last_col)?;
+        // r4-t2：合并范围面积计入全簿单元格预算（引擎对范围内全部
+        // 格物化——write_blank 逐格，一手核验 worksheet.rs merge_range；
+        // MAX_ROW×MAX_COL 量级面积在此 typed 拒绝，不进引擎）+
+        // 左上格文本长度统一 MAX_CELL_TEXT（同 write() 单格文本面）。
+        check_text_len(text.chars().count(), MAX_CELL_TEXT, "merged cell text")?;
+        let area = (last_row - first_row + 1) as u64 * (last_col - first_col + 1) as u64;
+        check_cell_budget(*self.cells, area)?;
         let fmt = style.map(style_to_format).unwrap_or_default();
         self.ws
             .merge_range(first_row, first_col, last_row, last_col, text, &fmt)?;
+        *self.cells += area;
         self.advance_water(first_row);
         Ok(())
     }
 
     /// 写超链接（五形态见 [`HyperlinkSpec`]；display_text = None 时
-    /// 值面 = URL——write_url 纯链接语义）。
+    /// 值面 = URL——write_url 纯链接语义）。r4-t2：url = 引擎限镜像
+    /// [`MAX_URL_TEXT`]（2080——引擎 url.rs `MAX_URL_LEN` 同值，探针
+    /// 2080/2081 钉定，typed 前移不落 Engine 类）；显示文本统一
+    /// [`MAX_CELL_TEXT`]（引擎 write_string 路径同值）。
     pub fn write_hyperlink(
         &mut self,
         row: u32,
@@ -554,10 +679,17 @@ impl SheetWriter<'_> {
         spec: HyperlinkSpec,
     ) -> Result<(), WriteError> {
         self.check_coord(row, col)?;
-        let text = spec.display_text.unwrap_or_else(|| spec.url.clone());
+        check_cell_budget(*self.cells, 1)?;
+        check_text_len(spec.url.chars().count(), MAX_URL_TEXT, "hyperlink url")?;
+        let text = spec.display_text.clone();
+        if let Some(t) = &text {
+            check_text_len(t.chars().count(), MAX_CELL_TEXT, "hyperlink display text")?;
+        }
+        let text = text.unwrap_or_else(|| spec.url.clone());
         let tooltip = spec.tooltip.unwrap_or_default();
         self.ws
             .write_url_with_options(row, col, spec.url.as_str(), text, tooltip, None)?;
+        *self.cells += 1;
         self.advance_water(row);
         Ok(())
     }
@@ -747,5 +879,229 @@ mod tests {
         let bytes = w.save_to_vec().unwrap();
         assert_eq!(&bytes[..2], b"PK", "产物应为 zip 容器");
         assert!(bytes.len() > 100);
+    }
+
+    // -----------------------------------------------------------------
+    // r4-t2 资源/格式上限（表数 / 全簿格预算 / 文本长度）
+    // -----------------------------------------------------------------
+
+    /// W3 表数上限：恰 256 表在位可存；第 257 表 typed Limit（先于
+    /// 引擎建表）。自产 256 表档 ≈ 264 zip 条目 < 读面
+    /// LIMIT_ENTRY_COUNT 10,000（自产文件须过自身读面）。fd 面
+    ///（引擎每表急切 tempfile，含非流式）的并发双簿安全余量见
+    /// MAX_SHEETS 常量注记（b 轮 EMFILE 实测校准）。
+    #[test]
+    fn sheet_count_write_limit() {
+        let mut w = WorkbookWriter::new();
+        for i in 0..MAX_SHEETS {
+            w.add_sheet(&format!("S{i}")).unwrap();
+        }
+        match w.add_sheet("S_extra") {
+            Err(WriteError::Limit(m)) => {
+                assert!(m.contains("sheet count over limit"), "{m}");
+            }
+            other => panic!("expected Limit at 257th sheet, got {other:?}"),
+        }
+        // 拒绝后簿仍完整可存（256 表合法档）。
+        let bytes = w.save_to_vec().unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+    }
+
+    /// W3 流式面对偶（fd 消耗的一手钉定）：256 流式表 = 每表急切
+    /// tempfile（t19 核验 worksheet.rs:1742，constant_memory 特性下
+    /// 非流式表同）→ 256 并发 fd；双簿并发（本套件门禁真实形态）
+    /// 512 fd + 进程开销 ≈ 560 < 软限 1024（a 轮 512 双簿并发 EMFILE
+    /// 证伪 → b 轮校准证据链）。wasm32 结构性缺席（t19 target-split，
+    /// cfg 同步纪律）。
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn streaming_sheet_count_256_fd_face() {
+        let mut w = WorkbookWriter::new();
+        for i in 0..MAX_SHEETS {
+            w.add_sheet_streaming(&format!("S{i}")).unwrap();
+        }
+        match w.add_sheet_streaming("S_extra") {
+            Err(WriteError::Limit(_)) => {}
+            other => panic!("expected Limit at 257th streaming sheet, got {other:?}"),
+        }
+        let p =
+            std::env::temp_dir().join(format!("mdc_write_test_fd256_{}.xlsx", std::process::id()));
+        w.save_to_path(&p.to_string_lossy()).unwrap();
+        assert!(p.metadata().map(|m| m.len() > 100).unwrap_or(false));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// W2 全簿格预算（增量制：已达上限再写即拒；恰 = 限的写入通过）
+    /// ——私有计数直置边界（真实 1M 格全链在 examples/bench_limits.rs
+    /// 发布面基准）+ 小规模计数算术钉定（write 逐格 + merge 按面积）。
+    #[test]
+    fn cell_budget_limit_and_arithmetic() {
+        // 边界：cells = MAX-1 → 写 1 格恰达限；再写 → typed Limit。
+        let mut w = WorkbookWriter::new();
+        w.cells_written = MAX_CELLS - 1;
+        {
+            let mut s = w.add_sheet("S").unwrap();
+            assert!(s.write(0, 0, CellValue::Number(1.0), None).is_ok());
+            match s.write(0, 1, CellValue::Number(2.0), None) {
+                Err(WriteError::Limit(m)) => {
+                    assert!(m.contains("total cell count over limit"), "{m}");
+                }
+                other => panic!("expected Limit at budget exhaustion, got {other:?}"),
+            }
+        }
+        assert_eq!(w.cells_written, MAX_CELLS);
+        // merge 面积预算：cells = MAX-4 → 2×2 恰达限；再 2×2 → Limit。
+        let mut w2 = WorkbookWriter::new();
+        w2.cells_written = MAX_CELLS - 4;
+        {
+            let mut s = w2.add_sheet("S").unwrap();
+            assert!(s.merge(0, 0, 1, 1, "m", None).is_ok());
+            match s.merge(2, 0, 3, 1, "m", None) {
+                Err(WriteError::Limit(_)) => {}
+                other => panic!("expected Limit for merge over budget, got {other:?}"),
+            }
+        }
+        // 计数算术（小规模真实全链）：3 write + 1×6 merge = 9。
+        let mut w3 = WorkbookWriter::new();
+        {
+            let mut s = w3.add_sheet("S").unwrap();
+            s.write(0, 0, CellValue::Number(1.0), None).unwrap();
+            s.write(0, 1, CellValue::Number(2.0), None).unwrap();
+            s.write(0, 2, CellValue::Number(3.0), None).unwrap();
+            s.merge(2, 0, 2, 5, "m", None).unwrap();
+        }
+        assert_eq!(w3.cells_written, 9);
+    }
+
+    /// W4/W5 格式面长度限（typed InvalidInput 先于引擎）：单格文本/
+    /// 公式文本/公式缓存文本/合并左上格文本/超链接 url 与显示文本
+    /// ——恰 = 限全过（引擎同值限 32767 chars；公式 8192 = Excel
+    /// 规格），限 + 1 全拒且消息可诊断。
+    #[test]
+    fn text_and_formula_length_limits() {
+        let mut w = WorkbookWriter::new();
+        {
+            let mut s = w.add_sheet("S").unwrap();
+            // 单格文本：恰 32767 过（引擎 write_string 同值）。
+            assert!(s
+                .write(0, 0, CellValue::Text("x".repeat(MAX_CELL_TEXT)), None)
+                .is_ok());
+            match s.write(0, 1, CellValue::Text("x".repeat(MAX_CELL_TEXT + 1)), None) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("cell text"), "{m}");
+                }
+                other => panic!("expected cell text reject, got {other:?}"),
+            }
+            // 公式文本：恰 8192 过 / 8193 拒。
+            assert!(s
+                .write(
+                    1,
+                    0,
+                    CellValue::Formula {
+                        text: "1+".to_string() + &"1".repeat(MAX_FORMULA_TEXT - 2),
+                        cached: None,
+                    },
+                    None,
+                )
+                .is_ok());
+            match s.write(
+                1,
+                1,
+                CellValue::Formula {
+                    text: "1+".to_string() + &"1".repeat(MAX_FORMULA_TEXT - 1),
+                    cached: None,
+                },
+                None,
+            ) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("formula text"), "{m}");
+                }
+                other => panic!("expected formula text reject, got {other:?}"),
+            }
+            // 公式缓存文本（引擎不检面——包装层统一）：恰/超。
+            assert!(s
+                .write(
+                    2,
+                    0,
+                    CellValue::Formula {
+                        text: "SUM(A1:A2)".into(),
+                        cached: Some(FormulaCache::Text("v".repeat(MAX_CELL_TEXT))),
+                    },
+                    None,
+                )
+                .is_ok());
+            match s.write(
+                2,
+                1,
+                CellValue::Formula {
+                    text: "SUM(A1:A2)".into(),
+                    cached: Some(FormulaCache::Text("v".repeat(MAX_CELL_TEXT + 1))),
+                },
+                None,
+            ) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("formula cached text"), "{m}");
+                }
+                other => panic!("expected cached text reject, got {other:?}"),
+            }
+            // 合并左上格文本（W4 补面——引擎 write_string 路径外的
+            // 单格文本面）：恰 32767 过 / 32768 拒。
+            assert!(s
+                .merge(4, 0, 4, 1, &"m".repeat(MAX_CELL_TEXT), None)
+                .is_ok());
+            match s.merge(5, 0, 5, 1, &"m".repeat(MAX_CELL_TEXT + 1), None) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("merged cell text"), "{m}");
+                }
+                other => panic!("expected merged text reject, got {other:?}"),
+            }
+            // 超链接：url = 引擎限镜像 MAX_URL_TEXT（2080——探针
+            // 钉定引擎 2080 过/2081 MaxUrlLengthExceeded，typed 前移）；
+            // 显示文本统一 MAX_CELL_TEXT（引擎同值）。
+            let url_prefix = "https://e.example/";
+            assert!(s
+                .write_hyperlink(
+                    6,
+                    0,
+                    HyperlinkSpec {
+                        url: "https://e.example/".to_string()
+                            + &"a".repeat(MAX_URL_TEXT - url_prefix.len()),
+                        display_text: None,
+                        tooltip: None,
+                    },
+                )
+                .is_ok());
+            match s.write_hyperlink(
+                7,
+                0,
+                HyperlinkSpec {
+                    url: "https://e.example/".to_string()
+                        + &"a".repeat(MAX_URL_TEXT - url_prefix.len() + 1),
+                    display_text: None,
+                    tooltip: None,
+                },
+            ) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("hyperlink url"), "{m}");
+                }
+                other => panic!("expected hyperlink url reject, got {other:?}"),
+            }
+            match s.write_hyperlink(
+                8,
+                0,
+                HyperlinkSpec {
+                    url: "https://e.example/".into(),
+                    display_text: Some("d".repeat(MAX_CELL_TEXT + 1)),
+                    tooltip: None,
+                },
+            ) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("hyperlink display text"), "{m}");
+                }
+                other => panic!("expected display text reject, got {other:?}"),
+            }
+        }
+        // 限内写入簿仍可存（长度限不破坏合法档）。
+        assert_eq!(&w.save_to_vec().unwrap()[..2], b"PK");
     }
 }

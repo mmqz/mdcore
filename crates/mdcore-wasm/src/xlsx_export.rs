@@ -19,7 +19,8 @@
 //!
 //! | code | 含义 |
 //! |---|---|
-//! | `xlsx_build` | 引擎写/打包失败（[`WriteError::Engine`] = `save_to_vec` 打包失败为唯一现实路径；[`WriteError::InvalidInput`] = 表名/坐标/流式纪律 typed 面——本映射经命名清洗 + 防御性截断**构造不可达**，完备性仍映射，t18 `docx_build` 单族同构）。**映射层是全函数——降级永不报错**。 |
+//! | `xlsx_build` | 引擎写/打包失败（[`WriteError::Engine`] = `save_to_vec` 打包失败为唯一现实路径；[`WriteError::InvalidInput`] = 表名/坐标/流式纪律/文本格式限 typed 面——本映射经命名清洗 + 防御性截断**构造不可达**，完备性仍映射，t18 `docx_build` 单族同构）。**映射层是全函数——降级永不报错**。 |
+//! | `xlsx_limit` | **r4-t2 写面资源限**（office-io `MAX_CELLS`/`MAX_SHEETS`——逐写调用 typed 拒[write 面执行点]，超限导出**无产物字节**——错误路径即无返回值；常量单一真源在 office-io write.rs，本层零自立数字；`MAX_CELLS` = 1M < 2^20 保证资源限先于本模块 MAX_ROW 防御截断[静默]触发）。 |
 //!
 //! ## 栅格映射（XLSX = 栅格；线性 markdown 文档映射固有有损——诚实定界）
 //!
@@ -93,12 +94,18 @@ pub struct ExportError {
     pub message: String,
 }
 
-/// 引擎写面错误 → 错误码（写面唯一族 `xlsx_build`——见模块文档：
-/// InvalidInput 经命名清洗+防御截断构造不可达，完备性仍映射）。
+/// 引擎写面错误 → 错误码（r4-t2：资源限 `xlsx_limit` 与格式/引擎面
+/// 可区分——见模块文档错误码表）。
 fn map_xlsx(e: WriteError) -> ExportError {
-    ExportError {
-        code: "xlsx_build",
-        message: format!("xlsx writer engine error: {e}"),
+    match e {
+        WriteError::Limit(m) => ExportError {
+            code: "xlsx_limit",
+            message: format!("xlsx writer resource limit: {m}"),
+        },
+        other => ExportError {
+            code: "xlsx_build",
+            message: format!("xlsx writer engine error: {other}"),
+        },
     }
 }
 
@@ -597,6 +604,32 @@ mod tests {
             json["markdown"].as_str().unwrap(),
             "## Document\n\n| Title |\n| --- |\n| para text |",
             "heading level 降级登记下文本内容 GFM 形态等值"
+        );
+    }
+
+    /// r4-t2：资源限错误码可区分——`xlsx_limit`（表数/格预算，office-io
+    /// `MAX_SHEETS`/`MAX_CELLS`）≠ `xlsx_build`（InvalidInput/Engine
+    /// 既有单族——映射层全函数降级永不报错，完备性映射不变）。
+    /// 常量单一真源在 office-io write.rs，本层零自立数字。
+    #[test]
+    fn limit_error_code_mapping() {
+        let e = map_xlsx(mdc_office_io::write::WriteError::Limit(
+            "sheet count over limit 256".into(),
+        ));
+        assert_eq!(e.code, "xlsx_limit");
+        assert!(
+            e.message.starts_with("xlsx writer resource limit"),
+            "{:?}",
+            e.message
+        );
+        // 既有面不动：InvalidInput/Engine 仍归 xlsx_build 单族。
+        assert_eq!(
+            map_xlsx(mdc_office_io::write::WriteError::InvalidInput("x".into())).code,
+            "xlsx_build"
+        );
+        assert_eq!(
+            map_xlsx(mdc_office_io::write::WriteError::Engine("x".into())).code,
+            "xlsx_build"
         );
     }
 }

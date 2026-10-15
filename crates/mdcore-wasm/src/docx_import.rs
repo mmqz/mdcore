@@ -85,7 +85,8 @@ pub struct ImportError {
     pub message: String,
 }
 
-/// office-io 错误面 → 错误码映射（容器门拒 ≠ 引擎解析错误）。
+/// office-io 错误面 → 错误码映射（容器门拒与引擎解析错误分离；
+/// r4-t2：写面资源限 `docx_limit` 与格式/引擎类可区分）。
 fn map_error(e: &DocxError) -> ImportError {
     match e {
         DocxError::Container(read) => ImportError {
@@ -104,6 +105,10 @@ fn map_error(e: &DocxError) -> ImportError {
         DocxError::Io(m) => ImportError {
             code: "io",
             message: format!("io error: {m}"),
+        },
+        DocxError::Limit(m) => ImportError {
+            code: "docx_limit",
+            message: format!("docx writer resource limit: {m}"),
         },
     }
 }
@@ -625,5 +630,29 @@ mod tests {
         );
         assert_eq!(payload["stats"]["tables"], 1);
         assert_eq!(payload["stats"]["images_skipped"], 1);
+    }
+
+    /// r4-t2：错误面完备性——`DocxError::Limit`（写面资源限，读路径
+    /// 不可达——office-io `MAX_PARAGRAPHS`/`MAX_RUNS`）在导入面映射为
+    /// `docx_limit`（与写导出面同码；完备性映射，模块文档错误码表）。
+    /// 读面既有码不动：Container(PrescanRejected) → container_prescan。
+    #[test]
+    fn limit_variant_maps_to_docx_limit_code() {
+        let e = map_error(&mdc_office_io::docx::DocxError::Limit(
+            "run count over limit 4000000".into(),
+        ));
+        assert_eq!(e.code, "docx_limit");
+        assert!(
+            e.message.starts_with("docx writer resource limit"),
+            "{:?}",
+            e.message
+        );
+        let prescan = map_error(&mdc_office_io::docx::DocxError::Container(
+            mdc_office_io::io::ReadError::PrescanRejected {
+                reason: "input size over limit",
+                entry: None,
+            },
+        ));
+        assert_eq!(prescan.code, "container_prescan", "读面既有码零漂移");
     }
 }

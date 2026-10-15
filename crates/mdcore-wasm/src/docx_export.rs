@@ -32,6 +32,7 @@
 //! | code | 含义 |
 //! |---|---|
 //! | `docx_build` | 引擎写/打包错误（[`DocxError::Io`] 打包失败为唯一现实路径；[`DocxError::Parse`] = heading 级越界 / list ilvl 越界，映射层恒钳位故不可达，完备性仍映射）。**映射层是全函数——降级永不报错**；`Container` 变体只在读面产生，写侧不可达（完备性登记）。 |
+//! | `docx_limit` | **r4-t2 写面资源限**（office-io `mdc_office_io::docx::MAX_PARAGRAPHS`/`MAX_RUNS`——save 面 typed 拒；超限导出**无产物字节**——错误路径即无返回值，无半成品 Vec；常量单一真源在 office-io，本层零自立数字）。 |
 //!
 //! ## 映射表（BlockKind → DocxWriter；模型级，非保真渲染）
 //!
@@ -87,11 +88,18 @@ pub struct ExportError {
     pub message: String,
 }
 
-/// 引擎写面错误 → 错误码（写面唯一族 `docx_build`——见模块文档）。
+/// 引擎写面错误 → 错误码（r4-t2：资源限 `docx_limit` 与引擎面
+/// `docx_build` 可区分——见模块文档错误码表）。
 fn map_error(e: &DocxError) -> ExportError {
-    ExportError {
-        code: "docx_build",
-        message: format!("docx writer engine error: {e}"),
+    match e {
+        DocxError::Limit(m) => ExportError {
+            code: "docx_limit",
+            message: format!("docx writer resource limit: {m}"),
+        },
+        other => ExportError {
+            code: "docx_build",
+            message: format!("docx writer engine error: {other}"),
+        },
     }
 }
 
@@ -465,7 +473,8 @@ pub fn export_docx_core(tree: &BlockTree) -> Result<Vec<u8>, ExportError> {
 #[wasm_bindgen]
 impl WasmCore {
     /// 当前文档 → DOCX 字节（JS `Uint8Array`）。失败 = 抛 JSON 串
-    /// `{"code":"docx_build","message":"..."}`（t16/t17 错误面约定）。
+    /// `{"code":"docx_build"|"docx_limit","message":"..."}`
+    /// （t16/t17 错误面约定 + r4-t2 资源限码）。
     #[wasm_bindgen]
     pub fn export_docx(&self) -> Result<Vec<u8>, JsValue> {
         export_docx_core(&self.inner.tree).map_err(|e| {
@@ -1031,5 +1040,33 @@ mod tests {
         let doc = read_docx_from_bytes(&bytes).expect("read back");
         assert!(doc.blocks.is_empty(), "空文档 = 0 块（最小合法 docx）");
         assert!(doc.headers.is_empty() && doc.footers.is_empty());
+    }
+
+    /// r4-t2：资源限错误码可区分——`docx_limit`（office-io
+    /// `MAX_PARAGRAPHS`/`MAX_RUNS`，save 面 typed 拒、超限导出无产物
+    /// 字节）≠ `docx_build`（引擎面既有单族）。常量单一真源在
+    /// office-io docx.rs，本层零自立数字。
+    #[test]
+    fn limit_error_code_mapping() {
+        let e = map_error(&mdc_office_io::docx::DocxError::Limit(
+            "paragraph count over limit 1000000".into(),
+        ));
+        assert_eq!(e.code, "docx_limit");
+        assert!(
+            e.message.starts_with("docx writer resource limit"),
+            "{:?}",
+            e.message
+        );
+        // 既有面不动：Container/Parse/Io 仍归 container_prescan/
+        // docx_parse/io（读面）与 docx_build（写面引擎）。
+        for (err, code) in [
+            (
+                mdc_office_io::docx::DocxError::Parse("x".into()),
+                "docx_build",
+            ),
+            (mdc_office_io::docx::DocxError::Io("x".into()), "docx_build"),
+        ] {
+            assert_eq!(map_error(&err).code, code);
+        }
     }
 }
