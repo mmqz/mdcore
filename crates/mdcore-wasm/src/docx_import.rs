@@ -38,6 +38,25 @@
 //! - 段落样式 `Heading1`..`Heading9` → `#`×level 标题（**7-9 钳到 6**，
 //!   MD 上限 h6）；其余样式 ID（Title/Subtitle/自定义）→ 普通段落
 //!   （office-io 模型级不做样式语义解释，本层只认 Word 规范标题 ID）；
+//!   **标题段带 numPr → 标题赢**（Word 编号标题仍显示为标题；mdcore
+//!   标题非列表项），编号丢弃（`list_numbering_dropped` 计数，r5-t1）；
+//! - **列表段（r5-t1）**：`numbering.kind` 解析成功 → markdown 列表项
+//!   ——Bullet → `- `；Ordered → `{n}. `（n = 连续列表 run 内计数器，
+//!   起始 1 **假定**〔读模型不承载 `w:start`〕）；嵌套缩进 =
+//!   2×min(ilvl, 8) 空格（mdcore `list_item_of` depth = indent/2+1；
+//!   钳 8 对称写面九级抽象域，`list_depth_clamped` 计数）；计数器 key
+//!   = (num_id, ilvl)——不同 numId = 独立实例（Word 语义），同 numId
+//!   更浅级推进 → 深级清零（Word 多级：父项推进子级重起）；**任何非
+//!   列表映射块（普通段/标题/表/降级段）中断 → 计数器清零重启**
+//!   （markdown 无持久列表身份；Word 对同 numId 非连续段续号 → 登记
+//!   降级）；原生 numFmt ∉ {decimal}（lowerLetter/upperRoman/…）→ 序号
+//!   标准化为 decimal（`list_markers_normalized` 计数——降级可诊断）；
+//!   numFmt `"none"`（Word 该级不显示 marker）→ **降级普通段落**，
+//!   不发明数字（`list_items_degraded` 计数）；kind=None（悬空 numId /
+//!   numStyleLink / ilvl 超定义域——兼容模式读面已给 BrokenReference
+//!   警告随 stats）→ 同样降级普通段落；空列表项 → `- `/`{n}. ` marker
+//!   加空内容行（mdcore 解析为空 ListItem——结构保真）；numId=0 在读面
+//!   已归 None（OOXML 去编号惯例，office-io 契约）→ 普通段落；
 //! - run：加粗 → `**`、斜体 → `*`、超链接 → `[text](target)`（外链
 //!   URL 含空白/`)`/空 → `<...>` 角括号形；锚点 → `#anchor`；包内
 //!   目标原样透传；r:id 无对应条目 [`HyperlinkTarget::Unresolved`] →
@@ -62,6 +81,11 @@
 //!
 //! - 段落文本以 MD 结构字符开头（`#`/`|`/`>`/`- `/数字`.` 等）会被
 //!   mdcore 行级解析解释为对应块型——导入是结构映射而非显示保真；
+//! - 列表降级面（r5-t1 登记）：有序起始值假定 1（`w:start` 读模型不
+//!   承载）；同 numId 非连续段重起（Word 续号）；自定义 numFmt 序号
+//!   标准化 decimal（原生形态经 stats 计数可诊断）；多行列表项
+//!   （run 内 `w:br` → `\n`）首行带 marker、续行脱离列表项——mdcore
+//!   行级解析拆独立段落块（既有软换行族降级，同普通段）；
 //! - 表格单元格内超链接目标（office-io TableData 扁平文本面）随
 //!   单元格文本合并，目标丢弃；
 //! - 内联 `*`/`_`/`[` 等字符不转义（mdcore 无内联转义层，转义会
@@ -72,8 +96,8 @@
 //! 先例）；wasm 壳由 wasm32 check + web 三件套门禁背书。
 
 use mdc_office_io::docx::{
-    read_docx_from_bytes_with_options, Block, DocxDocument, DocxError, HyperlinkTarget, RunData,
-    TableData,
+    read_docx_from_bytes_with_options, Block, DocxDocument, DocxError, HyperlinkTarget, ListKind,
+    ParagraphNumbering, RunData, TableData,
 };
 use mdc_office_io::io::{ReadError, ReadOptions};
 use wasm_bindgen::prelude::*;
@@ -262,6 +286,93 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 列表映射（r5-t1：numbering 读面承载 → markdown 列表行）
+// ---------------------------------------------------------------------------
+
+/// 导入侧嵌套钳位（= 写面九级抽象域：docx_export `list_shape`
+/// depth→ilvl 钳 0-8 与 DocxWriter `list_item` 0-8 typed 域对称）。
+/// 读面不钳（office-io 契约——敌意巨值走解析不可达路径），钳位在本层
+/// 发生并计数（stats `list_depth_clamped`——降级可诊断）。
+const IMPORT_MAX_ILVL: usize = 8;
+
+/// 连续列表 run 内的有序计数器（`(num_id, ilvl)` → 已发项数）：
+/// - 任何非列表映射块（普通段/标题/表/降级段）→ [`Self::reset`]
+///   （**中断重启**：markdown 无持久列表身份；Word 对同 numId 非连续
+///   段续号 → 模块文档登记降级）；
+/// - 同 numId 更浅 ilvl 推进 → 清该 numId 更深计数（Word 多级语义：
+///   父项推进子级重起）；不同 numId 互不影响（不同实例独立计数）。
+#[derive(Default)]
+struct ListCounters {
+    ordered: std::collections::HashMap<(usize, usize), usize>,
+}
+
+impl ListCounters {
+    fn reset(&mut self) {
+        self.ordered.clear();
+    }
+
+    /// 有序项取号（清同 numId 更深级后自增）。
+    fn next_ordered(&mut self, num_id: usize, ilvl: usize) -> usize {
+        self.ordered
+            .retain(|&(n, l), &mut _| n != num_id || l <= ilvl);
+        let c = self.ordered.entry((num_id, ilvl)).or_insert(0);
+        *c += 1;
+        *c
+    }
+}
+
+/// 单个列表段的映射结果（[`list_marker_line`] 出口）。
+enum ListMapping {
+    /// 列表行 + 降级旗标（ilvl 钳位 / 有序 marker 标准化——stats 计数面）。
+    Line {
+        line: String,
+        depth_clamped: bool,
+        marker_normalized: bool,
+    },
+    /// 降级普通段落：`kind=None`（悬空 numId / numStyleLink / ilvl 超
+    /// 定义域——兼容模式读面已给 BrokenReference 警告随 stats）或
+    /// numFmt `"none"`（Word 该级不显示 marker——不发明数字）。
+    Degraded,
+}
+
+/// 列表段 → markdown 列表行（纯函数；计数器状态经 `&mut` 注入）。
+/// 嵌套缩进 = 2×ilvl 空格（mdcore `list_item_of` depth = indent/2+1
+/// ——ilvl 0 = 顶级）；有序 marker `{n}.`（起始 1 假定：读模型不承载
+/// `w:start`）；无序恒 `- `；空文本项 → marker + 尾空格行（mdcore
+/// 解析为空 ListItem——结构保真）。
+fn list_marker_line(
+    numbering: &ParagraphNumbering,
+    text: &str,
+    counters: &mut ListCounters,
+) -> ListMapping {
+    let Some(kind) = numbering.kind else {
+        return ListMapping::Degraded;
+    };
+    if numbering.format.as_deref() == Some("none") {
+        return ListMapping::Degraded;
+    }
+    let depth_clamped = numbering.ilvl > IMPORT_MAX_ILVL;
+    let ilvl = numbering.ilvl.min(IMPORT_MAX_ILVL);
+    let (marker, marker_normalized) = match kind {
+        ListKind::Bullet => ("-".to_string(), false),
+        ListKind::Ordered => {
+            // 原生 numFmt ∉ {decimal}（lowerLetter/upperRoman/…）→ 序号
+            // 标准化 decimal（可诊断：`list_markers_normalized` 计数）。
+            let normalized = numbering.format.as_deref().is_some_and(|f| f != "decimal");
+            (
+                format!("{}.", counters.next_ordered(numbering.num_id, ilvl)),
+                normalized,
+            )
+        }
+    };
+    ListMapping::Line {
+        line: format!("{}{} {}", " ".repeat(2 * ilvl), marker, text),
+        depth_clamped,
+        marker_normalized,
+    }
+}
+
 /// DocxDocument → (markdown, stats JSON)。纯函数（原生直测；宿主消费
 /// 经 [`import_docx_core`] 字节入口）。
 fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
@@ -270,29 +381,69 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
     let mut paragraphs = 0usize;
     let mut tables = 0usize;
     let mut hyperlinks = 0usize;
+    // r5-t1 列表映射面（stats additive——既有 key 零变化）。
+    let mut list_items = 0usize;
+    let mut list_items_degraded = 0usize;
+    let mut list_numbering_dropped = 0usize;
+    let mut list_depth_clamped = 0usize;
+    let mut list_markers_normalized = 0usize;
+    let mut counters = ListCounters::default();
     for block in &doc.blocks {
         match block {
             Block::Paragraph(p) => {
                 let (text, links) = render_runs(&p.runs);
                 hyperlinks += links;
-                match heading_level(p.style.as_deref()) {
-                    Some(level) => {
-                        // MD 上限 h6（mdcore heading_of 1-6）——7-9 钳 6，登记。
-                        let level = level.min(6);
-                        lines.push(format!("{} {}", "#".repeat(level), text));
-                        headings += 1;
+                if let Some(level) = heading_level(p.style.as_deref()) {
+                    // 标题优先（r5-t1）：编号标题段（Word 多级编号标题）
+                    // → 标题赢，编号丢弃（mdcore 标题非列表项；计数
+                    // `list_numbering_dropped`）。标题中断列表 run。
+                    if p.numbering.is_some() {
+                        list_numbering_dropped += 1;
                     }
-                    None => {
-                        // 空段落跳过不计数（mdcore 空行不建块）；软换行段落
-                        // 原样多行——mdcore 行级解析拆多块，模块文档登记。
-                        if !text.is_empty() {
-                            lines.push(text);
-                            paragraphs += 1;
+                    counters.reset();
+                    // MD 上限 h6（mdcore heading_of 1-6）——7-9 钳 6，登记。
+                    let level = level.min(6);
+                    lines.push(format!("{} {}", "#".repeat(level), text));
+                    headings += 1;
+                    continue;
+                }
+                if let Some(numbering) = &p.numbering {
+                    match list_marker_line(numbering, &text, &mut counters) {
+                        ListMapping::Line {
+                            line,
+                            depth_clamped,
+                            marker_normalized,
+                        } => {
+                            if depth_clamped {
+                                list_depth_clamped += 1;
+                            }
+                            if marker_normalized {
+                                list_markers_normalized += 1;
+                            }
+                            lines.push(line);
+                            list_items += 1;
+                            continue;
+                        }
+                        // 降级普通段落（非崩溃非静默列表）：可诊断性 =
+                        // 兼容模式读面 BrokenReference 警告随 stats.warnings
+                        // + `list_items_degraded` 计数。降级段中断列表 run。
+                        ListMapping::Degraded => {
+                            list_items_degraded += 1;
                         }
                     }
                 }
+                // 普通段（含降级列表段/空段）——空段跳过不计数（mdcore 空行
+                // 不建块）；软换行段落原样多行——mdcore 行级解析拆多块，
+                // 模块文档登记。非列表块 → 列表 run 中断（计数器清零）。
+                counters.reset();
+                if !text.is_empty() {
+                    lines.push(text);
+                    paragraphs += 1;
+                }
             }
             Block::Table(t) => {
+                // 表块中断列表 run（markdown 表非列表成员）。
+                counters.reset();
                 if let Some(md) = render_table(t) {
                     lines.push(md);
                     tables += 1;
@@ -307,6 +458,11 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
         "paragraphs": paragraphs,
         "tables": tables,
         "hyperlinks": hyperlinks,
+        "list_items": list_items,
+        "list_items_degraded": list_items_degraded,
+        "list_numbering_dropped": list_numbering_dropped,
+        "list_depth_clamped": list_depth_clamped,
+        "list_markers_normalized": list_markers_normalized,
         "images_skipped": images_skipped,
         "headers_skipped": doc.headers.len(),
         "footers_skipped": doc.footers.len(),
@@ -357,13 +513,14 @@ const PNG_1X1: &[u8] = &[
 ];
 
 /// 样例 DOCX 字节（夹具产线单一真源）：标题 + 富文本段（加粗/斜体/
-/// 外链）+ 两列表 + 图片 + 页眉 + 页脚。消费方 = 本模块测试 +
+/// 外链）+ 两列表 + 列表节（有序×2 + 嵌套 ilvl1 + 无序×2——r5-t1
+/// 列表映射 e2e 面）+ 图片 + 页眉 + 页脚。消费方 = 本模块测试 +
 /// examples/gen_docx_fixture.rs（web e2e 夹具生成器）。
 /// `#[doc(hidden)]`：非产品面（wasm 导出面无此项——无
 /// #[wasm_bindgen]），仅为避免产线双份漂移而公开。
 #[doc(hidden)]
 pub fn build_sample_docx() -> Vec<u8> {
-    use mdc_office_io::docx::{DocxWriter, RunSpec};
+    use mdc_office_io::docx::{DocxWriter, ListKind, RunSpec};
     let mut w = DocxWriter::new();
     w.heading(1, "Imported Title").expect("heading");
     w.paragraph(&[
@@ -378,6 +535,18 @@ pub fn build_sample_docx() -> Vec<u8> {
         vec!["Name".to_string(), "Value".to_string()],
         vec!["alpha".to_string(), "1".to_string()],
     ]);
+    // 列表节（r5-t1）：读面经自有抽象 100（全级 decimal）/101（bullet）
+    // 读回 kind/format 双解析 → markdown 列表行（嵌套 = ilvl 1）。
+    w.list_item(&[RunSpec::text("First step")], ListKind::Ordered, 0)
+        .expect("list ordered");
+    w.list_item(&[RunSpec::text("Second step")], ListKind::Ordered, 0)
+        .expect("list ordered");
+    w.list_item(&[RunSpec::text("Nested step")], ListKind::Ordered, 1)
+        .expect("list nested");
+    w.list_item(&[RunSpec::text("Bullet one")], ListKind::Bullet, 0)
+        .expect("list bullet");
+    w.list_item(&[RunSpec::text("Bullet two")], ListKind::Bullet, 0)
+        .expect("list bullet");
     w.image(PNG_1X1, 1, 1).expect("image");
     w.header(&[RunSpec::text("Header Slot")]);
     w.footer(&[RunSpec::text("Footer Slot")]);
@@ -417,6 +586,99 @@ mod tests {
         }
     }
 
+    /// 带编号段构造（r5-t1 列表映射测试 helper——`para` 面 +numbering；
+    /// kind=None = 读面悬空/不可达形态，format=None 同构）。
+    fn numbered_para(
+        num_id: usize,
+        ilvl: usize,
+        kind: Option<ListKind>,
+        format: Option<&str>,
+        runs: Vec<RunData>,
+    ) -> Block {
+        Block::Paragraph(ParagraphData {
+            style: None,
+            runs,
+            numbering: Some(ParagraphNumbering {
+                num_id,
+                ilvl,
+                kind,
+                format: format.map(str::to_string),
+            }),
+            indent: None,
+        })
+    }
+
+    /// 列表映射矩阵样例（r5-t1 两个测试共用）：多级有序 + 中断重启 +
+    /// 独立 numId + 无序混合。
+    fn list_matrix_doc() -> DocxDocument {
+        doc_of(vec![
+            numbered_para(
+                7,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Top one")],
+            ),
+            numbered_para(
+                7,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Top two")],
+            ),
+            numbered_para(
+                7,
+                1,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Sub of two")],
+            ),
+            numbered_para(
+                7,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Top three")],
+            ),
+            numbered_para(
+                7,
+                1,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Sub of three")],
+            ),
+            para(None, vec![run("Break")]),
+            numbered_para(
+                7,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Restarted")],
+            ),
+            numbered_para(
+                8,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Other list")],
+            ),
+            numbered_para(
+                9,
+                0,
+                Some(ListKind::Bullet),
+                Some("bullet"),
+                vec![run("Dot one")],
+            ),
+            numbered_para(
+                9,
+                0,
+                Some(ListKind::Bullet),
+                Some("bullet"),
+                vec![run("Dot two")],
+            ),
+        ])
+    }
+
     fn doc_of(blocks: Vec<Block>) -> DocxDocument {
         DocxDocument {
             blocks,
@@ -443,18 +705,376 @@ mod tests {
              \n\
              | Name | Value |\n\
              | --- | --- |\n\
-             | alpha | 1 |"
+             | alpha | 1 |\n\
+             \n\
+             1. First step\n\
+             \n\
+             2. Second step\n\
+             \n\
+             \x20 1. Nested step\n\
+             \n\
+             - Bullet one\n\
+             \n\
+             - Bullet two"
         );
         let stats = &payload["stats"];
-        assert_eq!(stats["blocks"], 3);
+        assert_eq!(stats["blocks"], 8);
         assert_eq!(stats["headings"], 1);
         assert_eq!(stats["paragraphs"], 1); // 富文本段（非标题）
         assert_eq!(stats["tables"], 1);
         assert_eq!(stats["hyperlinks"], 1);
+        // r5-t1：列表节（有序×2 + 嵌套 ilvl1 + 无序×2）。
+        assert_eq!(stats["list_items"], 5);
+        assert_eq!(stats["list_items_degraded"], 0);
+        assert_eq!(stats["list_numbering_dropped"], 0);
+        assert_eq!(stats["list_depth_clamped"], 0);
+        assert_eq!(stats["list_markers_normalized"], 0);
         assert_eq!(stats["images_skipped"], 1);
         assert_eq!(stats["headers_skipped"], 1);
         assert_eq!(stats["footers_skipped"], 1);
         assert_eq!(stats["warnings"].as_array().map(Vec::len), Some(0));
+    }
+
+    /// r5-t1：列表映射矩阵——多级有序计数（父项推进子级重起）+ 中断
+    /// 重启 + 独立 numId + 无序混合，逐行 exact 断言 + stats 计数。
+    #[test]
+    fn list_numbering_maps_to_markdown_lines() {
+        let (md, stats) = docx_to_markdown(&list_matrix_doc());
+        let expected = [
+            "1. Top one",
+            "2. Top two",
+            "  1. Sub of two",
+            "3. Top three",
+            "  1. Sub of three", // 父项推进后子级重起（Word 多级语义）
+            "Break",
+            "1. Restarted",  // 中断重启（同 numId 非连续段——登记降级）
+            "1. Other list", // 不同 numId = 独立实例（Word 语义）
+            "- Dot one",
+            "- Dot two",
+        ]
+        .join("\n\n");
+        assert_eq!(md, expected);
+        assert_eq!(stats["list_items"], 9);
+        assert_eq!(stats["paragraphs"], 1);
+        assert_eq!(stats["list_items_degraded"], 0);
+        assert_eq!(stats["list_numbering_dropped"], 0);
+        assert_eq!(stats["list_depth_clamped"], 0);
+        assert_eq!(stats["list_markers_normalized"], 0);
+    }
+
+    /// r5-t1：导入 markdown → mdcore 解析 → 列表树结构闭环（docx →
+    /// markdown → BlockTree：深度/marker/父子关系——导入→编辑器消费链
+    /// 的原生层证明；`\n\n` 连接与紧凑列表在 mdcore 行级解析下同构）。
+    #[test]
+    fn list_markdown_parses_back_in_mdcore() {
+        let (md, _) = docx_to_markdown(&list_matrix_doc());
+        let tree = mdcore::markdown::markdown_to_tree(&md);
+        use mdcore::tree::BlockKind;
+        let top: Vec<_> = tree.top_level().to_vec();
+        // 顶级块序：7 个 ListItem + 1 个中断普通段（嵌套项挂在父项下）。
+        let top_summary: Vec<(BlockKind, String)> = top
+            .iter()
+            .map(|&id| {
+                let n = tree.node(id);
+                (n.kind, n.text.to_string())
+            })
+            .collect();
+        // 中断普通段在 Top three 之后落根层（文档序）——顶级序 =
+        // 3 个有序项 + Break + 重启/独立/无序 4 项。
+        let expected_top: Vec<(BlockKind, String)> = [
+            (BlockKind::ListItem, "Top one"),
+            (BlockKind::ListItem, "Top two"),
+            (BlockKind::ListItem, "Top three"),
+            (BlockKind::Paragraph, "Break"),
+            (BlockKind::ListItem, "Restarted"),
+            (BlockKind::ListItem, "Other list"),
+            (BlockKind::ListItem, "Dot one"),
+            (BlockKind::ListItem, "Dot two"),
+        ]
+        .into_iter()
+        .map(|(k, t)| (k, t.to_string()))
+        .collect();
+        assert_eq!(top_summary, expected_top);
+        assert_eq!(top.len(), 8);
+        // 嵌套：Sub of two = Top two 的子项（depth 2、marker 重起 1.）。
+        let top_two = top[1];
+        let children: Vec<_> = tree.node(top_two).children.clone();
+        assert_eq!(children.len(), 1);
+        let sub = tree.node(children[0]);
+        assert_eq!(sub.text.to_string(), "Sub of two");
+        assert_eq!(sub.attrs.get("marker").map(String::as_str), Some("1."));
+        assert_eq!(sub.attrs.get("depth").map(String::as_str), Some("2"));
+        assert_eq!(sub.parent, Some(top_two));
+        // 顶级项 attrs：marker/depth 逐项（Break = Paragraph 无 marker 面）。
+        let expected_markers = [
+            ("Top one", "1."),
+            ("Top two", "2."),
+            ("Top three", "3."),
+            ("Break", ""),
+            ("Restarted", "1."),
+            ("Other list", "1."),
+            ("Dot one", "-"),
+            ("Dot two", "-"),
+        ];
+        for (id, (text, marker)) in top.iter().zip(expected_markers) {
+            let n = tree.node(*id);
+            assert_eq!(n.text.to_string(), text);
+            if marker.is_empty() {
+                continue; // 中断段落：非列表项无 marker/depth
+            }
+            assert_eq!(n.attrs.get("marker").map(String::as_str), Some(marker));
+            assert_eq!(n.attrs.get("depth").map(String::as_str), Some("1"));
+        }
+    }
+
+    /// r5-t1：降级面——kind=None（悬空 numId / numStyleLink / ilvl 超
+    /// 定义域）与 numFmt "none" → 普通段落（非崩溃非静默列表）+ 降级
+    /// 计数 + 读面警告随 stats；降级段中断有序计数（重起）。
+    /// 严格模式悬空 numId 拒绝面 = office-io r4t3 zip 实测锚点
+    /// （r4t3_numbering_dangling_custom_format_injected_ind）；导入面恒
+    /// 兼容模式 → 警告 + 降级路径（本测试直构同形态模型）。
+    #[test]
+    fn list_degraded_cases_count_and_warn() {
+        let mut doc = doc_of(vec![
+            numbered_para(
+                5,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Before")],
+            ),
+            numbered_para(777, 2, None, None, vec![run("Dangling")]),
+            numbered_para(
+                6,
+                0,
+                Some(ListKind::Ordered),
+                Some("none"),
+                vec![run("NoMarker")],
+            ),
+            numbered_para(
+                5,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("After")],
+            ),
+        ]);
+        doc.warnings.push(mdc_office_io::io::CompatibilityWarning {
+            part: "word/document.xml".into(),
+            kind: mdc_office_io::io::WarningKind::BrokenReference,
+            detail: "numbering reference numId '777' has no numbering definition (dangling) \
+                     (kind unresolved; num_id/ilvl carried)"
+                .into(),
+        });
+        let (md, stats) = docx_to_markdown(&doc);
+        let expected = ["1. Before", "Dangling", "NoMarker", "1. After"].join("\n\n");
+        assert_eq!(md, expected, "降级段中断 → After 重起 1.");
+        assert_eq!(stats["list_items"], 2);
+        assert_eq!(stats["list_items_degraded"], 2);
+        assert_eq!(stats["paragraphs"], 2);
+        assert_eq!(stats["warnings"][0]["kind"], "broken_reference");
+        // 空文本降级段：行跳过（同空段惯例）但降级计数可见。
+        let (md2, stats2) =
+            docx_to_markdown(&doc_of(vec![numbered_para(9, 0, None, None, vec![])]));
+        assert_eq!(md2, "");
+        assert_eq!(stats2["list_items"], 0);
+        assert_eq!(stats2["list_items_degraded"], 1);
+        assert_eq!(stats2["paragraphs"], 0);
+    }
+
+    /// r5-t1：自定义 numFmt（lowerLetter/upperRoman/…）→ 序号标准化
+    /// decimal（kind 仍 Ordered），`list_markers_normalized` 计数可诊断。
+    #[test]
+    fn list_custom_numfmt_normalizes_to_decimal() {
+        let doc = doc_of(vec![
+            numbered_para(
+                3,
+                0,
+                Some(ListKind::Ordered),
+                Some("lowerLetter"),
+                vec![run("Alpha")],
+            ),
+            numbered_para(
+                3,
+                0,
+                Some(ListKind::Ordered),
+                Some("upperRoman"),
+                vec![run("Roman")],
+            ),
+            numbered_para(
+                3,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Dec")],
+            ),
+        ]);
+        let (md, stats) = docx_to_markdown(&doc);
+        assert_eq!(md, ["1. Alpha", "2. Roman", "3. Dec"].join("\n\n"));
+        assert_eq!(stats["list_items"], 3);
+        assert_eq!(
+            stats["list_markers_normalized"], 2,
+            "lowerLetter + upperRoman"
+        );
+    }
+
+    /// r5-t1：嵌套深度钳位——ilvl>8 钳 8（写面对称九级域）+ 计数；
+    /// mdcore 解析深度无上限（16 空格 → depth 9），导入→导出往返稳定
+    /// 在 8 级（docx_export list_shape 钳 0-8）。
+    #[test]
+    fn list_depth_clamp_at_ilvl8() {
+        let doc = doc_of(vec![
+            numbered_para(
+                4,
+                8,
+                Some(ListKind::Bullet),
+                Some("bullet"),
+                vec![run("At eight")],
+            ),
+            numbered_para(
+                4,
+                9,
+                Some(ListKind::Bullet),
+                Some("bullet"),
+                vec![run("Nine")],
+            ),
+            numbered_para(
+                4,
+                99,
+                Some(ListKind::Bullet),
+                Some("bullet"),
+                vec![run("Deep")],
+            ),
+        ]);
+        let (md, stats) = docx_to_markdown(&doc);
+        let indent = " ".repeat(16);
+        assert_eq!(
+            md,
+            [
+                format!("{indent}- At eight"),
+                format!("{indent}- Nine"),
+                format!("{indent}- Deep"),
+            ]
+            .join("\n\n")
+        );
+        assert_eq!(
+            stats["list_depth_clamped"], 2,
+            "ilvl 9 与 99 钳 8；恰 8 不计"
+        );
+        assert_eq!(stats["list_items"], 3);
+        // mdcore 解析：16 空格 → depth 9（解析无上限；导出面 list_shape
+        // 再钳 0-8——往返稳定在九级抽象域）。
+        let tree = mdcore::markdown::markdown_to_tree(&md);
+        let top: Vec<_> = tree.top_level().to_vec();
+        assert_eq!(top.len(), 3);
+        for id in top {
+            let n = tree.node(id);
+            assert_eq!(n.kind, mdcore::tree::BlockKind::ListItem);
+            assert_eq!(n.attrs.get("depth").map(String::as_str), Some("9"));
+        }
+    }
+
+    /// r5-t1：标题优先——Heading 样式段带 numPr → 标题赢（Word 编号标题
+    /// 仍显示为标题；mdcore 标题非列表项），编号丢弃计数 + 标题中断
+    /// 有序计数（后续同 numId 项重起）。
+    #[test]
+    fn list_heading_precedence_drops_numbering() {
+        let doc = doc_of(vec![
+            numbered_para(
+                2,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("One")],
+            ),
+            Block::Paragraph(ParagraphData {
+                style: Some("Heading2".to_string()),
+                runs: vec![run("Numbered heading")],
+                numbering: Some(ParagraphNumbering {
+                    num_id: 2,
+                    ilvl: 0,
+                    kind: Some(ListKind::Ordered),
+                    format: Some("decimal".to_string()),
+                }),
+                indent: None,
+            }),
+            numbered_para(
+                2,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("Two")],
+            ),
+        ]);
+        let (md, stats) = docx_to_markdown(&doc);
+        assert_eq!(md, ["1. One", "## Numbered heading", "1. Two"].join("\n\n"));
+        assert_eq!(stats["list_numbering_dropped"], 1);
+        assert_eq!(stats["list_items"], 2);
+        assert_eq!(stats["headings"], 1);
+        assert_eq!(stats["paragraphs"], 0);
+    }
+
+    /// r5-t1：空列表项 → marker + 尾空格行（mdcore 解析为空 ListItem——
+    /// 结构保真；Word 空编号段同视觉）。
+    #[test]
+    fn list_empty_item_emits_marker_only() {
+        let doc = doc_of(vec![
+            numbered_para(1, 0, Some(ListKind::Bullet), Some("bullet"), vec![]),
+            numbered_para(1, 0, Some(ListKind::Ordered), Some("decimal"), vec![]),
+        ]);
+        let (md, stats) = docx_to_markdown(&doc);
+        assert_eq!(md, "- \n\n1. ");
+        assert_eq!(stats["list_items"], 2);
+        let tree = mdcore::markdown::markdown_to_tree(&md);
+        let top: Vec<_> = tree.top_level().to_vec();
+        assert_eq!(top.len(), 2);
+        for (id, marker) in top.iter().zip(["-", "1."]) {
+            let n = tree.node(*id);
+            assert_eq!(n.kind, mdcore::tree::BlockKind::ListItem);
+            assert_eq!(n.text.to_string(), "");
+            assert_eq!(n.attrs.get("marker").map(String::as_str), Some(marker));
+        }
+    }
+
+    /// r5-t1：夹具全链——import markdown → mdcore 解析 → 列表树结构
+    ///（嵌套父子 + marker 逐项 + 与标题/表共存；e2e docx_import.py 的
+    /// 原生层镜像）。
+    #[test]
+    fn fixture_markdown_parses_to_list_tree() {
+        let payload = import_json(&build_sample_docx());
+        let md = payload["markdown"].as_str().expect("markdown");
+        let tree = mdcore::markdown::markdown_to_tree(md);
+        use mdcore::tree::BlockKind;
+        let top: Vec<_> = tree.top_level().to_vec();
+        let top_kinds: Vec<BlockKind> = top.iter().map(|&id| tree.node(id).kind).collect();
+        assert_eq!(
+            top_kinds,
+            vec![
+                BlockKind::Heading,
+                BlockKind::Paragraph,
+                BlockKind::Table,
+                BlockKind::ListItem,
+                BlockKind::ListItem,
+                BlockKind::ListItem,
+                BlockKind::ListItem,
+            ]
+        );
+        // 嵌套：Second step 的子项 = Nested step（2 空格缩进 → depth 2）。
+        let second = top[4];
+        assert_eq!(tree.node(second).text.to_string(), "Second step");
+        let children = tree.node(second).children.clone();
+        assert_eq!(children.len(), 1);
+        let nested = tree.node(children[0]);
+        assert_eq!(nested.text.to_string(), "Nested step");
+        assert_eq!(nested.attrs.get("depth").map(String::as_str), Some("2"));
+        assert_eq!(nested.parent, Some(second));
+        // 顶级列表项 marker 逐项（有序 1./2. + 无序 -/-）。
+        for (id, marker) in top[3..].iter().zip(["1.", "2.", "-", "-"]) {
+            assert_eq!(
+                tree.node(*id).attrs.get("marker").map(String::as_str),
+                Some(marker)
+            );
+        }
     }
 
     #[test]
@@ -634,6 +1254,16 @@ mod tests {
         );
         assert_eq!(payload["stats"]["tables"], 1);
         assert_eq!(payload["stats"]["images_skipped"], 1);
+        // r5-t1：列表节在真夹具上可达（5 项——与 build_sample_docx 同源）。
+        assert_eq!(payload["stats"]["list_items"], 5);
+        assert!(
+            payload["markdown"]
+                .as_str()
+                .expect("markdown")
+                .contains("2. Second step\n\n  1. Nested step"),
+            "fixture list section drifted: {}",
+            payload["markdown"]
+        );
     }
 
     /// r4-t2：错误面完备性——`DocxError::Limit`（写面资源限，读路径

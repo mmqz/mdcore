@@ -25,14 +25,43 @@ OUT = WEB / "tests" / "results" / "results_docx.json"
 
 # 导入后期望的编辑器文档：核心树规范形（to_markdown 按行 join——空行
 # 在 ingestion 时被跳过，块间无空行；导入串的 \n\n 分隔是宿主可读性面，
-# 编辑器 canonical 化后即单行分隔）。
+# 编辑器 canonical 化后即单行分隔）。r5-t1：列表节（有序×2 + 嵌套
+# ilvl1 → 2 空格缩进 + 无序×2）进期望串——numbering 读面 → markdown
+# 列表映射的消费面证据。
 EXPECTED_MD = (
     "# Imported Title\n"
     "plain **bold** and *italic* and [docs](https://example.com/docs)\n"
     "| Name | Value |\n"
     "| --- | --- |\n"
-    "| alpha | 1 |"
+    "| alpha | 1 |\n"
+    "1. First step\n"
+    "2. Second step\n"
+    "  1. Nested step\n"
+    "- Bullet one\n"
+    "- Bullet two"
 )
+
+# 导入后先序块序列（blocks_json：type + 嵌套 depth 字段，0 = 顶层；
+# Nested step 为 Second step 的子块 → depth 1）。
+EXPECTED_BLOCKS = [
+    {"type": "heading", "depth": 0},
+    {"type": "paragraph", "depth": 0},
+    {"type": "table", "depth": 0},
+    {"type": "list_item", "depth": 0},
+    {"type": "list_item", "depth": 0},
+    {"type": "list_item", "depth": 1},
+    {"type": "list_item", "depth": 0},
+    {"type": "list_item", "depth": 0},
+]
+
+# 列表项 attrs（mdcore 解析保留 marker 文本 + markdown 深度 1 基）。
+EXPECTED_LIST_ATTRS = [
+    {"text": "First step", "marker": "1.", "depth": "1"},
+    {"text": "Second step", "marker": "2.", "depth": "1"},
+    {"text": "Nested step", "marker": "1.", "depth": "2"},
+    {"text": "Bullet one", "marker": "-", "depth": "1"},
+    {"text": "Bullet two", "marker": "-", "depth": "1"},
+]
 
 Handler = http.server.SimpleHTTPRequestHandler
 Handler.extensions_map.update({".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm"})
@@ -98,33 +127,67 @@ def main() -> int:
             check("happy_import_file_input_exact_markdown", md == EXPECTED_MD, repr(md[:160]))
             blocks = page.evaluate("window.__blocks().map((b) => b.type)")
             check("import_block_types",
-                  blocks == ["heading", "paragraph", "table"], json.dumps(blocks))
+                  blocks == [b["type"] for b in EXPECTED_BLOCKS], json.dumps(blocks))
 
-            # ---- stats 面（typed 摘要 + 不导入面计数显式化）----
+            # ---- 列表结构面（r5-t1：嵌套 + 先序深度——BlockTree 终端消费面）----
+            blocks_full = page.evaluate(
+                "window.__blocks().map((b) => ({type: b.type, depth: b.depth, text: b.text, "
+                "marker: b.attrs ? (b.attrs.marker || null) : null, "
+                "md_depth: b.attrs ? (b.attrs.depth || null) : null}))")
+            list_blocks = [b for b in blocks_full if b["type"] == "list_item"]
+            nesting_ok = (
+                len(list_blocks) == 5
+                and blocks_full[5]["depth"] == 1  # Nested step = Second step 子块
+                and blocks_full[4]["depth"] == 0
+                and all(b["depth"] == 0 for i, b in enumerate(blocks_full) if b["type"] == "list_item" and i != 5)
+            )
+            check("import_list_nesting_depth",
+                  nesting_ok,
+                  json.dumps([{"type": b["type"], "depth": b["depth"]} for b in blocks_full]))
+            markers_ok = all(
+                lb["text"] == want["text"] and lb["marker"] == want["marker"]
+                and lb["md_depth"] == want["depth"]
+                for lb, want in zip(list_blocks, EXPECTED_LIST_ATTRS)
+            )
+            check("import_list_markers_and_md_depth",
+                  markers_ok,
+                  json.dumps(list_blocks))
+
+            # ---- stats 面（typed 摘要 + 不导入面计数显式化；r5-t1 列表
+            #      计数 + 零降级断言——夹具列表节全部走映射非降级路径）----
             stats = page.evaluate("window.__lastDocxImport.stats")
             status_text = page.evaluate("document.getElementById('docx-status').textContent")
             check("import_stats_and_status_line",
                   stats.get("headings") == 1 and stats.get("paragraphs") == 1
                   and stats.get("tables") == 1 and stats.get("hyperlinks") == 1
+                  and stats.get("list_items") == 5
+                  and stats.get("list_items_degraded") == 0
+                  and stats.get("list_numbering_dropped") == 0
+                  and stats.get("list_depth_clamped") == 0
+                  and stats.get("list_markers_normalized") == 0
                   and stats.get("images_skipped") == 1 and stats.get("headers_skipped") == 1
                   and stats.get("footers_skipped") == 1
                   and status_text.startswith("imported:")
-                  and "1 table" in status_text and "image skipped" in status_text,
+                  and "1 table" in status_text and "image skipped" in status_text
+                  and "5 list items" in status_text,
                   json.dumps({"stats": stats, "status": status_text}))
 
-            # ---- 导入文档是活编辑器文档（全桥：op/sync/事件管道）----
+            # ---- 导入文档是活编辑器文档（全桥：op/sync/事件管道）；
+            #      列表块在编辑后存活（r5-t1）----
             page.evaluate("window.__view.dispatch({ changes: { from: window.__view.state.doc.length, insert: '\\ntyped tail' } })")
-            page.wait_for_function("window.__blockCount() === 4", timeout=15000)
+            page.wait_for_function("window.__blockCount() === 9", timeout=15000)
             md_live = page.evaluate("window.__md()")
             check("imported_doc_is_live_editor",
-                  "typed tail" in md_live and md_live.startswith("# Imported Title"),
+                  "typed tail" in md_live and md_live.startswith("# Imported Title")
+                  and "1. First step" in md_live and "  1. Nested step" in md_live
+                  and "- Bullet two" in md_live,
                   repr(md_live[-80:]))
 
-            # ---- undo 键位契约在导入文档上仍成立 ----
+            # ---- undo 键位契约在导入文档上仍成立（回到导入态含列表节）----
             undo_ret = page.evaluate("window.__bridge.undo()")
             page.wait_for_function("!window.__md().includes('typed tail')", timeout=15000)
             md_undo = page.evaluate("window.__md()")
-            check("undo_works_after_import", undo_ret is True and "typed tail" not in md_undo,
+            check("undo_works_after_import", undo_ret is True and md_undo == EXPECTED_MD,
                   json.dumps({"ret": undo_ret, "tail": md_undo[-60:]}))
 
             # ---- 敌意面：垃圾字节 → typed 错误码 + 编辑器现状零触碰 ----

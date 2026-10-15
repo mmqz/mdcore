@@ -1476,6 +1476,11 @@ type DocxImportStats = {
   paragraphs: number;
   tables: number;
   hyperlinks: number;
+  /** r5-t1：列表段映射计数（numbering.kind 解析成功 → markdown 列表项）。
+   * 降级伴生键（list_items_degraded / list_numbering_dropped /
+   * list_depth_clamped / list_markers_normalized）为 additive JSON 面
+   * （wasm stats 直传，宿主按需读取——e2e 断言消费），不进本类型。 */
+  list_items: number;
   images_skipped: number;
   headers_skipped: number;
   footers_skipped: number;
@@ -1502,7 +1507,10 @@ function docxImport(bytes: Uint8Array):
   }
 }
 
-/** stats → 状态行（导入摘要；不导入面计数显式化——诚实边界）。 */
+/** stats → 状态行（导入摘要；不导入面计数显式化——诚实边界）。
+ * 列表计数（r5-t1）：>0 时显示（同 images/slots 条件段——非列表文档
+ * 不恒显 "0 list items" 噪声；headings/paragraphs/tables/links 恒显为
+ * 既有口径零变化）。 */
 function docxStatusLine(stats: DocxImportStats): string {
   const parts = [
     `${stats.headings} heading${stats.headings === 1 ? '' : 's'}`,
@@ -1510,6 +1518,7 @@ function docxStatusLine(stats: DocxImportStats): string {
     `${stats.tables} table${stats.tables === 1 ? '' : 's'}`,
     `${stats.hyperlinks} link${stats.hyperlinks === 1 ? '' : 's'}`,
   ];
+  if (stats.list_items > 0) parts.push(`${stats.list_items} list item${stats.list_items === 1 ? '' : 's'}`);
   if (stats.images_skipped > 0) parts.push(`${stats.images_skipped} image${stats.images_skipped === 1 ? '' : 's'} skipped`);
   const slots = stats.headers_skipped + stats.footers_skipped;
   if (slots > 0) parts.push(`${slots} header/footer slot${slots === 1 ? '' : 's'} skipped`);
