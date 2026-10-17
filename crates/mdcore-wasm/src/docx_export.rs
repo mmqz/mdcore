@@ -96,6 +96,14 @@ fn map_error(e: &DocxError) -> ExportError {
             code: "docx_limit",
             message: format!("docx writer resource limit: {m}"),
         },
+        // office-g Phase 1/2：输入校验拒绝（V1-V7）——与引擎面可区分。
+        // 当前 wasm 面不可达（BlockTree 无锚点载荷——DECISIONS ②⑦
+        // 门控；RunSpec 构造不经 wasm）——完备性映射，公开面暴露
+        // 后即时生效。
+        DocxError::InvalidInput(m) => ExportError {
+            code: "docx_invalid_input",
+            message: format!("docx writer invalid input: {m}"),
+        },
         other => ExportError {
             code: "docx_build",
             message: format!("docx writer engine error: {other}"),
@@ -1065,6 +1073,10 @@ mod tests {
                 "docx_build",
             ),
             (mdc_office_io::docx::DocxError::Io("x".into()), "docx_build"),
+            (
+                mdc_office_io::docx::DocxError::InvalidInput("V7: x".into()),
+                "docx_invalid_input",
+            ),
         ] {
             assert_eq!(map_error(&err).code, code);
         }

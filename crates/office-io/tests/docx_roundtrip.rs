@@ -2072,8 +2072,21 @@ fn r4t3_roundtrip_read_modify_write() {
         runs.iter()
             .map(|r| {
                 let mut s = RunSpec::styled_full(&r.text, r.bold, r.italic, false, false, false);
-                if let Some(HyperlinkTarget::External { target }) = &r.hyperlink {
-                    s.link = Some(target.clone());
+                match &r.hyperlink {
+                    // T6（office-g Phase 1）：Anchor 变体不再静默丢——
+                    // 读回的内部锚点链接在回放面保真。
+                    Some(HyperlinkTarget::External { target }) => {
+                        s.link = Some(target.clone());
+                    }
+                    Some(HyperlinkTarget::Anchor { anchor }) => {
+                        s.anchor = Some(anchor.clone());
+                    }
+                    // Internal（包内相对路径）/Unresolved（悬空 r:id，
+                    // 仅兼容模式）无 RunSpec 承载面——维持回放静默丢
+                    //（读面 BrokenReference 警告已在读侧可观测）。
+                    Some(HyperlinkTarget::Internal { .. })
+                    | Some(HyperlinkTarget::Unresolved { .. })
+                    | None => {}
                 }
                 s
             })

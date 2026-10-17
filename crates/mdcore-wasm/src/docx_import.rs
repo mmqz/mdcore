@@ -134,6 +134,12 @@ fn map_error(e: &DocxError) -> ImportError {
             code: "docx_limit",
             message: format!("docx writer resource limit: {m}"),
         },
+        // office-g Phase 1/2：读面不可达（InvalidInput 仅写面校验产生
+        // ——V1-V7；完备性映射防未来漂移）。
+        DocxError::InvalidInput(m) => ImportError {
+            code: "docx_invalid_input",
+            message: format!("docx writer invalid input: {m}"),
+        },
     }
 }
 
