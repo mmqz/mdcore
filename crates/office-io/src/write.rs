@@ -140,6 +140,12 @@ pub const MAX_CELL_TEXT: usize = 32_767;
 /// Engine 类）。本常量镜像引擎真值，包装层 typed InvalidInput 前移
 ///（探针：恰 2080 过 / 2081 拒）。
 pub const MAX_URL_TEXT: usize = 2_080;
+
+/// 超链接 tooltip 文本上限 = 引擎限镜像（rust_xlsxwriter
+/// `MAX_PARAMETER_LEN = 255`——worksheet.rs:1417，Excel 鼠标悬停
+/// 提示限；引擎 initialize() 对超限抛 ParameterError，探针 255/256
+/// 钉定，typed 前移不落 Engine 类；d1e-t2 补检）。
+pub const MAX_TOOLTIP_TEXT: usize = 255;
 /// 公式文本字符上限（r4-t2 格式面）：Excel 规格限 8192
 ///（引擎不检——包装层 typed 前移）。
 pub const MAX_FORMULA_TEXT: usize = 8_192;
@@ -671,7 +677,10 @@ impl SheetWriter<'_> {
     /// 值面 = URL——write_url 纯链接语义）。r4-t2：url = 引擎限镜像
     /// [`MAX_URL_TEXT`]（2080——引擎 url.rs `MAX_URL_LEN` 同值，探针
     /// 2080/2081 钉定，typed 前移不落 Engine 类）；显示文本统一
-    /// [`MAX_CELL_TEXT`]（引擎 write_string 路径同值）。
+    /// [`MAX_CELL_TEXT`]（引擎 write_string 路径同值）。tooltip =
+    /// 引擎限镜像 [`MAX_TOOLTIP_TEXT`]（255——引擎 url.rs initialize()
+    /// 对超限抛 ParameterError；d1e-t2 补检：超链接面第三字符串
+    /// 字段补齐同族 typed 前移纪律）。
     pub fn write_hyperlink(
         &mut self,
         row: u32,
@@ -684,6 +693,9 @@ impl SheetWriter<'_> {
         let text = spec.display_text.clone();
         if let Some(t) = &text {
             check_text_len(t.chars().count(), MAX_CELL_TEXT, "hyperlink display text")?;
+        }
+        if let Some(t) = &spec.tooltip {
+            check_text_len(t.chars().count(), MAX_TOOLTIP_TEXT, "hyperlink tooltip")?;
         }
         let text = text.unwrap_or_else(|| spec.url.clone());
         let tooltip = spec.tooltip.unwrap_or_default();
@@ -1100,8 +1112,67 @@ mod tests {
                 }
                 other => panic!("expected display text reject, got {other:?}"),
             }
+            // tooltip（d1e-t2 补检——引擎 url.rs initialize() 对超限
+            // 抛 ParameterError 的 typed 前移）：恰 255 过 / 256 拒。
+            assert!(s
+                .write_hyperlink(
+                    9,
+                    0,
+                    HyperlinkSpec {
+                        url: "https://e.example/".into(),
+                        display_text: None,
+                        tooltip: Some("t".repeat(MAX_TOOLTIP_TEXT)),
+                    },
+                )
+                .is_ok());
+            match s.write_hyperlink(
+                10,
+                0,
+                HyperlinkSpec {
+                    url: "https://e.example/".into(),
+                    display_text: None,
+                    tooltip: Some("t".repeat(MAX_TOOLTIP_TEXT + 1)),
+                },
+            ) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("hyperlink tooltip"), "{m}");
+                }
+                other => panic!("expected tooltip reject, got {other:?}"),
+            }
         }
         // 限内写入簿仍可存（长度限不破坏合法档）。
+        assert_eq!(&w.save_to_vec().unwrap()[..2], b"PK");
+    }
+
+    /// write_row 列宽边界（行级 API 的列域漏斗）：恰 16384 列
+    ///（col 0..=MAX_COL=16383——引擎列域镜像）过；16385 列 →
+    /// typed InvalidInput（check_coord 列域检查先于引擎调用）。
+    /// d1e-t2 补检（此前该入口无边界钉定）。附注：write_row 的
+    /// u16::try_from 宽度检查为**不可达防御**（u16 域 65535 > 列域
+    /// 16383，check_coord 恒先触发）——防御纵深保留，非行为面。
+    #[test]
+    fn write_row_column_width_boundary() {
+        let mut w = WorkbookWriter::new();
+        {
+            // 恰 16384 列（col 0..=16383——MAX_COL 域内满宽行）。
+            let row: Vec<CellValue> = (0..=MAX_COL).map(|i| CellValue::Number(i as f64)).collect();
+            assert_eq!(row.len(), 16_384);
+            let mut s = w.add_sheet("S").unwrap();
+            s.write_row(0, &row)
+                .expect("16384 列恰过（MAX_COL 域满宽）");
+            // 16385 列 → 第 16385 格（col 索引 16384）超列域拒绝。
+            let wide: Vec<CellValue> = (0..=MAX_COL)
+                .map(|_| CellValue::Number(0.0))
+                .chain(std::iter::once(CellValue::Number(0.0)))
+                .collect();
+            assert_eq!(wide.len(), 16_385);
+            match s.write_row(1, &wide) {
+                Err(WriteError::InvalidInput(m)) => {
+                    assert!(m.contains("col 16384 exceeds max 16383"), "{m}");
+                }
+                other => panic!("expected col-domain reject, got {other:?}"),
+            }
+        }
         assert_eq!(&w.save_to_vec().unwrap()[..2], b"PK");
     }
 }
