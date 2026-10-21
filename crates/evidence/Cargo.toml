@@ -1,0 +1,28 @@
+[package]
+name = "mdc-evidence"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# S1 外挂式文档证据系统——通用基础层（用户修订实施计划 2026-10-21 §四）。
+#
+# 定位与纪律：
+# - 正文与证据分离铁律（§二.3）：本 crate 不向 DOCX/XLSX/PDF/Markdown
+#   正文写入任何工作台专用标记；证据只存 sidecar，靠文档版本指纹 +
+#   引擎专属定位器关联正文。
+# - 领域模型独立（§二.1）：对 mdcore/mdc-office(-io)/mdc-pdf 零编译
+#   依赖（三域纪律延续）——引擎接入经调用方在应用层组合，本 crate
+#   只持有契约与状态语义。
+# - Headless 核心（§二.2）：零 GUI 类型/生命周期；宿主经稳定 API 接入。
+# - 命令层薄（§二.4）：命令信封 = 元数据 + 幂等 + 版本预期，不含
+#   工作流引擎；跨引擎事务由调用方显式编排（S2）。
+# - 三态正交（§四.2）：来源关联状态 × 计算状态 × 人工审核状态分开
+#   记录——任何单字段 verified 都被类型系统排除。
+#
+# 依赖面：serde（workspace 单源）用于 sidecar/事件序列化；其余纯 std。
+# 指纹默认实现 FNV-1a 64（变更检测用途、非防篡改——算法前缀编码，
+# sha256 升级路径在档，S2 写安全轮评估）。
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
