@@ -268,6 +268,11 @@ impl Workbench {
     }
 
     /// 重开会话（路径由调用方重供——路径不入 sidecar；policy 校验）。
+    ///
+    /// 恢复保真：`body_doc_id`/`body_version`/来源版本全部从 sidecar
+    /// 登记（`sidecar.document` 与 `sidecar.source_docs`）恢复——绝不
+    /// 硬编码重启值，否则重开后 `refresh_body`/`ingest_source` 会造成
+    /// 版本回退（与历史登记碰撞）与正文 doc_id 置空。
     pub fn open(
         policy: crate::security::PathPolicy,
         sidecar_path: &Path,
@@ -284,20 +289,33 @@ impl Workbench {
         let sidecar = store
             .load()?
             .ok_or(SidecarError::Corrupt("sidecar not found".into()))?;
+        // 正文身份与版本从 sidecar 恢复（单一真源）。
+        let body_doc_id = sidecar.document.doc_id.as_str().to_string();
+        let body_version = sidecar.document.version.0;
+        // 来源版本从 sidecar 注册表恢复：同 doc_id 未登记过的默认 1
+        // （首次 ingest 才入册）。
         let sources = source_paths
             .iter()
-            .map(|(id, p)| SourceRegistration {
-                doc_id: id.clone(),
-                path: p.clone(),
-                version: 1,
+            .map(|(id, p)| {
+                let version = sidecar
+                    .source_docs
+                    .iter()
+                    .find(|d| d.doc_id.as_str() == id.as_str())
+                    .map(|d| d.version.0)
+                    .unwrap_or(1);
+                SourceRegistration {
+                    doc_id: id.clone(),
+                    path: p.clone(),
+                    version,
+                }
             })
             .collect();
         Ok(Workbench {
             sidecar,
             store,
             body_path: body_path.to_path_buf(),
-            body_doc_id: String::new(),
-            body_version: 1,
+            body_doc_id,
+            body_version,
             sources,
             policy,
         })

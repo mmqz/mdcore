@@ -26,10 +26,11 @@ fn policy_for(dir: &std::path::Path) -> PathPolicy {
 
 fn write_sample_xlsx(path: &std::path::Path, price: f64) {
     let mut wb = WorkbookWriter::new();
-    let mut sh = wb.add_sheet("报价表").unwrap();
-    sh.write(6, 1, CellValue::Number(12.5), None).unwrap();
-    sh.write(6, 2, CellValue::Number(price), None).unwrap();
-    drop(sh);
+    {
+        let mut sh = wb.add_sheet("报价表").unwrap();
+        sh.write(6, 1, CellValue::Number(12.5), None).unwrap();
+        sh.write(6, 2, CellValue::Number(price), None).unwrap();
+    }
     wb.save_to_path(&path.to_string_lossy()).unwrap();
 }
 
@@ -140,6 +141,10 @@ fn path_policy_blocks_out_of_root_everywhere() {
     std::fs::remove_dir_all(&outside).ok();
 }
 
+/// 符号链接构造是 Unix 面能力——非 Unix 目标（wasm32 编译检查面）
+/// 不编译本用例（加载态行为由 PathPolicy::check 的 canonicalize 语义
+/// 覆盖，与平台无关）。
+#[cfg(all(test, target_family = "unix"))]
 #[test]
 fn path_policy_blocks_symlink_escape() {
     let dir = temp_dir("symlink");

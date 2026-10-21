@@ -27,14 +27,15 @@ fn temp_dir(tag: &str) -> PathBuf {
 /// 合成 XLSX（报价表）：B7 数量 / C7 单价 / B8、C8 第二行。
 fn write_sample_xlsx(path: &std::path::Path, price_c7: f64) {
     let mut wb = WorkbookWriter::new();
-    let mut sh = wb.add_sheet("报价表").unwrap();
-    sh.write(6, 1, CellValue::Number(12.5), None).unwrap(); // B7 qty
-    sh.write(6, 2, CellValue::Number(price_c7), None).unwrap(); // C7 price
-    sh.write(7, 1, CellValue::Number(20.0), None).unwrap(); // B8
-    sh.write(7, 2, CellValue::Number(100.5), None).unwrap(); // C8
-    sh.write(0, 4, CellValue::Text("备注".into()), None)
-        .unwrap(); // E1 文本格
-    drop(sh);
+    {
+        let mut sh = wb.add_sheet("报价表").unwrap();
+        sh.write(6, 1, CellValue::Number(12.5), None).unwrap(); // B7 qty
+        sh.write(6, 2, CellValue::Number(price_c7), None).unwrap(); // C7 price
+        sh.write(7, 1, CellValue::Number(20.0), None).unwrap(); // B8
+        sh.write(7, 2, CellValue::Number(100.5), None).unwrap(); // C8
+        sh.write(0, 4, CellValue::Text("备注".into()), None)
+            .unwrap(); // E1 文本格
+    }
     wb.save_to_path(&path.to_string_lossy()).unwrap();
 }
 
