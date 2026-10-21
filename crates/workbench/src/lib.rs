@@ -33,10 +33,13 @@
 //!   连接；段落定位器指纹 = 单段 trim 文本。
 //! - 时间：`at_ms` 全由调用方注入（确定性；无时钟依赖）。
 
+pub mod command;
 pub mod ingest;
 pub mod pipeline;
 pub mod report;
+pub mod security;
 
+pub use command::{expect_exactly, WorkbenchCommand};
 pub use ingest::{
     docx_body_ref, ingest_docx, ingest_xlsx, xlsx_source_ref, DocxBody, ParagraphInfo, SourceCell,
     XlsxSource,
@@ -45,6 +48,10 @@ pub use pipeline::{
     BindingProposal, CalcInputSpec, CalcProposal, InputSource, Workbench, WorkbenchError,
 };
 pub use report::{pending_reviews, render_report, stale_evidence};
+pub use security::{
+    check_counts, check_sidecar_size, publish, PathPolicy, PolicyError, MAX_CALCULATIONS,
+    MAX_EVIDENCE, MAX_SIDECAR_BYTES,
+};
 
 /// 工作台标记（干净导出验证用——正文出现任一即脏）。
 pub const WORKBENCH_MARKERS: &[&str] = &[

@@ -19,9 +19,9 @@
 use std::path::{Path, PathBuf};
 
 use mdc_evidence::{
-    CalculationRecord, CurrentInput, Decimal, DocumentRef, EvalError, EvidenceRecord,
-    Fingerprinter, Fnv64, IdempotencyKey, Locator, RecalcOutcome, RelationKind, ReviewStatus,
-    Sidecar, SidecarError, SidecarStore,
+    CalculationRecord, CommandEnvelope, CommandOutcome, CurrentInput, Decimal, DocumentRef,
+    EvalError, EvidenceRecord, Fingerprinter, Fnv64, IdempotencyKey, Locator, RecalcOutcome,
+    RelationKind, ReviewStatus, Sidecar, SidecarError, SidecarStore, VersionStamp,
 };
 use mdc_office_io::docx::{read_docx_from_bytes, DocxError};
 use mdc_office_io::io::ReadError;
@@ -136,6 +136,12 @@ pub enum WorkbenchError {
         marker: String,
     },
     ExportByteMismatch,
+    /// 路径允许列表拒绝（S2——分发面映射 Rejected）。
+    PathPolicy(crate::security::PolicyError),
+    /// 规模限制拒绝（S2——条数/字节门）。
+    Limit(String),
+    /// 序列化失败。
+    Serialize(serde_json::Error),
 }
 
 impl std::fmt::Display for WorkbenchError {
@@ -188,6 +194,9 @@ impl std::fmt::Display for WorkbenchError {
             WorkbenchError::ExportByteMismatch => {
                 f.write_str("clean export verification failed: bytes differ from body")
             }
+            WorkbenchError::PathPolicy(e) => write!(f, "path policy: {e}"),
+            WorkbenchError::Limit(r) => write!(f, "limit: {r}"),
+            WorkbenchError::Serialize(e) => write!(f, "serialize: {e}"),
         }
     }
 }
@@ -204,7 +213,7 @@ impl From<std::io::Error> for WorkbenchError {
     }
 }
 
-/// 八步闭环会话。
+/// 八步闭环会话（S2 起：全部文件面经 `policy` 允许列表）。
 pub struct Workbench {
     sidecar: Sidecar,
     store: SidecarStore,
@@ -212,17 +221,26 @@ pub struct Workbench {
     body_doc_id: String,
     body_version: u64,
     sources: Vec<SourceRegistration>,
+    policy: crate::security::PathPolicy,
 }
 
 impl Workbench {
     /// ②登记 DOCX 正文（建 sidecar；正文指纹 = 登记引用）。
+    /// S2：sidecar/正文/来源/导出全部路径必须落在 `policy` 允许根内。
     pub fn start(
+        policy: crate::security::PathPolicy,
         sidecar_path: &Path,
         body_path: &Path,
         body_doc_id: &str,
         at_ms: u64,
         operator: &str,
     ) -> Result<Workbench, WorkbenchError> {
+        policy
+            .check_dest(sidecar_path)
+            .map_err(WorkbenchError::PathPolicy)?;
+        policy
+            .check(body_path)
+            .map_err(WorkbenchError::PathPolicy)?;
         let body = ingest::ingest_docx(body_path)?;
         let body_ref = ingest::docx_body_ref(body_doc_id, &body, 1);
         let mut sidecar = Sidecar::new(body_ref);
@@ -235,7 +253,9 @@ impl Workbench {
             operator,
         );
         let store = SidecarStore::new(sidecar_path);
-        store.save(&sidecar)?;
+        let json = serde_json::to_string_pretty(&sidecar).map_err(WorkbenchError::Serialize)?;
+        crate::security::check_sidecar_size(json.len()).map_err(WorkbenchError::Limit)?;
+        crate::security::publish(store.path(), json.as_bytes())?;
         Ok(Workbench {
             sidecar,
             store,
@@ -243,15 +263,23 @@ impl Workbench {
             body_doc_id: body_doc_id.to_string(),
             body_version: 1,
             sources: vec![],
+            policy,
         })
     }
 
-    /// 重开会话（路径由调用方重供——路径不入 sidecar）。
+    /// 重开会话（路径由调用方重供——路径不入 sidecar；policy 校验）。
     pub fn open(
+        policy: crate::security::PathPolicy,
         sidecar_path: &Path,
         body_path: &Path,
         source_paths: &[(String, PathBuf)],
     ) -> Result<Workbench, WorkbenchError> {
+        policy
+            .check_dest(sidecar_path)
+            .map_err(WorkbenchError::PathPolicy)?;
+        policy
+            .check(body_path)
+            .map_err(WorkbenchError::PathPolicy)?;
         let store = SidecarStore::new(sidecar_path);
         let sidecar = store
             .load()?
@@ -271,6 +299,7 @@ impl Workbench {
             body_doc_id: String::new(),
             body_version: 1,
             sources,
+            policy,
         })
     }
 
@@ -281,6 +310,54 @@ impl Workbench {
     /// 直接访问（高级面——变更后请自行 save；常规操作走各步方法）。
     pub fn sidecar_mut(&mut self) -> &mut Sidecar {
         &mut self.sidecar
+    }
+
+    // —— S2 命令层 crate 内辅助（command.rs 用）——
+
+    pub(crate) fn lookup_command(
+        &self,
+        key: &mdc_evidence::IdempotencyKey,
+    ) -> Option<CommandOutcome> {
+        self.sidecar
+            .idempotency
+            .iter()
+            .find(|e| e.key == *key)
+            .map(|e| e.outcome.clone())
+    }
+
+    pub(crate) fn audit_replay(&mut self, envelope: &CommandEnvelope, at_ms: u64) {
+        self.sidecar.push_audit_public(
+            "command_replayed",
+            serde_json::json!({
+                "op_id": envelope.op_id,
+                "idempotency_key": envelope.idempotency_key.0,
+            }),
+            at_ms,
+            &envelope.operator,
+        );
+    }
+
+    pub(crate) fn body_version_stamp(&self) -> VersionStamp {
+        self.sidecar.document.version
+    }
+
+    pub(crate) fn has_any_records(&self) -> bool {
+        !self.sidecar.evidence.is_empty() || !self.sidecar.calculations.is_empty()
+    }
+
+    pub(crate) fn store_command_outcome(
+        &mut self,
+        envelope: &CommandEnvelope,
+        outcome: CommandOutcome,
+    ) {
+        let _ =
+            self.sidecar
+                .record_command(envelope.idempotency_key.clone(), &envelope.op_id, outcome);
+    }
+
+    /// 落盘（发布单点同 `save`——命令层入口用）。
+    pub(crate) fn persist(&self) -> Result<(), WorkbenchError> {
+        self.save()
     }
 
     /// ⑤ 报告（三态分列——见 report 模块）。
@@ -298,8 +375,12 @@ impl Workbench {
         crate::report::stale_evidence(&self.sidecar)
     }
 
+    /// 落盘（S2 发布单点：序列化 → 字节门 → 临时区+rename 原子发布）。
     fn save(&self) -> Result<(), WorkbenchError> {
-        self.store.save(&self.sidecar)?;
+        let json =
+            serde_json::to_string_pretty(&self.sidecar).map_err(WorkbenchError::Serialize)?;
+        crate::security::check_sidecar_size(json.len()).map_err(WorkbenchError::Limit)?;
+        crate::security::publish(self.store.path(), json.as_bytes())?;
         Ok(())
     }
 
@@ -324,6 +405,9 @@ impl Workbench {
         at_ms: u64,
         operator: &str,
     ) -> Result<DocumentRef, WorkbenchError> {
+        self.policy
+            .check(path)
+            .map_err(WorkbenchError::PathPolicy)?;
         let src = ingest::ingest_xlsx(path, doc_id)?;
         let version = match self.sources.iter().find(|s| s.doc_id == doc_id) {
             Some(reg) => reg.version + 1,
@@ -356,6 +440,9 @@ impl Workbench {
             .ok_or_else(|| WorkbenchError::SourceNotRegistered {
                 doc_id: doc_id.to_string(),
             })?;
+        self.policy
+            .check(&reg.path)
+            .map_err(WorkbenchError::PathPolicy)?;
         let src = ingest::ingest_xlsx(&reg.path, doc_id)?;
         let doc_ref = ingest::xlsx_source_ref(&src, reg.version);
         let registered = self
@@ -381,6 +468,13 @@ impl Workbench {
         at_ms: u64,
         operator: &str,
     ) -> Result<String, WorkbenchError> {
+        crate::security::check_counts(
+            self.sidecar.evidence.len(),
+            self.sidecar.calculations.len(),
+            true,
+            false,
+        )
+        .map_err(WorkbenchError::Limit)?;
         // 正文 fail-closed + 段落存在 + 主张数值在场
         let body = self.current_body()?;
         self.check_body_fresh(&body)?;
@@ -453,6 +547,13 @@ impl Workbench {
         at_ms: u64,
         operator: &str,
     ) -> Result<Decimal, WorkbenchError> {
+        crate::security::check_counts(
+            self.sidecar.evidence.len(),
+            self.sidecar.calculations.len(),
+            false,
+            true,
+        )
+        .map_err(WorkbenchError::Limit)?;
         let mut inputs = vec![];
         for spec in &p.inputs {
             match &spec.source {
@@ -552,10 +653,14 @@ impl Workbench {
                 (Some(Locator::XlsxCell { sheet, cell, .. }), Some(doc_id)) => {
                     let reg = self.sources.iter().find(|s| s.doc_id == *doc_id);
                     let extracted = match reg {
-                        Some(reg) => ingest::ingest_xlsx(&reg.path, doc_id).ok().and_then(|src| {
-                            src.cell(sheet, cell.0.as_str()).and_then(|c| c.decimal)
-                        }),
-                        None => None,
+                        // 注册路径复查（符号链接可能已改指根外——fail-closed
+                        // 视为不可用，级联 Unavailable）
+                        Some(reg) if self.policy.check(&reg.path).is_ok() => {
+                            ingest::ingest_xlsx(&reg.path, doc_id).ok().and_then(|src| {
+                                src.cell(sheet, cell.0.as_str()).and_then(|c| c.decimal)
+                            })
+                        }
+                        _ => None,
                     };
                     current.push(match extracted {
                         Some(v) => CurrentInput::Available { value: v },
@@ -611,6 +716,35 @@ impl Workbench {
         Ok(())
     }
 
+    /// 主张侧显式重验（⑥恢复通道——claim 锚）：新段落位置 + 当前
+    /// 正文（fail-closed：当前正文指纹必须 == sidecar 登记引用，
+    /// 即 refresh_body 已先行）。
+    pub fn reverify_claim(
+        &mut self,
+        evidence_id: &str,
+        paragraph_index: u32,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<(), WorkbenchError> {
+        let body = self.current_body()?;
+        self.check_body_fresh(&body)?;
+        let para = body
+            .paragraph(paragraph_index)
+            .ok_or(WorkbenchError::ParagraphNotFound {
+                index: paragraph_index,
+            })?;
+        self.sidecar.reverify_claim(
+            evidence_id,
+            self.sidecar.document.clone(),
+            paragraph_index,
+            para.fingerprint.0.clone(),
+            at_ms,
+            operator,
+        )?;
+        self.save()?;
+        Ok(())
+    }
+
     /// ⑥ 正文改写失效检测（claim 锚；版本自增）。
     pub fn refresh_body(&mut self, at_ms: u64, operator: &str) -> Result<usize, WorkbenchError> {
         let body = self.current_body()?;
@@ -659,6 +793,9 @@ impl Workbench {
         at_ms: u64,
         operator: &str,
     ) -> Result<(), WorkbenchError> {
+        self.policy
+            .check_dest(dest)
+            .map_err(WorkbenchError::PathPolicy)?;
         let body_bytes = std::fs::read(&self.body_path)?;
         // 先验证后产出（§九.11——验证失败不产出已发布结果）：
         // 验证 1：模型可解析（Word/WPS 可开的最小代理）+ 零工作台标记。

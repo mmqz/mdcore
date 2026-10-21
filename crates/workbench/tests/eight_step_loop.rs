@@ -14,6 +14,10 @@ use mdc_workbench::{
     BindingProposal, CalcInputSpec, CalcProposal, InputSource, Workbench, WorkbenchError,
 };
 
+fn policy_for(dir: &std::path::Path) -> mdc_workbench::PathPolicy {
+    mdc_workbench::PathPolicy::new(&[dir.to_path_buf()]).expect("temp dir root")
+}
+
 fn temp_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("mdc-wb-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
@@ -64,7 +68,15 @@ fn eight_step_closed_loop() {
     };
 
     // ② 登记 DOCX 正文（建 sidecar）
-    let mut wb = Workbench::start(&sidecar_path, &body, "body-1", tick(), "human:setup").unwrap();
+    let mut wb = Workbench::start(
+        policy_for(&dir),
+        &sidecar_path,
+        &body,
+        "body-1",
+        tick(),
+        "human:setup",
+    )
+    .unwrap();
     assert_eq!(wb.sidecar().document.doc_id.as_str(), "body-1");
 
     // ① 导入 XLSX 来源
@@ -276,7 +288,15 @@ fn source_correction_full_recovery_path() {
         *t
     };
 
-    let mut wb = Workbench::start(&sidecar_path, &body, "body-1", tick(), "human:setup").unwrap();
+    let mut wb = Workbench::start(
+        policy_for(&dir),
+        &sidecar_path,
+        &body,
+        "body-1",
+        tick(),
+        "human:setup",
+    )
+    .unwrap();
     wb.ingest_source("src-1", &xlsx, tick(), "ai:glm").unwrap();
     wb.propose_binding(
         BindingProposal {
@@ -461,7 +481,15 @@ fn proposals_fail_closed_on_stale_views_and_bad_targets() {
     write_sample_xlsx(&xlsx, 336.8);
     write_sample_docx(&body, "A 设备小计 4210.00 万元。");
 
-    let mut wb = Workbench::start(&sidecar_path, &body, "body-1", 100, "human:setup").unwrap();
+    let mut wb = Workbench::start(
+        policy_for(&dir),
+        &sidecar_path,
+        &body,
+        "body-1",
+        100,
+        "human:setup",
+    )
+    .unwrap();
     wb.ingest_source("src-1", &xlsx, 200, "ai:glm").unwrap();
 
     let proposal = |par: u32, coord: &str, value: Option<Decimal>| BindingProposal {
@@ -602,7 +630,15 @@ fn clean_export_detects_markers() {
     w.paragraph_text("这段正文包含 evidence_id 污染标记。");
     w.save_to_path(&body.to_string_lossy()).unwrap();
 
-    let mut wb = Workbench::start(&sidecar_path, &body, "body-1", 100, "human:setup").unwrap();
+    let mut wb = Workbench::start(
+        policy_for(&dir),
+        &sidecar_path,
+        &body,
+        "body-1",
+        100,
+        "human:setup",
+    )
+    .unwrap();
     assert!(matches!(
         wb.export_clean(&export, 200, "human:wang"),
         Err(WorkbenchError::MarkerFound { .. })
