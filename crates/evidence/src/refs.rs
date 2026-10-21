@@ -22,6 +22,10 @@ pub enum EngineKind {
     /// Markdown（mdcore 域——后续扩展）。
     #[serde(rename = "md")]
     Markdown,
+    /// Canvas（画布域——collab-r1 后续目标③：证据系统对画布对象的
+    /// 关联能力；对象身份 = 画布对象 ID，定位器见 Locator::CanvasObject）。
+    #[serde(rename = "canvas")]
+    Canvas,
 }
 
 impl EngineKind {
@@ -31,6 +35,7 @@ impl EngineKind {
             EngineKind::Xlsx => "xlsx",
             EngineKind::Pdf => "pdf",
             EngineKind::Markdown => "md",
+            EngineKind::Canvas => "canvas",
         }
     }
 }

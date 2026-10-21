@@ -126,6 +126,13 @@ pub enum Locator {
         page: u32,
         text_fingerprint: String,
     },
+    /// Canvas 画布对象（画布域协作引擎 mdc-canvas——对象身份 = 画布
+    /// 对象 ID[Map 键，删除撤销复原后同 ID]；指纹 = 对象语义指纹
+    /// [几何/属性/边端点/组成员——位置漂移即语义变更，证据失效]）。
+    CanvasObject {
+        object_id: String,
+        object_fingerprint: String,
+    },
 }
 
 impl Locator {
@@ -137,6 +144,7 @@ impl Locator {
             Locator::DocxParagraph { .. } | Locator::DocxTableCell { .. } => EngineKind::Docx,
             Locator::MarkdownBlock { .. } => EngineKind::Markdown,
             Locator::PdfPageText { .. } => EngineKind::Pdf,
+            Locator::CanvasObject { .. } => EngineKind::Canvas,
         }
     }
 

@@ -1,0 +1,34 @@
+[package]
+name = "mdc-canvas"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# mdc-canvas —— Canvas 引擎（正式交付目标③，用户指令 2026-10-21）。
+#
+# 定位与纪律：
+# - **独立领域模型**（§六 架构约束）：画布 = 图形状（节点/连线/分组
+#   + 几何 + 开放属性），非文档树——自有 CanvasObject/CanvasCommand，
+#   与 mdc-collab（文档域）并列，不建跨引擎统一 CRDT（各自 Doc）。
+# - **yrs 接触点**：产品面 yrs 接触点 = collab 域两 crate（mdc-collab
+#   文档面 / mdc-canvas 画布面）——各自 crate 边界可独立撤除，公开
+#   API 均零 yrs 类型；不变量集两 crate 同源同构（skip_gc 无条件 /
+#   捕获窗 0 / client_id 53 位域 / 入向全限额 + panic 隔离 / 双撤销
+#   栈 origin 分栈 + capture_transaction 拒 None-origin / 软上限
+#   粗粒度策略）。
+# - **载体**：根 Map "canvas"——对象 = 键（对象 ID）→ 嵌套 Map；
+#   属性写入 = yrs Map 键级 LWW（位置/尺寸高频更新的自然语义）。
+# - **同一命令接口模式**（与 mdc-collab 同构）：CanvasCommand 受控
+#   命令集 + Actor{Human,Ai} + execute(actor, cmd) + 每命令一事务
+#   一 origin + 撤销回执。
+# - **对象身份**：对象 ID = Map 键——删除 → 撤销复原 = **同 ID 回归**
+#   （Map 键身份稳定，优于 XML 元素的新 ID 族——删除复原的语义
+#   连续性是画布域的身份特性，测试钉定）。
+# - **证据关联**：依赖 mdc-evidence（契约层——Fingerprinter +
+#   Locator::CanvasObject）：对象语义指纹（几何/属性/边端点/组成员
+#   确定性序列化 FNV-1a）→ DocumentRef(EngineKind::Canvas) 登记 →
+#   画布改写 → 指纹失配 → 证据 Stale（三态机复用，画布为受证对象）。
+
+[dependencies]
+yrs = { version = "0.28", features = ["sync"] }
+mdc-evidence = { path = "../evidence" }

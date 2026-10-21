@@ -670,6 +670,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-canvas"
+version = "0.1.0"
+dependencies = [
+ "mdc-evidence",
+ "yrs",
+]
+
+[[package]]
 name = "mdc-collab"
 version = "0.1.0"
 dependencies = [
