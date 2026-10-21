@@ -77,6 +77,12 @@ pub struct EvidenceRecord {
     pub evidence_id: String,
     /// 被支持的正文主张（人读文本——"总报价 4210.00 万元"）。
     pub claim: String,
+    /// 主张数值（关键数字的机器可比对形——s1-r2 加性字段：Calculated
+    /// 型必填，复算的 ResultMismatch 判定锚；DirectQuote 等引用型
+    /// 可选登记，供后续数值对照。`#[serde(default)]` 保证 v1 数据
+    /// 加载不破）。
+    #[serde(default)]
+    pub claimed_value: Option<Decimal>,
     /// 主张所在正文位置（DOCX 侧定位器）。
     pub claim_locator: Locator,
     /// 主张登记时的正文文档引用（版本 + 指纹——失效判定锚）。
@@ -129,6 +135,11 @@ impl EvidenceRecord {
         if self.claim.is_empty() {
             return Err(EvidenceError::EmptyClaim);
         }
+        // Calculated 型主张必有可比对数值（无数字的"计算型主张"
+        // = 复算链断裂，拒建——s1-r2 强化）。
+        if self.relation == RelationKind::Calculated && self.claimed_value.is_none() {
+            return Err(EvidenceError::CalculatedMissingValue);
+        }
         Ok(())
     }
 
@@ -153,6 +164,8 @@ impl EvidenceRecord {
 pub enum EvidenceError {
     CalculatedMissingRef,
     NonCalculatedWithRef,
+    /// Calculated 型主张缺 claimed_value（s1-r2——复算链完整性）。
+    CalculatedMissingValue,
     EngineMismatch,
     EmptyClaim,
 }
@@ -163,6 +176,9 @@ impl std::fmt::Display for EvidenceError {
             EvidenceError::CalculatedMissingRef => "calculated relation requires calc_ref",
             EvidenceError::NonCalculatedWithRef => {
                 "non-calculated relation must not carry calc_ref"
+            }
+            EvidenceError::CalculatedMissingValue => {
+                "calculated relation requires a numeric claimed_value"
             }
             EvidenceError::EngineMismatch => "locator engine disagrees with document engine",
             EvidenceError::EmptyClaim => "claim text is empty",
@@ -190,6 +206,7 @@ mod tests {
         EvidenceRecord {
             evidence_id: "e1".into(),
             claim: "总报价 4210.00 万元".into(),
+            claimed_value: Some(Decimal::parse("4210.00").unwrap()),
             claim_locator: Locator::DocxParagraph {
                 paragraph_index: 3,
                 text_fingerprint: "fnv64:cc".into(),
@@ -231,6 +248,46 @@ mod tests {
             EvidenceError::NonCalculatedWithRef
         );
         assert!(record(RelationKind::DirectQuote, None).validate().is_ok());
+    }
+
+    #[test]
+    fn calculated_requires_claimed_value() {
+        let mut r = record(RelationKind::Calculated, Some("c1".into()));
+        assert!(r.validate().is_ok());
+        r.claimed_value = None;
+        assert_eq!(
+            r.validate().unwrap_err(),
+            EvidenceError::CalculatedMissingValue,
+            "无数字的计算型主张拒建（复算链完整性）"
+        );
+        // 引用型可选登记（不强制）
+        let mut q = record(RelationKind::DirectQuote, None);
+        q.claimed_value = None;
+        assert!(q.validate().is_ok());
+    }
+
+    #[test]
+    fn claimed_value_serde_default_keeps_v1_data_loadable() {
+        // v1 序列化形（无 claimed_value 字段）反序列化 = None，不破。
+        let legacy = r#"{
+            "evidence_id": "e1",
+            "claim": "主张",
+            "claim_locator": {"kind": "docx_paragraph", "paragraph_index": 3, "text_fingerprint": "fnv64:cc"},
+            "claim_doc": {"doc_id": "d1", "engine": "docx", "version": 1, "fingerprint": "fnv64:aa"},
+            "source_locator": {"kind": "xlsx_cell", "sheet": "s", "cell": "C7", "value_fingerprint": "fnv64:dd", "formula_fingerprint": null},
+            "source_doc": {"doc_id": "d1", "engine": "xlsx", "version": 1, "fingerprint": "fnv64:bb"},
+            "excerpt": "x",
+            "relation": "direct_quote",
+            "calc_ref": null,
+            "linkage": "valid",
+            "calc": "not_applicable",
+            "review": "pending",
+            "generation_batch": "b1",
+            "created_at_ms": 1000
+        }"#;
+        let parsed: EvidenceRecord = serde_json::from_str(legacy)
+            .expect("v1 形（缺 claimed_value）加载不破——serde(default)");
+        assert!(parsed.claimed_value.is_none());
     }
 
     #[test]

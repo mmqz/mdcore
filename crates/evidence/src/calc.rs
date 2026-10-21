@@ -243,6 +243,15 @@ impl Decimal {
         })
     }
 
+    /// 取负（i128 下界对称性：-(-2^127) 越界 = 显式错误；s1-r2 求值器
+    /// 一元负号所需）。
+    pub fn checked_neg(self) -> Result<Decimal, DecimalError> {
+        Ok(Decimal {
+            unscaled: self.unscaled.checked_neg().ok_or(DecimalError::Overflow)?,
+            scale: self.scale,
+        })
+    }
+
     /// 数值相等（跨标度）。
     pub fn numeric_eq(self, other: Decimal) -> Result<bool, DecimalError> {
         let (a, b, _) = Self::align(self, other)?;
@@ -450,6 +459,20 @@ mod tests {
         assert!(one
             .checked_div(Decimal::zero(0), 2, Rounding::HalfUp)
             .is_err());
+    }
+
+    #[test]
+    fn checked_neg_boundaries() {
+        let d = Decimal::parse("-2.5").unwrap();
+        assert_eq!(d.checked_neg().unwrap().to_string(), "2.5");
+        // i128 下界取负越界 = 显式错误（上界 -(-170141183460469231731..)
+        // 不存在对称问题——下界才是非对称端）
+        let min = Decimal::from_unscaled(i128::MIN, 0).unwrap();
+        assert_eq!(
+            min.checked_neg().unwrap_err(),
+            DecimalError::Overflow,
+            "-(i128::MIN) 越界显式错误"
+        );
     }
 
     #[test]

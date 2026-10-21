@@ -21,9 +21,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::{AuditEvent, CommandOutcome, IdempotencyKey};
 use crate::evidence::{CalculationRecord, EvidenceRecord};
+use crate::expr::{self, CurrentInput, EvalOutcome, RecalcOutcome};
 use crate::locator::Locator;
 use crate::refs::DocumentRef;
-use crate::status::LinkageStatus;
+use crate::status::{CalcStatus, LinkageStatus};
 
 /// 当前模式版本（破坏性变更 = 递增 + 迁移函数——读旧拒新是错误，
 /// 正确形状 = load 时按版本分派迁移）。
@@ -212,6 +213,109 @@ impl Sidecar {
         true
     }
 
+    /// 首次求值落值（s1-r2）：`evaluate` 产物写回——final_value +
+    /// intermediates + calc_status=Passed（值刚由求值器产出，链路自洽）。
+    /// 已含登记值的记录拒绝（不静默覆写——更新走 `recalculate_calc`
+    /// 或显式重登记）。
+    pub fn apply_evaluation(
+        &mut self,
+        calc_id: &str,
+        outcome: EvalOutcome,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<(), SidecarError> {
+        let rec = self
+            .calculations
+            .iter_mut()
+            .find(|c| c.calc_id == calc_id)
+            .ok_or_else(|| SidecarError::CalculationNotFound(calc_id.to_string()))?;
+        if rec.final_value.is_some() {
+            return Err(SidecarError::AlreadyEvaluated(calc_id.to_string()));
+        }
+        rec.final_value = Some(outcome.value);
+        rec.intermediates = outcome.intermediates;
+        rec.calc_status = CalcStatus::Passed;
+        self.push_audit(
+            at_ms,
+            operator,
+            "calc_evaluated",
+            serde_json::json!({
+                "calc_id": calc_id,
+                "value": outcome.value.to_string(),
+                "unit": outcome.computed_unit,
+            }),
+        );
+        Ok(())
+    }
+
+    /// 复算 + 级联（s1-r2——§四.4 复算闭环的执行点）：
+    ///
+    /// 1. `expr::recalc` 四步链（可用性/现值对照/求值/登记值对照）
+    ///    → 更新 `CalculationRecord.calc_status`；
+    /// 2. 对引用该计算的每条证据：失败**级联同因**（级联诚实性）；
+    ///    通过时对照 `evidence.claimed_value`（第五步：正文主张值
+    ///    对照）→ Passed / Failed(ResultMismatch)。
+    ///
+    /// 输入现值由调用方从真实来源提取（依赖倒置：本层不做引擎 IO）。
+    pub fn recalculate_calc(
+        &mut self,
+        calc_id: &str,
+        current: &[CurrentInput],
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<RecalcOutcome, SidecarError> {
+        let rec = self
+            .calculations
+            .iter()
+            .find(|c| c.calc_id == calc_id)
+            .ok_or_else(|| SidecarError::CalculationNotFound(calc_id.to_string()))?;
+        let outcome = expr::recalc(rec, current);
+        let rec = self
+            .calculations
+            .iter_mut()
+            .find(|c| c.calc_id == calc_id)
+            .expect("上方已验证存在");
+        rec.calc_status = outcome.status;
+        // 级联：引用该计算的证据逐条同步 calc 面
+        let mut cascaded = vec![];
+        for ev in self.evidence.iter_mut() {
+            if ev.calc_ref.as_deref() != Some(calc_id) {
+                continue;
+            }
+            ev.calc = match outcome.status {
+                CalcStatus::Failed(f) => CalcStatus::Failed(f),
+                CalcStatus::NotApplicable => CalcStatus::NotApplicable,
+                CalcStatus::Passed => {
+                    let computed = outcome.computed.expect("Passed 必携带计算值");
+                    match &ev.claimed_value {
+                        Some(claimed) => {
+                            if claimed.numeric_eq(computed).unwrap_or(false) {
+                                CalcStatus::Passed
+                            } else {
+                                CalcStatus::Failed(crate::status::CalcFailure::ResultMismatch)
+                            }
+                        }
+                        // 无可比对数值不可通过（诚实纪律；新数据经
+                        // validate 已排除，此为旧数据防御面）
+                        None => CalcStatus::Failed(crate::status::CalcFailure::ResultMismatch),
+                    }
+                }
+            };
+            cascaded.push(ev.evidence_id.clone());
+        }
+        self.push_audit(
+            at_ms,
+            operator,
+            "calc_recalc",
+            serde_json::json!({
+                "calc_id": calc_id,
+                "status": format!("{:?}", outcome.status),
+                "cascaded_evidence": cascaded,
+            }),
+        );
+        Ok(outcome)
+    }
+
     /// **显式重验**（唯一恢复通道）：新定位器 + 新文档引用 + 操作者
     /// ——审计记录后 linkage 置 Valid。定位器与文档引擎一致性校验。
     pub fn reverify_evidence(
@@ -289,6 +393,10 @@ pub enum SidecarError {
     EvidenceNotFound,
     EngineMismatch,
     DuplicateEvidenceId(String),
+    /// 计算记录不存在（s1-r2）。
+    CalculationNotFound(String),
+    /// 记录已含登记值——拒绝覆写（s1-r2 不静默覆写纪律）。
+    AlreadyEvaluated(String),
 }
 
 impl std::fmt::Display for SidecarError {
@@ -305,6 +413,12 @@ impl std::fmt::Display for SidecarError {
             SidecarError::EngineMismatch => f.write_str("locator/document engine mismatch"),
             SidecarError::DuplicateEvidenceId(id) => {
                 write!(f, "duplicate evidence id: {id}")
+            }
+            SidecarError::CalculationNotFound(id) => {
+                write!(f, "calculation record not found: {id}")
+            }
+            SidecarError::AlreadyEvaluated(id) => {
+                write!(f, "calculation already evaluated (refuse overwrite): {id}")
             }
         }
     }
@@ -391,6 +505,7 @@ mod tests {
         EvidenceRecord {
             evidence_id: id.into(),
             claim: "C7 合计 4210.00 万元".into(),
+            claimed_value: Some(crate::calc::Decimal::parse("4210.00").unwrap()),
             claim_locator: Locator::DocxParagraph {
                 paragraph_index: 3,
                 text_fingerprint: "fnv64:cc".into(),
@@ -593,5 +708,164 @@ mod tests {
         fs::write(dir.join("sc.json"), b"{ not valid").unwrap();
         assert!(matches!(store.load(), Err(SidecarError::Corrupt(_))));
         fs::remove_dir_all(&dir).ok();
+    }
+
+    // —— s1-r2：求值落值 + 复算级联 ——
+
+    fn calc_inputs() -> Vec<crate::evidence::CalcInput> {
+        use crate::evidence::CalcInput;
+        vec![
+            CalcInput {
+                name: "qty".into(),
+                value: crate::calc::Decimal::parse("12.5").unwrap(),
+                source: Some(Locator::XlsxCell {
+                    sheet: "报价表".into(),
+                    cell: CellCoord::parse("B7").unwrap(),
+                    value_fingerprint: Fnv64.fingerprint(b"12.5").0,
+                    formula_fingerprint: None,
+                }),
+                unit: Some("件".into()),
+            },
+            CalcInput {
+                name: "price".into(),
+                value: crate::calc::Decimal::parse("336.80").unwrap(),
+                source: None,
+                unit: Some("万元".into()),
+            },
+        ]
+    }
+
+    fn unevaluated_calc() -> CalculationRecord {
+        CalculationRecord {
+            calc_id: "calc-1".into(),
+            inputs: calc_inputs(),
+            expression: "qty * price".into(),
+            unit: Some("万元".into()),
+            precision: PrecisionRule {
+                target_scale: 2,
+                rounding: crate::calc::Rounding::HalfUp,
+            },
+            intermediates: vec![],
+            final_value: None,
+            calc_status: CalcStatus::NotApplicable,
+        }
+    }
+
+    fn avail(v: &str) -> CurrentInput {
+        CurrentInput::Available {
+            value: crate::calc::Decimal::parse(v).unwrap(),
+        }
+    }
+
+    #[test]
+    fn apply_evaluation_lands_and_refuses_overwrite() {
+        let mut sc = Sidecar::new(doc(EngineKind::Docx, "body-v1", 1));
+        assert!(sc.add_calculation(unevaluated_calc(), 1_000, "ai:glm"));
+        let outcome = crate::expr::evaluate(
+            "qty * price",
+            &calc_inputs(),
+            &PrecisionRule {
+                target_scale: 2,
+                rounding: crate::calc::Rounding::HalfUp,
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome.value.to_string(), "4210.00");
+        sc.apply_evaluation("calc-1", outcome, 1_100, "ai:glm")
+            .unwrap();
+        let rec = &sc.calculations[0];
+        assert_eq!(rec.final_value.unwrap().to_string(), "4210.00");
+        assert_eq!(rec.calc_status, CalcStatus::Passed);
+        assert_eq!(rec.intermediates.len(), 2, "乘法 + rescale 两行");
+        // 不静默覆写
+        let again = crate::expr::evaluate(
+            "qty * price",
+            &calc_inputs(),
+            &PrecisionRule {
+                target_scale: 2,
+                rounding: crate::calc::Rounding::HalfUp,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            sc.apply_evaluation("calc-1", again.clone(), 1_200, "ai:glm"),
+            Err(SidecarError::AlreadyEvaluated(_))
+        ));
+        assert!(matches!(
+            sc.apply_evaluation("no-such", again, 1_200, "ai:glm"),
+            Err(SidecarError::CalculationNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn recalculate_cascades_to_referencing_evidence() {
+        let mut sc = Sidecar::new(doc(EngineKind::Docx, "body-v1", 1));
+        sc.register_source_doc(doc(EngineKind::Xlsx, "source-v1", 1), 1_000, "ai:glm");
+        assert!(sc.add_calculation(unevaluated_calc(), 1_050, "ai:glm"));
+        // 证据引用 calc-1（Calculated 型，claimed_value = 4210.00）
+        let mut ev = evidence("e1", Calculated);
+        ev.claimed_value = Some(crate::calc::Decimal::parse("4210.00").unwrap());
+        sc.insert_evidence(ev, 1_100, "ai:glm").unwrap();
+        // 另一条主张值错的证据（复算应判 ResultMismatch）
+        let mut ev_bad = evidence("e2", Calculated);
+        ev_bad.claimed_value = Some(crate::calc::Decimal::parse("9999.99").unwrap());
+        sc.insert_evidence(ev_bad, 1_150, "ai:glm").unwrap();
+        let outcome = crate::expr::evaluate(
+            "qty * price",
+            &calc_inputs(),
+            &PrecisionRule {
+                target_scale: 2,
+                rounding: crate::calc::Rounding::HalfUp,
+            },
+        )
+        .unwrap();
+        sc.apply_evaluation("calc-1", outcome, 1_200, "ai:glm")
+            .unwrap();
+
+        // 现值一致 → 复算通过；级联：e1 通过（主张值吻合）、e2
+        // ResultMismatch（主张值不吻合）
+        let out = sc
+            .recalculate_calc(
+                "calc-1",
+                &[avail("12.5"), avail("336.80")],
+                2_000,
+                "human:wang",
+            )
+            .unwrap();
+        assert_eq!(out.status, CalcStatus::Passed);
+        assert_eq!(sc.evidence[0].calc, CalcStatus::Passed);
+        assert_eq!(
+            sc.evidence[1].calc,
+            CalcStatus::Failed(crate::status::CalcFailure::ResultMismatch)
+        );
+        // 审计事件在场
+        let kinds: Vec<&str> = sc.audit.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"calc_evaluated"));
+        assert!(kinds.contains(&"calc_recalc"));
+
+        // 现值变更 → InputMismatch 级联（两条证据同因）
+        let out2 = sc
+            .recalculate_calc(
+                "calc-1",
+                &[avail("13.0"), avail("336.80")],
+                3_000,
+                "human:wang",
+            )
+            .unwrap();
+        assert_eq!(
+            out2.status,
+            CalcStatus::Failed(crate::status::CalcFailure::InputMismatch)
+        );
+        for ev in &sc.evidence {
+            assert_eq!(
+                ev.calc,
+                CalcStatus::Failed(crate::status::CalcFailure::InputMismatch),
+                "失败级联同因"
+            );
+        }
+        assert!(matches!(
+            sc.recalculate_calc("no-such", &[], 4_000, "x"),
+            Err(SidecarError::CalculationNotFound(_))
+        ));
     }
 }

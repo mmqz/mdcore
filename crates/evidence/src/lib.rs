@@ -22,9 +22,13 @@
 //!   `CalcStatus`（计算）× `ReviewStatus`（人工审核）。三者独立表达，
 //!   见模块文档的语义边界。
 //! - [`evidence`]：`EvidenceRecord`（正文主张 → 来源 + 摘录 + 关系
-//!   类型）与 `CalculationRecord`（输入/公式/单位/精度/中间值/复算）。
+//!   类型 + 主张数值）与 `CalculationRecord`（输入/公式/单位/精度/
+//!   中间值/复算）。
 //! - [`calc`]：确定性十进制 `Decimal`（i128 定点 + 显式舍入规则）——
 //!   财务数据不走二进制浮点。
+//! - [`expr`]：表达式白名单求值器（§四.4 四式覆盖：数量×单价/求和/
+//!   比例/单位换算；资源四限 + 求值轨迹 + 单位传播 + `recalc`
+//!   复算链）。
 //! - [`command`]：命令信封 `CommandEnvelope`（幂等键/预期版本/操作者）
 //!   与 `CommandOutcome`；`audit`：追加式 `AuditEvent`。
 //! - [`sidecar`]：sidecar 存储 v1（JSON、原子写、模式版本校验、
@@ -40,16 +44,18 @@
 //! - 存储敏感面：sidecar 含原文摘录 = 敏感数据，默认本地，不上传
 //!   （§二.3）；本 crate 不含任何网络代码（结构性保证）。
 //!
-//! # S1 轮次边界（v0.1.0 = 契约层）
+//! # S1 轮次边界（v0.2.0 = 契约层 + 求值器）
 //!
-//! 本轮交付：数据契约 + 状态机语义 + sidecar v1 + 测试。**不含**：
-//! 表达式求值器（S1 后续轮）、office-io 真实文档接入（依赖倒置，
-//! 调用方注入指纹/定位能力）、命令分发执行（S2）、UI（不预设）。
+//! 已交付：数据契约 + 状态机语义 + sidecar v1 + 白名单求值器 +
+//! 复算级联。**不含**：office-io 真实文档接入（依赖倒置，调用方
+//! 注入指纹/定位能力——s1-r3 工作台层）、命令分发执行（S2）、
+//! UI（不预设）。
 
 pub mod audit;
 pub mod calc;
 pub mod command;
 pub mod evidence;
+pub mod expr;
 pub mod fingerprint;
 pub mod locator;
 pub mod refs;
@@ -60,6 +66,7 @@ pub use audit::AuditSeq;
 pub use calc::Decimal;
 pub use command::{AuditEvent, CommandEnvelope, CommandOutcome, ExpectedVersion, IdempotencyKey};
 pub use evidence::{CalculationRecord, EvidenceRecord, RelationKind};
+pub use expr::{evaluate, recalc, CurrentInput, EvalError, EvalOutcome, RecalcOutcome};
 pub use fingerprint::{fingerprint_of, Fingerprinter, Fnv64};
 pub use locator::Locator;
 pub use refs::{ContentFingerprint, DocId, DocumentRef, EngineKind, VersionStamp};
