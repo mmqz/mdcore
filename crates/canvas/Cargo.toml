@@ -32,3 +32,9 @@ publish = false
 [dependencies]
 yrs = { version = "0.28", features = ["sync"] }
 mdc-evidence = { path = "../evidence" }
+
+[dev-dependencies]
+# 端到端演示（examples/e2e_demo.rs）：文档域（mdc-collab）+ 画布域
+# （本 crate）+ 证据域（mdc-evidence）三域在同一场景协作——演示
+# 专用依赖边，产品依赖面不扩。
+mdc-collab = { path = "../collab" }

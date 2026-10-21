@@ -673,6 +673,7 @@ dependencies = [
 name = "mdc-canvas"
 version = "0.1.0"
 dependencies = [
+ "mdc-collab",
  "mdc-evidence",
  "yrs",
 ]
