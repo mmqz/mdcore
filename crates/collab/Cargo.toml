@@ -1,0 +1,32 @@
+[package]
+name = "mdc-collab"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# mdc-collab —— 协作引擎（正式交付目标①，用户指令 2026-10-21）。
+#
+# 定位与纪律（依据分析仓 collab-line 全部证据链）：
+# - 本 crate 是产品面**唯一 yrs 接触点**（B1.2 单点构造；隔离不变量：
+#   公开 API 零 `yrs::` 类型——撤除 yrs 时只拆本 crate，mdcore 其余
+#   成员零波及）。
+# - 构造面不变量：`skip_gc: true` 无条件（B1.1——上游 #676 UAF 未
+#   修复期间的全编队不变量；SessionOptions 刻意不含该开关）。
+# - 撤销面：双 UndoManager（Human/Ai 分栈 B3.2）+ 捕获窗 0（p20
+#   缺陷缓解：窗>0 + 同窗交错合并项 → undo 部分应用 + redo panic；
+#   硬编码非配置面，回升需上游修复 + 交错回归测试全绿）。
+# - 载体：XmlFragment 根 "doc"（yrs-e 映射矩阵定谳形状；九 kind 中
+#   非根 7 kind 元素承载 + 开放属性编码 + mark 包裹元素模型 D-2 +
+#   字节域换算 D-3）。
+# - 内存边界：skip_gc（GC 延迟）+ 撤销栈软上限粗粒度策略（B3.4：
+#   上游无逐出 API——超限 clear_all，代价 = 该 origin 撤销历史全失，
+#   诚实登记）+ 维护窗受控压缩（maintenance_gc：清栈后显式 gc）+
+#   全入向字节限额（B1.6）。
+# - 领域模型独立（§六 架构约束）：本 crate 不依赖 mdcore（MD 引擎）
+#   ——BlockKind/操作面是协作域自有形状（与 mdcore op.rs 七操作
+#   语义对齐但身份/载体独立）；引擎间接入在应用层组合。
+# - Headless：零 GUI/网络/进程面；同步产物为不透明 wire 字节，
+#   传输由宿主决定。
+
+[dependencies]
+yrs = { version = "0.28", features = ["sync"] }
