@@ -63,12 +63,12 @@ pub mod sidecar;
 pub mod status;
 
 pub use audit::AuditSeq;
-pub use calc::Decimal;
+pub use calc::{Decimal, Rounding};
 pub use command::{AuditEvent, CommandEnvelope, CommandOutcome, ExpectedVersion, IdempotencyKey};
-pub use evidence::{CalculationRecord, EvidenceRecord, RelationKind};
+pub use evidence::{CalcInput, CalculationRecord, EvidenceRecord, PrecisionRule, RelationKind};
 pub use expr::{evaluate, recalc, CurrentInput, EvalError, EvalOutcome, RecalcOutcome};
 pub use fingerprint::{fingerprint_of, Fingerprinter, Fnv64};
-pub use locator::Locator;
+pub use locator::{CellCoord, Locator};
 pub use refs::{ContentFingerprint, DocId, DocumentRef, EngineKind, VersionStamp};
 pub use sidecar::{Sidecar, SidecarError, SidecarStore};
-pub use status::{CalcStatus, LinkageStatus, ReviewStatus};
+pub use status::{CalcFailure, CalcStatus, LinkageStatus, ReviewStatus};

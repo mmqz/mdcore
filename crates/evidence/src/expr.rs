@@ -667,6 +667,7 @@ mod tests {
             name: name.into(),
             value: Decimal::parse(value).unwrap(),
             source: None,
+            source_doc_id: None,
             unit: unit.map(str::to_string),
         }
     }

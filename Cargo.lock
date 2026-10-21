@@ -621,6 +621,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-workbench"
+version = "0.1.0"
+dependencies = [
+ "mdc-evidence",
+ "mdc-office-io",
+ "serde_json",
+]
+
+[[package]]
 name = "mdcore"
 version = "0.1.0"
 dependencies = [

@@ -35,6 +35,11 @@ pub struct CalcInput {
     /// 值的来源定位器（None = 人工给定常量——此时该输入的正当性
     /// 完全依赖人工审核面）。
     pub source: Option<Locator>,
+    /// 来源定位器所属文档 ID（s1-r3 加性——复算现值提取需要知道
+    /// 定位器指向哪个文件；`source = None` 时应 None。
+    /// `#[serde(default)]` 保证 v1 数据加载不破）。
+    #[serde(default)]
+    pub source_doc_id: Option<String>,
     /// 单位（自由文本——单位换算一致性由表达式层校验，S1 后续轮）。
     pub unit: Option<String>,
 }

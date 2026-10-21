@@ -1,0 +1,32 @@
+[package]
+name = "mdc-workbench"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# S1-R3 工作台编排层（用户修订实施计划 2026-10-21 §四——合成样例
+# 八步闭环）。
+#
+# 定位：headless 编排器——组合 mdc-evidence（契约/状态/sidecar）与
+# mdc-office-io（XLSX 读/DOCX 读写）落地八步闭环：
+#   导入XLSX → 登记DOCX → 关联 → 计算 → 报告 → 改写失效检测 →
+#   审核清单 → 干净导出。
+#
+# 纪律：
+# - 正文零写入铁律：对 DOCX 正文只读（干净导出 = 字节拷贝 + 验证）；
+#   证据只进 sidecar。
+# - AI 提议 / 程序验证（§四.3）：关联与计算的数值一律由程序从真实
+#   文件提取并验证（指纹/定位器/求值）；提议方不供数，常量例外
+#   （正当性归人工审核，文档登记）。
+# - 时间注入：at_ms 全部由调用方传入（确定性测试 + 无时钟依赖——
+#   依赖倒置）。
+# - 无任意路径/SQL/Shell：路径是显式入参并登记于会话注册表（S2
+#   命令层在此之上加允许列表与命令信封）。
+#
+# 依赖面：仅本 workspace 两 crate（evidence + office-io）；零新增
+# 三方（office-io 既有闭包承载全部引擎 IO）。
+
+[dependencies]
+mdc-evidence = { path = "../evidence" }
+mdc-office-io = { path = "../office-io" }
+serde_json = { workspace = true }

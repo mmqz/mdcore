@@ -66,6 +66,17 @@ impl Sidecar {
         }
     }
 
+    /// 会话级审计事件直录（编排层用——资源名恒为本 sidecar 所属文档）。
+    pub fn push_audit_public(
+        &mut self,
+        kind: &str,
+        detail: serde_json::Value,
+        at_ms: u64,
+        operator: &str,
+    ) {
+        self.push_audit(at_ms, operator, kind, detail);
+    }
+
     fn next_seq(&mut self) -> u64 {
         self.audit.last().map(|e| e.seq).unwrap_or(0) + 1
     }
@@ -276,10 +287,17 @@ impl Sidecar {
             .find(|c| c.calc_id == calc_id)
             .expect("上方已验证存在");
         rec.calc_status = outcome.status;
-        // 级联：引用该计算的证据逐条同步 calc 面
+        // 级联：引用该计算的证据逐条同步 calc 面。
+        // 级联诚实性门槛（status.rs）：linkage 非 Valid 的证据不经
+        // 复算直接 Failed(InputUnavailable)——来源不实不许复算通过。
         let mut cascaded = vec![];
         for ev in self.evidence.iter_mut() {
             if ev.calc_ref.as_deref() != Some(calc_id) {
+                continue;
+            }
+            if !ev.linkage.allows_recalc() {
+                ev.calc = CalcStatus::Failed(crate::status::CalcFailure::InputUnavailable);
+                cascaded.push(ev.evidence_id.clone());
                 continue;
             }
             ev.calc = match outcome.status {
@@ -314,6 +332,142 @@ impl Sidecar {
             }),
         );
         Ok(outcome)
+    }
+
+    /// 人工审核动作（s1-r3——§四.3 待人工面的归宿）：
+    ///
+    /// 允许：Pending → Approved/Rejected；Approved ↔ Rejected
+    /// （人工改判——审核是人的判断，与机器事实不同，可被新的判断
+    /// 取代，但每次都留审计）。拒绝：任何 → Pending（人工决策不
+    /// 静默复位——复位 = 撤销决策，应经审计的新决策显式表达）。
+    pub fn review_evidence(
+        &mut self,
+        evidence_id: &str,
+        to: crate::status::ReviewStatus,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<(), SidecarError> {
+        use crate::status::ReviewStatus;
+        let ev = self
+            .evidence
+            .iter_mut()
+            .find(|e| e.evidence_id == evidence_id)
+            .ok_or(SidecarError::EvidenceNotFound)?;
+        let from = ev.review;
+        let allowed = matches!(
+            (from, to),
+            (ReviewStatus::Pending, ReviewStatus::Approved)
+                | (ReviewStatus::Pending, ReviewStatus::Rejected)
+                | (ReviewStatus::Approved, ReviewStatus::Rejected)
+                | (ReviewStatus::Rejected, ReviewStatus::Approved)
+        );
+        if !allowed {
+            return Err(SidecarError::InvalidReviewTransition { from, to });
+        }
+        ev.review = to;
+        self.push_audit(
+            at_ms,
+            operator,
+            "evidence_review",
+            serde_json::json!({
+                "evidence_id": evidence_id,
+                "from": format!("{from:?}"),
+                "to": format!("{to:?}"),
+            }),
+        );
+        Ok(())
+    }
+
+    /// 正文刷新（s1-r3——§四.5 正文变更失效判定的执行点）：新正文
+    /// 引用 + 新段落指纹表（索引 → 规范化文本指纹）→ **claim 锚断**
+    /// 的证据 linkage → Stale（只降不升；LinkageStatus 语义 = 锚定
+    /// 链状态，claim 锚与 source 锚共享同一状态面，审计 detail
+    /// 区分 side）。
+    ///
+    /// 仅处理 `DocxParagraph` 型 claim 定位器（表格/其他引擎定位器
+    /// 不猜——后续轮扩）；正文指纹未变 = 仅更新引用零降级。返回
+    /// 降级条数。
+    pub fn refresh_document(
+        &mut self,
+        new_doc: DocumentRef,
+        paragraph_fps: &[String],
+        at_ms: u64,
+        operator: &str,
+    ) -> usize {
+        let body_changed = self.document.fingerprint != new_doc.fingerprint;
+        let mut degraded = vec![];
+        if body_changed {
+            for ev in self.evidence.iter_mut() {
+                let anchor_broken = match &ev.claim_locator {
+                    Locator::DocxParagraph {
+                        paragraph_index,
+                        text_fingerprint,
+                    } => {
+                        paragraph_fps
+                            .get(*paragraph_index as usize)
+                            .map(|fp| fp != text_fingerprint)
+                            .unwrap_or(true) // 索引越界 = 段落已删
+                    }
+                    _ => continue, // 非 DOCX 段落主张：不猜，后续轮
+                };
+                if anchor_broken && ev.degrade_linkage(LinkageStatus::Stale) {
+                    degraded.push(ev.evidence_id.clone());
+                }
+            }
+        }
+        self.document = new_doc;
+        if body_changed {
+            self.push_audit(
+                at_ms,
+                operator,
+                "body_refresh",
+                serde_json::json!({
+                    "side": "claim",
+                    "degraded": degraded.len(),
+                    "evidence": degraded,
+                }),
+            );
+        }
+        degraded.len()
+    }
+
+    /// 主张侧重验（s1-r3——claim 锚唯一恢复通道，与
+    /// [`Sidecar::reverify_evidence`]（source 侧）对称）：新段落位置 +
+    /// 文本指纹 + 新正文引用 → linkage 置 Valid + 审计。
+    pub fn reverify_claim(
+        &mut self,
+        evidence_id: &str,
+        new_claim_doc: DocumentRef,
+        paragraph_index: u32,
+        text_fingerprint: String,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<(), SidecarError> {
+        if new_claim_doc.engine != crate::refs::EngineKind::Docx {
+            return Err(SidecarError::EngineMismatch);
+        }
+        let ev = self
+            .evidence
+            .iter_mut()
+            .find(|e| e.evidence_id == evidence_id)
+            .ok_or(SidecarError::EvidenceNotFound)?;
+        ev.claim_doc = new_claim_doc.clone();
+        ev.claim_locator = Locator::DocxParagraph {
+            paragraph_index,
+            text_fingerprint,
+        };
+        ev.linkage = LinkageStatus::Valid;
+        self.document = new_claim_doc;
+        self.push_audit(
+            at_ms,
+            operator,
+            "claim_reverified",
+            serde_json::json!({
+                "evidence_id": evidence_id,
+                "paragraph_index": paragraph_index,
+            }),
+        );
+        Ok(())
     }
 
     /// **显式重验**（唯一恢复通道）：新定位器 + 新文档引用 + 操作者
@@ -397,6 +551,11 @@ pub enum SidecarError {
     CalculationNotFound(String),
     /// 记录已含登记值——拒绝覆写（s1-r2 不静默覆写纪律）。
     AlreadyEvaluated(String),
+    /// 审核状态迁移非法（s1-r3——如人工决策回 Pending 复位）。
+    InvalidReviewTransition {
+        from: crate::status::ReviewStatus,
+        to: crate::status::ReviewStatus,
+    },
 }
 
 impl std::fmt::Display for SidecarError {
@@ -419,6 +578,9 @@ impl std::fmt::Display for SidecarError {
             }
             SidecarError::AlreadyEvaluated(id) => {
                 write!(f, "calculation already evaluated (refuse overwrite): {id}")
+            }
+            SidecarError::InvalidReviewTransition { from, to } => {
+                write!(f, "invalid review transition: {from:?} -> {to:?}")
             }
         }
     }
@@ -724,12 +886,14 @@ mod tests {
                     value_fingerprint: Fnv64.fingerprint(b"12.5").0,
                     formula_fingerprint: None,
                 }),
+                source_doc_id: Some("src-1".into()),
                 unit: Some("件".into()),
             },
             CalcInput {
                 name: "price".into(),
                 value: crate::calc::Decimal::parse("336.80").unwrap(),
                 source: None,
+                source_doc_id: None,
                 unit: Some("万元".into()),
             },
         ]
@@ -866,6 +1030,112 @@ mod tests {
         assert!(matches!(
             sc.recalculate_calc("no-such", &[], 4_000, "x"),
             Err(SidecarError::CalculationNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn review_transitions_and_reset_denied() {
+        let mut sc = Sidecar::new(doc(EngineKind::Docx, "b", 1));
+        sc.insert_evidence(evidence("e1", DirectQuote), 1, "ai:glm")
+            .unwrap();
+        // Pending → Approved（人工通过）
+        sc.review_evidence("e1", ReviewStatus::Approved, 2_000, "human:wang")
+            .unwrap();
+        assert_eq!(sc.evidence[0].review, ReviewStatus::Approved);
+        // Approved → Rejected（人工改判——留审计）
+        sc.review_evidence("e1", ReviewStatus::Rejected, 2_100, "human:wang")
+            .unwrap();
+        assert_eq!(sc.evidence[0].review, ReviewStatus::Rejected);
+        // → Pending 拒（人工决策不静默复位）
+        assert!(matches!(
+            sc.review_evidence("e1", ReviewStatus::Pending, 2_200, "human:wang"),
+            Err(SidecarError::InvalidReviewTransition { .. })
+        ));
+        assert!(matches!(
+            sc.review_evidence("no-such", ReviewStatus::Approved, 2_300, "x"),
+            Err(SidecarError::EvidenceNotFound)
+        ));
+        let kinds: Vec<&str> = sc.audit.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"evidence_review"));
+    }
+
+    #[test]
+    fn body_refresh_breaks_claim_anchor_only() {
+        let mut sc = Sidecar::new(doc(EngineKind::Docx, "body-v1", 1));
+        sc.insert_evidence(evidence("e1", DirectQuote), 1, "ai:glm")
+            .unwrap();
+        // 正文未变（同指纹）→ 零降级
+        let n = sc.refresh_document(
+            doc(EngineKind::Docx, "body-v1", 2),
+            &["fnv64:x".into()],
+            2_000,
+            "system",
+        );
+        assert_eq!(n, 0);
+        assert_eq!(sc.evidence[0].linkage, LinkageStatus::Valid);
+        // 正文改写：段落 3 指纹变 → claim 锚断 → Stale
+        let new_fps: Vec<String> = (0..5).map(|i| format!("fnv64:new-{i}")).collect();
+        let n2 = sc.refresh_document(
+            doc(EngineKind::Docx, "body-v2", 3),
+            &new_fps,
+            2_100,
+            "system",
+        );
+        assert_eq!(n2, 1, "e1 段落 3 指纹不匹配");
+        assert_eq!(sc.evidence[0].linkage, LinkageStatus::Stale);
+        // 段落被删（索引越界）= 锚断
+        let mut sc2 = Sidecar::new(doc(EngineKind::Docx, "body-v1", 1));
+        sc2.insert_evidence(evidence("e9", DirectQuote), 1, "ai:glm")
+            .unwrap();
+        let short: Vec<String> = vec!["fnv64:only-0".into()];
+        let n3 = sc2.refresh_document(doc(EngineKind::Docx, "body-v2", 2), &short, 2_200, "system");
+        assert_eq!(n3, 1, "段落 3 已删（正文缩短）");
+        // 审计在场
+        let kinds: Vec<&str> = sc.audit.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"body_refresh"));
+    }
+
+    #[test]
+    fn claim_reverify_is_only_claim_side_recovery() {
+        let mut sc = Sidecar::new(doc(EngineKind::Docx, "body-v1", 1));
+        sc.insert_evidence(evidence("e1", DirectQuote), 1, "ai:glm")
+            .unwrap();
+        let new_fps: Vec<String> = (0..5).map(|i| format!("fnv64:new-{i}")).collect();
+        sc.refresh_document(
+            doc(EngineKind::Docx, "body-v2", 3),
+            &new_fps,
+            2_000,
+            "system",
+        );
+        assert_eq!(sc.evidence[0].linkage, LinkageStatus::Stale);
+        // 主张侧重验：新段落位置 + 指纹 → 恢复 Valid
+        sc.reverify_claim(
+            "e1",
+            doc(EngineKind::Docx, "body-v2", 3),
+            4,
+            "fnv64:new-4".into(),
+            3_000,
+            "human:wang",
+        )
+        .unwrap();
+        assert_eq!(sc.evidence[0].linkage, LinkageStatus::Valid);
+        let loc = &sc.evidence[0].claim_locator;
+        match loc {
+            Locator::DocxParagraph {
+                paragraph_index,
+                text_fingerprint,
+            } => {
+                assert_eq!(*paragraph_index, 4);
+                assert_eq!(text_fingerprint, "fnv64:new-4");
+            }
+            other => panic!("期望 DocxParagraph，得到 {other:?}"),
+        }
+        let kinds: Vec<&str> = sc.audit.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"claim_reverified"));
+        // 非 DOCX 引用拒
+        assert!(matches!(
+            sc.reverify_claim("e1", doc(EngineKind::Xlsx, "x", 1), 1, "f".into(), 4, "x"),
+            Err(SidecarError::EngineMismatch)
         ));
     }
 }
