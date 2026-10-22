@@ -13,16 +13,24 @@ if (!existsSync('pkg/mdcore_wasm_bg.wasm')) {
 
 mkdirSync('dist', { recursive: true });
 
-await esbuild.build({
-  entryPoints: ['src/main.ts'],
-  outfile: 'dist/main.js',
-  bundle: true,
-  format: 'esm', // wasm-bindgen web-target glue is an ES module
-  target: 'es2022',
-  minify: false,
-  logLevel: 'info',
-});
+const entries = [
+  { in: 'src/main.ts', out: 'dist/main.js' },
+  { in: 'src/bench.ts', out: 'dist/bench.js' }, // 阶段1宿主选型：原型A基准页
+];
+
+for (const e of entries) {
+  await esbuild.build({
+    entryPoints: [e.in],
+    outfile: e.out,
+    bundle: true,
+    format: 'esm', // wasm-bindgen web-target glue is an ES module
+    target: 'es2022',
+    minify: false,
+    logLevel: 'info',
+  });
+}
 
 cpSync('index.html', 'dist/index.html');
+cpSync('bench.html', 'dist/bench.html');
 cpSync('pkg/mdcore_wasm_bg.wasm', 'dist/mdcore_wasm_bg.wasm');
 console.log('build ok -> dist/');
