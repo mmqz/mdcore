@@ -729,6 +729,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-relay"
+version = "0.1.0"
+dependencies = [
+ "mdc-canvas",
+ "mdc-collab",
+]
+
+[[package]]
 name = "mdc-settings"
 version = "0.1.0"
 dependencies = [

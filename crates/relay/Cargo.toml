@@ -1,0 +1,28 @@
+[package]
+name = "mdc-relay"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# mdc-relay —— 服务端中继（集成项⑥：权威端/中继形态——协作与Canvas
+# 正式交付报告 §3.6）。
+#
+# 定位与纪律：
+# - **传输无关**（Headless 纪律延伸）：本 crate 是中继**状态机**——
+#   入向消息进、出向投递出；零网络/线程/进程面。宿主把
+#   [`RelayMessage`]/[`RelayDelivery`] 桥接到真实传输（WebSocket/
+#   TCP/IPC），传输层身份认证是宿主责任（`from` 字段不重签）。
+# - **领域无关**：权威副本经 [`SyncReplica`] 门面抽象——文档域
+#   （CollabSession）与画布域（CanvasSession）的同步 API 同构
+#   （state_vector/encode_diff/apply_update/snapshot），宿主以薄
+#   包装类型实现 trait 接入（孤儿规则：门面类型属宿主侧）。
+# - **CRDT 字节直转发**：入向 update 原样扇出（幂等/交换律是 CRDT
+#   的结构性质——中继不重编码；权威快照单点编码语义在会话侧）。
+# - 在场层聚合：[`mdc_collab::Presence`] 单点归属（integ-r3）——
+#   中继侧聚合使晚到端可经 presence wire 全量补齐。
+
+[dependencies]
+mdc-collab = { path = "../collab" }
+
+[dev-dependencies]
+mdc-canvas = { path = "../canvas" }
