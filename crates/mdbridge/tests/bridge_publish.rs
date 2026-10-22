@@ -3,7 +3,7 @@ mod common;
 
 use common::*;
 use mdc_collab::Actor;
-use mdc_mdbridge::{family_id, parse_family_id, BridgeError};
+use mdc_mdbridge::{parse_family_id, BridgeError};
 use mdcore::markdown;
 use mdcore::op::Op;
 use mdcore::tree::BlockKind;

@@ -8,10 +8,10 @@ mod common;
 
 use common::*;
 use mdc_collab::Actor;
-use mdc_mdbridge::{family_id, parse_family_id, BridgeError, MdCollabHost, TranslateError};
+use mdc_mdbridge::{parse_family_id, BridgeError, MdCollabHost, TranslateError};
+use mdcore::op;
 use mdcore::op::Op;
 use mdcore::tree::{BlockKind, BlockTree};
-use mdcore::{markdown, op};
 
 fn must_op(h: &mut MdCollabHost, o: &mut Op) -> mdc_collab::CommandReceipt {
     h.apply_op(Actor::Human, o).expect("apply_op")
@@ -149,12 +149,12 @@ fn move_block_same_parent_all_positions() {
                 to_index: to,
             },
         ];
-        let (mut h, bare) = dual_run(seq, &format!("same-parent move to={to}"));
+        let (h, bare) = dual_run(seq, &format!("same-parent move to={to}"));
         assert_eq!(md(&h), md_of(&bare), "过桥与裸树同序");
     }
     // 显式期望锚定（to_index 语义的可读面）：
     // to=0 → [P2,P1,P3]；to=1 → [P1,P2,P3]（原位）；to=2 → [P1,P3,P2]。
-    let (mut h, _) = dual_run(
+    let (h, _) = dual_run(
         vec![
             insert_text(vec![], 0, BlockKind::Paragraph, "P1"),
             insert_text(vec![], 1, BlockKind::Paragraph, "P2"),
@@ -168,7 +168,7 @@ fn move_block_same_parent_all_positions() {
         "move to 0",
     );
     assert_eq!(md(&h), "P2\nP1\nP3");
-    let (mut h, _) = dual_run(
+    let (h, _) = dual_run(
         vec![
             insert_text(vec![], 0, BlockKind::Paragraph, "P1"),
             insert_text(vec![], 1, BlockKind::Paragraph, "P2"),
@@ -203,7 +203,7 @@ fn move_block_cross_parent_and_back() {
             to_index: 1,
         },
     ];
-    let (mut h, bare) = dual_run(seq, "cross-parent move");
+    let (h, bare) = dual_run(seq, "cross-parent move");
     assert_eq!(md(&h), md_of(&bare));
     // 显式：[P1, P2, 空 bq]（空 bq 渲染为空行）。
     assert_eq!(md(&h), "P1\nP2\n");
