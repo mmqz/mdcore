@@ -294,6 +294,9 @@ fn full_loop_through_command_dispatch() {
     write_sample_docx(&body);
 
     let t = &mut 100u64;
+    // 审核时间戳快照（tick 闭包借用 t 之前取——阶段2人工信封用；
+    // 语义 = 全部 exec 命令之后的时间点，单调即可）
+    let review_at = 900u64;
     let mut tick = || {
         *t += 10;
         *t
@@ -388,14 +391,21 @@ fn full_loop_through_command_dispatch() {
         wb.sidecar().evidence[0].calc,
         mdc_evidence::CalcStatus::Passed
     );
+    // 审核命令 = 人工动作（阶段2门禁：exec 统一 "ai:glm" 操作者会被
+    // 审核允许列表拒绝——审核面显式用人工信封）
     assert!(matches!(
-        exec(
-            &mut wb,
+        wb.execute(
+            envelope(
+                "op-review",
+                "key-review",
+                ExpectedVersion::Any,
+                "human:wang"
+            ),
             WorkbenchCommand::Review {
                 evidence_id: "e-calc".into(),
                 decision: ReviewStatus::Approved
             },
-            ExpectedVersion::Any
+            review_at
         ),
         CommandOutcome::Succeeded { .. }
     ));

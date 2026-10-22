@@ -19,9 +19,10 @@
 use std::path::{Path, PathBuf};
 
 use mdc_evidence::{
-    CalculationRecord, CommandEnvelope, CommandOutcome, CurrentInput, Decimal, DocumentRef,
-    EvalError, EvidenceRecord, Fingerprinter, Fnv64, IdempotencyKey, Locator, RecalcOutcome,
-    RelationKind, ReviewStatus, Sidecar, SidecarError, SidecarStore, VersionStamp,
+    CalcStatus, CalculationRecord, CommandEnvelope, CommandOutcome, CurrentInput, Decimal,
+    DocumentRef, EvalError, EvidenceRecord, Fingerprinter, Fnv64, IdempotencyKey, LinkageStatus,
+    Locator, RecalcOutcome, RelationKind, ReviewStatus, Sidecar, SidecarError, SidecarStore,
+    VersionStamp,
 };
 use mdc_office_io::docx::{read_docx_from_bytes, DocxError};
 use mdc_office_io::io::ReadError;
@@ -136,6 +137,12 @@ pub enum WorkbenchError {
         marker: String,
     },
     ExportByteMismatch,
+    /// 审核门槛拒绝（阶段 2——操作者不在允许列表 / 失效关联过审 /
+    /// 高值主张未过复算；拒绝 = 零状态变化）。
+    ReviewGate {
+        evidence_id: String,
+        reason: String,
+    },
     /// 路径允许列表拒绝（S2——分发面映射 Rejected）。
     PathPolicy(crate::security::PolicyError),
     /// 规模限制拒绝（S2——条数/字节门）。
@@ -185,6 +192,12 @@ impl std::fmt::Display for WorkbenchError {
             WorkbenchError::CalcNotFound { calc_id } => {
                 write!(f, "calc not found: {calc_id}")
             }
+            WorkbenchError::ReviewGate {
+                evidence_id,
+                reason,
+            } => {
+                write!(f, "review gate rejected [{evidence_id}]: {reason}")
+            }
             WorkbenchError::MarkerFound { marker } => {
                 write!(
                     f,
@@ -222,6 +235,8 @@ pub struct Workbench {
     body_version: u64,
     sources: Vec<SourceRegistration>,
     policy: crate::security::PathPolicy,
+    /// 审核门槛（阶段 2——会话级策略，默认严格档；见 security::ReviewPolicy）。
+    review_policy: crate::security::ReviewPolicy,
 }
 
 impl Workbench {
@@ -264,6 +279,7 @@ impl Workbench {
             body_version: 1,
             sources: vec![],
             policy,
+            review_policy: crate::security::ReviewPolicy::default(),
         })
     }
 
@@ -318,6 +334,7 @@ impl Workbench {
             body_version,
             sources,
             policy,
+            review_policy: crate::security::ReviewPolicy::default(),
         })
     }
 
@@ -780,7 +797,8 @@ impl Workbench {
         Ok(degraded)
     }
 
-    /// ⑦ 人工审核动作。
+    /// ⑦ 人工审核动作（阶段 2 起经 [`Self::check_review_gate`] 门槛——
+    /// 拒绝 = 零状态变化、sidecar 零落盘）。
     pub fn review(
         &mut self,
         evidence_id: &str,
@@ -788,10 +806,70 @@ impl Workbench {
         at_ms: u64,
         operator: &str,
     ) -> Result<(), WorkbenchError> {
+        self.check_review_gate(evidence_id, to, operator)?;
         self.sidecar
             .review_evidence(evidence_id, to, at_ms, operator)?;
         self.save()?;
         Ok(())
+    }
+
+    /// 审核门槛检查（计划 §五「不同业务场景可配置的审核门槛」）。
+    ///
+    /// 三维 fail-closed（配置见 [`crate::security::ReviewPolicy`]）：
+    /// 操作者前缀允许列表（默认 `human:`——AI 不可改审核态）；
+    /// 过审要求关联 Valid（除非显式放开失效过审）；主张值达门槛的
+    /// 计算型证据要求计算面 Passed。
+    fn check_review_gate(
+        &self,
+        evidence_id: &str,
+        to: ReviewStatus,
+        operator: &str,
+    ) -> Result<(), WorkbenchError> {
+        let gate = |reason: String| WorkbenchError::ReviewGate {
+            evidence_id: evidence_id.to_string(),
+            reason,
+        };
+        if !self.review_policy.operator_allowed(operator) {
+            return Err(gate(format!(
+                "operator '{operator}' not in reviewer allowlist"
+            )));
+        }
+        if to != ReviewStatus::Approved {
+            return Ok(()); // 拒绝/审核面其余方向不受关联/计算门槛辖
+        }
+        let ev = self
+            .sidecar
+            .evidence
+            .iter()
+            .find(|e| e.evidence_id == evidence_id)
+            .ok_or(WorkbenchError::Sidecar(SidecarError::EvidenceNotFound))?;
+        if !self.review_policy.allow_approval_of_broken_linkage
+            && ev.linkage != LinkageStatus::Valid
+        {
+            return Err(gate(format!(
+                "linkage is {:?} (not Valid) — reverify before approval",
+                ev.linkage
+            )));
+        }
+        if let Some(thr) = self.review_policy.calc_required_at_or_above {
+            let high_value = ev
+                .claimed_value
+                .as_ref()
+                .map(|v| *v >= thr)
+                .unwrap_or(false);
+            if ev.calc_ref.is_some() && high_value && ev.calc != CalcStatus::Passed {
+                return Err(gate(format!(
+                    "claimed value at/above {thr} requires Passed calc (current: {:?})",
+                    ev.calc
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// 审核门槛策略注入（会话级——不同业务场景不同档；不入 sidecar）。
+    pub fn set_review_policy(&mut self, policy: crate::security::ReviewPolicy) {
+        self.review_policy = policy;
     }
 
     /// 幂等记录（S2 命令层预埋——会话内直用）。

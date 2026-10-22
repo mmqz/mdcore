@@ -297,6 +297,11 @@ mod bench {
     }
 }
 
+// wasm32 check --all-targets 面：示例不可执行但须可编译——占位 main
+//（真实现见下方 not(wasm32) 块；本占位使全目标检查口径完整）。
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     bench::run();

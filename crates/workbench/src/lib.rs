@@ -49,8 +49,8 @@ pub use pipeline::{
 };
 pub use report::{pending_reviews, render_report, stale_evidence};
 pub use security::{
-    check_counts, check_sidecar_size, publish, PathPolicy, PolicyError, MAX_CALCULATIONS,
-    MAX_EVIDENCE, MAX_SIDECAR_BYTES,
+    check_counts, check_sidecar_size, publish, PathPolicy, PolicyError, ReviewPolicy,
+    MAX_CALCULATIONS, MAX_EVIDENCE, MAX_SIDECAR_BYTES,
 };
 
 /// 工作台标记（干净导出验证用——正文出现任一即脏）。

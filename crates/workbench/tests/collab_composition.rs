@@ -258,10 +258,12 @@ fn collab_body_ai_polish_stale_rebind_and_undo_recovery() {
         "未触及段落的主张不失效（选择性）"
     );
 
-    // ── 人工重绑（§四.5 润色后允许失效 → 审核通过 + reverify）──
-    wb.review("e-calc", ReviewStatus::Approved, 2100, "human:reviewer")
+    // ── 人工重绑（§四.5 润色后允许失效 → reverify 恢复 Valid → 审核通过。
+    // 阶段2审核门禁的次序守护：过审前必须先显式重验——先审后验的旧序
+    // 在严格档下被拒，人工动作批次内的次序本非本测试语义本体）──
+    wb.reverify_claim("e-calc", 3, 2100, "human:reviewer")
         .unwrap();
-    wb.reverify_claim("e-calc", 3, 2200, "human:reviewer")
+    wb.review("e-calc", ReviewStatus::Approved, 2200, "human:reviewer")
         .unwrap();
     assert_eq!(linkage_of(&wb, "e-calc"), LinkageStatus::Valid);
 
@@ -348,9 +350,9 @@ fn collab_body_two_peer_convergence_human_and_ai() {
     assert_eq!(degraded, 1, "AI 润色段失效");
     assert_eq!(linkage_of(&wb, "e-calc"), LinkageStatus::Stale);
     assert_eq!(linkage_of(&wb, "e-quote"), LinkageStatus::Valid);
-    wb.review("e-calc", ReviewStatus::Approved, 3300, "human:reviewer")
+    wb.reverify_claim("e-calc", 3, 3300, "human:reviewer")
         .unwrap();
-    wb.reverify_claim("e-calc", 3, 3400, "human:reviewer")
+    wb.review("e-calc", ReviewStatus::Approved, 3400, "human:reviewer")
         .unwrap();
     assert_eq!(linkage_of(&wb, "e-calc"), LinkageStatus::Valid);
 }

@@ -199,7 +199,8 @@ impl Workbench {
     }
 }
 
-/// 错误映射：路径/规模 → Rejected；其余 → Failed。
+/// 错误映射：路径/规模/审核门槛 → Rejected（校验拒绝——客户端可
+/// 修正态）；其余 → Failed。
 fn map_error(e: WorkbenchError) -> CommandOutcome {
     match e {
         WorkbenchError::PathPolicy(p) => CommandOutcome::Rejected {
@@ -207,6 +208,12 @@ fn map_error(e: WorkbenchError) -> CommandOutcome {
         },
         WorkbenchError::Limit(r) => CommandOutcome::Rejected {
             reason: format!("limit: {r}"),
+        },
+        WorkbenchError::ReviewGate {
+            evidence_id,
+            reason,
+        } => CommandOutcome::Rejected {
+            reason: format!("review gate [{evidence_id}]: {reason}"),
         },
         other => CommandOutcome::Failed {
             reason: other.to_string(),

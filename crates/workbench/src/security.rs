@@ -164,3 +164,50 @@ pub fn publish(dest: &Path, bytes: &[u8]) -> io::Result<()> {
     std::fs::rename(&tmp, dest)?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// 审核门槛（阶段 2——计划 §五「不同业务场景可配置的审核门槛」）
+// ---------------------------------------------------------------------------
+
+/// 审核门槛策略：会话级注入（宿主按业务场景配置），**不入 sidecar**
+/// ——sidecar 只承载事实与审计，策略属调用方信任面（配置漂移不改
+/// 历史数据语义）。全部维度 fail-closed：不配置 = 严格默认档。
+///
+/// 三个业务差异维度（增量最小面——覆盖「谁可审 / 失效可否过审 /
+/// 高值需复算」三类门槛；更多维度按真实业务场景再加）：
+/// 1. `reviewer_prefixes`：审核动作的操作者前缀允许列表
+///    （默认 `["human:"]`——AI 不可改审核态，架构原则「AI 只提关联
+///    与推导」的门面化）；
+/// 2. `allow_approval_of_broken_linkage`：关联失效（Stale/Missing/
+///    Ambiguous）时是否允许直接过审（默认 false——过审前必须显式
+///    重验恢复 Valid）；
+/// 3. `calc_required_at_or_above`：主张值门槛——达到即要求计算面
+///    Passed 才可过审（默认 None 不设；仅对带 `calc_ref` 的计算型
+///    主张生效——引用型主张无计算面可依）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewPolicy {
+    pub reviewer_prefixes: Vec<String>,
+    pub allow_approval_of_broken_linkage: bool,
+    pub calc_required_at_or_above: Option<mdc_evidence::Decimal>,
+}
+
+impl Default for ReviewPolicy {
+    fn default() -> Self {
+        Self {
+            reviewer_prefixes: vec!["human:".to_string()],
+            allow_approval_of_broken_linkage: false,
+            calc_required_at_or_above: None,
+        }
+    }
+}
+
+impl ReviewPolicy {
+    /// 操作者是否在审核允许列表内（空列表 = 不限——测试/单机自担）。
+    pub fn operator_allowed(&self, operator: &str) -> bool {
+        self.reviewer_prefixes.is_empty()
+            || self
+                .reviewer_prefixes
+                .iter()
+                .any(|p| operator.starts_with(p.as_str()))
+    }
+}

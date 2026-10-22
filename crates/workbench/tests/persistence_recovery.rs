@@ -230,8 +230,9 @@ fn cross_session_idempotent_replay() {
     let evidence_before = wb.sidecar().evidence.len();
     let audit_before = wb.sidecar().audit.len();
 
-    // 命令分发面执行一条命令（入幂等表）
-    let env = envelope("op-1", "key-persist-1", ExpectedVersion::Any, "ai:glm");
+    // 命令分发面执行一条命令（入幂等表）。审核 = 人工动作——阶段 2
+    // 门禁下 AI 操作者过不了审核允许列表（首执行成功是本测试前提）
+    let env = envelope("op-1", "key-persist-1", ExpectedVersion::Any, "human:wang");
     let out = wb.execute(
         env.clone(),
         WorkbenchCommand::Review {
