@@ -13,6 +13,8 @@
 //! cargo run --release -p mdc-office-io --example bench_limits -- write1m_stream
 //! cargo run --release -p mdc-office-io --example bench_limits -- docx100k
 //! cargo run --release -p mdc-office-io --example bench_limits -- docx1m
+//! cargo run --release -p mdc-office-io --example bench_limits -- slice500k
+//! cargo run --release -p mdc-office-io --example bench_limits -- edit500k
 //! ```
 //!
 //! 计量口径：每子命令单进程跑单场景；**耗时 = Instant 实测**，
@@ -85,7 +87,7 @@ mod bench {
     pub fn run() {
         let mode = std::env::args().nth(1).unwrap_or_else(|| {
             eprintln!(
-                "usage: bench_limits <gen500k|read500k|gen4m|read4m|write1m|write1m_stream|docx100k|docx1m>"
+                "usage: bench_limits <gen500k|read500k|gen4m|read4m|write1m|write1m_stream|docx100k|docx1m|slice500k|edit500k>"
             );
             std::process::exit(2);
         });
@@ -98,6 +100,8 @@ mod bench {
             "write1m_stream" => write_bench(true),
             "docx100k" => docx_bench(100_000),
             "docx1m" => docx_bench(1_000_000),
+            "slice500k" => slice_bench(),
+            "edit500k" => edit_bench(),
             other => {
                 eprintln!("unknown mode: {other}");
                 std::process::exit(2);
@@ -172,6 +176,107 @@ mod bench {
             },
             start,
             format!("{cells} cells (in-memory Vec / tempfile), output {out_bytes} bytes"),
+        );
+    }
+
+    /// 阶段 1 基准②：可视区切片读取（500k 格读入 + 万次 50行×20列
+    /// 窗口提取——typed 网格 get_abs；渲染面可视区滚动的引擎侧下界）。
+    fn slice_bench() {
+        let path = bench_path("bench_r4t2_read500k.xlsx");
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("bench file missing: {path} — run gen500k first");
+            std::process::exit(2);
+        }
+        let t0 = Instant::now();
+        let book =
+            mdc_office_io::io::read_book(&path).unwrap_or_else(|e| panic!("read failed: {e:?}"));
+        let read_ms = t0.elapsed().as_millis();
+        let sheet = &book.sheets[0];
+        let (h, w) = (sheet.typed.height(), sheet.typed.width());
+        // 确定性伪随机窗口位置（LCG——可复现）。
+        let mut seed: u64 = 0x2545F4914F6CDD1D;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            seed >> 33
+        };
+        const WINDOWS: usize = 10_000;
+        const WIN_H: u32 = 50;
+        const WIN_W: u32 = 20;
+        let t = Instant::now();
+        let mut sum = 0u64;
+        for _ in 0..WINDOWS {
+            let r0 = (next() as u32) % (h as u32 - WIN_H);
+            let c0 = (next() as u32) % (w as u32 - WIN_W);
+            for r in r0..r0 + WIN_H {
+                for c in c0..c0 + WIN_W {
+                    if sheet.typed.get_abs(r, c).is_some() {
+                        sum += 1;
+                    }
+                }
+            }
+        }
+        let per_win_us = t.elapsed().as_micros() / WINDOWS as u128;
+        println!(
+            "[bench_limits] slice500k: read {read_ms} ms (grid {h}x{w}); 10000 windows (50x20) → {per_win_us} µs/窗（非空命中 {sum}）"
+        );
+        println!(
+            "[bench_limits] slice500k: elapsed {} ms, peak RSS {}",
+            t.elapsed().as_millis(),
+            peak_rss_kib()
+                .map(|k| format!("{} KiB", k))
+                .unwrap_or_else(|| "n/a".into())
+        );
+    }
+
+    /// 阶段 1 基准②：单格编辑提交（C3 读—改—重建架构的提交下界：
+    /// 全量读 + kind 保持逐格重放 + 全量写——单笔编辑不可回避的代价）。
+    fn edit_bench() {
+        let path = bench_path("bench_r4t2_read500k.xlsx");
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("bench file missing: {path} — run gen500k first");
+            std::process::exit(2);
+        }
+        let t = Instant::now();
+        let book =
+            mdc_office_io::io::read_book(&path).unwrap_or_else(|e| panic!("read failed: {e:?}"));
+        let read_ms = t.elapsed().as_millis();
+        let t2 = Instant::now();
+        let mut w = mdc_office_io::write::WorkbookWriter::new();
+        let mut replayed = 0u64;
+        for sheet in &book.sheets {
+            let mut sw = w.add_sheet(&sheet.name).expect("add sheet");
+            let (start, end) = match (sheet.typed.start(), sheet.typed.end()) {
+                (Some(s), Some(e)) => (s, e),
+                _ => continue,
+            };
+            for r in start.0..=end.0 {
+                for c in start.1..=end.1 {
+                    if let Some(cell) = sheet.typed.get_abs(r, c) {
+                        if let (Some((v, style)), _) = (cell.to_write_parts(), ()) {
+                            sw.write(r, c as u16, v, style.as_ref())
+                                .expect("replay write");
+                            replayed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let rebuild_ms = t2.elapsed().as_millis();
+        let out = bench_path("bench_p1_edit500k_rebuilt.xlsx");
+        let t3 = Instant::now();
+        w.save_to_path(&out).expect("save");
+        let save_ms = t3.elapsed().as_millis();
+        println!(
+            "[bench_limits] edit500k: C3 单笔编辑提交全链 = read {read_ms} ms + replay {rebuild_ms} ms ({replayed} cells) + save {save_ms} ms"
+        );
+        println!(
+            "[bench_limits] edit500k: elapsed {} ms, peak RSS {}",
+            t.elapsed().as_millis(),
+            peak_rss_kib()
+                .map(|k| format!("{} KiB", k))
+                .unwrap_or_else(|| "n/a".into())
         );
     }
 
