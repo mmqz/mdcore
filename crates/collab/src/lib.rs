@@ -46,11 +46,13 @@
 //!   char↔byte 无损换算（公开面恒 char 域，字节域不泄漏）。
 
 pub mod command;
+pub mod events;
 pub mod identity;
 pub mod ops;
 pub mod session;
 
 pub use command::{CollabCommand, CommandOutcome, CommandReceipt};
+pub use events::{ChangeSource, CollabEvent, Subscription};
 pub use identity::CrdtAnchor;
 pub use session::{Actor, CollabError, CollabSession, SessionOptions};
 

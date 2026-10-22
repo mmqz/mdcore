@@ -14,6 +14,7 @@ use yrs::{
     Transact, UndoManager, Update, Xml, XmlFragment,
 };
 
+use crate::events::{ChangeSource, CollabEvent, EventHub, UpdateCollector};
 use crate::identity::CrdtAnchor;
 use crate::{BlockInfo, BlockKind};
 
@@ -145,6 +146,10 @@ pub struct CollabSession {
     /// 最近一次操作是否触发撤销栈清理（execute 回执面——清理发生在
     /// 操作内部，事后重算不可见，故清理时置标志）。
     undo_cleared_last: bool,
+    /// 事件订阅面（集成项③——见 events 模块文档）。
+    pub(crate) hub: EventHub,
+    /// 事务字节收集器（观察者回调 → 事件 updates 面）。
+    pub(crate) collector: UpdateCollector,
 }
 
 impl CollabSession {
@@ -172,6 +177,10 @@ impl CollabSession {
         undo_human.expand_scope(&doc, &doc.get_or_insert_xml_fragment(ROOT));
         undo_ai.expand_scope(&doc, &doc.get_or_insert_xml_fragment(ROOT));
 
+        // 事件面接线（集成项③）：观察者注册（构造期无并发事务）。
+        let collector = UpdateCollector::default();
+        collector.attach(&doc);
+
         Ok(CollabSession {
             doc,
             undo_human,
@@ -180,6 +189,8 @@ impl CollabSession {
             next_seq: 0,
             anchors: HashMap::new(),
             undo_cleared_last: false,
+            hub: EventHub::default(),
+            collector,
         })
     }
 
@@ -254,21 +265,49 @@ impl CollabSession {
     // ── 撤销面（B3.2 分栈；捕获窗 0）────────────────────────────
 
     /// 撤销指定 origin 面的最近栈项（栈本地——永不进 wire）。
+    /// 撤销产出（返回 true 且有字节）派发 [`crate::events::ChangeSource::Undo`] 事件。
     pub fn undo(&mut self, actor: Actor) -> bool {
+        self.collector.begin();
         let r = match actor {
             Actor::Human => self.undo_human.undo_blocking(),
             Actor::Ai => self.undo_ai.undo_blocking(),
         };
+        let updates = self.collector.drain();
         self.enforce_undo_limit(actor);
+        if r && !updates.is_empty() {
+            self.hub.dispatch(&CollabEvent {
+                source: ChangeSource::Undo { actor },
+                updates,
+            });
+        }
         r
     }
 
-    /// 重做指定 origin 面。
+    /// 重做指定 origin 面（事件面同 undo）。
     pub fn redo(&mut self, actor: Actor) -> bool {
-        match actor {
+        self.collector.begin();
+        let r = match actor {
             Actor::Human => self.undo_human.redo_blocking(),
             Actor::Ai => self.undo_ai.redo_blocking(),
+        };
+        let updates = self.collector.drain();
+        if r && !updates.is_empty() {
+            self.hub.dispatch(&CollabEvent {
+                source: ChangeSource::Redo { actor },
+                updates,
+            });
         }
+        r
+    }
+
+    // ── 事件面（集成项③——见 events 模块）────────────────────
+
+    /// 订阅变更事件（Drop 句柄即退订；派发纪律见 [`crate::events`]）。
+    pub fn subscribe(
+        &mut self,
+        f: impl FnMut(&CollabEvent) + Send + 'static,
+    ) -> crate::events::Subscription {
+        self.hub.subscribe(f)
     }
 
     /// 撤销栈深度（观测面——内存边界监控）。
@@ -331,8 +370,11 @@ impl CollabSession {
 
     /// 入向 update（字节限额前置 + panic 隔离）。远端编辑不带本地
     /// origin → 不进本地撤销栈（只能撤销自己的编辑——协同撤销语义）。
+    /// 成功应用派发 [`crate::events::ChangeSource::Remote`] 事件（字节
+    /// 即 updates 面——宿主转发链的对称面）。
     pub fn apply_update(&self, bytes: &[u8]) -> Result<(), CollabError> {
         self.check_inbound(bytes.len())?;
+        self.collector.begin();
         let doc = &self.doc;
         let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let update =
@@ -344,9 +386,24 @@ impl CollabSession {
             Ok(())
         }));
         match r {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(e),
-            Err(p) => Err(CollabError::Panic(panic_message(&p))),
+            Ok(Ok(())) => {
+                let updates = self.collector.drain();
+                if !updates.is_empty() {
+                    self.hub.dispatch(&CollabEvent {
+                        source: ChangeSource::Remote,
+                        updates,
+                    });
+                }
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let _ = self.collector.drain(); // 失败路径丢弃残留（失败不产事件）
+                Err(e)
+            }
+            Err(p) => {
+                let _ = self.collector.drain();
+                Err(CollabError::Panic(panic_message(&p)))
+            }
         }
     }
 
@@ -385,6 +442,7 @@ impl CollabSession {
         let before = self.full_update_len();
         self.undo_human.clear_all();
         self.undo_ai.clear_all();
+        self.collector.begin();
         let doc = &self.doc;
         std::panic::catch_unwind(AssertUnwindSafe(|| {
             let mut txn = doc.transact_mut();
@@ -392,6 +450,13 @@ impl CollabSession {
             txn.commit();
         }))
         .map_err(|p| CollabError::Panic(panic_message(&p)))?;
+        let updates = self.collector.drain();
+        // 维护窗显式通知（updates 可能为空——GC 不产新 CRDT 操作；
+        // 事件仍发，宿主以此感知维护点）。
+        self.hub.dispatch(&CollabEvent {
+            source: ChangeSource::Maintenance,
+            updates,
+        });
         let after = self.full_update_len();
         Ok((before, after))
     }

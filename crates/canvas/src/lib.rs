@@ -20,8 +20,10 @@
 //! 任一变化 → 指纹变 → 证据失效（Stale）。位置漂移即语义变更——
 //! 画布域的证据粒度决策，注册于 Locator::CanvasObject 文档。
 
+pub mod events;
 pub mod session;
 
+pub use events::{CanvasChangeSource, CanvasEvent, Subscription};
 pub use session::{
     Actor, CanvasCommand, CanvasError, CanvasObject, CanvasSession, CommandOutcome, CommandReceipt,
     ObjectKind, SessionOptions,

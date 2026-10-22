@@ -19,6 +19,8 @@ use yrs::{
     StateVector, Transact, UndoManager, Update,
 };
 
+use crate::events::{CanvasChangeSource, CanvasEvent, EventHub, TouchedCollector, UpdateCollector};
+
 /// 载体根名。
 const ROOT: &str = "canvas";
 /// 载体字段名（私有常量——载体形状是本 crate 私事）。
@@ -256,6 +258,12 @@ pub struct CanvasSession {
     options: SessionOptions,
     next_seq: u64,
     undo_cleared_last: bool,
+    /// 事件订阅面（集成项③——见 events 模块）。
+    pub(crate) hub: EventHub,
+    /// 事务字节收集器。
+    pub(crate) collector: UpdateCollector,
+    /// 受触对象收集器（根 Map 深观察）。
+    pub(crate) touched: TouchedCollector,
 }
 
 impl CanvasSession {
@@ -278,6 +286,12 @@ impl CanvasSession {
         undo_human.expand_scope(&doc, &doc.get_or_insert_map(ROOT));
         undo_ai.expand_scope(&doc, &doc.get_or_insert_map(ROOT));
 
+        // 事件面接线（集成项③）：doc 级 update 观察者 + 根 Map 深观察。
+        let collector = UpdateCollector::default();
+        collector.attach(&doc);
+        let touched = TouchedCollector::default();
+        touched.attach(&root);
+
         Ok(CanvasSession {
             doc,
             undo_human,
@@ -285,6 +299,9 @@ impl CanvasSession {
             options,
             next_seq: 0,
             undo_cleared_last: false,
+            hub: EventHub::default(),
+            collector,
+            touched,
         })
     }
 
@@ -341,19 +358,52 @@ impl CanvasSession {
     // ── 撤销面 ─────────────────────────────────────────────────────
 
     pub fn undo(&mut self, actor: Actor) -> bool {
+        self.collector.begin();
+        self.touched.begin();
         let r = match actor {
             Actor::Human => self.undo_human.undo_blocking(),
             Actor::Ai => self.undo_ai.undo_blocking(),
         };
+        let updates = self.collector.drain();
+        let touched = self.touched.drain();
         self.enforce_undo_limit(actor);
+        if r && !updates.is_empty() {
+            self.hub.dispatch(&CanvasEvent {
+                source: CanvasChangeSource::Undo { actor },
+                updates,
+                touched,
+            });
+        }
         r
     }
 
     pub fn redo(&mut self, actor: Actor) -> bool {
-        match actor {
+        self.collector.begin();
+        self.touched.begin();
+        let r = match actor {
             Actor::Human => self.undo_human.redo_blocking(),
             Actor::Ai => self.undo_ai.redo_blocking(),
+        };
+        let updates = self.collector.drain();
+        let touched = self.touched.drain();
+        if r && !updates.is_empty() {
+            self.hub.dispatch(&CanvasEvent {
+                source: CanvasChangeSource::Redo { actor },
+                updates,
+                touched,
+            });
         }
+        r
+    }
+
+    // ── 事件面（集成项③）────────────────────────────────
+
+    /// 订阅变更事件（Drop 句柄即退订；派发纪律见 events 模块）。
+    pub fn subscribe(
+        &mut self,
+        f: impl FnMut(&CanvasEvent) + Send + 'static,
+    ) -> crate::events::Subscription {
+        self.hub.subscribe(f)
     }
 
     pub fn undo_depth(&self, actor: Actor) -> usize {
@@ -408,6 +458,8 @@ impl CanvasSession {
 
     pub fn apply_update(&self, bytes: &[u8]) -> Result<(), CanvasError> {
         self.check_inbound(bytes.len())?;
+        self.collector.begin();
+        self.touched.begin();
         let doc = &self.doc;
         let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let update =
@@ -419,9 +471,28 @@ impl CanvasSession {
             Ok(())
         }));
         match r {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(e),
-            Err(p) => Err(CanvasError::Panic(panic_message(&p))),
+            Ok(Ok(())) => {
+                let updates = self.collector.drain();
+                let touched = self.touched.drain();
+                if !updates.is_empty() {
+                    self.hub.dispatch(&CanvasEvent {
+                        source: CanvasChangeSource::Remote,
+                        updates,
+                        touched,
+                    });
+                }
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let _ = self.collector.drain();
+                let _ = self.touched.drain();
+                Err(e)
+            }
+            Err(p) => {
+                let _ = self.collector.drain();
+                let _ = self.touched.drain();
+                Err(CanvasError::Panic(panic_message(&p)))
+            }
         }
     }
 
@@ -439,10 +510,13 @@ impl CanvasSession {
     }
 
     /// 受控压缩（清栈 + 显式 gc——同 mdc-collab 语义与代价）。
+    /// 维护窗事件恒发（updates 可能为空——逻辑读模型不变）。
     pub fn maintenance_gc(&mut self) -> Result<(usize, usize), CanvasError> {
         let before = self.full_update_len();
         self.undo_human.clear_all();
         self.undo_ai.clear_all();
+        self.collector.begin();
+        self.touched.begin();
         let doc = &self.doc;
         std::panic::catch_unwind(AssertUnwindSafe(|| {
             let mut txn = doc.transact_mut();
@@ -450,6 +524,13 @@ impl CanvasSession {
             txn.commit();
         }))
         .map_err(|p| CanvasError::Panic(panic_message(&p)))?;
+        let updates = self.collector.drain();
+        let touched = self.touched.drain();
+        self.hub.dispatch(&CanvasEvent {
+            source: CanvasChangeSource::Maintenance,
+            updates,
+            touched,
+        });
         Ok((before, self.full_update_len()))
     }
 
@@ -503,7 +584,37 @@ impl CanvasSession {
 
     // ── 命令执行 ───────────────────────────────────────────────────
 
+    /// 受控命令执行（人类与 AI 同一入口）。成功且产出 CRDT 字节的命令
+    /// 恰派发一个 [`crate::events::CanvasChangeSource::Command`] 事件
+    /// （touched = 受触对象 ID 字典序去重）。
     pub fn execute(
+        &mut self,
+        actor: Actor,
+        cmd: CanvasCommand,
+    ) -> Result<CommandReceipt, CanvasError> {
+        self.collector.begin();
+        self.touched.begin();
+        let result = self.execute_inner(actor, cmd);
+        let updates = self.collector.drain();
+        let touched = self.touched.drain();
+        match result {
+            Ok(receipt) => {
+                if !updates.is_empty() {
+                    self.hub.dispatch(&CanvasEvent {
+                        source: CanvasChangeSource::Command { actor },
+                        updates,
+                        touched,
+                    });
+                }
+                Ok(receipt)
+            }
+            // 失败不产事件（错误经返回值显式传递）。
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 命令实施体（事件包裹的内层——`?` 早退不绕过收集器清理）。
+    fn execute_inner(
         &mut self,
         actor: Actor,
         cmd: CanvasCommand,

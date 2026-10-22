@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::events::{ChangeSource, CollabEvent};
 use crate::session::{Actor, CollabError, CollabSession};
 use crate::{BlockKind, BlockSpec};
 
@@ -78,8 +79,35 @@ pub enum CommandOutcome {
 }
 
 impl CollabSession {
-    /// 受控命令执行（人类与 AI 的同一入口）。
+    /// 受控命令执行（人类与 AI 的同一入口）。成功且产出 CRDT 字节的
+    /// 命令派发 [`crate::events::ChangeSource::Command`] 事件（一个
+    /// 命令恰一个事件；批量装载的逐小批事务合并为 updates 序）。
     pub fn execute(
+        &mut self,
+        actor: Actor,
+        cmd: CollabCommand,
+    ) -> Result<CommandReceipt, CollabError> {
+        self.collector.begin();
+        let result = self.execute_inner(actor, cmd);
+        let updates = self.collector.drain();
+        match result {
+            Ok(receipt) => {
+                if !updates.is_empty() {
+                    self.hub.dispatch(&CollabEvent {
+                        source: ChangeSource::Command { actor },
+                        updates,
+                    });
+                }
+                Ok(receipt)
+            }
+            // 失败不产事件（错误经返回值显式传递；残留字节丢弃——
+            // 部分提交面由错误返回驱动宿主重读，双通道不重复）。
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 命令实施体（事件包裹的内层——`?` 早退不绕过收集器清理）。
+    fn execute_inner(
         &mut self,
         actor: Actor,
         cmd: CollabCommand,
