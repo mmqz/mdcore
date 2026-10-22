@@ -30,3 +30,8 @@ publish = false
 mdc-evidence = { path = "../evidence" }
 mdc-office-io = { path = "../office-io" }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+mdc-mdbridge = { path = "../mdbridge" }
+mdcore = { path = "../mdcore" }
+mdc-collab = { path = "../collab" }

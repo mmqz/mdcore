@@ -740,8 +740,11 @@ dependencies = [
 name = "mdc-workbench"
 version = "0.1.0"
 dependencies = [
+ "mdc-collab",
  "mdc-evidence",
+ "mdc-mdbridge",
  "mdc-office-io",
+ "mdcore",
  "serde_json",
 ]
 
