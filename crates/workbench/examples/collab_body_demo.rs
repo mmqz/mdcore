@@ -294,10 +294,12 @@ fn main() {
     ck(7, "幕四：AI 润色段主张 e-calc → Stale");
     ck(8, "幕四：相邻主张 e-quote 保持 Valid（选择性失效——指纹面）");
 
-    // ── 幕五：人工闭环（审核 + 重绑 + 撤销回退 + 干净导出）──
-    wb.review("e-calc", ReviewStatus::Approved, 2100, "human:reviewer")
+    // ── 幕五：人工闭环（重绑 + 审核 + 撤销回退 + 干净导出）。
+    // 阶段2审核门禁次序：先显式重验恢复 Valid → 再过审（先审后验
+    // 的旧序被严格档拒绝——人工只能核验过关联的证据）
+    wb.reverify_claim("e-calc", 3, 2100, "human:reviewer")
         .unwrap();
-    wb.reverify_claim("e-calc", 3, 2200, "human:reviewer")
+    wb.review("e-calc", ReviewStatus::Approved, 2200, "human:reviewer")
         .unwrap();
     assert_eq!(linkage_of(&wb, "e-calc"), LinkageStatus::Valid);
     ck(

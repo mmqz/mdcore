@@ -290,3 +290,68 @@ fn remove_then_undo_identity() {
     assert_ne!(anchor, anchor2);
     assert!(s.resolve_anchor(anchor2).is_ok());
 }
+
+/// 阶段 3 §六.1「检查普通输入的撤销粒度」——实证钉定 + 语义边界。
+///
+/// 现状（捕获窗 0 = p20 缓解的既定代价）：**每命令一项**。逐字符
+/// 输入 = 每字符一项（本测试钉定）；宿主侧输入聚合（如 300ms 去抖
+/// 合并为单命令）= 阶段 5 表面实施项（HANDOFF 既有限制登记——p20
+/// 窗>0 与交错 origin 是缺陷路径，聚合必须在命令构造侧而非捕获窗）。
+/// 本测试同时验证：逐项撤销全链回退正确（语义完整性不因粒度细而破）。
+#[test]
+fn typing_granularity_pinned_per_command() {
+    let mut s = CollabSession::open(opts(41)).unwrap();
+    s.execute(
+        Actor::Human,
+        CollabCommand::InsertBlock {
+            parent: None,
+            index: 0,
+            spec: spec(BlockKind::Paragraph, ""),
+            id: Some("p-gran".into()),
+        },
+    )
+    .unwrap();
+    let base = s.undo_depth(Actor::Human);
+
+    // 模拟逐字符输入 "hello"（宿主未聚合的最细粒度——每字符一命令）
+    for (i, ch) in ['h', 'e', 'l', 'l', 'o'].iter().enumerate() {
+        s.execute(
+            Actor::Human,
+            CollabCommand::ReplaceText {
+                block_id: "p-gran".into(),
+                start: i as u32,
+                end: i as u32,
+                insert: ch.to_string(),
+            },
+        )
+        .unwrap();
+    }
+    assert_eq!(s.find_block("p-gran").unwrap().text, "hello");
+    // 粒度钉定：5 命令 = 5 栈项（捕获窗 0——p20 缓解既定代价）
+    assert_eq!(
+        s.undo_depth(Actor::Human),
+        base + 5,
+        "每命令一项（逐字符输入 = 逐字符栈项——阶段5宿主聚合前的钉定现状）"
+    );
+
+    // 逐项撤销全链回退正确（5 次 → 空文本；第 6 次 = 撤销插入本身）
+    for _ in 0..5 {
+        assert!(s.undo(Actor::Human));
+    }
+    assert_eq!(s.find_block("p-gran").unwrap().text, "");
+
+    // 宿主聚合形态（单命令多字符 = 正常路径）：1 命令 1 栈项
+    s.execute(
+        Actor::Human,
+        CollabCommand::ReplaceText {
+            block_id: "p-gran".into(),
+            start: 0,
+            end: 0,
+            insert: "hello".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(s.undo_depth(Actor::Human), base + 1, "聚合输入 = 单栈项");
+    assert!(s.undo(Actor::Human));
+    assert_eq!(s.find_block("p-gran").unwrap().text, "");
+}
