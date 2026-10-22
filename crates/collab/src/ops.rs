@@ -372,6 +372,28 @@ impl CollabSession {
         if old_kind == Some(new_kind) {
             return Ok(()); // 同类：零操作零栈项
         }
+        // 目标种类承载面校验（镜像 insert/load 时不变量——文本/子块
+        // 无去处则拒，不静默丢内容；audit 走查发现的对齐缺口：此前
+        // 重建无条件复制子节点，可产出 hr带文本 / 非容器带子块 等
+        // 本引擎书写约定外的形状）。
+        {
+            let txn = self.doc().transact();
+            let (text, _) = read_coverage(&loc.element, &txn);
+            if !new_kind.carries_text() && !text.is_empty() {
+                return Err(CollabError::KindIncompatible {
+                    block_id: block_id.into(),
+                    op: "text",
+                });
+            }
+            let child_blocks =
+                Self::child_block_count(&ParentRef::Element(loc.element.clone()), &txn);
+            if !new_kind.carries_children() && child_blocks > 0 {
+                return Err(CollabError::KindIncompatible {
+                    block_id: block_id.into(),
+                    op: "children",
+                });
+            }
+        }
         // 子树 block_id 先登记（重建后锚点重指面）。
         let subtree_ids = {
             let txn = self.doc().transact();
@@ -389,18 +411,33 @@ impl CollabSession {
                     rebuilt.attributes.insert(k.into(), v);
                 }
             }
+            let keep_text = new_kind.carries_text();
+            let mut pushed_text = false;
             for c in loc.element.children(&txn) {
                 match c {
-                    XmlOut::Text(t) => {
+                    XmlOut::Text(t) if keep_text => {
                         rebuilt
                             .children
                             .push(XmlIn::Text(XmlTextPrelim::new(t.get_string(&txn)).into()));
+                        pushed_text = true;
                     }
-                    XmlOut::Element(e) => {
+                    XmlOut::Element(e) if e.tag().as_ref() == MARK_TAG && keep_text => {
                         rebuilt.children.push(XmlIn::Element(deep_copy(&e, &txn)));
                     }
-                    XmlOut::Fragment(_) => {}
+                    XmlOut::Element(e) if e.tag().as_ref() != MARK_TAG => {
+                        // 子块（前置校验保证目标必为容器）。
+                        rebuilt.children.push(XmlIn::Element(deep_copy(&e, &txn)));
+                    }
+                    _ => {} // 目标不承载的面：丢弃（前置校验保证非空时已拒）
                 }
+            }
+            // 文本承载目标恒带出生文本节点（撤销耦合防护——与
+            // build_prelim 同一约定；hr→p 类转换此前会产出无文本
+            // 节点的文本承载块 = 耦合隐患）。
+            if keep_text && !pushed_text {
+                rebuilt
+                    .children
+                    .insert(0, XmlIn::Text(XmlTextPrelim::new("").into()));
             }
             rebuilt
         };

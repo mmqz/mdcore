@@ -192,7 +192,6 @@ fn linkage_of(wb: &Workbench, id: &str) -> LinkageStatus {
         .find(|e| e.evidence_id == id)
         .unwrap()
         .linkage
-        .clone()
 }
 
 /// 由正文段落文本构建 mdcore BlockTree（标题 + 段落——与 DOCX 夹具

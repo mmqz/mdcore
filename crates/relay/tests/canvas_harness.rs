@@ -42,6 +42,12 @@ pub struct CanvasNet {
     queues: HashMap<u64, UpdateQueue>,
 }
 
+impl Default for CanvasNet {
+    fn default() -> Self {
+        CanvasNet::new()
+    }
+}
+
 impl CanvasNet {
     pub fn new() -> CanvasNet {
         let replica = CanvasSession::open(SessionOptions {

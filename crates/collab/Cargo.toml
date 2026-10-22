@@ -31,3 +31,8 @@ publish = false
 [dependencies]
 yrs = { version = "0.28", features = ["sync"] }
 serde_json = "1"
+
+[dev-dependencies]
+# 测试面外部载体构造（audit 测试：出生缺文本节点/未知标签/外域根等
+# 敌意形状须绕过本引擎直写 wire——与产品依赖同版本钉版；不扩闭包）。
+yrs = { version = "0.28", features = ["sync"] }

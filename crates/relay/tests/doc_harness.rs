@@ -47,6 +47,12 @@ pub struct Net {
     presence_states: HashMap<u64, Vec<mdc_collab::PresenceState>>,
 }
 
+impl Default for Net {
+    fn default() -> Self {
+        Net::new_interval(None)
+    }
+}
+
 impl Net {
     pub fn new() -> Net {
         Net::new_interval(None)

@@ -179,7 +179,7 @@ impl RelayHub {
                 self.replica.apply_update(&bytes)?;
                 self.applied_doc_updates += 1;
                 if let Some(interval) = self.snapshot_interval {
-                    if interval > 0 && self.applied_doc_updates % interval == 0 {
+                    if interval > 0 && self.applied_doc_updates.is_multiple_of(interval) {
                         self.latest_snapshot = Some(self.replica.snapshot()?);
                     }
                 }

@@ -83,7 +83,6 @@ fn linkage_of(wb: &Workbench, id: &str) -> LinkageStatus {
         .find(|e| e.evidence_id == id)
         .unwrap()
         .linkage
-        .clone()
 }
 
 fn main() {
@@ -108,7 +107,7 @@ fn main() {
         w.paragraph_text("报价数据来源于《设备报价表》。");
         w.save_to_path(&body.to_string_lossy()).unwrap();
     }
-    let policy = mdc_workbench::PathPolicy::new(&[dir.to_path_buf()]).unwrap();
+    let policy = mdc_workbench::PathPolicy::new(std::slice::from_ref(&dir)).unwrap();
     let mut wb =
         Workbench::start(policy, &sidecar_path, &body, "body-1", 1000, "human:setup").unwrap();
     wb.ingest_source("src-1", &xlsx, 1100, "ai:glm").unwrap();

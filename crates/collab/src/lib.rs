@@ -45,6 +45,7 @@
 //! - **D-3** 载体 XmlText 偏移域 = UTF-8 字节域 → 适配层单点
 //!   char↔byte 无损换算（公开面恒 char 域，字节域不泄漏）。
 
+pub mod audit;
 pub mod command;
 pub mod events;
 pub mod identity;
@@ -52,6 +53,7 @@ pub mod ops;
 pub mod presence;
 pub mod session;
 
+pub use audit::{AuditReport, AuditViolation};
 pub use command::{CollabCommand, CommandOutcome, CommandReceipt};
 pub use events::{ChangeSource, CollabEvent, Subscription};
 pub use identity::CrdtAnchor;
