@@ -122,6 +122,18 @@ impl BlockKind {
     }
 }
 
+/// 行内标记区间读回视图（`BlockInfo.marks` 元素——own-text 段 char 域，
+/// 与 mdcore `MarkSpan` 字段形状一致；领域模型独立纪律：协作域自有类型）。
+///
+/// 形状 = 展平区间（per-kind）：同一区间多重标记 = 多条记录；
+/// 序确定（区间 start 升序，同区间 kind 字典序）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkInfo {
+    pub start: u32,
+    pub end: u32,
+    pub mark: String,
+}
+
 /// 读模型块视图（`document()`/`find_block()` 产物——快照式，非引用）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockInfo {
@@ -132,6 +144,9 @@ pub struct BlockInfo {
     /// own-text 段逻辑文本（Text 子节点 + mark 元素内文本按序拼接；
     /// 容器块 = 首段自有文本，不含子块文本）。
     pub text: String,
+    /// 行内标记（own-text 段 char 域展平区间——载体 m 元素嵌套的
+    /// 逻辑读回；materialize 消费面，mdbridge 对接轮引入）。
+    pub marks: Vec<MarkInfo>,
     /// 子块（递归）。
     pub children: Vec<BlockInfo>,
 }

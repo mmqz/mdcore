@@ -1,0 +1,24 @@
+[package]
+name = "mdc-mdbridge"
+version.workspace = true
+edition = "2021"
+publish = false
+
+# mdc-mdbridge —— MD 引擎 ↔ 协作引擎 op 层对接（集成项①，应用层组合）。
+#
+# 定位：把 mdcore 的原子 Op 流（NodePath 寻址 + u64 BlockId）翻译为
+# mdc-collab 的命令流（block_id 字符串寻址），并把协作态反向物化为
+# mdcore BlockTree（引擎消费面：MD 序列化 / 指纹 / 锚点）。
+#
+# 架构纪律（分析仓 collab-line 协作与Canvas正式交付报告 §3.1）：
+# - 引擎间不互相依赖（mdcore 与 mdc-collab 零 path 依赖不变量维持）——
+#   对接按约束在**应用层组合**，本 crate 即该组合点。
+# - 协作会话是协同文档的唯一真相源；shadow BlockTree 是纯投影
+#   （collab 命令成功后增量镜像；远端同步/撤销/失败自愈 = 全量重物化）。
+# - 身份映射决策（BlockId(u64) ↔ block_id(String)）见 lib.rs 模块文档。
+#
+# 依赖面：仅本 workspace 两 crate（mdcore + mdc-collab）；零新增三方。
+
+[dependencies]
+mdcore = { path = "../mdcore" }
+mdc-collab = { path = "../collab" }

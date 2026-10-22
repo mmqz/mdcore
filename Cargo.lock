@@ -694,6 +694,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-mdbridge"
+version = "0.1.0"
+dependencies = [
+ "mdc-collab",
+ "mdcore",
+]
+
+[[package]]
 name = "mdc-office"
 version = "0.1.0"
 

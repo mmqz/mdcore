@@ -474,11 +474,13 @@ pub(crate) fn block_id_of(el: &yrs::XmlElementRef, txn: &yrs::Transaction) -> Op
 /// 递归读块视图。
 pub(crate) fn read_block(el: &yrs::XmlElementRef, txn: &yrs::Transaction) -> BlockInfo {
     let kind = BlockKind::from_tag(el.tag().as_ref()).unwrap_or(BlockKind::Paragraph);
+    let (text, marks) = own_text_and_marks(el, txn);
     BlockInfo {
         block_id: block_id_of(el, txn).unwrap_or_default(),
         kind,
         attrs: user_attrs(el, txn),
-        text: own_text(el, txn),
+        text,
+        marks,
         children: el
             .children(txn)
             .filter_map(|c| match c {
@@ -486,6 +488,67 @@ pub(crate) fn read_block(el: &yrs::XmlElementRef, txn: &yrs::Transaction) -> Blo
                 _ => None,
             })
             .collect(),
+    }
+}
+
+/// own-text 段逻辑文本 + 行内标记展平区间（leading 段语义——首个非
+/// Text/mark 子节点即段结束；容器不含子块文本）。
+///
+/// 区间展平：m 元素嵌套的 active 标记集 → 每区间每 kind 一条
+/// [`MarkInfo`]；空标记集区间不产出记录。序 = 区间序 × kind 字典序。
+pub(crate) fn own_text_and_marks(
+    el: &yrs::XmlElementRef,
+    txn: &yrs::Transaction,
+) -> (String, Vec<crate::MarkInfo>) {
+    let mut text = String::new();
+    let mut spans: Vec<crate::MarkInfo> = Vec::new();
+    let mut pos = 0u32;
+    walk_marks(el, txn, &mut Vec::new(), &mut text, &mut spans, &mut pos);
+    // 闭合序（嵌套内层先）→ 契约序（start, end, mark 字典序）。
+    spans.sort_by(|a, b| (a.start, a.end, &a.mark).cmp(&(b.start, b.end, &b.mark)));
+    (text, spans)
+}
+
+fn walk_marks(
+    el: &yrs::XmlElementRef,
+    txn: &yrs::Transaction,
+    active: &mut Vec<String>,
+    text: &mut String,
+    spans: &mut Vec<crate::MarkInfo>,
+    pos: &mut u32,
+) {
+    for c in el.children(txn) {
+        match c {
+            XmlOut::Text(t) => {
+                let s = t.get_string(txn);
+                *pos += s.chars().count() as u32;
+                text.push_str(&s);
+            }
+            XmlOut::Element(e) if e.tag().as_ref() == MARK_TAG => {
+                let start = *pos;
+                let mut pushed = false;
+                for (k, v) in e.attributes(txn) {
+                    if k == "kind" {
+                        if let Some(kind) = attr_str(&v) {
+                            active.push(kind);
+                            pushed = true;
+                        }
+                    }
+                }
+                walk_marks(&e, txn, active, text, spans, pos);
+                if pushed {
+                    let kind = active.pop().expect("push/pop 对称");
+                    if *pos > start {
+                        spans.push(crate::MarkInfo {
+                            start,
+                            end: *pos,
+                            mark: kind,
+                        });
+                    }
+                }
+            }
+            _ => break, // 首个非 Text/mark 子节点 = own-text 段结束
+        }
     }
 }
 
@@ -508,32 +571,6 @@ fn find_in_children(
         }
     }
     None
-}
-
-/// own-text 段逻辑文本：leading Text/m 子树内全部文本按序拼接
-/// （容器块 = 自有文本段，不含子块；D-3 char 域口径）。
-pub(crate) fn own_text(el: &yrs::XmlElementRef, txn: &yrs::Transaction) -> String {
-    let mut out = String::new();
-    for c in el.children(txn) {
-        match c {
-            XmlOut::Text(t) => out.push_str(&t.get_string(txn)),
-            XmlOut::Element(e) if e.tag().as_ref() == MARK_TAG => {
-                collect_text(&e, txn, &mut out);
-            }
-            _ => break, // 首个非 Text/mark 子节点 = own-text 段结束
-        }
-    }
-    out
-}
-
-fn collect_text(el: &yrs::XmlElementRef, txn: &yrs::Transaction, out: &mut String) {
-    for c in el.children(txn) {
-        match c {
-            XmlOut::Text(t) => out.push_str(&t.get_string(txn)),
-            XmlOut::Element(e) => collect_text(&e, txn, out),
-            _ => {}
-        }
-    }
 }
 
 // ── 属性键合法化（开放键面——yrs-e §2.1）────────────────────────
