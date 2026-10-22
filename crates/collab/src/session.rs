@@ -113,6 +113,9 @@ pub struct SessionOptions {
     /// clear_all 该栈——代价 = 该 origin 全部撤销历史丢失，诚实
     /// 登记非静默；`None` = 不限制[内存代价见 p19 定量]）。
     pub undo_stack_limit: Option<usize>,
+    /// 在场层（awareness）入向字节限额（瞬态 JSON 小载荷面——
+    /// 默认 1MiB，与文档 52MiB 族分立；见 presence 模块文档）。
+    pub presence_byte_limit: usize,
 }
 
 impl Default for SessionOptions {
@@ -121,6 +124,7 @@ impl Default for SessionOptions {
             client_id: 7_100_001,
             input_byte_limit: 52 * 1024 * 1024,
             undo_stack_limit: None,
+            presence_byte_limit: 1024 * 1024,
         }
     }
 }
@@ -150,6 +154,8 @@ pub struct CollabSession {
     pub(crate) hub: EventHub,
     /// 事务字节收集器（观察者回调 → 事件 updates 面）。
     pub(crate) collector: UpdateCollector,
+    /// 在场层（集成项④——见 presence 模块文档）。
+    presence: crate::presence::Presence,
 }
 
 impl CollabSession {
@@ -181,6 +187,10 @@ impl CollabSession {
         let collector = UpdateCollector::default();
         collector.attach(&doc);
 
+        // 在场层接线（集成项④）：client_id 与会话对齐（Doc 克隆共享态）。
+        let presence =
+            crate::presence::Presence::bound_to_session(&doc, options.presence_byte_limit);
+
         Ok(CollabSession {
             doc,
             undo_human,
@@ -191,6 +201,7 @@ impl CollabSession {
             undo_cleared_last: false,
             hub: EventHub::default(),
             collector,
+            presence,
         })
     }
 
@@ -308,6 +319,13 @@ impl CollabSession {
         f: impl FnMut(&CollabEvent) + Send + 'static,
     ) -> crate::events::Subscription {
         self.hub.subscribe(f)
+    }
+
+    // ── 在场层（集成项④——见 presence 模块）────────────────
+
+    /// 在场层（在线状态/光标）——独立 wire 通道，不入撤销、不持久化。
+    pub fn presence_mut(&mut self) -> &mut crate::presence::Presence {
+        &mut self.presence
     }
 
     /// 撤销栈深度（观测面——内存边界监控）。
@@ -498,6 +516,11 @@ pub(crate) fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
     } else {
         "<non-string panic payload>".to_string()
     }
+}
+
+/// panic_message 的跨模块面（presence 等模块复用——同一实现单点）。
+pub(crate) fn panic_message_pub(p: &Box<dyn std::any::Any + Send>) -> String {
+    panic_message(p)
 }
 
 // ── 载体读取工具（session/ops/identity 共用）────────────────────

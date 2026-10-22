@@ -30,3 +30,4 @@ publish = false
 
 [dependencies]
 yrs = { version = "0.28", features = ["sync"] }
+serde_json = "1"

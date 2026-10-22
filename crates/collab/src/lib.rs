@@ -49,11 +49,13 @@ pub mod command;
 pub mod events;
 pub mod identity;
 pub mod ops;
+pub mod presence;
 pub mod session;
 
 pub use command::{CollabCommand, CommandOutcome, CommandReceipt};
 pub use events::{ChangeSource, CollabEvent, Subscription};
 pub use identity::CrdtAnchor;
+pub use presence::{Presence, PresenceEvent, PresenceState, PresenceSubscription};
 pub use session::{Actor, CollabError, CollabSession, SessionOptions};
 
 pub use identity::ResolvedAnchor;
