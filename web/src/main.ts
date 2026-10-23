@@ -67,6 +67,7 @@ import {
   keymap,
 } from '@codemirror/view';
 import init, { WasmCore, import_docx, import_xlsx } from '../pkg/mdcore_wasm.js';
+import { setupCanvasView } from './canvas_view.js';
 import { setupEvidencePanel } from './evidence_panel.js';
 import { setupPdfView } from './pdf_view.js';
 import { setupXlsxGrid } from './xlsx_grid.js';
@@ -1482,6 +1483,17 @@ async function main(): Promise<void> {
   // and degrades to display-only when the second wasm package is absent.
   // Zero coupling to WasmCore/WasmBook/WasmWorkbench lifecycles.
   setupPdfView();
+
+  // ---- Phase 5 §8.5: canvas surface view (SVG retained-mode display +
+  // WasmCanvas model plane, dual-instance collab demo). The loader uses a
+  // runtime-URL import (pdf_view PDF_WASM_PATH pattern): esbuild cannot
+  // statically resolve it, so the module is fetched from ./pkg/ at runtime —
+  // a later wasm rebuild lands WasmCanvas there with zero main.js rebuild,
+  // and the same indirection lets the e2e mock dry-run swap the module via
+  // the static server route. WasmCanvas is optional in the current pkg
+  // build: the panel boots display-only (typed bridge_absent) until then.
+  // Zero coupling to WasmCore/WasmBook/WasmWorkbench lifecycles.
+  setupCanvasView(() => import(new URL('./pkg/mdcore_wasm.js', import.meta.url).href));
 
   window.__ready = true;
 }

@@ -10,6 +10,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # p5-t3：证据工作台 wasm 出口（内存会话——阶段 5 §八.1 前置件）。
 mdc-workbench = { path = "../workbench" }
+# p5-t5：画布会话 wasm 出口（§八.5 Canvas 表面——四表面第四员）。
+mdc-canvas = { path = "../canvas" }
 # 契约类型直依赖（RelationKind/ReviewStatus/Decimal 等——workbench 传递
 # 依赖已在 lock，零新增三方）。
 mdc-evidence = { path = "../evidence" }

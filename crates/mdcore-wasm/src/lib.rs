@@ -26,6 +26,7 @@
 //! WorkbookWriter → zip 字节下载；与 t17 导入合流 = XLSX 往返闭环，
 //! office 消费三部曲收口；栅格映射降级面显式登记于该模块文档）。
 
+pub mod canvas;
 pub mod docx_export;
 pub mod docx_import;
 pub mod workbench;

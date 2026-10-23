@@ -11,6 +11,7 @@ use std::panic::AssertUnwindSafe;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mdc_evidence::Fingerprinter as _;
+use yrs::sync::time::Clock;
 use yrs::undo::Options as UndoOptions;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
@@ -166,12 +167,30 @@ impl Actor {
 
 /// 会话选项（与 mdc-collab::SessionOptions 同构纪律：不含 skip_gc、
 /// 不含捕获窗）。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionOptions {
     pub client_id: u64,
     pub input_byte_limit: usize,
     /// 撤销栈软上限（粗粒度 clear_all 策略——同 mdc-collab）。
     pub undo_stack_limit: Option<usize>,
+    /// 时钟注入面（p5-t5 wasm 前置）：撤销栈时间戳源。`None` = 系统
+    /// 时钟（native 默认——既有行为零变化）；`Some(f)` = 宿主注入
+    /// （wasm32 无 std 时间系统——`SystemTime::now()` = trap；注入
+    /// 确定性时钟，与 mdcore-wasm `set_clock_ms`/mdc-pdf
+    /// `PortableInstant` 同纪律）。
+    pub clock_ms: Option<std::sync::Arc<dyn Fn() -> u64 + Send + Sync>>,
+}
+
+impl std::fmt::Debug for SessionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 闭包面非 Debug——以占位标记呈现（Debug derive 与 dyn Fn 冲突）。
+        f.debug_struct("SessionOptions")
+            .field("client_id", &self.client_id)
+            .field("input_byte_limit", &self.input_byte_limit)
+            .field("undo_stack_limit", &self.undo_stack_limit)
+            .field("clock_ms", &self.clock_ms.as_ref().map(|_| "<clock>"))
+            .finish()
+    }
 }
 
 impl Default for SessionOptions {
@@ -180,6 +199,7 @@ impl Default for SessionOptions {
             client_id: 7_200_001,
             input_byte_limit: 52 * 1024 * 1024,
             undo_stack_limit: None,
+            clock_ms: None,
         }
     }
 }
@@ -281,8 +301,8 @@ impl CanvasSession {
         let root = doc.get_or_insert_map(ROOT);
         let _ = root.len(&doc.transact());
 
-        let mut undo_human = Self::new_undo_manager(Actor::Human);
-        let mut undo_ai = Self::new_undo_manager(Actor::Ai);
+        let mut undo_human = Self::new_undo_manager(Actor::Human, &options.clock_ms);
+        let mut undo_ai = Self::new_undo_manager(Actor::Ai, &options.clock_ms);
         undo_human.expand_scope(&doc, &doc.get_or_insert_map(ROOT));
         undo_ai.expand_scope(&doc, &doc.get_or_insert_map(ROOT));
 
@@ -305,21 +325,44 @@ impl CanvasSession {
         })
     }
 
-    fn new_undo_manager(origin: Actor) -> UndoManager {
+    fn new_undo_manager(
+        origin: Actor,
+        clock_ms: &Option<std::sync::Arc<dyn Fn() -> u64 + Send + Sync>>,
+    ) -> UndoManager {
         // 与 mdc-collab 同构：每 origin 一栈 + 窗 0 + capture_transaction
         // 拒 None-origin（远端应用不入本地栈）。
         let mut tracked = HashSet::new();
         tracked.insert(origin.wire());
-        UndoManager::with_options(UndoOptions {
-            capture_timeout_millis: 0,
-            tracked_origins: tracked,
-            capture_transaction: Some(std::sync::Arc::new(|txn| txn.origin().is_some())),
-            timestamp: std::sync::Arc::new(|| {
+        /// 宿主闭包 → yrs Clock 适配器（注入面）。
+        struct HostClock<F: Fn() -> u64 + Send + Sync>(F);
+        impl<F: Fn() -> u64 + Send + Sync> Clock for HostClock<F> {
+            fn now(&self) -> u64 {
+                (self.0)()
+            }
+        }
+        /// 系统时钟（native 默认——wasm32 不可达：SessionOptions 时钟
+        /// 注入是 wasm 构造前置）。
+        struct SystemClock;
+        impl Clock for SystemClock {
+            fn now(&self) -> u64 {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0)
-            }),
+            }
+        }
+        let timestamp: std::sync::Arc<dyn Clock> = match clock_ms {
+            Some(f) => {
+                let f = f.clone();
+                std::sync::Arc::new(HostClock(move || f()))
+            }
+            None => std::sync::Arc::new(SystemClock),
+        };
+        UndoManager::with_options(UndoOptions {
+            capture_timeout_millis: 0,
+            tracked_origins: tracked,
+            capture_transaction: Some(std::sync::Arc::new(|txn| txn.origin().is_some())),
+            timestamp,
             init_undo_stack: vec![],
             init_redo_stack: vec![],
         })

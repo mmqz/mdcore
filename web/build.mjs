@@ -66,4 +66,15 @@ if (existsSync('pkg_pdf/pdf_wasm.js')) {
   console.log('note: web/pkg_pdf absent (mdc-pdf-wasm pending) — pdf_view runs display-only');
 }
 
+// ---- §八.5: canvas wasm 桥胶水（pkg/mdcore_wasm.js 的运行时副本——
+// main.ts 的 canvas 装载器走运行时 URL import './pkg/mdcore_wasm.js'，
+// 不打进 main.js。wasm 重建落 WasmCanvas 后无需重打 main.js 即生效；
+// 胶水内部以相对 URL 取 mdcore_wasm_bg.wasm（与 dist 根副本同一二进制）。
+// 注：这是同胶水的第二模块实例（独立 wasm 线性内存）——canvas 会话与
+// WasmCore 生命周期零耦合，代价 = 一份额外实例（pkg 稳定后可切回打包
+// import 单实例）。----
+mkdirSync('dist/pkg', { recursive: true });
+cpSync('pkg/mdcore_wasm.js', 'dist/pkg/mdcore_wasm.js');
+cpSync('pkg/mdcore_wasm_bg.wasm', 'dist/pkg/mdcore_wasm_bg.wasm');
+
 console.log('build ok -> dist/');

@@ -198,6 +198,49 @@
   .pdf-freetext-input { position: absolute; z-index: 10; border: 1px solid #1a73e8;
                         border-radius: 0; padding: 1px 4px; font: inherit; font-size: 12px;
                         outline: none; background: #fff; pointer-events: auto; }
+  /* ---- Phase 5 §8.5：Canvas 表面视图（canvas_view.ts）——双面板布局
+     （主画布 + AI 端只读镜像），SVG 元素样式/选中态/工具条 ---- */
+  #canvas-panel { display: none; max-width: 1128px; margin: 8px auto 0; padding: 0 16px;
+                  height: calc(100vh - 170px); }
+  #canvas-toolbar { display: flex; align-items: center; gap: 6px; font-size: 13px; height: 32px;
+                   flex-wrap: wrap; }
+  .cv-btn { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid #cfd4dc;
+            border-radius: 6px; background: #f7f8fa; cursor: pointer; }
+  .cv-btn:hover:not(:disabled) { background: #eef0f4; }
+  .cv-btn:disabled { opacity: .45; cursor: default; }
+  .cv-btn.active { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+  #canvas-status { margin-left: 8px; color: #667; font-size: 12px; min-height: 16px;
+                   word-break: break-all; }
+  #canvas-status.cv-error { color: #b00; }
+  #canvas-body { display: flex; gap: 10px; height: calc(100% - 64px); }
+  #canvas-scroll { flex: 1 1 auto; min-width: 0; overflow: auto; position: relative;
+                   border: 1px solid #d7dbe2; background: #fff; outline: none; }
+  #canvas-scroll:focus { border-color: #9ab4e8; }
+  #canvas-svg { display: block; touch-action: none; user-select: none; }
+  #canvas-svg text { font: 12px/1.4 -apple-system, "Segoe UI", sans-serif; fill: #222;
+                     pointer-events: none; }
+  #canvas-svg .node rect { fill: #eef3ff; stroke: #4a7dff; stroke-width: 1.5; }
+  #canvas-svg .node:hover rect { fill: #e2ebff; }
+  #canvas-svg .node.selected rect { stroke: #1a73e8; stroke-width: 2.5; }
+  #canvas-svg .node.dragging rect { fill: #ffe9b8; stroke: #b45309; }
+  #canvas-svg .node.edge-source rect { stroke: #b45309; stroke-width: 3; stroke-dasharray: 4 3; }
+  #canvas-svg .edge { stroke: #8895a7; stroke-width: 1.5; }
+  #canvas-svg .edge.dangling { stroke: #d97706; stroke-dasharray: 5 4; }
+  #canvas-svg .group rect { fill: none; stroke: #9aa3af; stroke-dasharray: 6 4; }
+  #canvas-svg .group.selected rect { stroke: #7c3aed; stroke-width: 2; }
+  #canvas-svg .group text { fill: #667; font-size: 11px; }
+  #canvas-ai-panel { flex: 0 0 260px; width: 260px; display: flex; flex-direction: column;
+                    border: 1px solid #d7dbe2; border-radius: 6px; background: #fbfbfc;
+                    overflow: hidden; }
+  #canvas-ai-head { padding: 6px 10px; font-size: 12px; color: #455;
+                    border-bottom: 1px solid #e2e5ea; display: flex; align-items: center;
+                    justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+  #canvas-ai-head .cv-btn { font-size: 11px; padding: 2px 8px; }
+  #canvas-ai-svg-wrap { flex: 1 1 auto; min-height: 0; overflow: hidden; background: #fff; }
+  #canvas-ai-svg { display: block; width: 100%; height: 100%; }
+  #canvas-edit-input { position: absolute; z-index: 50; box-sizing: border-box;
+                       border: 2px solid #1a73e8; border-radius: 0; padding: 2px 4px;
+                       font: inherit; font-size: 12px; outline: none; background: #fff; }
 </style>
 </head>
 <body>
@@ -222,10 +265,12 @@
       <button type="button" id="tab-doc" class="view-tab active">Document</button>
       <button type="button" id="tab-grid" class="view-tab">Grid</button>
       <button type="button" id="tab-pdf" class="view-tab">PDF</button>
+      <button type="button" id="tab-canvas" class="view-tab">Canvas</button>
     </div>
     <div id="editor"></div>
     <div id="grid-panel"></div>
     <div id="pdf-panel"></div>
+    <div id="canvas-panel"></div>
   </div>
 </div>
 <pre id="debug">booting…</pre>
