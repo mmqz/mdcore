@@ -57,6 +57,21 @@ gates.md「T1 卫生修复轮 · feature 面前置 bootstrap」。默认面常�
 - `THIRD-PARTY-NOTICES.draft.md`：34 第三方组件按锁定版本逐包取证（crates.io/npm），
   全白名单族、零 GPL 传染、零 UNKNOWN，与 R22-c SBOM 交叉一致。**随依赖变更必须再生成**
   （生成器脚本存分析仓 scripts/r2_gen_notices.py，可复跑）。
+- **p5-t4 增量登记（pdfjs-dist）**：`pdfjs-dist@6.4.299`（Apache-2.0，
+  web/package.json 首个 PDF 面三方运行时件——CM6 三包为既有正文编辑
+  面依赖）。用途 = PDF 表面显示面（§八.4 成熟组件复用；路线定谳 B：
+  pdf.js 渲染 + mdc-pdf lopdf wasm 写回——渲染分离、真相不分离）。
+  **传递面**（审查 M-1 修正）：`optionalDependencies` 含
+  `@napi-rs/canvas@1.0.13`（MIT，Node 服务端渲染可选面——浏览器
+  bundle 不消费，dist 零分发二进制）+ 11 个平台二进制可选包
+  （android/darwin/linux/win32 家族）——npm lock 本次 +280 行共
+  **13 包**，全 MIT 白名单族；NOTICES 再生成时须全量收录（非仅
+  pdfjs-dist 一项）。同轮 wasm 面：`console_error_panic_hook`
+  （MIT，已在 mdcore-wasm 闭包）；lopdf/getrandom 零新版本
+  （lock +11 行为 workspace 内部边与 getrandom 特性统一）。
+  legacy 构建取舍：modern 路径用 TC39 upsert（Map.getOrInsertComputed
+  ——webview 宿主 JSC 不支持），legacy 构建为宿主兼容面（pdf_view.ts
+  注释在档）。
 - `ASSET_CHECK.md`：零内嵌二进制资产核查记录。
 - `TRADEMARK_RULES.md`：命名域（mdcore/mdshell/mdc-*）、四对象标记禁止事项、
   兼容表述边界、**定名前检索门**。

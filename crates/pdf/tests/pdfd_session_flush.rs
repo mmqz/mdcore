@@ -174,6 +174,10 @@ impl AnnotationWriter for TapWriter {
         Ok(())
     }
 
+    fn product_bytes(&self) -> Vec<u8> {
+        Vec::new() // 观测面无产物字节——统计断言走 Tap 计数
+    }
+
     fn save_incremental(&mut self) -> Result<IncrementalSave, CommandError> {
         let mut t = self.0.lock().unwrap();
         t.saves += 1;

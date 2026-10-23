@@ -24,8 +24,8 @@
 //!   用，`encrypted` 旗标仍置位（会话层 S5 据此拒写）；**曾加密**
 //!   （空口令自动解密）态对象图明文可见——检测照常。
 
+use crate::security::portable_now;
 use std::collections::HashSet;
-use std::time::Instant;
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
@@ -42,7 +42,7 @@ pub fn open_scan(pdf: &[u8], limits: &Limits) -> Result<OpenAssessment, CommandE
     // S3-L7 输入层（open 家族入口统一检查——与 from_bytes /
     // PdfiumEngine::open 同款，先于解析）。
     limits.check_open_input_bytes(pdf.len() as u64)?;
-    let started = Instant::now();
+    let started = portable_now();
     let doc = Document::load_mem(pdf)
         .map_err(|e| CommandError::engine(format!("lopdf 装载失败：{e}")))?;
     let assessment = scan_document(&doc, limits);

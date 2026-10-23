@@ -16,7 +16,42 @@
 //!   字节/渲染目标缓冲四处消费点在档）；
 //! - **S5** 仍加密态拒绝一切写类命令（语义锁背书）。
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// 便携单调时钟（p5-t4 wasm 面）：wasm32-unknown-unknown 无 std 时间
+// 系统（Instant::now() = trap "time not implemented"）。native 侧
+// 零变化（别名 = Instant 本体）；wasm32 侧零计时占位——L4 打开预算
+// 检查恒过（诚实登记：wasm 面单线程阻塞语义下，预算检查本就只能
+// 事后报告而无法中断扫描；零计时即「不报告」——预算防线在 native
+// 路径完整保留）。
+// ---------------------------------------------------------------------------
+
+/// 便携 Instant（native = std Instant；wasm32 = 零计时占位）。
+#[cfg(not(target_arch = "wasm32"))]
+pub use std::time::Instant as PortableInstant;
+/// 便携时钟取 now（native = Instant::now；wasm32 = 占位值）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn portable_now() -> PortableInstant {
+    std::time::Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortableInstant;
+
+#[cfg(target_arch = "wasm32")]
+pub fn portable_now() -> PortableInstant {
+    PortableInstant
+}
+
+#[cfg(target_arch = "wasm32")]
+impl PortableInstant {
+    /// 零 elapsed（占位——预算检查恒过，见上注）。
+    pub fn elapsed(self) -> Duration {
+        Duration::ZERO
+    }
+}
 
 use serde::{Deserialize, Serialize};
 
@@ -262,7 +297,7 @@ impl Limits {
     /// [`REASON_OPEN_BUDGET`]；PDF-e 接线）：`started` 起算的装载 +
     /// 扫描耗时超 `open_budget_ms` 即拒（Duration 全精度比较——测试
     /// 可注入 0 预算确定性触发）。
-    pub fn check_open_budget(&self, started: Instant) -> Result<(), CommandError> {
+    pub fn check_open_budget(&self, started: PortableInstant) -> Result<(), CommandError> {
         if started.elapsed() > Duration::from_millis(self.open_budget_ms) {
             return Err(CommandError::SecurityDeny {
                 reason: REASON_OPEN_BUDGET,

@@ -31,7 +31,6 @@
 //! `write_annotation` 以 `InvalidPage` 显式失败，不静默错页挂载。
 
 use std::collections::HashMap;
-use std::time::Instant;
 
 // 版本钉住的 lopdf 再导出（feature 门内）：测试/宿主经本 crate 引用与
 // 实装同版本的 lopdf 实例——避免 dev-dependency 把 lopdf 带进默认测试
@@ -90,7 +89,7 @@ impl LopdfWriter {
         // PdfiumEngine::open 同款；先于解析：敌意大文档的无界解析面
         // 在入口收口）。
         limits.check_open_input_bytes(pdf.len() as u64)?;
-        let started = Instant::now();
+        let started = crate::security::portable_now();
         let doc = Document::load_mem(&pdf)
             .map_err(|e| CommandError::engine(format!("lopdf 装载失败：{e}")))?;
         if doc.is_encrypted() || doc.was_encrypted() {
@@ -294,6 +293,10 @@ impl AnnotationWriter for LopdfWriter {
             bytes_appended,
             prefix_bytes,
         })
+    }
+    /// 当前产物字节（PDF-e 视图层：宿主取回面——前缀 + 既往修订）。
+    fn product_bytes(&self) -> Vec<u8> {
+        LopdfWriter::product_bytes(self)
     }
 }
 

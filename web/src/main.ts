@@ -68,6 +68,7 @@ import {
 } from '@codemirror/view';
 import init, { WasmCore, import_docx, import_xlsx } from '../pkg/mdcore_wasm.js';
 import { setupEvidencePanel } from './evidence_panel.js';
+import { setupPdfView } from './pdf_view.js';
 import { setupXlsxGrid } from './xlsx_grid.js';
 
 // ---------------------------------------------------------------------------
@@ -1474,6 +1475,13 @@ async function main(): Promise<void> {
   // The handle ctor is optional in the current pkg build — the panel runs
   // inert (typed bridge_absent results) until the wasm rebuild lands it.
   setupEvidencePanel(() => import('../pkg/mdcore_wasm.js'));
+
+  // ---- Phase 5 §8.4: PDF surface view (pdf.js display plane + mdc-pdf
+  // wasm session model plane). Self-contained lazy boot: pdfjs is bundled
+  // into main.js, the mdc-pdf wasm glue (web/pkg_pdf/) resolves at runtime
+  // and degrades to display-only when the second wasm package is absent.
+  // Zero coupling to WasmCore/WasmBook/WasmWorkbench lifecycles.
+  setupPdfView();
 
   window.__ready = true;
 }

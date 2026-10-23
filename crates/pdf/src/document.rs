@@ -278,6 +278,13 @@ impl PdfSession {
         self.now_ms = now_ms;
     }
 
+    /// 当前产物字节（`None` = 未装配写器；PDF-e 视图层——落盘由宿主
+    /// 决定，会话零文件系统。flush 前取 = 最近落盘态[不含未保存修订]，
+    /// flush 后取 = 含本次追加）。
+    pub fn product_bytes(&self) -> Option<Vec<u8>> {
+        self.annot_writer.as_ref().map(|w| w.product_bytes())
+    }
+
     /// flush：保存事务（会话 API 非命令——六命令面零变化）。语义序：
     /// ① S5 加密态拒（先于一切——含零脏与写器装配检查，策略门最前）
     /// → ② 零脏幂等短路（不追加字节）→ ③ 逐条写（脏集升序）→

@@ -729,6 +729,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-pdf-wasm"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "getrandom",
+ "mdc-pdf",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "mdc-relay"
 version = "0.1.0"
 dependencies = [

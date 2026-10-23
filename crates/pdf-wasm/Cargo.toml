@@ -1,0 +1,20 @@
+[package]
+name = "mdc-pdf-wasm"
+version.workspace = true
+edition = "2021"
+description = "mdc-pdf 会话 wasm 出口（阶段 5 §八.4 PDF 表面——渲染分离真相不分离：pdf.js 纯显示面，模型层单一真相 = PdfSession[安全评估/搜索/标注/lopdf 增量写]）。依赖面：mdc-pdf[engine-lopdf]（wasm32 实测干净编译——getrandom wasm_js 特性统一）+ wasm-bindgen + serde_json；零新三方 crate（lopdf 闭包已在 lock）。"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mdc-pdf = { path = "../pdf", features = ["engine-lopdf"] }
+wasm-bindgen = "0.2"
+serde_json.workspace = true
+console_error_panic_hook = "0.1"
+
+# lopdf→rand→getrandom 传递面在 wasm32 需要 wasm_js 特性（js_sys
+# crypto 源）——原生构建零影响（特性只在 wasm 目标生效）。零新 crate
+# （getrandom 0.4 已在 lock）。
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }

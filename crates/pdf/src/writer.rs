@@ -45,6 +45,10 @@ pub trait AnnotationWriter {
     /// 保存为增量修订：原字节前缀逐位保持 + 追加。返回统计；无未保存
     /// 内容时不追加字节（幂等）。
     fn save_incremental(&mut self) -> Result<IncrementalSave, CommandError>;
+
+    /// 当前产物字节（前缀 + 既往追加修订——宿主取回面，PDF-e 视图
+    /// 层定稿：落盘位置由宿主决定，会话自身不写文件）。
+    fn product_bytes(&self) -> Vec<u8>;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +162,11 @@ impl AnnotationWriter for MockWriter {
         self.writes.push((page, annot.id));
         self.pending += 1;
         Ok(())
+    }
+
+    // mock 无产物面——长度断言走固有 product_bytes() -> u64。
+    fn product_bytes(&self) -> Vec<u8> {
+        Vec::new()
     }
 
     fn save_incremental(&mut self) -> Result<IncrementalSave, CommandError> {

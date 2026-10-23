@@ -130,6 +130,74 @@
   #grid-edit-input { position: absolute; z-index: 50; box-sizing: border-box; border: 2px solid #1a73e8;
                      border-radius: 0; padding: 2px 4px; font: inherit; font-size: 13px; outline: none;
                      background: #fff; }
+  /* ---- Phase 5 §8.4：PDF 表面视图（pdf_view.ts）---- */
+  #pdf-panel { display: none; max-width: 1128px; margin: 8px auto 0; padding: 0 16px;
+               height: calc(100vh - 170px); }
+  #pdf-toolbar { display: flex; align-items: center; gap: 6px; font-size: 13px; height: 32px;
+                 flex-wrap: wrap; }
+  .pdf-btn { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid #cfd4dc;
+             border-radius: 6px; background: #f7f8fa; cursor: pointer; }
+  .pdf-btn:hover:not(:disabled) { background: #eef0f4; }
+  .pdf-btn:disabled { opacity: .45; cursor: default; }
+  #pdf-page-label { min-width: 56px; text-align: center; color: #455; font-variant-numeric: tabular-nums; }
+  #pdf-zoom-label { min-width: 42px; text-align: center; color: #455; font-variant-numeric: tabular-nums; }
+  #pdf-search { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid #cfd4dc;
+                border-radius: 6px; background: #fff; width: 140px; }
+  #pdf-search-count { color: #667; min-width: 48px; }
+  #pdf-annot-mode { font: inherit; font-size: 13px; padding: 2px 4px; border: 1px solid #cfd4dc;
+                    border-radius: 6px; background: #fff; }
+  #pdf-status { margin-top: 4px; font-size: 12px; color: #667; min-height: 26px;
+                word-break: break-all; }
+  #pdf-status .pdf-error { color: #b00; }
+  #pdf-status .pdf-warn-line { display: block; background: #fff3d6; color: #7a5a00;
+                               padding: 1px 6px; border-radius: 4px; margin-top: 2px; }
+  #pdf-viewport { position: relative; overflow: auto; height: calc(100% - 64px);
+                  border: 1px solid #d7dbe2; background: #525659; outline: none; }
+  #pdf-viewport:focus { border-color: #9ab4e8; }
+  #pdf-content { position: relative; padding: 16px 0; width: max-content; margin: 0 auto; }
+  .pdf-page { position: relative; background: #fff; margin: 0 16px 16px; overflow: hidden;
+              box-shadow: 0 1px 4px rgb(0 0 0 / 0.35); }
+  .pdf-canvas { position: absolute; inset: 0; z-index: 1; display: block; }
+  /* pdf.js 标准文字层（v6 viewer CSS 移植——透明文字 + 原生选区；
+     --total-scale-factor/--scale-round-* 由 pdf_view.ts 逐页注入） */
+  .pdf-page .textLayer { position: absolute; inset: 0; z-index: 2; text-align: initial;
+                         overflow: clip; line-height: 1; letter-spacing: normal; word-spacing: normal;
+                         text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0;
+                         caret-color: CanvasText; opacity: 1;
+                         --min-font-size: 1;
+                         --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+                         --min-font-size-inv: calc(1 / var(--min-font-size)); }
+  .pdf-page .textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre;
+                                       cursor: text; transform-origin: 0% 0%; user-select: text; }
+  .pdf-page .textLayer > :not(.markedContent),
+  .pdf-page .textLayer .markedContent span:not(.markedContent) {
+    z-index: 1; --font-height: 0;
+    font-size: calc(var(--text-scale-factor) * var(--font-height));
+    --scale-x: 1; --rotate: 0deg;
+    transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+  .pdf-page .textLayer .markedContent { display: contents; }
+  .pdf-page .textLayer ::selection { background: rgb(0 0 255 / 0.25); color: transparent; }
+  /* 标注/搜索/证据叠加层（默认透传——不遮挡文字选区；ink 模式接管） */
+  .pdf-overlay { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+  #pdf-viewport.pdf-mode-ink .pdf-overlay { pointer-events: auto; cursor: crosshair; }
+  #pdf-viewport.pdf-mode-highlight .textLayer { cursor: text; }
+  .pdf-annot-highlight { position: absolute; background: rgb(255 214 10 / 0.35);
+                         mix-blend-mode: multiply; border-radius: 2px; }
+  .pdf-annot-note { position: absolute; width: 18px; height: 18px; background: #ffd54f;
+                    border: 1px solid #b8860b; border-radius: 3px 3px 3px 0; cursor: help;
+                    pointer-events: auto; font-size: 11px; line-height: 16px; text-align: center; }
+  .pdf-annot-freetext { position: absolute; font-size: 12px; color: #222;
+                        background: rgb(255 255 255 / 0.85); border: 1px dashed #cfd4dc;
+                        padding: 1px 4px; white-space: pre; }
+  .pdf-annot-ink, .pdf-ink-preview { position: absolute; inset: 0; overflow: visible;
+                                     pointer-events: none; }
+  .pdf-search-hit { position: absolute; background: rgb(255 160 0 / 0.35); border-radius: 2px; }
+  .pdf-search-hit.active { background: rgb(255 100 0 / 0.55); }
+  .pdf-evidence-region { position: absolute; box-shadow: inset 0 0 0 2px #4a7dff;
+                         background: rgb(74 125 255 / 0.15); }
+  .pdf-freetext-input { position: absolute; z-index: 10; border: 1px solid #1a73e8;
+                        border-radius: 0; padding: 1px 4px; font: inherit; font-size: 12px;
+                        outline: none; background: #fff; pointer-events: auto; }
 </style>
 </head>
 <body>
@@ -153,9 +221,11 @@
     <div id="view-tabs">
       <button type="button" id="tab-doc" class="view-tab active">Document</button>
       <button type="button" id="tab-grid" class="view-tab">Grid</button>
+      <button type="button" id="tab-pdf" class="view-tab">PDF</button>
     </div>
     <div id="editor"></div>
     <div id="grid-panel"></div>
+    <div id="pdf-panel"></div>
   </div>
 </div>
 <pre id="debug">booting…</pre>
