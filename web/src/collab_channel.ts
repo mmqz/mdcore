@@ -180,8 +180,9 @@ function onMessage(ev: MessageEvent): void {
     case 'hello': {
       members.add(from);
       post({ k: 'hi', from: mySlot }); // 成员互见（应答不触发再应答）
-      // 新成员可能错过历史——主动推一份 catch-up（幂等：diff 为空则无操作）
-      catchUpFrom(from);
+      // 注：晚加入者的 catch-up 由加入方自带 sync_req 请求（见
+      // setupCollabChannel 尾部）——既有成员不主动推（推错方向的
+      // 差量[对空 sv 求 diff]无意义；加入方以自己的 sv 请求才正确）。
       break;
     }
     case 'hi': {
@@ -236,6 +237,16 @@ function onMessage(ev: MessageEvent): void {
   }
 }
 
+/** 晚加入者 catch-up：以自己的真实 sv 广播 sync_req（既有成员定向
+ * 应答差量——空 sv 字符串不触发差量计算，故必须待会话面就绪后带
+ * 真实 sv 发请求；p6-t6 发现修正）。 */
+function joinerCatchUp(): void {
+  const docSv = docSession ? bytesToBase64(docSession.state_vector()) : '';
+  const ui = canvasUI();
+  const canvasSv = ui && ui.mainStateVector() ? bytesToBase64(ui.mainStateVector() as Uint8Array) : '';
+  post({ k: 'sync_req', from: mySlot, docSv, canvasSv });
+}
+
 /** doc 差量（对端 sv base64；无会话/空差 = 空串）。 */
 function docDiffFor(svB64: string): string {
   if (!docSession || svB64.length === 0) return '';
@@ -255,15 +266,6 @@ function canvasDiffFor(svB64: string): string {
   const sv = base64ToBytes(svB64);
   const diff = ui.mainEncodeDiff(sv);
   return diff && diff.length > 0 ? bytesToBase64(diff) : '';
-}
-
-/** 定向 catch-up：请求对端补差（hello 路径——新成员全量补齐）。 */
-function catchUpFrom(peerSlot: number): void {
-  const docSv = docSession ? bytesToBase64(docSession.state_vector()) : '';
-  const ui = canvasUI();
-  const canvasSv = ui ? bytesToBase64(ui.mainStateVector() ?? new Uint8Array()) : '';
-  if (docSv.length === 0 && canvasSv.length === 0) return;
-  post({ k: 'sync_req', from: peerSlot, docSv, canvasSv });
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +420,9 @@ function installProbes(): void {
 export function setupCollabChannel(loadWasm: () => Promise<WasmModule>): void {
   window.__collabReady = false;
   void (async (): Promise<void> => {
-    // 通道先行（canvas 钩与会话面就绪前后台已可收发）
+    // 通道先行（canvas 钩与会话面就绪前后台已可收发）。晚加入者的
+    // catch-up 在会话面就绪后以自己的真实 sv 发 sync_req（见尾部
+    // joinerCatchUp——hello 被动路径不投递既有状态，请求权在加入方）。
     channel = new BroadcastChannel(CHANNEL);
     channel.onmessage = onMessage;
     connected = true;
@@ -451,8 +455,10 @@ export function setupCollabChannel(loadWasm: () => Promise<WasmModule>): void {
         });
         canvasHooked = true;
         clearInterval(hookTimer);
+        joinerCatchUp(); // 钩就绪即请求差量（canvas sv 可用）
       } else if (Date.now() > hookDeadline) {
         clearInterval(hookTimer); // canvas 面缺席（旧 pkg/启动失败）——doc 面独立成立
+        joinerCatchUp(); // 超时仍请求（doc 面差量独立成立）
       }
     }, 50);
 

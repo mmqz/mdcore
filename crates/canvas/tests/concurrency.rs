@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use mdc_canvas::{Actor, CanvasCommand, CanvasError, CanvasSession, SessionOptions};
+use mdc_canvas::{
+    Actor, CanvasCommand, CanvasError, CanvasSession, CommandOutcome, SessionOptions,
+};
 
 fn opts(id: u64) -> SessionOptions {
     SessionOptions {
@@ -221,4 +223,68 @@ fn hostile_wire_and_maintenance_gc() {
     )
     .unwrap();
     assert_eq!(c.find_object("n").unwrap().x, 5.0);
+}
+
+/// p6-t6 发现修正：同 client 域既有 id（对端复活面）时 next_id 跳段
+/// 分配——同槽 reload 计数器归零 + apply_update 复活旧段号对象后，
+/// 新分配不撞号（对象不丢、id 域无重复）。
+#[test]
+fn next_id_skips_ids_revived_from_remote_state() {
+    use mdc_canvas::{CanvasSession, SessionOptions};
+
+    let mut a = CanvasSession::open(SessionOptions {
+        client_id: 7_200_011,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut b = CanvasSession::open(SessionOptions {
+        client_id: 7_200_011, // 同槽 reload 语义：同一 client 域
+        ..Default::default()
+    })
+    .unwrap();
+    // 第一页面世：3 对象（id 7_200_011-1..3）→ 快照
+    for i in 0..3 {
+        a.execute(
+            Actor::Human,
+            CanvasCommand::AddNode {
+                id: None,
+                x: 10.0 + i as f64,
+                y: 20.0,
+                w: 100.0,
+                h: 40.0,
+                props: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+    }
+    let snap = a.authoritative_snapshot().unwrap();
+    // 同槽新页面世（计数器 0）：先复活旧状态
+    b.apply_update(&snap).unwrap();
+    assert_eq!(b.objects().len(), 3);
+    // 新分配必须跳过复活占用的 -1..-3 → 首个新 id = 7_200_011-4
+    let r = b
+        .execute(
+            Actor::Human,
+            CanvasCommand::AddNode {
+                id: None,
+                x: 99.0,
+                y: 99.0,
+                w: 100.0,
+                h: 40.0,
+                props: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+    let new_id = match r.outcome {
+        CommandOutcome::NodeAdded { id } => id,
+        _ => panic!("expected NodeAdded"),
+    };
+    assert_eq!(new_id, "7200011-4", "revived ids must be skipped");
+    // 对象零丢失：3 复活 + 1 新增 = 4，且 id 域无重复
+    let ids: Vec<String> = b.objects().iter().map(|o| o.id.clone()).collect();
+    assert_eq!(ids.len(), 4);
+    assert_eq!(
+        ids.iter().collect::<std::collections::HashSet<_>>().len(),
+        4
+    );
 }

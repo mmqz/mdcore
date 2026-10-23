@@ -816,7 +816,21 @@ export class CanvasViewUI {
       const g = this.ensureEl(id, 'node') as SVGGElement | null;
       if (!g) return;
       g.setAttribute('transform', `translate(${obj.x},${obj.y})`);
-      const rect = g.firstElementChild as SVGRectElement;
+      const rect = g.firstElementChild as SVGRectElement | null;
+      if (rect === null) {
+        // 池元素形态异常（kind 错配/子树被外置清空）——渲染层自愈：
+        // 丢弃池项重建（ensureEl 对已断开条目走新建路径）。
+        console.error(`canvas renderObject: pooled element for ${id} has no children (tag ${g.tagName}) — rebuilding`);
+        g.remove();
+        this.els.delete(id);
+        const g2 = this.ensureEl(id, 'node') as SVGGElement | null;
+        if (!g2 || !g2.firstElementChild) return;
+        g2.setAttribute('transform', `translate(${obj.x},${obj.y})`);
+        (g2.firstElementChild as SVGRectElement).setAttribute('width', `${obj.w}`);
+        (g2.firstElementChild as SVGRectElement).setAttribute('height', `${obj.h}`);
+        (g2.lastElementChild as SVGTextElement).textContent = obj.props.label ?? obj.id;
+        return;
+      }
       rect.setAttribute('width', `${obj.w}`);
       rect.setAttribute('height', `${obj.h}`);
       const text = g.lastElementChild as SVGTextElement;

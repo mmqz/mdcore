@@ -390,8 +390,22 @@ impl CanvasSession {
     }
 
     fn next_id(&mut self) -> String {
-        self.next_seq += 1;
-        format!("{}-{}", self.options.client_id, self.next_seq)
+        // 撞号跳过环：同 client 域既有 id（对端复活/重放携带的同段号
+        // 对象——同槽 reload 后计数器归零的经典撞号面）逐段跳过。分配
+        // 是稀有路径（用户命令级），O(1) map 键查找零成本；无既有对象
+        // 时恰一次循环 = 与原实现同代价。
+        loop {
+            self.next_seq += 1;
+            let id = format!("{}-{}", self.options.client_id, self.next_seq);
+            let occupied = {
+                let root = self.root();
+                let txn = self.doc.transact();
+                root.get(&txn, id.as_str()).is_some()
+            };
+            if !occupied {
+                return id;
+            }
+        }
     }
 
     fn root(&self) -> yrs::MapRef {
