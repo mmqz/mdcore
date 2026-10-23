@@ -86,4 +86,5 @@
 
 pub mod docx;
 pub mod io;
+pub mod rebuild;
 pub mod write;

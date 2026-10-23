@@ -67,6 +67,7 @@ import {
   keymap,
 } from '@codemirror/view';
 import init, { WasmCore, import_docx, import_xlsx } from '../pkg/mdcore_wasm.js';
+import { setupXlsxGrid } from './xlsx_grid.js';
 
 // ---------------------------------------------------------------------------
 // 核侧数据形状（blocks_json / take_events 的最小面）
@@ -1457,6 +1458,14 @@ async function main(): Promise<void> {
     return true;
   };
   window.__contractVersion = 1.1;
+
+  // ---- Phase 5 §8.3: grid UI productization (xlsx_grid wiring) ----
+  // WasmBook's lifecycle is independent of WasmCore (the installNewCore
+  // reinstall face never touches the grid — the book instance is held by the
+  // #grid-file open path). View-tab switching and panel visibility all live
+  // in xlsx_grid.ts; main.ts only hands over the (already initialized) wasm
+  // module loader — dynamic import resolves to the same module instance.
+  setupXlsxGrid(() => import('../pkg/mdcore_wasm.js'));
 
   window.__ready = true;
 }
