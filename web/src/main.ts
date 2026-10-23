@@ -67,7 +67,10 @@ import {
   keymap,
 } from '@codemirror/view';
 import init, { WasmCore, import_docx, import_xlsx } from '../pkg/mdcore_wasm.js';
+import * as wasmMod from '../pkg/mdcore_wasm.js';
+import { wasmBoot } from './wasm_boot.js';
 import { setupCanvasView } from './canvas_view.js';
+import { setupCollabChannel } from './collab_channel.js';
 import { setupEvidencePanel } from './evidence_panel.js';
 import { setupPdfView } from './pdf_view.js';
 import { setupXlsxGrid } from './xlsx_grid.js';
@@ -1302,7 +1305,7 @@ function applySettingToSnapshot(path: string, value: number | boolean | string):
 
 async function main(): Promise<void> {
   const t0 = performance.now();
-  const initP = init(); // R16：wasm 实例化与大文档生成并行（TTI）
+  const initP = wasmBoot(wasmMod); // R16：wasm 实例化与大文档生成并行（TTI）——单飞门（__wbg_init 并发不安全，见 wasm_boot.ts）
   const params = new URLSearchParams(location.search);
   const big = params.get('doc') === 'big';
   const kb = Number(params.get('kb') ?? '1024');
@@ -1327,7 +1330,7 @@ async function main(): Promise<void> {
     };
     const chunks = big ? buildBigChunks(kb * 1024, nChunks) : splitChunks(SAMPLE_MD, nChunks);
     heapMark('chunks-built');
-    const wasmOut = await initP;
+    const wasmOut = (await initP) as { memory: WebAssembly.Memory };
     // R19 堆归因：wasm 线性内存单独暴露（performance.memory 语义验证——
     // 稳态 usedJSHeapSize 与 JS 分配采样（~46MB）的巨差是否即 wasm memory）。
     // 存 Memory 对象引用（grow 后 buffer 更新，实时读现值）。
@@ -1494,6 +1497,10 @@ async function main(): Promise<void> {
   // build: the panel boots display-only (typed bridge_absent) until then.
   // Zero coupling to WasmCore/WasmBook/WasmWorkbench lifecycles.
   setupCanvasView(() => import(new URL('./pkg/mdcore_wasm.js', import.meta.url).href));
+
+  // §九.5/§九.8 协同双端 web 化 harness（BroadcastChannel 跨页传输：
+  // doc 协作会话 + canvas main 钩；探针 __collab* 面——组合测试驱动点）。
+  setupCollabChannel(() => import(new URL('./pkg/mdcore_wasm.js', import.meta.url).href));
 
   window.__ready = true;
 }

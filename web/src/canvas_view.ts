@@ -51,6 +51,7 @@
 // ---------------------------------------------------------------------------
 
 type WasmModule = typeof import('../pkg/mdcore_wasm.js');
+import { wasmBoot } from './wasm_boot.js';
 
 /** WasmCanvas 方法面（wasm-bindgen web-target，方法名 snake_case）。 */
 interface WasmCanvasFace {
@@ -161,10 +162,19 @@ const EDGE_DY = 18;
 const GROUP_PAD = 12;
 /** 撤销栈软上限（两实例同限——receipt undo_cleared 演示面）。 */
 const UNDO_LIMIT = 200;
-/** 双实例 client id（(0, 2^53) 域；restore 实例另起段避免 ID 撞车）。 */
-const MAIN_CLIENT_ID = 7_200_001;
-const AI_CLIENT_ID = 7_200_002;
-const RESTORE_CLIENT_BASE = 7_200_100;
+/** 双实例 client id（(0, 2^53) 域；restore 实例另起段避免 ID 撞车）。
+ * 跨页协同（§九.5 双端 web 化）：`?cc=<slot>` URL 参数把本页双实例
+ * 段位平移 slot×10——两页各持段位后互不撞车（cc=0 默认 = 既有
+ * 常量行为零变化；collab_channel 消费同一 slot 约定）。 */
+function clientSlot(): number {
+  const raw = new URLSearchParams(location.search).get('cc');
+  const n = raw === null ? 0 : Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n >= 0 && n <= 999 ? n : 0;
+}
+const CC_SLOT = clientSlot();
+const MAIN_CLIENT_ID = 7_200_001 + CC_SLOT * 10;
+const AI_CLIENT_ID = 7_200_002 + CC_SLOT * 10;
+const RESTORE_CLIENT_BASE = 7_200_100 + CC_SLOT * 10;
 /** 事件日志容量（__canvasEvents 面）。 */
 const EVENT_LOG_CAP = 200;
 /** 泵收敛轮上限（一次变更的跨实例回声 ≤ 2 轮——防御性上限）。 */
@@ -560,6 +570,8 @@ export class CanvasViewUI {
   /** 事件泵（双实例排空式轮询 → 跨实例转发 → touched 局部渲染）。
    * 返回是否有事件流过（false = 空转——状态行不被常态行覆写，瞬时
    * 消息[错误/提示]保留到下一次真实变更）。 */
+  private transportSend: ((bytes: Uint8Array) => void) | null = null;
+
   private pump(): boolean {
     if (!this.main || !this.ai) return false;
     const dirtyMain = new Set<string>();
@@ -575,6 +587,15 @@ export class CanvasViewUI {
         if (ev.source === 'remote' || ev.source === 'maintenance') continue; // 不回发
         for (const b64 of ev.updates) {
           this.applyToPeer(this.ai, base64ToBytes(b64), 'ai');
+          // 跨页传输（§九.5 双端 web 化——collab_channel 注册；对端
+          // 以 remote 面应用，不回声）。
+          if (this.transportSend) {
+            try {
+              this.transportSend(base64ToBytes(b64));
+            } catch {
+              // 传输面瞬时失败不阻断本页（CRDT 幂等——对端 catch-up 兜底）
+            }
+          }
         }
       }
 
@@ -636,6 +657,36 @@ export class CanvasViewUI {
     } catch (e) {
       const fail = wasmFail(e);
       this.showStatus(`sync to ${side} peer failed (${fail.code}): ${fail.message}`, true);
+    }
+  }
+
+  // ── 跨页传输钩（§九.5 双端 web 化——collab_channel 注册）──────
+
+  /** 注册跨页传输（pump 将 main 侧 command/undo/redo 产出字节外送）。 */
+  registerTransport(send: (bytes: Uint8Array) => void): void {
+    this.transportSend = send;
+  }
+
+  /** 远端 update → 双实例（main + ai 均 remote 面——pump 不回发；
+   * 单发 main 会让 ai 镜像滞后，双发维持三端收敛不变量）。 */
+  applyRemote(bytes: Uint8Array): void {
+    if (!this.main || !this.ai) return;
+    this.applyToPeer(this.main, bytes, 'main');
+    this.applyToPeer(this.ai, bytes, 'ai');
+  }
+
+  /** main 状态向量（晚加入端 catch-up 面）。 */
+  mainStateVector(): Uint8Array | null {
+    return this.main ? this.main.face.state_vector() : null;
+  }
+
+  /** main 差量（对端 sv 之后的新事务）。 */
+  mainEncodeDiff(sv: Uint8Array): Uint8Array | null {
+    if (!this.main) return null;
+    try {
+      return this.main.face.encode_diff(sv);
+    } catch {
+      return null;
     }
   }
 
@@ -1565,18 +1616,25 @@ export class CanvasViewUI {
  * WasmCanvas 面可选：pkg 旧构建时面板 inert-but-alive，探针全部 typed
  * bridge_absent（e2e SKIP 门）。任何失败都不向顶层抛出。
  */
+/** 活跃实例（setup 完成→替换；跨页传输钩[§九.5]的注册入口）。 */
+let activeUI: CanvasViewUI | null = null;
+
+/** 活跃 Canvas 视图（setup 未完成 = null——调用方自行判空）。 */
+export function canvasUI(): CanvasViewUI | null {
+  return activeUI;
+}
+
 export function setupCanvasView(loadWasm: () => Promise<WasmModule>): void {
   window.__canvasReady = false;
   void (async (): Promise<void> => {
     try {
       const mod = await loadWasm();
       if (typeof mod.default === 'function') {
-        await mod.default(); // 幂等（main 已 init 则秒回）
+        await wasmBoot(mod); // 单飞门（幂等——main 已 init 则秒回）
       }
-      const ui = new CanvasViewUI(mod);
+      activeUI = new CanvasViewUI(mod);
       window.__canvasReady = true;
-      // `ui` 由 window 探针闭包持有——无 GC 顾虑
-      void ui;
+      // activeUI 模块级持有（跨页传输钩注册面）——无 GC 顾虑
     } catch (e) {
       const panel = document.getElementById('canvas-panel');
       if (panel) panel.textContent = `canvas panel boot failed: ${String(e)}`;

@@ -34,6 +34,7 @@
 //   {ok:false, code, message} — nothing ever throws out of this module.
 
 import type { WasmBook } from '../pkg/mdcore_wasm.js';
+import { wasmBoot } from './wasm_boot.js';
 
 type WasmModule = typeof import('../pkg/mdcore_wasm.js');
 
@@ -1204,7 +1205,7 @@ export function setupXlsxGrid(initWasm: () => Promise<WasmModule>): void {
     try {
       const mod = await initWasm();
       if (typeof mod.default === 'function') {
-        await mod.default(); // idempotent no-op when main() already inited
+        await wasmBoot(mod); // 单飞门（idempotent no-op when main() already inited）
       }
       const ui = new XlsxGridUI(mod);
       window.__gridReady = true;

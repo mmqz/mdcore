@@ -27,6 +27,7 @@
 //! office 消费三部曲收口；栅格映射降级面显式登记于该模块文档）。
 
 pub mod canvas;
+pub mod collab;
 pub mod docx_export;
 pub mod docx_import;
 pub mod workbench;

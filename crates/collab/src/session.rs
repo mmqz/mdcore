@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use yrs::sync::time::Clock;
 use yrs::types::xml::{XmlElementPrelim, XmlIn, XmlOut, XmlTextPrelim};
 use yrs::undo::Options as UndoOptions;
 use yrs::updates::decoder::Decode;
@@ -103,7 +104,7 @@ impl Actor {
 ///
 /// **刻意不含 skip_gc**（B1.1 全编队不变量——构造期无条件强制）。
 /// **刻意不含捕获窗**（p20 缺陷缓解——硬编码 0，非运行期参数）。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionOptions {
     pub client_id: u64,
     /// 全入向字节限额（B1.6；默认 52MiB 对齐 SECURITY_POLICY v1.2
@@ -116,6 +117,24 @@ pub struct SessionOptions {
     /// 在场层（awareness）入向字节限额（瞬态 JSON 小载荷面——
     /// 默认 1MiB，与文档 52MiB 族分立；见 presence 模块文档）。
     pub presence_byte_limit: usize,
+    /// 时钟注入（wasm32 面——`SystemTime::now()` 在该目标上陷阱；
+    /// 撤销栈时间戳源。`None` = 系统时钟[毫秒，失败回退 0——
+    /// 排序由 clock 字段保证]，与 mdc-canvas `SessionOptions::clock_ms`
+    /// 同款纪律）。默认 None = 原生行为零变化。
+    pub clock_ms: Option<std::sync::Arc<dyn Fn() -> u64 + Send + Sync>>,
+}
+
+impl std::fmt::Debug for SessionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 闭包面非 Debug——以占位标记呈现（mdc-canvas 同款手工 impl）。
+        f.debug_struct("SessionOptions")
+            .field("client_id", &self.client_id)
+            .field("input_byte_limit", &self.input_byte_limit)
+            .field("undo_stack_limit", &self.undo_stack_limit)
+            .field("presence_byte_limit", &self.presence_byte_limit)
+            .field("clock_ms", &self.clock_ms.as_ref().map(|_| "<clock>"))
+            .finish()
+    }
 }
 
 impl Default for SessionOptions {
@@ -125,6 +144,7 @@ impl Default for SessionOptions {
             input_byte_limit: 52 * 1024 * 1024,
             undo_stack_limit: None,
             presence_byte_limit: 1024 * 1024,
+            clock_ms: None,
         }
     }
 }
@@ -178,8 +198,8 @@ impl CollabSession {
         let _ = xml.len(&doc.transact());
 
         // B3.2 双栈 + 捕获窗 0（p20 缓解，硬编码——见模块文档）。
-        let mut undo_human = Self::new_undo_manager(Actor::Human);
-        let mut undo_ai = Self::new_undo_manager(Actor::Ai);
+        let mut undo_human = Self::new_undo_manager(Actor::Human, &options.clock_ms);
+        let mut undo_ai = Self::new_undo_manager(Actor::Ai, &options.clock_ms);
         undo_human.expand_scope(&doc, &doc.get_or_insert_xml_fragment(ROOT));
         undo_ai.expand_scope(&doc, &doc.get_or_insert_xml_fragment(ROOT));
 
@@ -212,19 +232,31 @@ impl CollabSession {
     /// B3.1 撤销栈本地归属 + p12「对端墓碑 2%」观察面的产品收口）。
     /// 该过滤器同时阻断 yrs 的 len==1 回退（单 origin 集合会捕获
     /// None-origin 事务——Yjs 自身编辑器约定，不适用于本产品语义）。
-    fn new_undo_manager(origin: Actor) -> UndoManager {
+    fn new_undo_manager(
+        origin: Actor,
+        clock_ms: &Option<std::sync::Arc<dyn Fn() -> u64 + Send + Sync>>,
+    ) -> UndoManager {
         let mut tracked = HashSet::new();
         tracked.insert(origin.wire());
-        UndoManager::with_options(UndoOptions {
-            capture_timeout_millis: 0, // p20：硬编码非配置面
-            tracked_origins: tracked,
-            capture_transaction: Some(std::sync::Arc::new(|txn| txn.origin().is_some())),
-            timestamp: std::sync::Arc::new(|| {
+        // 时钟源：注入时钟优先（wasm32 面唯一安全路径）；None =
+        // 系统时钟毫秒（失败回退 0——排序由 clock 字段保证）。
+        let timestamp: std::sync::Arc<dyn Clock> = match clock_ms {
+            Some(clk) => std::sync::Arc::new({
+                let clk = std::sync::Arc::clone(clk);
+                move || clk()
+            }),
+            None => std::sync::Arc::new(|| {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(0)
             }),
+        };
+        UndoManager::with_options(UndoOptions {
+            capture_timeout_millis: 0, // p20：硬编码非配置面
+            tracked_origins: tracked,
+            capture_transaction: Some(std::sync::Arc::new(|txn| txn.origin().is_some())),
+            timestamp,
             init_undo_stack: vec![],
             init_redo_stack: vec![],
         })

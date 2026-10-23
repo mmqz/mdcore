@@ -20,5 +20,9 @@ mdcore = { path = "../mdcore" }
 # 仅消费方依赖，office-io 不依赖 mdcore）。零三方闭包增量：office-io
 # 及其全部依赖已在本 workspace Cargo.lock。
 mdc-office-io = { path = "../office-io" }
+# p6-t3：协作会话 wasm 出口（阶段 6 §九.5/§九.8 协同双端 web 化——
+# WasmCollabSession）。零三方闭包增量：mdc-collab 及其依赖（yrs）
+# 已在本 workspace Cargo.lock（mdc-canvas 同载 yrs）。
+mdc-collab = { path = "../collab" }
 serde_json.workspace = true
 wasm-bindgen = "0.2"

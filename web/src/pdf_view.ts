@@ -30,6 +30,7 @@
 //   所有 wasm 调用包裹：抛出的 JSON 串解析为 typed {ok:false, code,
 //   message}——本模块任何路径不向顶层抛出。
 
+import { wasmBoot } from './wasm_boot.js';
 import type {
   PageViewport,
   PDFDocumentProxy,
@@ -1994,7 +1995,7 @@ export function setupPdfView(): void {
       try {
         pdfWasm = (await import(new URL(PDF_WASM_PATH, import.meta.url).href)) as PdfWasmModule;
         if (typeof pdfWasm.default === 'function') {
-          await pdfWasm.default(); // wasm-bindgen web-target 异步初始化
+          await wasmBoot(pdfWasm); // 单飞门（wasm-bindgen web-target 异步初始化——pdf_wasm 独立 glue 门）
         }
         // hook 在异步初始化之后接线（wasm 导出面就绪）。
         const initFn = (pdfWasm as unknown as { pdf_wasm_init?: () => void }).pdf_wasm_init;

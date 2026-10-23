@@ -781,6 +781,7 @@ name = "mdcore-wasm"
 version = "0.1.0"
 dependencies = [
  "mdc-canvas",
+ "mdc-collab",
  "mdc-evidence",
  "mdc-office-io",
  "mdc-workbench",
