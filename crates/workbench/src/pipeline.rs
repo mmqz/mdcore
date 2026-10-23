@@ -30,13 +30,30 @@ use mdc_office_io::io::ReadError;
 use crate::ingest::{self, DocxBody, XlsxSource};
 use crate::WORKBENCH_MARKERS;
 use mdc_evidence::{CalcInput, PrecisionRule};
+use std::collections::HashMap;
 
-/// 来源注册项（doc_id ↔ 路径 + 当前版本）。
+/// 来源注册项（doc_id ↔ 路径[文件会话] + 当前版本；内存会话 path =
+/// None——字节在 [`Io::Memory::sources`]）。
 #[derive(Debug, Clone)]
 struct SourceRegistration {
     doc_id: String,
-    path: PathBuf,
+    path: Option<PathBuf>,
     version: u64,
+}
+
+/// 会话 IO 后端（p5-t3：文件 = 原子落盘；内存 = wasm/无文件系统）。
+/// 两后端共享同一验证/级联/审计核心（[`Workbench`] 各步方法）——
+/// 仅 IO 边界分派，不重写任何判定逻辑。
+enum Io {
+    Files {
+        policy: crate::security::PathPolicy,
+        store: SidecarStore,
+        body_path: PathBuf,
+    },
+    Memory {
+        body: Vec<u8>,
+        sources: HashMap<String, Vec<u8>>,
+    },
 }
 
 /// 关联提议（AI/人给出映射，程序验证并构造记录）。
@@ -226,15 +243,14 @@ impl From<std::io::Error> for WorkbenchError {
     }
 }
 
-/// 八步闭环会话（S2 起：全部文件面经 `policy` 允许列表）。
+/// 八步闭环会话（S2 起：全部文件面经 `policy` 允许列表；p5-t3 起内存
+/// 会话 [wasm/无文件系统] 与文件会话共享同一验证核心）。
 pub struct Workbench {
     sidecar: Sidecar,
-    store: SidecarStore,
-    body_path: PathBuf,
+    io: Io,
     body_doc_id: String,
     body_version: u64,
     sources: Vec<SourceRegistration>,
-    policy: crate::security::PathPolicy,
     /// 审核门槛（阶段 2——会话级策略，默认严格档；见 security::ReviewPolicy）。
     review_policy: crate::security::ReviewPolicy,
 }
@@ -273,12 +289,47 @@ impl Workbench {
         crate::security::publish(store.path(), json.as_bytes())?;
         Ok(Workbench {
             sidecar,
-            store,
-            body_path: body_path.to_path_buf(),
+            io: Io::Files {
+                policy,
+                store,
+                body_path: body_path.to_path_buf(),
+            },
             body_doc_id: body_doc_id.to_string(),
             body_version: 1,
             sources: vec![],
-            policy,
+            review_policy: crate::security::ReviewPolicy::default(),
+        })
+    }
+
+    /// ②登记 DOCX 正文（内存会话——p5-t3 wasm 面：零 std::fs，
+    /// sidecar 恒驻内存，持久化由调用方经 [`Self::sidecar_json`] 自取）。
+    pub fn start_memory(
+        body_bytes: &[u8],
+        body_doc_id: &str,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<Workbench, WorkbenchError> {
+        let body = ingest::ingest_docx_bytes(body_bytes)?;
+        let body_ref = ingest::docx_body_ref(body_doc_id, &body, 1);
+        let mut sidecar = Sidecar::new(body_ref);
+        sidecar.push_audit_public(
+            "workbench_start",
+            serde_json::json!({
+                "body_doc_id": body_doc_id,
+                "io": "memory",
+            }),
+            at_ms,
+            operator,
+        );
+        Ok(Workbench {
+            sidecar,
+            io: Io::Memory {
+                body: body_bytes.to_vec(),
+                sources: HashMap::new(),
+            },
+            body_doc_id: body_doc_id.to_string(),
+            body_version: 1,
+            sources: vec![],
             review_policy: crate::security::ReviewPolicy::default(),
         })
     }
@@ -321,19 +372,77 @@ impl Workbench {
                     .unwrap_or(1);
                 SourceRegistration {
                     doc_id: id.clone(),
-                    path: p.clone(),
+                    path: Some(p.clone()),
                     version,
                 }
             })
             .collect();
         Ok(Workbench {
             sidecar,
-            store,
-            body_path: body_path.to_path_buf(),
+            io: Io::Files {
+                policy,
+                store,
+                body_path: body_path.to_path_buf(),
+            },
             body_doc_id,
             body_version,
             sources,
-            policy,
+            review_policy: crate::security::ReviewPolicy::default(),
+        })
+    }
+
+    /// 重开内存会话（p5-t3 wasm 面：sidecar JSON + 正文/来源字节由
+    /// 调用方重供——路径不入 sidecar 纪律天然成立；恢复保真语义与
+    /// [`Self::open`] 同源——身份/版本全部从 sidecar 登记）。
+    pub fn open_memory(
+        sidecar_json: &str,
+        body_bytes: &[u8],
+        source_bytes: &[(String, Vec<u8>)],
+    ) -> Result<Workbench, WorkbenchError> {
+        let sidecar: Sidecar = serde_json::from_str(sidecar_json).map_err(|_| {
+            WorkbenchError::Sidecar(SidecarError::Corrupt("sidecar json parse failed".into()))
+        })?;
+        if sidecar.schema_version != 1 {
+            return Err(WorkbenchError::Sidecar(SidecarError::Corrupt(format!(
+                "schema version {} not supported",
+                sidecar.schema_version
+            ))));
+        }
+        let body_doc_id = sidecar.document.doc_id.as_str().to_string();
+        let body_version = sidecar.document.version.0;
+        // 正文指纹 fail-closed：重供字节必须与 sidecar 登记引用一致
+        // （与 open 后首个 body 面调用同纪律——错配即拒，不静默）。
+        let body = ingest::ingest_docx_bytes(body_bytes)?;
+        if body.fingerprint != sidecar.document.fingerprint {
+            return Err(WorkbenchError::BodyStale);
+        }
+        let mut map = HashMap::new();
+        let sources = source_bytes
+            .iter()
+            .map(|(id, bytes)| {
+                let version = sidecar
+                    .source_docs
+                    .iter()
+                    .find(|d| d.doc_id.as_str() == id.as_str())
+                    .map(|d| d.version.0)
+                    .unwrap_or(1);
+                map.insert(id.clone(), bytes.clone());
+                SourceRegistration {
+                    doc_id: id.clone(),
+                    path: None,
+                    version,
+                }
+            })
+            .collect();
+        Ok(Workbench {
+            sidecar,
+            io: Io::Memory {
+                body: body_bytes.to_vec(),
+                sources: map,
+            },
+            body_doc_id,
+            body_version,
+            sources,
             review_policy: crate::security::ReviewPolicy::default(),
         })
     }
@@ -410,17 +519,109 @@ impl Workbench {
         crate::report::stale_evidence(&self.sidecar)
     }
 
-    /// 落盘（S2 发布单点：序列化 → 字节门 → 临时区+rename 原子发布）。
+    /// 落盘（S2 发布单点：序列化 → 字节门 → 临时区+rename 原子发布；
+    /// 内存会话 = 字节门照跑 + 零落盘——sidecar 恒驻内存，持久化由
+    /// 调用方经 [`Self::sidecar_json`] 自取）。
     fn save(&self) -> Result<(), WorkbenchError> {
         let json =
             serde_json::to_string_pretty(&self.sidecar).map_err(WorkbenchError::Serialize)?;
         crate::security::check_sidecar_size(json.len()).map_err(WorkbenchError::Limit)?;
-        crate::security::publish(self.store.path(), json.as_bytes())?;
+        if let Io::Files { store, .. } = &self.io {
+            crate::security::publish(store.path(), json.as_bytes())?;
+        }
         Ok(())
     }
 
+    /// 内存会话持久化面（单点投影——无隐藏中间态；与磁盘 sidecar
+    /// 字节同构[serde 原生形]，原生端 [`Self::open`] 可直接消费）。
+    pub fn sidecar_json(&self) -> Result<String, WorkbenchError> {
+        serde_json::to_string_pretty(&self.sidecar).map_err(WorkbenchError::Serialize)
+    }
+
+    /// restore 专用附源（p5-t3 wasm 面：`open_memory` 后逐源补字节——
+    /// 只填内存字节表与注册表，**不动 sidecar/不产审计/不 bump 版本**；
+    /// 版本以 sidecar.source_docs 登记为准[未登记默认 1]——恢复语义
+    /// 与 `open_memory` 的列表构造面同源）。幂等：同 doc_id 重复附 =
+    /// 字节覆盖。仅内存会话。
+    pub fn attach_source_bytes(
+        &mut self,
+        doc_id: &str,
+        bytes: &[u8],
+    ) -> Result<(), WorkbenchError> {
+        let Io::Memory { sources, .. } = &mut self.io else {
+            return Err(WorkbenchError::Sidecar(SidecarError::Corrupt(
+                "attach_source_bytes on file session".into(),
+            )));
+        };
+        sources.insert(doc_id.to_string(), bytes.to_vec());
+        let version = self
+            .sidecar
+            .source_docs
+            .iter()
+            .find(|d| d.doc_id.as_str() == doc_id)
+            .map(|d| d.version.0)
+            .unwrap_or(1);
+        match self.sources.iter_mut().find(|s| s.doc_id == doc_id) {
+            Some(reg) => reg.version = version,
+            None => self.sources.push(SourceRegistration {
+                doc_id: doc_id.to_string(),
+                path: None,
+                version,
+            }),
+        }
+        Ok(())
+    }
+
+    /// 当前正文段落面（p5-t3 wasm 面：证据侧栏 claim 锚跳转数据源）。
+    pub fn current_paragraphs(&self) -> Result<Vec<ingest::ParagraphInfo>, WorkbenchError> {
+        Ok(self.current_body()?.paragraphs)
+    }
+
     fn current_body(&self) -> Result<DocxBody, WorkbenchError> {
-        ingest::ingest_docx(&self.body_path)
+        match &self.io {
+            Io::Files { body_path, .. } => ingest::ingest_docx(body_path),
+            Io::Memory { body, .. } => ingest::ingest_docx_bytes(body),
+        }
+    }
+
+    /// 当前正文字节（导出面/内存刷新面共用）。
+    fn body_bytes(&self) -> Result<Vec<u8>, WorkbenchError> {
+        match &self.io {
+            Io::Files { body_path, .. } => std::fs::read(body_path).map_err(WorkbenchError::Io),
+            Io::Memory { body, .. } => Ok(body.clone()),
+        }
+    }
+
+    /// 重读来源（两后端同语义：策略检查仅文件会话——内存会话无路径面）。
+    fn load_source(&self, doc_id: &str) -> Result<XlsxSource, WorkbenchError> {
+        let reg = self
+            .sources
+            .iter()
+            .find(|s| s.doc_id == doc_id)
+            .ok_or_else(|| WorkbenchError::SourceNotRegistered {
+                doc_id: doc_id.to_string(),
+            })?;
+        match &self.io {
+            Io::Files { policy, .. } => {
+                let path = reg
+                    .path
+                    .as_ref()
+                    .ok_or(WorkbenchError::SourceNotRegistered {
+                        doc_id: doc_id.to_string(),
+                    })?;
+                policy.check(path).map_err(WorkbenchError::PathPolicy)?;
+                ingest::ingest_xlsx(path, doc_id)
+            }
+            Io::Memory { sources, .. } => {
+                let bytes =
+                    sources
+                        .get(doc_id)
+                        .ok_or_else(|| WorkbenchError::SourceNotRegistered {
+                            doc_id: doc_id.to_string(),
+                        })?;
+                ingest::ingest_xlsx_bytes(bytes, doc_id)
+            }
+        }
     }
 
     /// 正文 fail-closed 检查：当前文件指纹 == sidecar 登记引用。
@@ -440,10 +641,51 @@ impl Workbench {
         at_ms: u64,
         operator: &str,
     ) -> Result<DocumentRef, WorkbenchError> {
-        self.policy
-            .check(path)
-            .map_err(WorkbenchError::PathPolicy)?;
-        let src = ingest::ingest_xlsx(path, doc_id)?;
+        let src = match &self.io {
+            Io::Files { policy, .. } => {
+                policy.check(path).map_err(WorkbenchError::PathPolicy)?;
+                ingest::ingest_xlsx(path, doc_id)?
+            }
+            Io::Memory { .. } => {
+                return Err(WorkbenchError::Sidecar(SidecarError::Corrupt(
+                    "file ingest on memory session — use ingest_source_bytes".into(),
+                )));
+            }
+        };
+        let reg_path = Some(path.to_path_buf());
+        self.ingest_source_inner(doc_id, src, reg_path, at_ms, operator)
+    }
+
+    /// ①/⑥ 导入或刷新 XLSX 来源（内存会话——字节替换同 doc_id，
+    /// 语义与路径版同源：指纹变化自动触发证据失效，版本自增）。
+    pub fn ingest_source_bytes(
+        &mut self,
+        doc_id: &str,
+        bytes: &[u8],
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<DocumentRef, WorkbenchError> {
+        if !matches!(self.io, Io::Memory { .. }) {
+            return Err(WorkbenchError::Sidecar(SidecarError::Corrupt(
+                "byte ingest on file session — use ingest_source".into(),
+            )));
+        }
+        let src = ingest::ingest_xlsx_bytes(bytes, doc_id)?;
+        if let Io::Memory { sources, .. } = &mut self.io {
+            sources.insert(doc_id.to_string(), bytes.to_vec());
+        }
+        self.ingest_source_inner(doc_id, src, None, at_ms, operator)
+    }
+
+    /// 摄取核心（两入口共享：版本对账 + 注册 + sidecar 登记 + save）。
+    fn ingest_source_inner(
+        &mut self,
+        doc_id: &str,
+        src: XlsxSource,
+        reg_path: Option<PathBuf>,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<DocumentRef, WorkbenchError> {
         let version = match self.sources.iter().find(|s| s.doc_id == doc_id) {
             Some(reg) => reg.version + 1,
             None => 1,
@@ -453,12 +695,12 @@ impl Workbench {
             .register_source_doc(doc_ref.clone(), at_ms, operator);
         match self.sources.iter_mut().find(|s| s.doc_id == doc_id) {
             Some(reg) => {
-                reg.path = path.to_path_buf();
+                reg.path = reg_path;
                 reg.version = version;
             }
             None => self.sources.push(SourceRegistration {
                 doc_id: doc_id.to_string(),
-                path: path.to_path_buf(),
+                path: reg_path,
                 version,
             }),
         }
@@ -466,7 +708,7 @@ impl Workbench {
         Ok(doc_ref)
     }
 
-    /// 来源 fail-closed 检查：当前文件指纹 == 注册引用（返回摄取产物）。
+    /// 来源 fail-closed 检查：当前源指纹 == 注册引用（返回摄取产物）。
     fn fresh_source(&self, doc_id: &str) -> Result<(XlsxSource, DocumentRef), WorkbenchError> {
         let reg = self
             .sources
@@ -475,10 +717,7 @@ impl Workbench {
             .ok_or_else(|| WorkbenchError::SourceNotRegistered {
                 doc_id: doc_id.to_string(),
             })?;
-        self.policy
-            .check(&reg.path)
-            .map_err(WorkbenchError::PathPolicy)?;
-        let src = ingest::ingest_xlsx(&reg.path, doc_id)?;
+        let src = self.load_source(doc_id)?;
         let doc_ref = ingest::xlsx_source_ref(&src, reg.version);
         let registered = self
             .sidecar
@@ -686,17 +925,12 @@ impl Workbench {
         for input in &record.inputs {
             match (&input.source, &input.source_doc_id) {
                 (Some(Locator::XlsxCell { sheet, cell, .. }), Some(doc_id)) => {
-                    let reg = self.sources.iter().find(|s| s.doc_id == *doc_id);
-                    let extracted = match reg {
-                        // 注册路径复查（符号链接可能已改指根外——fail-closed
-                        // 视为不可用，级联 Unavailable）
-                        Some(reg) if self.policy.check(&reg.path).is_ok() => {
-                            ingest::ingest_xlsx(&reg.path, doc_id).ok().and_then(|src| {
-                                src.cell(sheet, cell.0.as_str()).and_then(|c| c.decimal)
-                            })
-                        }
-                        _ => None,
-                    };
+                    // 重读现值（两后端同语义：注册源重读——内存会话
+                    // 无路径复查面，重读失败 fail-closed 级联 Unavailable）。
+                    let extracted = self
+                        .load_source(doc_id)
+                        .ok()
+                        .and_then(|src| src.cell(sheet, cell.0.as_str()).and_then(|c| c.decimal));
                     current.push(match extracted {
                         Some(v) => CurrentInput::Available { value: v },
                         None => CurrentInput::Unavailable,
@@ -782,6 +1016,31 @@ impl Workbench {
 
     /// ⑥ 正文改写失效检测（claim 锚；版本自增）。
     pub fn refresh_body(&mut self, at_ms: u64, operator: &str) -> Result<usize, WorkbenchError> {
+        self.refresh_body_inner(at_ms, operator)
+    }
+
+    /// ⑥ 正文改写失效检测（内存会话：宿主供新正文字节——「文件已
+    /// 变」的内存等价物；指纹对照/级联/版本自增语义同源）。
+    pub fn refresh_body_bytes(
+        &mut self,
+        new_body_bytes: &[u8],
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<usize, WorkbenchError> {
+        if !matches!(self.io, Io::Memory { .. }) {
+            return Err(WorkbenchError::Sidecar(SidecarError::Corrupt(
+                "byte refresh on file session — use refresh_body".into(),
+            )));
+        }
+        // 先验证新字节可解析（fail-closed：不可解析即拒，会话不动）。
+        let _ = ingest::ingest_docx_bytes(new_body_bytes)?;
+        if let Io::Memory { body, .. } = &mut self.io {
+            *body = new_body_bytes.to_vec();
+        }
+        self.refresh_body_inner(at_ms, operator)
+    }
+
+    fn refresh_body_inner(&mut self, at_ms: u64, operator: &str) -> Result<usize, WorkbenchError> {
         let body = self.current_body()?;
         self.body_version += 1;
         let new_ref = ingest::docx_body_ref(&self.body_doc_id, &body, self.body_version);
@@ -889,10 +1148,44 @@ impl Workbench {
         at_ms: u64,
         operator: &str,
     ) -> Result<(), WorkbenchError> {
-        self.policy
-            .check_dest(dest)
-            .map_err(WorkbenchError::PathPolicy)?;
-        let body_bytes = std::fs::read(&self.body_path)?;
+        // 次序（审查 M1 修复）：check_dest 前置 → 验证 → 产物落地 →
+        // 审计——拒绝/写失败/验证失败路径零状态变化（审计零记录、
+        // sidecar 零落盘，与 review 门拒绝同纪律）。
+        if let Io::Files { policy, .. } = &self.io {
+            policy
+                .check_dest(dest)
+                .map_err(WorkbenchError::PathPolicy)?;
+            let bytes = self.export_clean_verified()?;
+            // 先验证后产出（§九.11）：临时文件 + rename 原子发布。
+            let tmp = dest.with_extension("export.tmp");
+            std::fs::write(&tmp, &bytes).map_err(WorkbenchError::Io)?;
+            std::fs::rename(&tmp, dest).map_err(WorkbenchError::Io)?;
+            // 验证 2（文件会话）：字节同一（导出 = 正文原样，零变换）。
+            let exported = std::fs::read(dest).map_err(WorkbenchError::Io)?;
+            if exported != bytes {
+                return Err(WorkbenchError::ExportByteMismatch);
+            }
+        }
+        // 产物已落地才审计。
+        self.record_clean_export(at_ms, operator)
+    }
+
+    /// ⑧ 干净导出（字节返回版——内存会话/宿主自定落点共用）。
+    /// 返回字节即产物交付（先审计合理）；零标记验证照跑。
+    pub fn export_clean_bytes(
+        &mut self,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<Vec<u8>, WorkbenchError> {
+        let body_bytes = self.export_clean_verified()?;
+        self.record_clean_export(at_ms, operator)?;
+        Ok(body_bytes)
+    }
+
+    /// 验证核心（零副作用：读正文 + 解析 + 零标记扫描；不审计不
+    /// 落盘——两入口共享，审查 M1 拆分）。
+    fn export_clean_verified(&self) -> Result<Vec<u8>, WorkbenchError> {
+        let body_bytes = self.body_bytes()?;
         // 先验证后产出（§九.11——验证失败不产出已发布结果）：
         // 验证 1：模型可解析（Word/WPS 可开的最小代理）+ 零工作台标记。
         let doc = read_docx_from_bytes(&body_bytes).map_err(WorkbenchError::DocxRead)?;
@@ -925,23 +1218,18 @@ impl Workbench {
                 }
             }
         }
-        // 验证全过后才落产物（临时文件 + rename 原子发布）。
-        let tmp = dest.with_extension("export.tmp");
-        std::fs::write(&tmp, &body_bytes)?;
-        std::fs::rename(&tmp, dest)?;
-        // 验证 2：字节同一（导出 = 正文原样，零变换）。
-        let exported = std::fs::read(dest)?;
-        if exported != body_bytes {
-            return Err(WorkbenchError::ExportByteMismatch);
-        }
+        Ok(body_bytes)
+    }
+
+    /// 导出审计 + 落盘（产物落地后调用——拒绝路径零记录）。
+    fn record_clean_export(&mut self, at_ms: u64, operator: &str) -> Result<(), WorkbenchError> {
         self.sidecar.push_audit_public(
             "clean_export",
-            serde_json::json!({"bytes": body_bytes.len(), "markers_checked": WORKBENCH_MARKERS.len()}),
+            serde_json::json!({"markers_checked": WORKBENCH_MARKERS.len()}),
             at_ms,
             operator,
         );
-        self.save()?;
-        Ok(())
+        self.save()
     }
 }
 

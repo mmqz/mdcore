@@ -9,8 +9,8 @@ use std::path::Path;
 use mdc_evidence::{
     ContentFingerprint, Decimal, DocId, DocumentRef, EngineKind, Fingerprinter, Fnv64, VersionStamp,
 };
-use mdc_office_io::docx::{read_docx, Block};
-use mdc_office_io::io::{read_book, Book, CellData};
+use mdc_office_io::docx::{read_docx, read_docx_from_bytes, Block};
+use mdc_office_io::io::{read_book, read_book_from_bytes, Book, CellData};
 
 use crate::pipeline::WorkbenchError;
 
@@ -90,6 +90,18 @@ pub fn col_to_a1(col: u32) -> String {
 /// 摄取 XLSX（严格读门默认——office-io 四门全开）。
 pub fn ingest_xlsx(path: &Path, doc_id: &str) -> Result<XlsxSource, WorkbenchError> {
     let book: Book = read_book(&path.to_string_lossy()).map_err(WorkbenchError::XlsxRead)?;
+    xlsx_from_book(&book, doc_id)
+}
+
+/// 摄取 XLSX（字节入口——p5-t3 内存会话面：与路径版共享核心，
+/// 严格读门同套[read_book_from_bytes 与 read_book 同门]）。
+pub fn ingest_xlsx_bytes(bytes: &[u8], doc_id: &str) -> Result<XlsxSource, WorkbenchError> {
+    let book: Book = read_book_from_bytes(bytes).map_err(WorkbenchError::XlsxRead)?;
+    xlsx_from_book(&book, doc_id)
+}
+
+/// Book → XlsxSource 核心提取（路径/字节两入口共享——不重复实现）。
+fn xlsx_from_book(book: &Book, doc_id: &str) -> Result<XlsxSource, WorkbenchError> {
     let mut cells = vec![];
     let mut fp_input = String::new();
     for sheet in &book.sheets {
@@ -187,10 +199,21 @@ impl DocxBody {
 /// 摄取 DOCX 正文（严格读门默认）。
 pub fn ingest_docx(path: &Path) -> Result<DocxBody, WorkbenchError> {
     let doc = read_docx(&path.to_string_lossy()).map_err(WorkbenchError::DocxRead)?;
+    docx_from_blocks(&doc.blocks)
+}
+
+/// 摄取 DOCX 正文（字节入口——p5-t3 内存会话面：与路径版共享核心）。
+pub fn ingest_docx_bytes(bytes: &[u8]) -> Result<DocxBody, WorkbenchError> {
+    let doc = read_docx_from_bytes(bytes).map_err(WorkbenchError::DocxRead)?;
+    docx_from_blocks(&doc.blocks)
+}
+
+/// Blocks → DocxBody 核心提取（路径/字节两入口共享）。
+fn docx_from_blocks(blocks: &[Block]) -> Result<DocxBody, WorkbenchError> {
     let mut paragraphs = vec![];
     let mut fp_input = String::new();
     let mut idx = 0u32;
-    for block in &doc.blocks {
+    for block in blocks {
         if let Block::Paragraph(p) = block {
             let text = p.text();
             let normalized = text.trim().to_string();

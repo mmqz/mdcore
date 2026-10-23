@@ -82,6 +82,51 @@
   .grid-rowhead-cell { position: absolute; left: 0; box-sizing: border-box; width: 48px; height: 26px;
                        background: #f3f4f6; border-right: 1px solid #d7dbe2; border-bottom: 1px solid #d7dbe2;
                        font-size: 12px; color: #556; text-align: center; line-height: 25px; user-select: none; }
+  /* Phase 5 §8.1：主体双栏（左证据栏 + 右主区[文档/表格]）——
+     #editor / #grid-panel / #view-tabs 的 id 与结构不变，只加外层 flex 容器 */
+  #main-row { display: flex; align-items: flex-start; }
+  #main-col { flex: 1 1 auto; min-width: 0; }
+  /* ---- 证据侧栏（evidence_panel）---- */
+  #evidence-panel { flex: 0 0 300px; width: 300px; margin: 12px 0 0 16px;
+                    height: calc(100vh - 190px); display: flex; flex-direction: column;
+                    border: 1px solid #d7dbe2; border-radius: 6px; background: #fbfbfc;
+                    font-size: 13px; overflow: hidden; }
+  #ev-toolbar { padding: 10px; border-bottom: 1px solid #e2e5ea; }
+  #ev-counts { display: block; color: #556; margin-bottom: 8px; font-size: 12px; }
+  .ev-btn { font: inherit; font-size: 12px; padding: 3px 10px; margin: 0 4px 4px 0; border: 1px solid #cfd4dc;
+            border-radius: 6px; background: #f7f8fa; cursor: pointer; }
+  .ev-btn:hover:not(:disabled) { background: #eef0f4; }
+  .ev-btn:disabled { opacity: .45; cursor: default; }
+  #ev-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; }
+  .ev-card { border: 1px solid #e2e5ea; border-radius: 6px; background: #fff; padding: 8px 10px; margin-bottom: 8px; }
+  .ev-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 12px; }
+  .ev-id { font-weight: 600; color: #222; }
+  .ev-badge { font-size: 11px; padding: 1px 6px; border-radius: 8px; border: 1px solid; font-weight: 500; }
+  .linkage-valid { color: #1a7f37; border-color: #9fc9ab; }
+  .linkage-stale { color: #b45309; border-color: #d9a35b; }
+  .linkage-missing { color: #667; border-color: #aab; }
+  .linkage-ambiguous { color: #7c3aed; border-color: #b79ae8; }
+  .calc-passed { color: #1a7f37; border-color: #9fc9ab; }
+  .calc-failed { color: #b00; border-color: #d98080; }
+  .calc-na { color: #667; border-color: #aab; }
+  .review-pending { color: #a16207; border-color: #d9b95b; }
+  .review-approved { color: #1a7f37; border-color: #9fc9ab; }
+  .review-rejected { color: #b00; border-color: #d98080; }
+  .ev-claim { margin: 6px 0 2px; cursor: pointer; }
+  .ev-claim:hover { text-decoration: underline; }
+  .ev-meta { color: #667; font-size: 12px; word-break: break-all; }
+  .ev-actions { margin-top: 6px; display: flex; gap: 6px; }
+  .ev-actions button { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid #cfd4dc;
+                       border-radius: 6px; background: #f7f8fa; cursor: pointer; }
+  .ev-actions button:hover:not(:disabled) { background: #eef0f4; }
+  .ev-actions button:disabled { opacity: .45; cursor: default; }
+  #ev-report { border-top: 1px solid #e2e5ea; padding: 8px 10px; }
+  #ev-report summary { cursor: pointer; color: #556; font-size: 12px; }
+  #ev-report pre { font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap; max-height: 180px;
+                   overflow: auto; margin: 6px 0 0; }
+  #ev-status { border-top: 1px solid #e2e5ea; padding: 6px 10px; font-size: 12px; color: #667;
+               min-height: 26px; word-break: break-all; }
+  #ev-status.ev-error { color: #b00; }
   #grid-edit-input { position: absolute; z-index: 50; box-sizing: border-box; border: 2px solid #1a73e8;
                      border-radius: 0; padding: 2px 4px; font: inherit; font-size: 13px; outline: none;
                      background: #fff; }
@@ -102,12 +147,17 @@
   <label class="import-btn" for="grid-file">open .xlsx grid</label>
   <input type="file" id="grid-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
 </div>
-<div id="view-tabs">
-  <button type="button" id="tab-doc" class="view-tab active">Document</button>
-  <button type="button" id="tab-grid" class="view-tab">Grid</button>
+<div id="main-row">
+  <div id="evidence-panel"></div>
+  <div id="main-col">
+    <div id="view-tabs">
+      <button type="button" id="tab-doc" class="view-tab active">Document</button>
+      <button type="button" id="tab-grid" class="view-tab">Grid</button>
+    </div>
+    <div id="editor"></div>
+    <div id="grid-panel"></div>
+  </div>
 </div>
-<div id="editor"></div>
-<div id="grid-panel"></div>
 <pre id="debug">booting…</pre>
 <script type="module" src="./main.js"></script>
 </body>

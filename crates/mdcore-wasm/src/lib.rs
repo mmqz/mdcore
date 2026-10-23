@@ -28,6 +28,7 @@
 
 pub mod docx_export;
 pub mod docx_import;
+pub mod workbench;
 pub mod xlsx_export;
 pub mod xlsx_grid;
 pub mod xlsx_import;

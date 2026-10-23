@@ -67,6 +67,7 @@ import {
   keymap,
 } from '@codemirror/view';
 import init, { WasmCore, import_docx, import_xlsx } from '../pkg/mdcore_wasm.js';
+import { setupEvidencePanel } from './evidence_panel.js';
 import { setupXlsxGrid } from './xlsx_grid.js';
 
 // ---------------------------------------------------------------------------
@@ -1466,6 +1467,13 @@ async function main(): Promise<void> {
   // in xlsx_grid.ts; main.ts only hands over the (already initialized) wasm
   // module loader — dynamic import resolves to the same module instance.
   setupXlsxGrid(() => import('../pkg/mdcore_wasm.js'));
+
+  // ---- Phase 5 §8.1: evidence workbench panel (left sidebar wiring) ----
+  // WasmWorkbench lifecycle is independent of WasmCore/WasmBook (the panel
+  // holds its own session handle; installNewCore reinstalls never touch it).
+  // The handle ctor is optional in the current pkg build — the panel runs
+  // inert (typed bridge_absent results) until the wasm rebuild lands it.
+  setupEvidencePanel(() => import('../pkg/mdcore_wasm.js'));
 
   window.__ready = true;
 }

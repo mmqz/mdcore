@@ -8,6 +8,11 @@ description = "Headless Core v0 的 WASM 绑定（WebView 内 CM6 View 的对端
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# p5-t3：证据工作台 wasm 出口（内存会话——阶段 5 §八.1 前置件）。
+mdc-workbench = { path = "../workbench" }
+# 契约类型直依赖（RelationKind/ReviewStatus/Decimal 等——workbench 传递
+# 依赖已在 lock，零新增三方）。
+mdc-evidence = { path = "../evidence" }
 mdcore = { path = "../mdcore" }
 # t16：首个 office 消费边（REUSE.md §0「经 wasm 桥」路径；三域纪律——
 # 仅消费方依赖，office-io 不依赖 mdcore）。零三方闭包增量：office-io
