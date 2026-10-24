@@ -2,12 +2,13 @@
 name = "mdshell-native"
 version.workspace = true
 edition = "2021"
-description = "R10 原生宿主壳（tao + wry + GTK3，ADR-H1 定谳：Slint 因 GPL 证排除）。⚠️ 不在 prototype workspace 编译面内：需要 webkit2gtk-4.1 / GTK3 系统开发库（沙箱无 sudo 不可安装）。在有系统依赖的机器上：cargo check -p mdshell-native --manifest-path .../shell-native/Cargo.toml"
+description = "R10 原生宿主壳（tao + wry + GTK3，ADR-H1 定谳：Slint 因 GPL 证排除）。s5a-env 轮起依赖已实体化：编译需 webkit2gtk-4.1/GTK3 dev 面——本沙箱以 apt download + dpkg -x 提取树自愈（source /home/z/my-project/optroot/env.sh 后再 cargo check -p mdshell-native）。"
 
-# 依赖声明（在可编译环境中取消注释并核对版本；ADR-H1：tao+wry+GTK3，无 Slint）：
-# [dependencies]
-# mdcore = { path = "../mdcore" }
-# mdshell = { path = "../shell" }
-# wry = "0.46"
-# tao = "0.30"
-# gtk = "0.18"   # GTK3 绑定（Linux 面板控件；Slint 因 GPL 证与 ADR-C1 排除）
+# 依赖（s5a-env 实体化，版本循 Cargo.toml 注释蓝图原值）：
+# ADR-H1：tao+wry+GTK3，无 Slint。
+[dependencies]
+mdcore = { path = "../mdcore" }
+mdshell = { path = "../shell" }
+wry = "0.46"
+tao = "0.30"
+gtk = "0.18"   # GTK3 绑定（Linux 面板控件；Slint 因 GPL 证与 ADR-C1 排除）

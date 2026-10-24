@@ -1,1 +1,4 @@
 target/
+
+# s5a-env：打包产物目录（deb 等——不入库，packaging/ 脚本可再生）
+build/

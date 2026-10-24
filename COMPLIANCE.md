@@ -72,6 +72,17 @@ gates.md「T1 卫生修复轮 · feature 面前置 bootstrap」。默认面常�
   legacy 构建取舍：modern 路径用 TC39 upsert（Map.getOrInsertComputed
   ——webview 宿主 JSC 不支持），legacy 构建为宿主兼容面（pdf_view.ts
   注释在档）。
+- **s5a-env 增量登记（mdshell-native 依赖实体化）**：壳 crate 从蓝图态转实体态
+  （`wry@0.46.3`（Apache-2.0 OR MIT）/ `tao@0.30`（Apache-2.0 OR MIT）/
+  `gtk@0.18`（gtk3-rs，MIT）+ 路径依赖 mdcore/mdshell）——Cargo.lock +2813/-308。
+  **SBOM 全量复跑（366 三方包去重，cargo metadata --locked 逐包 license 取证）**：
+  0 UNKNOWN / 0 GPL / 0 白名单外；唯一 LGPL 字样 `r-efi@6.0.0`（`MIT OR
+  Apache-2.0 OR LGPL-2.1-or-later` 三选一组合，取 MIT 路径满足，无强制 LGPL）。
+  脚本：分析侧 `scripts/sbom_check.py`（工作区 `/home/z/my-project/scripts/`），
+  可复跑。**webkit2gtk 系统库**（LGPL，deb `Depends: libwebkit2gtk-4.1-0` /
+  `libgtk-3-0` 由系统提供、动态链接不进产物二进制——§3 既有政策，deb
+  control Depends 已声明）。NOTICES 全量再生成待 compliance-baseline 分支
+  重建时执行（main 无该文件——登记边界，非阻塞）。
 - `ASSET_CHECK.md`：零内嵌二进制资产核查记录。
 - `TRADEMARK_RULES.md`：命名域（mdcore/mdshell/mdc-*）、四对象标记禁止事项、
   兼容表述边界、**定名前检索门**。

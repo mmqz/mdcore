@@ -1767,7 +1767,7 @@ fn open_assessment_form_probe_serde_shape() {
 #[test]
 fn open_entry_limit_checks_reason_codes_and_boundary() {
     use mdc_pdf::security::{Limits, REASON_OPEN_BUDGET, REASON_OPEN_FILE_BYTES};
-    use std::time::Instant;
+    use mdc_pdf::security::portable_now;
 
     // (a) L7 边界语义：恰等上限放行（min 收敛不触发拒绝），上限 +1 拒。
     let limits = Limits {
@@ -1792,7 +1792,7 @@ fn open_entry_limit_checks_reason_codes_and_boundary() {
         open_budget_ms: 0,
         ..Limits::default()
     };
-    let started = Instant::now();
+    let started = portable_now();
     std::thread::sleep(std::time::Duration::from_micros(1));
     assert_eq!(
         zero.check_open_budget(started),
@@ -1803,7 +1803,7 @@ fn open_entry_limit_checks_reason_codes_and_boundary() {
     );
 
     // (c) 宽预算正控：毫秒级耗时不误伤（3s 默认值面）。
-    let started = Instant::now();
+    let started = portable_now();
     assert!(
         Limits::default().check_open_budget(started).is_ok(),
         "默认 3s 预算下瞬时检查放行（不误伤正常打开）"
