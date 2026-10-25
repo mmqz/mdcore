@@ -1766,8 +1766,8 @@ fn open_assessment_form_probe_serde_shape() {
 
 #[test]
 fn open_entry_limit_checks_reason_codes_and_boundary() {
-    use mdc_pdf::security::{Limits, REASON_OPEN_BUDGET, REASON_OPEN_FILE_BYTES};
     use mdc_pdf::security::portable_now;
+    use mdc_pdf::security::{Limits, REASON_OPEN_BUDGET, REASON_OPEN_FILE_BYTES};
 
     // (a) L7 边界语义：恰等上限放行（min 收敛不触发拒绝），上限 +1 拒。
     let limits = Limits {
