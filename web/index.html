@@ -56,6 +56,23 @@
   #status-bar .sb-item { white-space: nowrap; }
   #status-bar .sb-save { margin-left: auto; }
   #status-bar .sb-save.sb-dirty { color: var(--danger); }
+  /* TOC 大纲面板（TR-UI 批 B）：fixed 右侧零布局侵入 */
+  #toc-panel {
+    position: fixed; top: 120px; right: 16px; z-index: 150;
+    width: 240px; max-height: calc(100vh - 200px);
+    display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--border-strong); border-radius: 8px;
+    font-size: 13px; overflow: hidden; box-shadow: 0 6px 18px rgba(0,0,0,.12);
+  }
+  #toc-panel[hidden] { display: none; }
+  #toc-head { padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+              color: var(--fg-muted); font-size: 12px; user-select: none; }
+  #toc-list { flex: 1 1 auto; overflow-y: auto; padding: 4px 0; }
+  .toc-item { padding: 4px 12px; cursor: pointer; white-space: nowrap;
+              overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+  .toc-item:hover { background: var(--panel-hover); }
+  .toc-empty { padding: 10px 12px; color: var(--fg-soft); font-size: 12px; }
+  #toc-toggle-btn.active { background: var(--edit-hl); }
   .cm-editor { outline: none; }
   .cm-content { font: inherit; }
   .cm-line.cm-heading { font-weight: 700; }
@@ -449,6 +466,11 @@
       <button type="button" id="tab-grid" class="view-tab">Grid</button>
       <button type="button" id="tab-pdf" class="view-tab">PDF</button>
       <button type="button" id="tab-canvas" class="view-tab">Canvas</button>
+      <button type="button" id="toc-toggle-btn" class="view-tab" title="文档大纲（标题导航跳转）" aria-expanded="false">大纲</button>
+    </div>
+    <div id="toc-panel" hidden>
+      <div id="toc-head">大纲 · 标题导航</div>
+      <div id="toc-list"><div class="toc-empty">暂无标题——用 H1-H3 或 # 前缀创建。</div></div>
     </div>
     <div id="format-toolbar" role="toolbar" aria-label="格式工具条">
       <button type="button" class="ft-b" data-format="bold" title="粗体（Mod-B）">B</button>

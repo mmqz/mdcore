@@ -1360,6 +1360,10 @@ declare global {
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
+    /** TR-UI 批 B：TOC 大纲（标题列表 [{level, text}]——__blocks 过滤 heading）。 */
+    __toc: () => { level: number; text: string }[];
+    /** TR-UI 批 B：TOC 跳转（索引定位标题行 + 光标移动 + 滚动居中；重名跳首个 v1 限制）。 */
+    __tocJump: (idx: number) => boolean;
     /** TR-UI 批 A-2：Ctrl+S 保存动作（mdc-save 事件 + dirty 清位；宿主桥路径 = __md() + save_document）。 */
     __save: () => boolean;
     /** TR-UI 批 A-2：最近一次保存结果（{ok, revision, bytes}）。 */
@@ -2248,6 +2252,88 @@ function setupStatusBar(): void {
 }
 
 setupStatusBar();
+
+// ---------------------------------------------------------------------------
+// TR-UI 批 B — TOC 文档大纲（标题导航面板：fixed 右侧零布局侵入）
+//
+// 数据源：__blocks()（先序平铺）过滤 type=heading，level 来自 attrs。
+// 跳转：标题文本行在 doc 中定位（`#`*level + 空格 + 文本——重名标题
+// 跳首个，v1 已知限制登记）→ selection + scrollIntoView。刷新 500ms
+// 轮询（与状态栏同模型）。
+// ---------------------------------------------------------------------------
+
+interface TocEntry { level: number; text: string; }
+
+function setupTocPanel(): void {
+  const panel = document.getElementById('toc-panel');
+  const listEl = document.getElementById('toc-list');
+  const btn = document.getElementById('toc-toggle-btn');
+  let entries: TocEntry[] = [];
+
+  const jumpTo = (idx: number): boolean => {
+    const e = entries[idx];
+    const view = window.__view;
+    if (!e || !view) return false;
+    const doc = view.state.doc;
+    const prefix = '#'.repeat(e.level) + ' ';
+    // 文本定位：标题行 = prefix + text（重名跳首个——v1 限制）
+    for (let ln = 1; ln <= doc.lines; ln++) {
+      const line = doc.line(ln);
+      if (line.text === prefix + e.text) {
+        view.dispatch({ selection: { anchor: line.from } });
+        view.focus();
+        const dom = view.domAtPos(line.from);
+        const el = dom.node.nodeType === Node.TEXT_NODE
+          ? dom.node.parentElement
+          : (dom.node as Element);
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const refresh = (): void => {
+    if (!listEl || panel?.hidden) return; // 面板关闭时跳过渲染（数据在打开时重建）
+    const blocks = typeof window.__blocks === 'function' ? window.__blocks() : [];
+    entries = blocks
+      .filter((b) => b.type === 'heading')
+      .map((b) => ({ level: Number(b.attrs?.level ?? 1), text: b.text }));
+    if (entries.length === 0) {
+      listEl.innerHTML = '<div class="toc-empty">暂无标题——用 H1-H3 或 # 前缀创建。</div>';
+      return;
+    }
+    listEl.replaceChildren(...entries.map((e, i) => {
+      const item = document.createElement('div');
+      item.className = 'toc-item';
+      item.style.paddingLeft = `${12 + (e.level - 1) * 14}px`;
+      item.textContent = e.text || '(空标题)';
+      item.title = `${'H'.repeat(Math.min(e.level, 6))} ${e.text}`;
+      item.addEventListener('click', () => { jumpTo(i); });
+      return item;
+    }));
+  };
+
+  btn?.addEventListener('click', () => {
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    btn.classList.toggle('active', !panel.hidden);
+    btn.setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) refresh();
+  });
+  window.setInterval(refresh, 500);
+
+  // 测试桥（与 UI 点击同源）。
+  window.__toc = (): TocEntry[] => {
+    const blocks = typeof window.__blocks === 'function' ? window.__blocks() : [];
+    return blocks
+      .filter((b) => b.type === 'heading')
+      .map((b) => ({ level: Number(b.attrs?.level ?? 1), text: b.text }));
+  };
+  window.__tocJump = (idx: number): boolean => jumpTo(idx);
+}
+
+setupTocPanel();
 
 
 // ---------------------------------------------------------------------------

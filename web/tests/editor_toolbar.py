@@ -216,6 +216,48 @@ def main() -> int:
                   and "已保存" in (saved["save"] or ""),
                   json.dumps(saved))
 
+            # ---- TR-UI 批 B：TOC 大纲 ----
+            # 构造标题文档 → 面板开 → 列表断言 → 跳转断言
+            page.evaluate("window.__inject('# 第一章\\nintro\\n## 子节 A\\ntext\\n# 第二章\\nend\\n')")
+            page.wait_for_function("window.__blockCount() === 6", timeout=15000)
+            page.wait_for_timeout(800)  # boot 收敛稳定窗（批 A-2 实证竞态）
+            toc = page.evaluate("window.__toc()")
+            check("toc_entries_from_headings",
+                  len(toc) == 3 and toc[0]["level"] == 1 and toc[0]["text"] == "第一章"
+                  and toc[1]["level"] == 2 and toc[1]["text"] == "子节 A"
+                  and toc[2]["text"] == "第二章",
+                  json.dumps(toc))
+            # 面板 UI 开（真实按钮）→ 渲染项数 + 层级缩进
+            page.click("#toc-toggle-btn")
+            panel_state = page.evaluate("""() => ({
+                hidden: document.getElementById('toc-panel').hidden,
+                items: document.querySelectorAll('#toc-list .toc-item').length,
+                item2Pad: (document.querySelectorAll('#toc-list .toc-item')[1] || {}).style
+                          ? document.querySelectorAll('#toc-list .toc-item')[1].style.paddingLeft : null,
+            })""")
+            check("toc_panel_renders",
+                  panel_state["hidden"] is False and panel_state["items"] == 3
+                  and panel_state["item2Pad"] == "26px",
+                  json.dumps(panel_state))
+            # 跳转：__tocJump(1)（子节 A）→ 光标行号 = 3
+            jump = page.evaluate("""() => {
+                const ok = window.__tocJump(1);
+                const sel = window.__view.state.selection.main.head;
+                return { ok, line: window.__view.state.doc.lineAt(sel).number };
+            }""")
+            check("toc_jump_moves_cursor",
+                  jump["ok"] is True and jump["line"] == 3,
+                  json.dumps(jump))
+            # 跳转后 UI 点击同源（第二章 → 行 5）
+            page.evaluate("() => document.querySelectorAll('#toc-list .toc-item')[2].click()")
+            jump2 = page.evaluate("""() => {
+                const sel = window.__view.state.selection.main.head;
+                return { line: window.__view.state.doc.lineAt(sel).number };
+            }""")
+            check("toc_ui_click_jumps",
+                  jump2["line"] == 5,
+                  json.dumps(jump2))
+
             # ---- 契约 + 零页错终验 ----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
