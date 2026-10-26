@@ -278,6 +278,35 @@
   #canvas-edit-input { position: absolute; z-index: 50; box-sizing: border-box;
                        border: 2px solid var(--accent); border-radius: 0; padding: 2px 4px;
                        font: inherit; font-size: 12px; outline: none; background: var(--bg); }
+
+  /* ---- #3 批2：设置面板 + 证据面板折叠 ---- */
+  #settings-overlay { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.38);
+                      display: flex; align-items: center; justify-content: center; }
+  #settings-panel { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 80px);
+                    overflow: auto; background: var(--bg); color: var(--fg);
+                    border: 1px solid var(--border-strong); border-radius: 12px;
+                    padding: 18px 20px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+  #settings-panel .sp-title { margin: 0 0 12px; font-size: 16px; }
+  .sp-form { display: flex; flex-direction: column; gap: 10px; }
+  .sp-row { display: grid; grid-template-columns: 1fr 170px; gap: 8px; align-items: center;
+            font-size: 13px; }
+  .sp-row .sp-name { color: var(--fg-soft); }
+  .sp-row .sp-hint { grid-column: 1 / -1; color: var(--fg-muted); font-size: 11px; margin-top: -6px; }
+  .sp-input { font: inherit; font-size: 13px; padding: 3px 8px; border: 1px solid var(--border);
+              border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .sp-input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+  .sp-status { margin-top: 10px; font-size: 12px; color: var(--fg-muted); min-height: 1em; }
+  .sp-status.sp-ok { color: #1a7f37; }
+  .sp-status.sp-err { color: var(--danger); }
+  .sp-actions { margin-top: 12px; display: flex; justify-content: flex-end; }
+
+  #evidence-collapse-btn { flex: 0 0 auto; align-self: stretch; width: 20px; margin: 12px 0 0 4px;
+                           border: 1px solid var(--border); border-left: none; border-radius: 0 6px 6px 0;
+                           background: var(--panel); color: var(--fg-muted); cursor: pointer;
+                           font-size: 11px; padding: 0; }
+  #evidence-collapse-btn:hover { background: var(--panel-hover); }
+  #main-row.ev-collapsed #evidence-panel { width: 0; flex-basis: 0; margin-left: 0;
+                                           overflow: hidden; border: none; min-width: 0; }
 </style>
 <script>
   // #3 主题防闪白：wasm boot 前先以 localStorage 缓存定档（权威 =

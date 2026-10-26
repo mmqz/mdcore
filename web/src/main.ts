@@ -1506,6 +1506,8 @@ async function main(): Promise<void> {
 
   setupThemeControl();
   setupSettingsButton();
+  window.addEventListener('mdc-open-settings', () => openSettingsPanel());
+  setupEvidenceCollapse();
 
   // 启动态收口：debug 行在 boot 期间显示 "booting…"（index.html 初始文案），
   // 启动完成后必须换掉——否则用户看到的是永久 "booting…"，功能其实已就绪。
@@ -1966,11 +1968,177 @@ function setupThemeControl(): void {
   refresh();
 }
 
-/** 设置按钮（#settings-panel 的入口——面板本体由后续批挂载）。 */
+/** 设置按钮：打开设置面板（mdc-open-settings 事件——面板消费
+ * CONTRACT §4 全键位，__setSetting 服务端校验为权威门）。 */
 function setupSettingsButton(): void {
   const btn = document.getElementById('settings-btn');
   if (!btn) return;
   btn.addEventListener('click', () => {
     window.dispatchEvent(new CustomEvent('mdc-open-settings'));
   });
+}
+
+// ---------------------------------------------------------------------------
+// #3 批2：设置面板（CONTRACT §4 v1.1 全键位消费）与证据面板折叠
+// ---------------------------------------------------------------------------
+
+/** §4 默认值表的 UI 镜像（值域 = 契约表；服务端 __setSetting 校验为
+ * 权威门，UI min/max 仅输入辅助）。 */
+const SETTINGS_FIELDS: Array<{
+  path: string;
+  label: string;
+  kind: 'number' | 'bool' | 'select';
+  min?: number;
+  max?: number;
+  options?: string[];
+  hint?: string;
+}> = [
+  { path: 'editor.undo_coalesce_ms', label: '撤销合并窗口 (ms)', kind: 'number', min: 1, max: 10000, hint: '相邻编辑合并为单撤销项的窗口' },
+  { path: 'editor.progressive_open_threshold_bytes', label: '渐进打开阈值 (bytes)', kind: 'number', min: 0, max: 2 ** 30, hint: '超过此大小分段装载（TTI 提速）' },
+  { path: 'ai.commands_enabled', label: 'AI 命令通道', kind: 'bool', hint: 'AI 操作者命令总开关' },
+  { path: 'storage.meta_sidecar', label: 'sidecar 元数据', kind: 'bool', hint: '证据/审计 sidecar 持久化' },
+  { path: 'storage.autosave_enabled', label: '自动保存', kind: 'bool' },
+  { path: 'storage.autosave_interval_ms', label: '自动保存间隔 (ms)', kind: 'number', min: 1000, max: 3600000 },
+  { path: 'storage.session_restore', label: '会话恢复', kind: 'bool' },
+  { path: 'appearance.theme', label: '主题', kind: 'select', options: ['light', 'dark', 'system'] },
+  { path: 'appearance.font_size_px', label: '正文字号 (px)', kind: 'number', min: 8, max: 48 },
+];
+
+/** 点路径取值（快照两层结构）。 */
+function settingsGet(path: string): unknown {
+  const snap = window.__settings();
+  const [section, key] = path.split('.');
+  const sec = (snap as unknown as Record<string, Record<string, unknown>>)[section];
+  return sec?.[key];
+}
+
+/** 设置面板（动态挂载——index.html DOM 契约零接触）。 */
+function openSettingsPanel(): void {
+  document.getElementById('settings-panel')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'settings-overlay';
+  const panel = document.createElement('div');
+  panel.id = 'settings-panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', '设置');
+  const title = document.createElement('h2');
+  title.textContent = '设置';
+  title.className = 'sp-title';
+  panel.appendChild(title);
+  const form = document.createElement('div');
+  form.className = 'sp-form';
+  for (const f of SETTINGS_FIELDS) {
+    const row = document.createElement('label');
+    row.className = 'sp-row';
+    const name = document.createElement('span');
+    name.className = 'sp-name';
+    name.textContent = f.label;
+    row.appendChild(name);
+    let input: HTMLElement;
+    if (f.kind === 'bool') {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = settingsGet(f.path) === true;
+      input = cb;
+    } else if (f.kind === 'select') {
+      const sel = document.createElement('select');
+      for (const o of f.options ?? []) {
+        const opt = document.createElement('option');
+        opt.value = o;
+        opt.textContent = o;
+        sel.appendChild(opt);
+      }
+      sel.value = String(settingsGet(f.path) ?? f.options?.[0] ?? '');
+      input = sel;
+    } else {
+      const num = document.createElement('input');
+      num.type = 'number';
+      if (f.min !== undefined) num.setAttribute('min', String(f.min));
+      if (f.max !== undefined) num.setAttribute('max', String(f.max));
+      num.value = String(settingsGet(f.path) ?? '');
+      input = num;
+    }
+    input.className = 'sp-input';
+    input.setAttribute('data-path', f.path);
+    row.appendChild(input);
+    if (f.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'sp-hint';
+      hint.textContent = f.hint;
+      row.appendChild(hint);
+    }
+    form.appendChild(row);
+  }
+  panel.appendChild(form);
+  const status = document.createElement('div');
+  status.id = 'settings-status';
+  status.className = 'sp-status';
+  panel.appendChild(status);
+  const actions = document.createElement('div');
+  actions.className = 'sp-actions';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'grid-btn';
+  closeBtn.textContent = '关闭 (Esc)';
+  closeBtn.addEventListener('click', () => overlay.remove());
+  actions.appendChild(closeBtn);
+  panel.appendChild(actions);
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+
+  // 变更即写（__setSetting 权威校验——拒绝时面板显示错误并回滚显示值）。
+  form.addEventListener('change', (e) => {
+    const t = e.target as HTMLInputElement | HTMLSelectElement;
+    const path = t.getAttribute('data-path');
+    if (!path) return;
+    const f = SETTINGS_FIELDS.find((x) => x.path === path);
+    if (!f) return;
+    let value: number | boolean | string;
+    if (f.kind === 'bool') value = (t as HTMLInputElement).checked;
+    else if (f.kind === 'number') {
+      const n = Number((t as HTMLInputElement).value);
+      if (!Number.isFinite(n)) { status.textContent = `✗ ${f.label}：需数字`; return; }
+      value = n;
+    } else value = (t as HTMLSelectElement).value;
+    const ok = window.__setSetting(path, value);
+    if (ok) {
+      status.textContent = `✓ ${f.label} 已保存`;
+      status.className = 'sp-status sp-ok';
+    } else {
+      status.textContent = `✗ ${f.label}：值域外（${f.min ?? ''}..${f.max ?? f.options?.join('/') ?? ''}）——已拒`;
+      status.className = 'sp-status sp-err';
+      // 回滚显示值为快照现值（拒绝未生效）。
+      const cur = settingsGet(path);
+      if (f.kind === 'bool') (t as HTMLInputElement).checked = cur === true;
+      else (t as HTMLInputElement | HTMLSelectElement).value = String(cur ?? '');
+    }
+  });
+  const esc = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
+  };
+  document.addEventListener('keydown', esc);
+}
+
+/** 证据面板折叠（width-0 形态——display 保持 block，测试面零接触）。 */
+function setupEvidenceCollapse(): void {
+  const mainRow = document.getElementById('main-row');
+  const panel = document.getElementById('evidence-panel');
+  if (!mainRow || !panel) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'evidence-collapse-btn';
+  btn.title = '折叠/展开证据面板';
+  btn.setAttribute('aria-label', '折叠/展开证据面板');
+  const setCollapsed = (collapsed: boolean): void => {
+    mainRow.classList.toggle('ev-collapsed', collapsed);
+    btn.textContent = collapsed ? '»' : '«';
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  };
+  btn.addEventListener('click', () => {
+    setCollapsed(!mainRow.classList.contains('ev-collapsed'));
+  });
+  mainRow.prepend(btn);
 }
