@@ -153,3 +153,47 @@ CM5 legacy，本桥未复现该缺陷）。
 语义完全由核保证（Rust 侧 r12_ai_loop 10 条）；浏览器侧只验渲染与
 事件流接线。AI 提交带 base gate 的 `commit_transaction_as` 未透传到
 wasm 绑定（见 prototype README §9 简化项）。
+
+## 8. TR-UI 产品化战役（issues #3 深化 + #9/#10 闭环，dev-r1..r20）
+
+### 8.1 issues 闭环（#9 / #10）
+
+- **#9（TR-1）行尾镜像**：`markdown_to_tree` 入口 CRLF/孤立 CR 统一
+  规范化 LF（模型 = 权威层；三解析入口漏斗单点覆盖）——`__md()`
+  保存内容 = CM6 所见。回归锁 `tr1_line_endings.rs` 六件 + web
+  `tr1_web_e2e.py` 两件。
+- **#10（TR-4）导出格式**：`WasmCore::export_docx_styled(options_json)`
+  加性面（镜像 office-io snake_case API；形状面 `docx_options` /
+  值域面 V9 漏斗 `docx_invalid_input` 分层校验）+ ⚙ 导出选项面板
+  （4 预设：默认/公文 A4[四号·1.5 倍·90pt 边距 = G2 LO 实测口径]/
+  紧凑/大字 + 自定义三选）+ 运行时鸭子探测（旧 pkg 回退兼容）。
+
+### 8.2 格式工具条（程序化文本编辑模式）
+
+工具条 **不做独立 op 面**——按钮 = `view.dispatch` 文本 changes，
+语义由既有双层管道承载（body 快路径 / 前缀区 fullResync 核内差分）；
+独立 op 轨被否决（模型 marks 不写入 MD 投影 = 视图零反馈）。
+**forceFullSync 标志**：行首前缀变更强制全量同步（快路径会把
+`# ` 吸收为字面文本 = 块类型漂移，e2e 实证）。11 键 + 8 快捷键
+（Mod-b/i/e/Shift-x/Shift-1/2/3/0）。
+
+### 8.3 状态栏 / Ctrl+S / 自动保存提醒
+
+5 槽位（字符/词数混合计数/块数/光标 Ln,Col/rev + dirty 指示）；
+Ctrl+S = `mdc-save` 事件（宿主 CONTRACT 桥路径 = `__md()` +
+`save_document`）；dirty 超 5s → `mdc-autosave-hint` 提醒事件
+（不自动写核——保存动作恒经宿主桥/用户）。
+
+### 8.4 TOC 大纲 / 查找替换 / 帮助 / 字号 / 打印
+
+TOC（fixed 右侧零布局侵入 + 层级缩进 + 文本定位跳转）；查找替换
+（零新增依赖面——手写 indexOf 收集 + 单事务倒序替换 = undo 一次
+撤全）；帮助面板（F1，12 行速查表）；字号 Ctrl+=/-/0（clamp
+11-28 + localStorage）；`@media print`（chrome 全隐只留正文）。
+
+### 8.5 测试面
+
+`editor_toolbar.py`（26 checks）+ `hostile_ui.py`（8 checks：
+空文档/200KB 大文档/emoji 代理对/BIDI/面板叠加/连击 20 次/
+localStorage 污染/行号+自动保存）+ `tr1_web_e2e.py`（2）。
+web 全量 15→18 套件 **239 checks** 全绿。

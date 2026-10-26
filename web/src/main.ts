@@ -65,6 +65,7 @@ import {
   ViewUpdate,
   WidgetType,
   keymap,
+  lineNumbers,
 } from '@codemirror/view';
 import init, { WasmCore, import_docx, import_xlsx } from '../pkg/mdcore_wasm.js';
 import * as wasmMod from '../pkg/mdcore_wasm.js';
@@ -680,6 +681,7 @@ class CM6View {
             { key: 'Mod-Shift-3', preventDefault: true, run: () => owner.toggleLinePrefix('heading', 3) },
             { key: 'Mod-Shift-0', preventDefault: true, run: () => owner.clearLinePrefix() },
           ]),
+          lineNumbers(), // TR-UI 批 D：行号槽（文档编辑体验——docx 行定位对照）
           EditorView.lineWrapping,
         ],
       }),
@@ -2213,6 +2215,7 @@ function setupStatusBar(): void {
   const saveEl = document.getElementById('sb-save');
   let dirty = false;
   let lastSeenRev = -1;
+  let dirtySince = 0; // TR-UI 批 D：dirty 起始时刻（自动保存提醒事件源）
 
   const refresh = (): void => {
     const core = window.__core;
@@ -2231,9 +2234,20 @@ function setupStatusBar(): void {
     if (cursorEl) cursorEl.textContent = `Ln ${line.number}, Col ${sel - line.from + 1}`;
     const rev = Number(core.revision());
     if (revEl) revEl.textContent = `rev ${rev}`;
-    if (lastSeenRev >= 0 && rev !== lastSeenRev) dirty = true;
+    const now = Date.now();
+    if (lastSeenRev >= 0 && rev !== lastSeenRev) {
+      if (!dirty) dirtySince = now;
+      dirty = true;
+    }
     lastSeenRev = rev;
-    if (saveEl) {
+    if (dirty && dirtySince > 0 && now - dirtySince > 5000) {
+      // TR-UI 批 D：dirty 超 5s → 自动保存提醒事件（宿主可消费触发
+      // autosave；web 独立态 = 提示文本升级）。不自动写核——保存动作
+      // 恒经宿主桥/用户（CONTRACT 路径不越权）。
+      saveEl?.classList.add('sb-dirty');
+      if (saveEl) saveEl.textContent = '未保存 · Ctrl+S（建议保存）';
+      window.dispatchEvent(new CustomEvent('mdc-autosave-hint', { detail: { revision: rev } }));
+    } else if (saveEl) {
       saveEl.textContent = dirty ? '未保存 · Ctrl+S' : '已保存';
       saveEl.classList.toggle('sb-dirty', dirty);
     }
