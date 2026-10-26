@@ -258,6 +258,40 @@ def main() -> int:
                   jump2["line"] == 5,
                   json.dumps(jump2))
 
+            # ---- TR-UI 批 B-2：查找替换 ----
+            page.evaluate("window.__inject('alpha beta gamma\\nalpha delta\\n')")
+            page.wait_for_function("window.__blockCount() === 2", timeout=15000)
+            page.wait_for_timeout(800)
+            n = page.evaluate("window.__findMatches('alpha')")
+            check("find_matches_count", n == 2, json.dumps({"n": n}))
+            ok = page.evaluate("window.__findGoto(1)")
+            sel = page.evaluate("window.__findSelection()")
+            check("find_goto_selects_first",
+                  ok is True and sel and sel["text"] == "alpha" and sel["from"] == 0,
+                  json.dumps(sel))
+            # 全部替换（单事务——undo 一次撤全）
+            cnt = page.evaluate("window.__replaceAll('alpha', 'OMEGA')")
+            md = page.evaluate("window.__md()")
+            check("replace_all_single_txn",
+                  cnt == 2 and md == "OMEGA beta gamma\nOMEGA delta",
+                  json.dumps({"cnt": cnt, "md": md}))
+            u = page.evaluate("""() => { window.__bridge.undo(); return window.__md(); }""")
+            check("replace_all_undo_once_restores",
+                  u == "alpha beta gamma\nalpha delta",
+                  json.dumps({"md": u}))
+            # Ctrl+F 真实键盘开面板
+            page.evaluate("window.__view.focus()")
+            page.keyboard.press("Control+f")
+            fp = page.evaluate("""() => ({
+                hidden: document.getElementById('find-panel').hidden,
+                focused: document.activeElement && document.activeElement.id === 'find-input',
+            })""")
+            check("ctrl_f_opens_panel", fp["hidden"] is False and fp["focused"] is True,
+                  json.dumps(fp))
+            page.keyboard.press("Escape")
+            fp2 = page.evaluate("document.getElementById('find-panel').hidden")
+            check("escape_closes_panel", fp2 is True, json.dumps({"hidden": fp2}))
+
             # ---- 契约 + 零页错终验 ----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,

@@ -73,6 +73,26 @@
   .toc-item:hover { background: var(--panel-hover); }
   .toc-empty { padding: 10px 12px; color: var(--fg-soft); font-size: 12px; }
   #toc-toggle-btn.active { background: var(--edit-hl); }
+  /* 查找替换面板（TR-UI 批 B-2） */
+  #find-panel {
+    position: fixed; top: 120px; right: 16px; z-index: 160;
+    width: 320px; padding: 10px 12px;
+    background: var(--panel); border: 1px solid var(--border-strong); border-radius: 8px;
+    font-size: 13px; box-shadow: 0 6px 18px rgba(0,0,0,.12);
+  }
+  #find-panel[hidden] { display: none; }
+  #find-panel .fp-row { display: flex; gap: 6px; margin: 4px 0; align-items: center; }
+  #find-panel input {
+    flex: 1 1 auto; min-width: 0; padding: 4px 8px; font: inherit; font-size: 13px;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+  }
+  #find-panel button {
+    padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
+    background: var(--panel-hover); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  #find-panel button:hover { background: var(--panel-active); }
+  #find-count { color: var(--fg-muted); font-size: 12px; min-width: 60px; text-align: right; }
   .cm-editor { outline: none; }
   .cm-content { font: inherit; }
   .cm-line.cm-heading { font-weight: 700; }
@@ -471,6 +491,19 @@
     <div id="toc-panel" hidden>
       <div id="toc-head">大纲 · 标题导航</div>
       <div id="toc-list"><div class="toc-empty">暂无标题——用 H1-H3 或 # 前缀创建。</div></div>
+    </div>
+    <div id="find-panel" hidden>
+      <div class="fp-row">
+        <input type="text" id="find-input" placeholder="查找…" aria-label="查找文本" />
+        <span id="find-count">0/0</span>
+        <button type="button" id="find-prev-btn" title="上一个（Shift+Enter）">↑</button>
+        <button type="button" id="find-next-btn" title="下一个（Enter）">↓</button>
+      </div>
+      <div class="fp-row">
+        <input type="text" id="replace-input" placeholder="替换为…" aria-label="替换文本" />
+        <button type="button" id="replace-one-btn" title="替换当前匹配">替换</button>
+        <button type="button" id="replace-all-btn" title="替换全部匹配">全部</button>
+      </div>
     </div>
     <div id="format-toolbar" role="toolbar" aria-label="格式工具条">
       <button type="button" class="ft-b" data-format="bold" title="粗体（Mod-B）">B</button>

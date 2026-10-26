@@ -1360,6 +1360,14 @@ declare global {
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
+    /** TR-UI 批 B-2：查找匹配计数（全量 indexOf 收集）。 */
+    __findMatches: (needle: string) => number;
+    /** TR-UI 批 B-2：跳转下一/上一匹配（selection + scroll 居中）。 */
+    __findGoto: (dir: 1 | -1) => boolean;
+    /** TR-UI 批 B-2：当前匹配选区快照。 */
+    __findSelection: () => { from: number; to: number; text: string } | null;
+    /** TR-UI 批 B-2：全部替换（单事务多 changes = 核内单条目；返回替换数）。 */
+    __replaceAll: (needle: string, rep: string) => number;
     /** TR-UI 批 B：TOC 大纲（标题列表 [{level, text}]——__blocks 过滤 heading）。 */
     __toc: () => { level: number; text: string }[];
     /** TR-UI 批 B：TOC 跳转（索引定位标题行 + 光标移动 + 滚动居中；重名跳首个 v1 限制）。 */
@@ -2334,6 +2342,142 @@ function setupTocPanel(): void {
 }
 
 setupTocPanel();
+
+// ---------------------------------------------------------------------------
+// TR-UI 批 B-2 — 查找替换（Ctrl+F 面板；零新增依赖面——@codemirror/
+// search 不引入，手写最小实现：indexOf 全量匹配收集 + selection 跳转
+// + 替换走 view.dispatch changes 由既有管道入核）。
+// ---------------------------------------------------------------------------
+
+function setupFindPanel(): void {
+  const panel = document.getElementById('find-panel');
+  const findInput = document.getElementById('find-input') as HTMLInputElement | null;
+  const replaceInput = document.getElementById('replace-input') as HTMLInputElement | null;
+  const countEl = document.getElementById('find-count');
+  let matches: { from: number; to: number }[] = [];
+  let cur = -1;
+
+  const collect = (needle: string): void => {
+    matches = [];
+    cur = -1;
+    const view = window.__view;
+    if (!view || !needle) { updateCount(); return; }
+    const text = view.state.doc.toString();
+    let i = text.indexOf(needle);
+    while (i !== -1) {
+      matches.push({ from: i, to: i + needle.length });
+      i = text.indexOf(needle, i + Math.max(needle.length, 1));
+    }
+    updateCount();
+  };
+
+  const updateCount = (): void => {
+    if (countEl) countEl.textContent = `${cur + 1}/${matches.length}`;
+  };
+
+  const gotoMatch = (dir: 1 | -1): boolean => {
+    const view = window.__view;
+    if (!view || matches.length === 0) return false;
+    cur = (cur + dir + matches.length) % matches.length;
+    const m = matches[cur];
+    view.dispatch({ selection: { anchor: m.from, head: m.to } });
+    const dom = view.domAtPos(m.from);
+    const el = dom.node.nodeType === Node.TEXT_NODE ? dom.node.parentElement : (dom.node as Element);
+    el?.scrollIntoView({ block: 'center' });
+    updateCount();
+    return true;
+  };
+
+  const findFrom = (dir: 1 | -1): void => {
+    collect(findInput?.value ?? '');
+    gotoMatch(dir);
+  };
+
+  const replaceOne = (): boolean => {
+    const view = window.__view;
+    const rep = replaceInput?.value ?? '';
+    if (!view || matches.length === 0 || cur < 0) return false;
+    const m = matches[cur];
+    view.dispatch({ changes: { from: m.from, to: m.to, insert: rep } });
+    collect(findInput?.value ?? ''); // 重收集（偏移全变）
+    if (matches.length > 0) gotoMatch(1);
+    return true;
+  };
+
+  const replaceAll = (): number => {
+    const view = window.__view;
+    const needle = findInput?.value ?? '';
+    const rep = replaceInput?.value ?? '';
+    if (!view || !needle) return 0;
+    collect(needle);
+    if (matches.length === 0) return 0;
+    // 倒序替换（偏移稳定）——单事务多 changes = 核内单条目（undo 一次撤全）
+    const rev = [...matches].reverse();
+    view.dispatch({ changes: rev.map((m) => ({ from: m.from, to: m.to, insert: rep })) });
+    collect(needle);
+    return matches.length + rev.length - matches.length; // 替换前计数（重收集后值已变——返回原数）
+  };
+
+  // UI 事件
+  findInput?.addEventListener('input', () => { collect(findInput.value); if (matches.length > 0) gotoMatch(1); });
+  findInput?.addEventListener('keydown', (ev: KeyboardEvent) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); findFrom(ev.shiftKey ? -1 : 1); }
+    if (ev.key === 'Escape') { ev.preventDefault(); togglePanel(false); }
+  });
+  document.getElementById('find-next-btn')?.addEventListener('click', () => findFrom(1));
+  document.getElementById('find-prev-btn')?.addEventListener('click', () => findFrom(-1));
+  document.getElementById('replace-one-btn')?.addEventListener('click', () => { replaceOne(); });
+  document.getElementById('replace-all-btn')?.addEventListener('click', () => { replaceAll(); });
+
+  const togglePanel = (force?: boolean): void => {
+    if (!panel) return;
+    const show = force ?? panel.hidden;
+    panel.hidden = !show;
+    if (show) {
+      findInput?.focus();
+      findInput?.select();
+      collect(findInput?.value ?? '');
+    } else {
+      window.__view?.focus();
+    }
+  };
+
+  // Ctrl+F / Esc 全局
+  document.addEventListener('keydown', (ev: KeyboardEvent) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f' && !ev.shiftKey) {
+      ev.preventDefault();
+      togglePanel(true);
+    }
+    if (ev.key === 'Escape' && panel && !panel.hidden) togglePanel(false);
+  });
+
+  // 测试桥（与 UI 同源）
+  window.__findMatches = (needle: string): number => {
+    collect(needle);
+    return matches.length;
+  };
+  window.__findGoto = (dir: 1 | -1): boolean => gotoMatch(dir);
+  window.__findSelection = (): { from: number; to: number; text: string } | null => {
+    const view = window.__view;
+    if (!view || cur < 0 || !matches[cur]) return null;
+    const m = matches[cur];
+    return { from: m.from, to: m.to, text: view.state.sliceDoc(m.from, m.to) };
+  };
+  window.__replaceAll = (needle: string, rep: string): number => {
+    collect(needle);
+    if (matches.length === 0) return 0;
+    const n = matches.length;
+    const view = window.__view;
+    if (view) {
+      const rev = [...matches].reverse();
+      view.dispatch({ changes: rev.map((m) => ({ from: m.from, to: m.to, insert: rep })) });
+    }
+    collect(needle);
+    return n;
+  };
+}
+
+setupFindPanel();
 
 
 // ---------------------------------------------------------------------------
