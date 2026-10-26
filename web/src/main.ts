@@ -1503,6 +1503,17 @@ async function main(): Promise<void> {
   setupCollabChannel(() => import(new URL('./pkg/mdcore_wasm.js', import.meta.url).href));
 
   window.__ready = true;
+
+  // 启动态收口：debug 行在 boot 期间显示 "booting…"（index.html 初始文案），
+  // 启动完成后必须换掉——否则用户看到的是永久 "booting…"，功能其实已就绪。
+  // 首次编辑后的实时 rev/blocks 读数由 debugLine() 接管。
+  const bootEl = document.getElementById('debug');
+  if (bootEl) {
+    const p = window.__perf;
+    bootEl.textContent = p.progressive
+      ? `ready · blocks=${window.__blockCount()} · progressive tti=${p.progressive.ttiMs.toFixed(0)}ms ingest=${p.progressive.ingestMs.toFixed(0)}ms chunks=${p.progressive.chunks}`
+      : `ready · blocks=${window.__blockCount()} · load=${p.loadMs.toFixed(0)}ms`;
+  }
 }
 
 // ---------------------------------------------------------------------------

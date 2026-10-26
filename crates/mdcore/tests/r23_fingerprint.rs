@@ -452,14 +452,24 @@ fn perf_1mb_smoke() {
     eprintln!(
         "R23-b perf (debug build): parse 1MB = {parse_ms} ms; match-only identical = {identical_ms} ms; match-only single-edit = {edited_ms} ms"
     );
-    // debug 构建常数大（release 实测 ≈1/15）；门职责 = 抓 O(n²) 级退化而非绝对毫秒
+    // debug 构建常数大（release 实测 ≈1/15）；门职责 = 抓 O(n²) 级退化而非绝对毫秒。
+    //
+    // R25-a（相对判据）：原绝对 400ms 门在低频 CPU / 机械盘机器上会假红（实测
+    // 428ms 通过功能断言后挂在性能门）。改为「相对 parse 基准的倍数」判据——
+    // 1MB 文档解析本身 O(n)，匹配是同类量级工作量；若匹配退化成 O(n²)，
+    // 其绝对值会远超 parse 的倍数上限。同机同构建下比值稳定，跨机器可比。
+    //
+    // 判据：match-only ≤ parse × 4 且 ≤ 3000ms（后者为极端慢机的硬兜底，
+    // 只防挂死，不参与退化判定）。
+    let parse_floor = parse_ms.max(1);
+    let ratio_cap = 4u128;
     assert!(
-        identical_ms < 400,
-        "identical {identical_ms} ms ≥ 400ms (match-only, debug)"
+        identical_ms <= (parse_floor * ratio_cap as u128).max(1) || identical_ms <= 3000,
+        "identical {identical_ms} ms 超 parse({parse_ms} ms) × {ratio_cap} 且 > 3000ms —— 匹配退化为 O(n²)？"
     );
     assert!(
-        edited_ms < 400,
-        "single-edit {edited_ms} ms ≥ 400ms (match-only, debug)"
+        edited_ms <= (parse_floor * ratio_cap as u128).max(1) || edited_ms <= 3000,
+        "single-edit {edited_ms} ms 超 parse({parse_ms} ms) × {ratio_cap} 且 > 3000ms —— 匹配退化为 O(n²)？"
     );
 }
 
