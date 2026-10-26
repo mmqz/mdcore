@@ -2178,6 +2178,119 @@ pub enum FieldSpec {
 }
 
 // ---------------------------------------------------------------------------
+// G2 文档级格式面（issue #6：页面设置 / 正文默认样式 / 行距——
+// 引擎三 API 已在场[Docx::default_size·default_fonts·default_line_spacing
+// ·section_property]，office-io 此前未接线 → 全文 10pt Times New Roman
+// + 页边距写死的实测根因）
+// ---------------------------------------------------------------------------
+
+/// 页面几何（sectPr 面——单位 **twips**（1/20 pt，Word 域口径：
+/// A4 = 11906×16838；引擎默认边距 = Word 2019 值 1985/1701/1701/1701）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageGeometry {
+    /// 页宽（pgSz w）。
+    pub width: u32,
+    /// 页高（pgSz h）。
+    pub height: u32,
+    /// 上边距（pgMar top）。
+    pub margin_top: i32,
+    /// 右边距（pgMar right）。
+    pub margin_right: i32,
+    /// 下边距（pgMar bottom）。
+    pub margin_bottom: i32,
+    /// 左边距（pgMar left）。
+    pub margin_left: i32,
+    /// 页眉距边（pgMar header）。
+    pub margin_header: i32,
+    /// 页脚距边（pgMar footer）。
+    pub margin_footer: i32,
+    /// 装订线（pgMar gutter）。
+    pub gutter: i32,
+}
+
+impl PageGeometry {
+    /// A4 + 引擎默认边距（= 不调用 `page_geometry` 时的产物基线）。
+    pub fn a4_default() -> Self {
+        Self {
+            width: 11906,
+            height: 16838,
+            margin_top: 1985,
+            margin_right: 1701,
+            margin_bottom: 1701,
+            margin_left: 1701,
+            margin_header: 851,
+            margin_footer: 992,
+            gutter: 0,
+        }
+    }
+}
+
+/// 行距规则（w:spacing w:lineRule——`line` 值语义随规则变化）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineRuleSpec {
+    /// `auto`：`line` = 行倍数 × 240（240 = 单倍；1.5 倍 = 360）。
+    Auto,
+    /// `atLeast`：`line` = twips 最小值（不足行高自动撑开）。
+    AtLeast,
+    /// `exact`：`line` = twips 精确值（超出裁剪）。
+    Exact,
+}
+
+/// 行距与段距（docDefaults 段级 pPr——全文默认；段级覆盖面在
+/// `RunSpec` 之外属段落属性，本面只提供文档级默认）。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LineSpacingSpec {
+    /// 行距主值（语义随 [`LineRuleSpec`]——twips 或 倍数×240）。
+    pub line: Option<i32>,
+    /// 行距规则。
+    pub line_rule: Option<LineRuleSpec>,
+    /// 段前距（twips）。
+    pub before: Option<u32>,
+    /// 段后距（twips）。
+    pub after: Option<u32>,
+}
+
+impl LineSpacingSpec {
+    /// 倍数行距（auto 规则——`multiple` 为行倍数：1.0 单倍 / 1.5 / 2.0）。
+    pub fn multiple(multiple: f64) -> Self {
+        Self {
+            line: Some((multiple * 240.0).round() as i32),
+            line_rule: Some(LineRuleSpec::Auto),
+            before: None,
+            after: None,
+        }
+    }
+
+    /// 精确行距（exact 规则——twips：240 twips = 12pt）。
+    pub fn exact_twips(twips: i32) -> Self {
+        Self {
+            line: Some(twips),
+            line_rule: Some(LineRuleSpec::Exact),
+            before: None,
+            after: None,
+        }
+    }
+}
+
+/// 正文默认排版（docDefaults rPr 面——**公开 API 单位换算**：
+/// `size_half_points` 半磅[10pt=20；#8 实测「全文 10pt」= 引擎缺省
+/// 面的修复入口]；字体三槽 ascii/east_asia/cs——中文标书场景
+/// east_asia 必设）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefaultTypography {
+    /// 西文字体（rFonts ascii）。
+    pub ascii_font: String,
+    /// 中文字体（rFonts eastAsia）。
+    pub east_asia_font: String,
+    /// 复杂文种字体（rFonts cs——可与 ascii 同值）。
+    pub complex_script_font: String,
+    /// 默认字号（w:sz——**半磅**：10.5pt = 21，四号 = 28）。
+    pub size_half_points: u16,
+    /// 默认行距/段距（w:spacing——None = 引擎缺省[单倍无段距]）。
+    pub line_spacing: Option<LineSpacingSpec>,
+}
+
+// ---------------------------------------------------------------------------
 // t20 写面常量（公开 = 写面契约的一部分——消费方 XML 级断言可依赖）
 // ---------------------------------------------------------------------------
 
@@ -2431,6 +2544,10 @@ pub struct DocxWriter {
     /// 注入 ordered/bullet 两抽象 + num 桥——无列表文档的 numbering.xml
     /// 保持引擎内建形态；`save_to_vec` 后随基态重置）。
     numbering_registered: bool,
+    /// G2：文档级格式面登记（V9 域校验数据源——几何/排版越界
+    /// save 漏斗粘性拒绝）。
+    page_geometry: Option<PageGeometry>,
+    typography: Option<DefaultTypography>,
     /// r4-t2：段等价物累计（含表单元格/页眉页脚槽位/脚注内容段；
     /// 替换槽位按每次调用计——上界语义）。
     paragraphs: u64,
@@ -2473,6 +2590,8 @@ impl DocxWriter {
         Self {
             docx,
             numbering_registered: false,
+            page_geometry: None,
+            typography: None,
             paragraphs: 0,
             runs: 0,
             validation_error: None,
@@ -2717,6 +2836,57 @@ impl DocxWriter {
     /// 页脚等返回 ()）是既有 API 契约——逐调用 typed 拒结构性不可用，
     /// 资源限统一在本漏斗执行（消费面预检经
     /// [`check_document_scale`] 共用同一单点比较）。
+    /// G2 页面几何（sectPr 面——pgSz/pgMar；单位 twips，见
+    /// [`PageGeometry`]）。多次调用 = 后值覆盖（文档级单值语义）。
+    /// V9 域校验（几何正值域）save 漏斗粘性拒绝。
+    pub fn page_geometry(&mut self, g: PageGeometry) {
+        let sp = &mut self.docx.document.section_property;
+        sp.page_size = docx_rs::PageSize::new().width(g.width).height(g.height);
+        sp.page_margin = docx_rs::PageMargin::new()
+            .top(g.margin_top)
+            .right(g.margin_right)
+            .bottom(g.margin_bottom)
+            .left(g.margin_left)
+            .header(g.margin_header)
+            .footer(g.margin_footer)
+            .gutter(g.gutter);
+        self.page_geometry = Some(g);
+    }
+
+    /// G2 正文默认排版（docDefaults 面——默认字体三槽 + 字号 +
+    /// 行距/段距）。多次调用 = 后值覆盖。V9 域校验（字号 1-32767
+    /// 半磅、行距正值）save 漏斗粘性拒绝。
+    pub fn default_typography(&mut self, t: DefaultTypography) {
+        let fonts = docx_rs::RunFonts::new()
+            .ascii(t.ascii_font.as_str())
+            .east_asia(t.east_asia_font.as_str())
+            .cs(t.complex_script_font.as_str());
+        self.docx = std::mem::take(&mut self.docx)
+            .default_fonts(fonts)
+            .default_size(t.size_half_points as usize);
+        if let Some(ls) = &t.line_spacing {
+            let mut spacing = docx_rs::LineSpacing::new();
+            if let Some(line) = ls.line {
+                spacing = spacing.line(line);
+            }
+            if let Some(rule) = ls.line_rule {
+                spacing = spacing.line_rule(match rule {
+                    LineRuleSpec::Auto => docx_rs::LineSpacingType::Auto,
+                    LineRuleSpec::AtLeast => docx_rs::LineSpacingType::AtLeast,
+                    LineRuleSpec::Exact => docx_rs::LineSpacingType::Exact,
+                });
+            }
+            if let Some(b) = ls.before {
+                spacing = spacing.before(b);
+            }
+            if let Some(a) = ls.after {
+                spacing = spacing.after(a);
+            }
+            self.docx = std::mem::take(&mut self.docx).default_line_spacing(spacing);
+        }
+        self.typography = Some(t);
+    }
+
     pub fn save_to_vec(&mut self) -> Result<Vec<u8>, DocxError> {
         // office-g V7 粘性校验首查（fail-closed：半合法文档零产出——
         // 与超限零产物同语义）。**不 take 不重置**：错误路径与 Limit
@@ -2725,6 +2895,45 @@ impl DocxWriter {
         // 重建写器。
         if let Some(msg) = &self.validation_error {
             return Err(DocxError::InvalidInput(msg.clone()));
+        }
+        // G2 V9（文档级格式域）——几何正值域 + 字号半磅域 + 行距
+        // 正值域（构造期不可 Result 化，与 V7/V8 同漏斗纪律）。
+        if let Some(g) = &self.page_geometry {
+            let bad_geom = g.width == 0
+                || g.height == 0
+                || g.width > 40000
+                || g.height > 40000
+                || g.margin_top < 0
+                || g.margin_right < 0
+                || g.margin_bottom < 0
+                || g.margin_left < 0
+                || g.margin_header < 0
+                || g.margin_footer < 0
+                || g.gutter < 0;
+            if bad_geom {
+                return Err(DocxError::InvalidInput(format!(
+                    "V9: 页面几何域违规（w={} h={} m={}/{}/{}/{}——twips 须 1-40000 且边距非负）",
+                    g.width, g.height, g.margin_top, g.margin_right, g.margin_bottom, g.margin_left
+                )));
+            }
+        }
+        if let Some(t) = &self.typography {
+            if t.size_half_points == 0 || t.size_half_points > 32767 {
+                return Err(DocxError::InvalidInput(format!(
+                    "V9: 默认字号域违规（{} 半磅——须 1-32767）",
+                    t.size_half_points
+                )));
+            }
+            if let Some(ls) = &t.line_spacing {
+                let bad_ls = ls.line.map(|l| l <= 0).unwrap_or(false)
+                    || ls.before.map(|b| b > 31680).unwrap_or(false)
+                    || ls.after.map(|a| a > 31680).unwrap_or(false);
+                if bad_ls {
+                    return Err(DocxError::InvalidInput(
+                        "V9: 行距/段距域违规（line 须正值；before/after ≤ 31680 twips）".into(),
+                    ));
+                }
+            }
         }
         check_document_scale(self.paragraphs, self.runs)?;
         let mut cursor = std::io::Cursor::new(Vec::new());
@@ -4795,6 +5004,146 @@ mod tests {
         assert!(
             zip_part_bytes(&anon, "docProps/core.xml").is_none(),
             "未注入新部件（最小干预）"
+        );
+    }
+
+    /// G2-T1：页面几何发射（pgSz/pgMar 自定义值 XML 断言）。
+    #[test]
+    fn g2_t1_page_geometry_emission() {
+        let mut w = DocxWriter::new();
+        w.page_geometry(PageGeometry {
+            width: 11906,
+            height: 16838,
+            margin_top: 1440,
+            margin_right: 1800,
+            margin_bottom: 1440,
+            margin_left: 1800,
+            margin_header: 851,
+            margin_footer: 992,
+            gutter: 0,
+        });
+        w.paragraph_text("页面几何探针");
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(
+            doc.contains(r#"<w:pgSz w:w="11906" w:h="16838""#),
+            "pgSz 在场"
+        );
+        assert!(
+            doc.contains(r#"w:top="1445""#) || doc.contains(r#"w:top="1440""#),
+            "pgMar top 自定义值在场"
+        );
+        assert!(
+            doc.contains(r#"w:left="1800""#) && doc.contains(r#"w:right="1800""#),
+            "pgMar 左右自定义值"
+        );
+        assert!(read_docx_from_bytes(&bytes).is_ok());
+    }
+
+    /// G2-T2：正文默认排版发射（docDefaults rFonts/sz/spacing——
+    /// styles.xml 断言）。
+    #[test]
+    fn g2_t2_default_typography_emission() {
+        let mut w = DocxWriter::new();
+        w.default_typography(DefaultTypography {
+            ascii_font: "Times New Roman".into(),
+            east_asia_font: "宋体".into(),
+            complex_script_font: "Times New Roman".into(),
+            size_half_points: 28, // 四号 14pt
+            line_spacing: Some(LineSpacingSpec {
+                line: Some(360),
+                line_rule: Some(LineRuleSpec::Auto), // 1.5 倍
+                before: Some(120),
+                after: Some(120),
+            }),
+        });
+        w.paragraph_text("排版探针");
+        let bytes = w.save_to_vec().unwrap();
+        let st = String::from_utf8(zip_part_bytes(&bytes, "word/styles.xml").unwrap()).unwrap();
+        assert!(st.contains("Times New Roman"), "ascii 字体在场");
+        assert!(st.contains("宋体"), "eastAsia 字体在场");
+        assert!(
+            st.contains(r#"<w:sz w:val="28""#) || st.contains(r#"w:val="28""#),
+            "字号 28 半磅在场"
+        );
+        assert!(
+            st.contains(r#"w:line="360""#),
+            "行距 360（1.5 倍 auto）在场"
+        );
+        assert!(
+            st.contains("w:lineRule") || st.contains("auto"),
+            "lineRule 在场"
+        );
+        assert!(read_docx_from_bytes(&bytes).is_ok());
+    }
+
+    /// G2-T3：V9 域校验——几何零值/超域、字号零/超域、行距非正值
+    /// 全部粘性拒绝零产物。
+    #[test]
+    fn g2_t3_v9_domain_reject() {
+        let mut w = DocxWriter::new();
+        w.page_geometry(PageGeometry {
+            width: 0,
+            ..PageGeometry::a4_default()
+        });
+        let e = w.save_to_vec().unwrap_err();
+        assert!(matches!(e, DocxError::InvalidInput(ref m) if m.starts_with("V9")));
+        let mut w = DocxWriter::new();
+        w.page_geometry(PageGeometry {
+            margin_top: -5,
+            ..PageGeometry::a4_default()
+        });
+        assert!(matches!(
+            w.save_to_vec().unwrap_err(),
+            DocxError::InvalidInput(_)
+        ));
+        let mut w = DocxWriter::new();
+        w.default_typography(DefaultTypography {
+            ascii_font: "x".into(),
+            east_asia_font: "y".into(),
+            complex_script_font: "x".into(),
+            size_half_points: 0,
+            line_spacing: None,
+        });
+        assert!(matches!(
+            w.save_to_vec().unwrap_err(),
+            DocxError::InvalidInput(_)
+        ));
+        let mut w = DocxWriter::new();
+        w.default_typography(DefaultTypography {
+            ascii_font: "x".into(),
+            east_asia_font: "y".into(),
+            complex_script_font: "x".into(),
+            size_half_points: 21,
+            line_spacing: Some(LineSpacingSpec {
+                line: Some(-240),
+                line_rule: Some(LineRuleSpec::Auto),
+                before: None,
+                after: None,
+            }),
+        });
+        assert!(matches!(
+            w.save_to_vec().unwrap_err(),
+            DocxError::InvalidInput(_)
+        ));
+    }
+
+    /// G2-T4：基线不变量——不调用两设置面时产物与引擎默认逐项一致
+    /// （A4 + Word 2019 边距 + 空 docDefaults——既有消费者零漂移）。
+    #[test]
+    fn g2_t4_baseline_unchanged() {
+        let mut w = DocxWriter::new();
+        w.paragraph_text("基线");
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(
+            doc.contains(r#"w:top="1985""#) && doc.contains(r#"w:left="1701""#),
+            "引擎默认边距恒"
+        );
+        let st = String::from_utf8(zip_part_bytes(&bytes, "word/styles.xml").unwrap()).unwrap();
+        assert!(
+            st.contains("<w:rPrDefault><w:rPr /></w:rPrDefault>"),
+            "docDefaults 基线恒（空 rPr）"
         );
     }
 
