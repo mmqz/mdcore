@@ -464,11 +464,11 @@ fn perf_1mb_smoke() {
     let parse_floor = parse_ms.max(1);
     let ratio_cap = 4u128;
     assert!(
-        identical_ms <= (parse_floor * ratio_cap as u128).max(1) || identical_ms <= 3000,
+        identical_ms <= (parse_floor * ratio_cap).max(1) || identical_ms <= 3000,
         "identical {identical_ms} ms 超 parse({parse_ms} ms) × {ratio_cap} 且 > 3000ms —— 匹配退化为 O(n²)？"
     );
     assert!(
-        edited_ms <= (parse_floor * ratio_cap as u128).max(1) || edited_ms <= 3000,
+        edited_ms <= (parse_floor * ratio_cap).max(1) || edited_ms <= 3000,
         "single-edit {edited_ms} ms 超 parse({parse_ms} ms) × {ratio_cap} 且 > 3000ms —— 匹配退化为 O(n²)？"
     );
 }

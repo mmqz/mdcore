@@ -3130,6 +3130,231 @@ fn replace_slot_footer(docx: &mut docx_rs::Docx, slot: SlotKind, f: docx_rs::Foo
 // 单测（全环往返与敌意输入见 tests/docx_roundtrip.rs）
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// G3 暗标元数据匿名化（issue #6 / 标书 R-11 BLOCKER——2026-10-26）
+// ---------------------------------------------------------------------------
+
+/// 匿名 core.xml（与引擎新建面 `DocxWriter::save_to_vec` 产物**逐字节
+/// 同构**——探针 g3_docx_docprops_inventory 实测锚点。「新建」与
+/// 「匿名导出」元数据面一致 = 单一真源语义：unknown 作者 + epoch
+/// 零时 + revision=1）。
+const ANON_CORE_XML: &str = concat!(
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+    r#"<cp:coreProperties"#,
+    r#" xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties""#,
+    r#" xmlns:dc="http://purl.org/dc/elements/1.1/""#,
+    r#" xmlns:dcterms="http://purl.org/dc/terms/""#,
+    r#" xmlns:dcmitype="http://purl.org/dc/dcmitype/""#,
+    r#" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">"#,
+    r#"<dcterms:created xsi:type="dcterms:W3CDTF">1970-01-01T00:00:00Z</dcterms:created>"#,
+    r#"<dc:creator>unknown</dc:creator>"#,
+    r#"<cp:lastModifiedBy>unknown</cp:lastModifiedBy>"#,
+    r#"<dcterms:modified xsi:type="dcterms:W3CDTF">1970-01-01T00:00:00Z</dcterms:modified>"#,
+    r#"<cp:revision>1</cp:revision>"#,
+    r#"</cp:coreProperties>"#,
+);
+
+/// 匿名 app.xml / custom.xml（空骨架——与引擎新建面同构；custom 的
+/// Company/Sender 等 VT 自定义属性整面清空）。
+const ANON_APP_XML: &str = concat!(
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+    r#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties""#,
+    r#" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"/>"#,
+);
+const ANON_CUSTOM_XML: &str = concat!(
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+    r#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties""#,
+    r#" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"/>"#,
+);
+
+/// 匿名 people.xml（批注人员名单部件——存在即清空）。
+const ANON_PEOPLE_XML: &str = concat!(
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+    r#"<w:people xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#,
+);
+
+/// comments.xml 批注作者面匿名化（w:author/w:initials → 空串、
+/// w:date → epoch——quick-xml 事件流属性级改写，文本内容零触碰）。
+fn anonymize_comments_xml(xml: &str) -> Result<String, DocxError> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut writer = quick_xml::Writer::new(Vec::new());
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(mut e)) => {
+                anonymize_comment_attrs(&mut e);
+                writer
+                    .write_event(Event::Start(e))
+                    .map_err(|e| DocxError::Io(format!("comments rewrite: {e}")))?;
+            }
+            Ok(Event::Empty(mut e)) => {
+                anonymize_comment_attrs(&mut e);
+                writer
+                    .write_event(Event::Empty(e))
+                    .map_err(|e| DocxError::Io(format!("comments rewrite: {e}")))?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(other) => {
+                writer
+                    .write_event(other)
+                    .map_err(|e| DocxError::Io(format!("comments rewrite: {e}")))?;
+            }
+            Err(e) => return Err(DocxError::Io(format!("comments parse: {e}"))),
+        }
+    }
+    let out = String::from_utf8(writer.into_inner())
+        .map_err(|e| DocxError::Io(format!("comments utf8: {e}")))?;
+    Ok(out)
+}
+
+/// 批注属性清零（author/initials → 空串、date → epoch）。
+/// quick-xml 0.41 `Attributes` 无原位改写——收集后重建 BytesStart
+/// （保留原始 key 字节含前缀，未匹配属性原值回写）。
+fn anonymize_comment_attrs(e: &mut quick_xml::events::BytesStart<'_>) {
+    let owned: Vec<(Vec<u8>, Vec<u8>)> = e
+        .attributes()
+        .flatten()
+        .map(|a| (a.key.as_ref().to_vec(), a.value.as_ref().to_vec()))
+        .collect();
+    if owned.is_empty() {
+        return;
+    }
+    let name = e.name().as_ref().to_vec();
+    let mut new_start = quick_xml::events::BytesStart::new(std::borrow::Cow::Owned(
+        String::from_utf8_lossy(&name).into_owned(),
+    ));
+    for (key, value) in owned {
+        let local = key.rsplit(|&b| b == b':').next().unwrap_or(&key);
+        let replacement: &[u8] = match local {
+            b"author" | b"initials" => b"",
+            b"date" => b"1970-01-01T00:00:00Z",
+            _ => &value,
+        };
+        new_start.push_attribute(quick_xml::events::attributes::Attribute {
+            key: quick_xml::name::QName(&key),
+            value: replacement.into(),
+        });
+    }
+    *e = new_start;
+}
+
+/// docx 暗标元数据匿名化（G3 / R-11：既有文档读改写导出面的
+/// 元数据级清零——原子发布字节边界内完成，无「先发布再补丁」窗口）。
+///
+/// **变换面（五部件）**：
+/// - `docProps/core.xml` → 匿名常量（unknown 作者 + epoch 零时 +
+///   revision=1，与引擎新建面逐字节同构）；
+/// - `docProps/app.xml` / `docProps/custom.xml` → 空骨架（Company/
+///   Manager/Sender 等扩展与自定义属性整面清空）；
+/// - `word/comments.xml` → w:author/w:initials 置空 + w:date → epoch
+///   （批注**文本内容零触碰**——只清归属面）；
+/// - `word/people.xml` → 空骨架（存在即清空）。
+///
+/// **不变量（正文零触碰）**：`word/document.xml` 及其余全部部件
+/// **原压缩流原样拷贝**（`raw_copy`——字节级不变）。容忍缺部件
+/// （无 docProps 的极简 zip 跳过对应面）；`word/document.xml`
+/// 不在场 = 拒（非 docx 伪产物 fail-closed）。
+///
+/// **边界**：`document.xml` 内的修订记录（w:ins/w:del 的 w:author
+/// 属性）**不在变换面**——清作者需动正文部件字节，违反正文零触碰
+/// 不变量；带修订文档应先接受/拒绝修订（内容面操作，非元数据面）。
+pub fn anonymize_docx_props(bytes: &[u8]) -> Result<Vec<u8>, DocxError> {
+    use std::io::Write as _;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| DocxError::Io(format!("open zip: {e}")))?;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let mut has_document = false;
+    for i in 0..archive.len() {
+        // 两段借用：by_index_raw 仅用于名字发现与 raw_copy（未解压流）；
+        // comments.xml 需解压读 → 独立 by_name（解压模式）。
+        let name = {
+            let entry = archive
+                .by_index_raw(i)
+                .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
+            entry.name().to_string()
+        };
+        match name.as_str() {
+            "docProps/core.xml" => {
+                writer
+                    .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                    .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
+                writer
+                    .write_all(ANON_CORE_XML.as_bytes())
+                    .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+            }
+            "docProps/app.xml" | "docProps/custom.xml" => {
+                let skeleton = if name == "docProps/app.xml" {
+                    ANON_APP_XML
+                } else {
+                    ANON_CUSTOM_XML
+                };
+                writer
+                    .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                    .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
+                writer
+                    .write_all(skeleton.as_bytes())
+                    .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+            }
+            "word/people.xml" => {
+                writer
+                    .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                    .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
+                writer
+                    .write_all(ANON_PEOPLE_XML.as_bytes())
+                    .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+            }
+            "word/comments.xml" => {
+                let mut xml = String::new();
+                archive
+                    .by_name(&name)
+                    .map_err(|e| DocxError::Io(format!("comments open: {e}")))?
+                    .read_to_string(&mut xml)
+                    .map_err(|e| DocxError::Io(format!("comments read: {e}")))?;
+                let anon = anonymize_comments_xml(&xml)?;
+                writer
+                    .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                    .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
+                writer
+                    .write_all(anon.as_bytes())
+                    .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+            }
+            _ => {
+                if name == "word/document.xml" {
+                    has_document = true;
+                }
+                let entry = archive
+                    .by_index_raw(i)
+                    .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
+                writer
+                    .raw_copy_file(entry)
+                    .map_err(|e| DocxError::Io(format!("zip copy: {e}")))?;
+            }
+        }
+    }
+    if !has_document {
+        return Err(DocxError::Io(
+            "anonymize: word/document.xml 不在场（非 docx 伪产物——fail-closed 拒绝）".into(),
+        ));
+    }
+    let out = writer
+        .finish()
+        .map_err(|e| DocxError::Io(format!("zip finish: {e}")))?;
+    Ok(out.into_inner())
+}
+
+/// 读 docx 指定部件原始字节（匿名化配套验证面——workbench 导出验证
+/// 与测试共用；部件不在场返回 None）。
+pub fn docx_part_bytes(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
+    let mut ar = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    let mut e = ar.by_name(name).ok()?;
+    let mut v = vec![];
+    std::io::Read::read_to_end(&mut e, &mut v).ok()?;
+    Some(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4374,5 +4599,153 @@ mod tests {
                 field: None,
             }
         );
+    }
+
+    // ── G3 暗标匿名化测试组（issue #6 / R-11）──────────────────────
+
+    /// zip 部件字节读取 helper（G3 测试面——既有 `zip_part` 返回
+    /// String，此处需要原始字节比较）。
+    fn zip_part_bytes(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
+        let mut ar = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+        let mut e = ar.by_name(name).ok()?;
+        let mut v = vec![];
+        std::io::Read::read_to_end(&mut e, &mut v).ok()?;
+        Some(v)
+    }
+
+    /// 构造带暗标的 docx（helper：DocxWriter 基底 → 注入暗标
+    /// core.xml / custom.xml / comments.xml——模拟用户既有文档）。
+    fn build_darkmarked_docx() -> Vec<u8> {
+        let mut w = DocxWriter::new();
+        w.heading(1, "既有文档").unwrap();
+        w.paragraph_text("用户既有正文——暗标随导出泄出的威胁面。");
+        let base = w.save_to_vec().unwrap();
+        let mut reader = zip::ZipArchive::new(std::io::Cursor::new(&base)).unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        use std::io::Write as _;
+        for i in 0..reader.len() {
+            let mut entry = reader.by_index(i).unwrap();
+            let name = entry.name().to_string();
+            let replacement: &[u8] = match name.as_str() {
+                "docProps/core.xml" => r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"><dc:creator>张三</dc:creator><cp:lastModifiedBy>李四</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">2026-10-26T09:00:00Z</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">2026-10-26T10:30:00Z</dcterms:modified><cp:revision>42</cp:revision></cp:coreProperties>"#.as_bytes(),
+                "docProps/custom.xml" => r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Company"><vt:lpstr>某某科技有限公司</vt:lpstr></property><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="3" name="Sender"><vt:lpstr>王五</vt:lpstr></property></Properties>"#.as_bytes(),
+                "word/comments.xml" => r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="0" w:author="赵六" w:date="2026-10-20T08:00:00Z" w:initials="ZL"><w:p><w:r><w:t>批注内容文本</w:t></w:r></w:p></w:comment></w:comments>"#.as_bytes(),
+                _ => {
+                    use std::io::Read as _;
+                    let mut buf = vec![];
+                    entry.read_to_end(&mut buf).unwrap();
+                    writer
+                        .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                        .unwrap();
+                    writer.write_all(&buf).unwrap();
+                    continue;
+                }
+            };
+            writer
+                .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(replacement).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    /// T1：引擎新建面已匿名 + anonymize 幂等（core 逐字节 = 匿名常量
+    /// ——新建与匿名导出元数据面同构 = 单一真源）。
+    #[test]
+    fn g3_t1_new_face_already_anonymous_and_idempotent() {
+        let mut w = DocxWriter::new();
+        w.heading(1, "新建面").unwrap();
+        let fresh = w.save_to_vec().unwrap();
+        let core_fresh =
+            String::from_utf8(zip_part_bytes(&fresh, "docProps/core.xml").unwrap()).unwrap();
+        assert_eq!(core_fresh, ANON_CORE_XML, "引擎新建面 core.xml = 匿名常量");
+
+        let once = anonymize_docx_props(&fresh).unwrap();
+        assert_eq!(
+            String::from_utf8(zip_part_bytes(&once, "docProps/core.xml").unwrap()).unwrap(),
+            ANON_CORE_XML,
+            "匿名化后 core.xml 逐字节 = 匿名常量（幂等）"
+        );
+        // 正文部件字节不变
+        assert_eq!(
+            zip_part_bytes(&fresh, "word/document.xml"),
+            zip_part_bytes(&once, "word/document.xml"),
+            "正文零触碰"
+        );
+        // 匿名产物仍可解析（Word 可开的最小代理）
+        assert!(read_docx_from_bytes(&once).is_ok());
+    }
+
+    /// T2：暗标全清——creator/lastModifiedBy/Company/Sender/批注作者
+    /// 全部清零，正文与批注文本保留。
+    #[test]
+    fn g3_t2_darkmark_full_scrub() {
+        let dark = build_darkmarked_docx();
+        let doc_before = zip_part_bytes(&dark, "word/document.xml").unwrap();
+        let anon = anonymize_docx_props(&dark).unwrap();
+        let core = String::from_utf8(zip_part_bytes(&anon, "docProps/core.xml").unwrap()).unwrap();
+        assert_eq!(core, ANON_CORE_XML);
+        assert!(!core.contains("张三") && !core.contains("李四") && !core.contains("42"));
+        let custom =
+            String::from_utf8(zip_part_bytes(&anon, "docProps/custom.xml").unwrap()).unwrap();
+        assert_eq!(custom, ANON_CUSTOM_XML);
+        assert!(!custom.contains("某某科技") && !custom.contains("王五"));
+        let comments =
+            String::from_utf8(zip_part_bytes(&anon, "word/comments.xml").unwrap()).unwrap();
+        assert!(
+            !comments.contains("赵六") && !comments.contains("ZL"),
+            "批注作者/缩写清零"
+        );
+        assert!(comments.contains("批注内容文本"), "批注文本内容保留");
+        assert!(
+            comments.contains(r#"w:author="""#) && comments.contains("1970-01-01T00:00:00Z"),
+            "author 置空 + date → epoch"
+        );
+        assert_eq!(
+            zip_part_bytes(&anon, "word/document.xml").unwrap(),
+            doc_before,
+            "正文部件原压缩流字节不变"
+        );
+        assert!(read_docx_from_bytes(&anon).is_ok(), "匿名产物可解析");
+    }
+
+    /// T3：缺部件容忍（无 docProps 的极简 zip——docProps 面跳过，
+    /// 正文照常原样拷贝）。
+    #[test]
+    fn g3_t3_missing_docprops_tolerated() {
+        use std::io::Write as _;
+        let mut w = DocxWriter::new();
+        w.paragraph_text("极简档");
+        let base = w.save_to_vec().unwrap();
+        let doc = zip_part_bytes(&base, "word/document.xml").unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "word/document.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(&doc).unwrap();
+        let minimal = writer.finish().unwrap().into_inner();
+        let anon = anonymize_docx_props(&minimal).unwrap();
+        assert_eq!(zip_part_bytes(&anon, "word/document.xml").unwrap(), doc);
+        assert!(
+            zip_part_bytes(&anon, "docProps/core.xml").is_none(),
+            "未注入新部件（最小干预）"
+        );
+    }
+
+    /// T4：非 docx 伪产物 fail-closed（无 word/document.xml 的 zip 拒）。
+    #[test]
+    fn g3_t4_not_docx_rejected() {
+        use std::io::Write as _;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file("foo.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"not a docx").unwrap();
+        let bogus = writer.finish().unwrap().into_inner();
+        let err = anonymize_docx_props(&bogus).unwrap_err();
+        assert!(matches!(err, DocxError::Io(_)), "fail-closed 拒绝: {err:?}");
     }
 }

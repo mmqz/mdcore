@@ -1757,6 +1757,7 @@ dependencies = [
  "mdc-office-io",
  "mdcore",
  "serde_json",
+ "zip",
 ]
 
 [[package]]

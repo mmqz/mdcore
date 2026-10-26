@@ -1170,6 +1170,62 @@ impl Workbench {
         self.record_clean_export(at_ms, operator)
     }
 
+    /// ⑧-bis 暗标匿名导出（G3 / R-11 BLOCKER：元数据级清零在原子
+    /// 发布字节边界内完成，无「先发布再补丁」窗口）。
+    ///
+    /// 次序与 [`Self::export_clean`] 同族：check_dest 前置 → 验证
+    /// （源过零标记门 → `anonymize_docx_props` → 匿名产物可解析 +
+    /// 正文部件逐字节同源）→ 临时区 + rename 原子发布 → 审计。
+    /// 拒绝/写失败/验证失败路径零状态变化（与干净导出同纪律）。
+    pub fn export_anonymous(
+        &mut self,
+        dest: &Path,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<(), WorkbenchError> {
+        if let Io::Files { policy, .. } = &self.io {
+            policy
+                .check_dest(dest)
+                .map_err(WorkbenchError::PathPolicy)?;
+            let bytes = self.export_anonymous_verified()?;
+            let tmp = dest.with_extension("export-anon.tmp");
+            std::fs::write(&tmp, &bytes).map_err(WorkbenchError::Io)?;
+            std::fs::rename(&tmp, dest).map_err(WorkbenchError::Io)?;
+            // 验证 2（文件会话）：落地产物读回可解析（匿名化非破坏性
+            // 代理——字节同一验证不适用：docProps 面字节必然变化）。
+            let exported = std::fs::read(dest).map_err(WorkbenchError::Io)?;
+            read_docx_from_bytes(&exported).map_err(WorkbenchError::DocxRead)?;
+        }
+        self.record_anonymous_export(at_ms, operator)
+    }
+
+    /// ⑧-bis 匿名导出（字节返回版——内存会话/宿主自定落点共用）。
+    pub fn export_anonymous_bytes(
+        &mut self,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<Vec<u8>, WorkbenchError> {
+        let bytes = self.export_anonymous_verified()?;
+        self.record_anonymous_export(at_ms, operator)?;
+        Ok(bytes)
+    }
+
+    /// 匿名导出验证核心（零副作用）：源先过干净导出全门（可解析 +
+    /// 零标记——复用 [`Self::export_clean_verified`]），再匿名化，
+    /// 匿名产物双验证（可解析 + 正文部件与源逐字节同）。
+    fn export_anonymous_verified(&self) -> Result<Vec<u8>, WorkbenchError> {
+        let body_bytes = self.export_clean_verified()?;
+        let anon = mdc_office_io::docx::anonymize_docx_props(&body_bytes)
+            .map_err(WorkbenchError::DocxRead)?;
+        read_docx_from_bytes(&anon).map_err(WorkbenchError::DocxRead)?;
+        let src_doc = mdc_office_io::docx::docx_part_bytes(&body_bytes, "word/document.xml");
+        let out_doc = mdc_office_io::docx::docx_part_bytes(&anon, "word/document.xml");
+        if src_doc.is_none() || src_doc != out_doc {
+            return Err(WorkbenchError::ExportByteMismatch);
+        }
+        Ok(anon)
+    }
+
     /// ⑧ 干净导出（字节返回版——内存会话/宿主自定落点共用）。
     /// 返回字节即产物交付（先审计合理）；零标记验证照跑。
     pub fn export_clean_bytes(
@@ -1226,6 +1282,26 @@ impl Workbench {
         self.sidecar.push_audit_public(
             "clean_export",
             serde_json::json!({"markers_checked": WORKBENCH_MARKERS.len()}),
+            at_ms,
+            operator,
+        );
+        self.save()
+    }
+
+    fn record_anonymous_export(
+        &mut self,
+        at_ms: u64,
+        operator: &str,
+    ) -> Result<(), WorkbenchError> {
+        self.sidecar.push_audit_public(
+            "anonymous_export",
+            serde_json::json!({
+                "markers_checked": WORKBENCH_MARKERS.len(),
+                "scrub_targets": [
+                    "docProps/core.xml", "docProps/app.xml", "docProps/custom.xml",
+                    "word/comments.xml", "word/people.xml"
+                ],
+            }),
             at_ms,
             operator,
         );

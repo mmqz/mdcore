@@ -32,6 +32,9 @@ mdc-office-io = { path = "../office-io" }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+# zip 8.6：dev-only（G3 匿名导出测试构造暗标 docx 用——与 office-io
+# 产品闭包同版本，零新增三方面）。
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 mdc-mdbridge = { path = "../mdbridge" }
 mdcore = { path = "../mdcore" }
 mdc-collab = { path = "../collab" }

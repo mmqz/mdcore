@@ -52,6 +52,10 @@ pub enum WorkbenchCommand {
     },
     /// ⑧ 干净导出。
     ExportClean { dest: PathBuf },
+    /// ⑧-bis 暗标匿名导出（G3 / R-11：元数据级清零在原子发布边界内
+    /// 完成——干净导出同门零标记验证 + docProps/批注作者面匿名化；
+    /// 正文部件字节不变）。
+    ExportAnonymous { dest: PathBuf },
 }
 
 impl Workbench {
@@ -193,6 +197,10 @@ impl Workbench {
             }
             WorkbenchCommand::ExportClean { dest } => {
                 self.export_clean(&dest, at_ms, op).map_err(map_error)?;
+                Ok(serde_json::json!({"dest": dest.to_string_lossy()}))
+            }
+            WorkbenchCommand::ExportAnonymous { dest } => {
+                self.export_anonymous(&dest, at_ms, op).map_err(map_error)?;
                 Ok(serde_json::json!({"dest": dest.to_string_lossy()}))
             }
         }

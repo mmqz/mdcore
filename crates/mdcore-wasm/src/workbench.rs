@@ -521,6 +521,14 @@ impl WasmWorkbench {
             .export_clean_bytes(at_ms, operator)
             .map_err(wb_js)
     }
+
+    /// ⑧-bis 暗标匿名导出（G3 / R-11：字节返回版——宿主自定落点；
+    /// 元数据级清零在返回字节内完成）。
+    pub fn export_anonymous(&mut self, at_ms: u64, operator: &str) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .export_anonymous_bytes(at_ms, operator)
+            .map_err(wb_js)
+    }
 }
 
 fn wb_js(e: impl Into<WbError>) -> JsValue {
