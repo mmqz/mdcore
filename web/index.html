@@ -4,7 +4,27 @@
 <meta charset="utf-8" />
 <title>R9 — CM6 ↔ mdcore-wasm bridge</title>
 <style>
-  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", sans-serif; background: #fff; color: #222; }
+  /* #3 UI 产品化：主题变量系统（消费 CONTRACT §4 appearance.theme——
+     light/dark/system 三态；system 走 prefers-color-scheme）。
+     变量清单 = 既有硬编码色的语义化映射（测试只断言 display 不断言
+     颜色——主题切换零测试面风险）。 */
+  :root {
+    --bg: #fff; --fg: #222; --fg-muted: #667; --fg-soft: #556;
+    --panel: #f7f8fa; --panel-hover: var(--panel-hover); --panel-active: #f2f3f6;
+    --border: #cfd4dc; --border-strong: var(--border-strong); --border-soft: var(--border-soft);
+    --accent: var(--accent); --danger: #b00; --code-bg: #f4f4f5;
+    --marker: #b48eff; --marker-revealed: #fff3d6; --canvas-bg: #fbfbfc;
+    --grid-head: #f3f4f6; --edit-hl: #fff3d6; --warn-bg: #fff3d6;
+  }
+  [data-theme="dark"] {
+    --bg: #1b1d21; --fg: #e4e6ea; --fg-muted: #9aa3af; --fg-soft: #b6bcc4;
+    --panel: #25282d; --panel-hover: #2d3138; --panel-active: #292d33;
+    --border: #3a3f47; --border-strong: #43494f; --border-soft: #343941;
+    --accent: #7cabff; --danger: #ff8f8f; --code-bg: #2b2f35;
+    --marker: #c9a6ff; --marker-revealed: #4d4436; --canvas-bg: #202329;
+    --grid-head: #2b2f35; --edit-hl: #4d4436; --warn-bg: #4d4436;
+  }
+  body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
   #editor { max-width: 760px; margin: 24px auto; padding: 0 16px; }
   .cm-editor { outline: none; }
   .cm-content { font: inherit; }
@@ -13,51 +33,68 @@
   .cm-line.cm-h2 { font-size: 1.6em; }
   .cm-line.cm-h3 { font-size: 1.35em; }
   .cm-line.cm-list-line { padding-left: 8px; }
-  .cm-line.cm-quote-line { border-left: 3px solid #cfd4dc; color: #556; padding-left: 8px; }
-  .cm-list-marker { color: #b48eff; font-weight: 600; }
-  .cm-quote-marker { color: #9aa3af; }
-  .cm-fence { color: #9aa3af; background: #f7f8fa; }
-  .cm-inline-code { background: #f4f4f5; border-radius: 4px; padding: 1px 4px; font: 0.92em ui-monospace, monospace; }
+  .cm-line.cm-quote-line { border-left: 3px solid var(--border); color: var(--fg-soft); padding-left: 8px; }
+  .cm-list-marker { color: var(--marker); font-weight: 600; }
+  .cm-quote-marker { color: var(--fg-muted); }
+  .cm-fence { color: var(--fg-muted); background: var(--panel); }
+  .cm-inline-code { background: var(--code-bg); border-radius: 4px; padding: 1px 4px; font: 0.92em ui-monospace, monospace; }
   .cm-bold { font-weight: 700; }
-  .cm-marker-revealed { background: #fff3d6; }
-  .cm-hr { border: none; border-top: 2px solid #ddd; margin: 12px 0; }
+  .cm-marker-revealed { background: var(--marker-revealed); }
+  .cm-hr { border: none; border-top: 2px solid var(--border); margin: 12px 0; }
   #debug { max-width: 760px; margin: 8px auto 40px; padding: 8px 12px; font: 11px/1.5 ui-monospace, monospace;
-           color: #667; background: #f7f8fa; border-radius: 6px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
+           color: var(--fg-muted); background: var(--panel); border-radius: 6px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
   /* t16/t17：导入工具条（最小面——文件入口 + 状态行；.import-btn = 两导入钮共享样式）
      t18/t19：export .docx / export .xlsx 同类面共享（动作钮无 file input） */
-  #toolbar { max-width: 760px; margin: 14px auto 0; padding: 0 16px; font-size: 13px; }
-  .import-btn { display: inline-block; padding: 3px 12px; border: 1px solid #cfd4dc; border-radius: 6px;
-                color: #455; background: #f7f8fa; cursor: pointer; user-select: none; margin-right: 8px; }
-  .import-btn:hover { background: #eef0f4; }
+  #toolbar { max-width: 760px; margin: 14px auto 0; padding: 0 16px; font-size: 13px;
+             display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .tb-group { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px 2px 8px;
+              border: 1px solid var(--border-soft); border-radius: 8px; margin-right: 6px;
+              color: var(--fg-muted); }
+  .tb-group svg { width: 14px; height: 14px; opacity: .8; }
+  .tb-spacer { flex: 1 1 auto; }
+  .import-btn { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border: 1px solid var(--border); border-radius: 6px;
+                color: var(--fg-soft); background: var(--panel); cursor: pointer; user-select: none; margin-right: 8px; }
+  .import-btn:hover { background: var(--panel-hover); }
+  .import-btn svg { width: 13px; height: 13px; flex: 0 0 auto; opacity: .75; }
   button.import-btn { border: 0; font: inherit; }
-  #docx-status, #xlsx-status { margin-left: 10px; color: #667; }
-  #docx-status.docx-error, #xlsx-status.xlsx-error { color: #b00; }
-  #docx-export-status { margin-left: 10px; color: #667; }
-  #docx-export-status.docx-export-error { color: #b00; }
-  #xlsx-export-status { margin-left: 10px; color: #667; }
-  #xlsx-export-status.xlsx-export-error { color: #b00; }
+  #docx-status, #xlsx-status { margin-left: 10px; color: var(--fg-muted); }
+  #docx-status.docx-error, #xlsx-status.xlsx-error { color: var(--danger); }
+  #docx-export-status { margin-left: 10px; color: var(--fg-muted); }
+  #docx-export-status.docx-export-error { color: var(--danger); }
+  #xlsx-export-status { margin-left: 10px; color: var(--fg-muted); }
+  #xlsx-export-status.xlsx-export-error { color: var(--danger); }
   /* Phase 5 §8.3：视图切换（文档编辑器 <-> 表格面板）*/
   #view-tabs { max-width: 760px; margin: 12px auto 0; padding: 0 16px; font-size: 13px; }
-  .view-tab { border: 1px solid #cfd4dc; border-bottom: none; border-radius: 6px 6px 0 0;
+  .view-tab { border: 1px solid var(--border); border-bottom: none; border-radius: 6px 6px 0 0;
               padding: 4px 18px; margin-right: 4px; cursor: pointer; font: inherit; font-size: 13px;
-              background: #f2f3f6; color: #556; }
-  .view-tab:hover { background: #eaecef; }
-  .view-tab.active { background: #fff; color: #222; font-weight: 600; }
+              background: var(--panel-active); color: var(--fg-soft); }
+  .view-tab:hover { background: var(--panel-hover); }
+  .view-tab.active { background: var(--bg); color: var(--fg); font-weight: 600; }
   /* ---- 表格 UI（xlsx_grid）：几何常量与 xlsx_grid.ts 镜像（CELL_W 88 / CELL_H 26 /
      HEAD_W 48 / HEAD_H 24）---- */
   #grid-panel { display: none; max-width: 1128px; margin: 8px auto 0; padding: 0 16px;
                 height: calc(100vh - 170px); }
+  /* #3 空态引导：未打开工作簿时（panel 无子节点）显示引导卡片——
+     打开后自动消失（:empty 判定，零 DOM 契约接触）。 */
+  #grid-panel:empty::before {
+    content: "打开工作簿开始\A 点上方 open .xlsx grid\A 虚拟滚动 · 切片加载 · 证据高亮";
+    white-space: pre-line; text-align: center;
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: var(--fg-muted); font-size: 14px; line-height: 2;
+    border: 1px dashed var(--border-strong); border-radius: 10px;
+    background: var(--panel);
+  }
   #grid-toolbar { display: flex; align-items: center; gap: 10px; font-size: 13px; height: 32px; }
-  #grid-sheet-select { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid #cfd4dc;
-                       border-radius: 6px; background: #fff; }
-  .grid-btn { font: inherit; font-size: 13px; padding: 3px 12px; border: 1px solid #cfd4dc;
-              border-radius: 6px; background: #f7f8fa; cursor: pointer; }
-  .grid-btn:hover { background: #eef0f4; }
-  #grid-status { margin-left: 8px; color: #667; }
-  .grid-error { color: #b00; }
+  #grid-sheet-select { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid var(--border);
+                       border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .grid-btn { font: inherit; font-size: 13px; padding: 3px 12px; border: 1px solid var(--border);
+              border-radius: 6px; background: var(--panel); color: var(--fg-soft); cursor: pointer; }
+  .grid-btn:hover { background: var(--panel-hover); }
+  #grid-status { margin-left: 8px; color: var(--fg-muted); }
+  .grid-error { color: var(--danger); }
   #grid-viewport { position: relative; overflow: auto; height: calc(100% - 40px);
-                   border: 1px solid #d7dbe2; background: #fff; outline: none; font-size: 13px; }
-  #grid-viewport:focus { border-color: #9ab4e8; }
+                   border: 1px solid var(--border-strong); background: var(--bg); outline: none; font-size: 13px; }
+  #grid-viewport:focus { border-color: var(--accent); }
   #grid-spacer { position: absolute; left: 0; top: 0; width: 0; height: 0; }
   #grid-cells { position: absolute; left: 48px; top: 24px; z-index: 10; }
   #grid-frozen-row { position: absolute; left: 48px; top: 24px; z-index: 20; }
@@ -65,23 +102,23 @@
   #grid-rowhead { position: absolute; left: 0; top: 24px; width: 48px; z-index: 40; }
   #grid-colhead { position: absolute; left: 48px; top: 0; height: 24px; z-index: 40; }
   .grid-corner { position: absolute; left: 0; top: 0; width: 48px; height: 24px; z-index: 45;
-                 background: #f3f4f6; border-right: 1px solid #d7dbe2; border-bottom: 1px solid #d7dbe2; }
+                 background: var(--grid-head); border-right: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong); }
   .grid-cell { position: absolute; box-sizing: border-box; width: 88px; height: 26px;
-               border-right: 1px solid #e2e5ea; border-bottom: 1px solid #e2e5ea;
+               border-right: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
                padding: 3px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-               line-height: 18px; background: #fff; }
+               line-height: 18px; background: var(--bg); }
   .grid-cell.k-number { text-align: right; }
   .grid-cell.k-bool { color: #7c3aed; }
-  .grid-cell.k-error { color: #b00; font-weight: 600; }
-  .grid-cell.edited { background: #fff3d6; }
+  .grid-cell.k-error { color: var(--danger); font-weight: 600; }
+  .grid-cell.edited { background: var(--edit-hl); }
   .grid-cell.evidence { box-shadow: inset 0 0 0 2px #4a7dff; background: #eef3ff; }
-  .grid-cell.selected { outline: 2px solid #1a73e8; outline-offset: -2px; }
+  .grid-cell.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
   .grid-colhead-cell { position: absolute; top: 0; box-sizing: border-box; width: 88px; height: 24px;
-                       background: #f3f4f6; border-right: 1px solid #d7dbe2; border-bottom: 1px solid #d7dbe2;
-                       font-size: 12px; color: #556; text-align: center; line-height: 23px; user-select: none; }
+                       background: var(--grid-head); border-right: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong);
+                       font-size: 12px; color: var(--fg-soft); text-align: center; line-height: 23px; user-select: none; }
   .grid-rowhead-cell { position: absolute; left: 0; box-sizing: border-box; width: 48px; height: 26px;
-                       background: #f3f4f6; border-right: 1px solid #d7dbe2; border-bottom: 1px solid #d7dbe2;
-                       font-size: 12px; color: #556; text-align: center; line-height: 25px; user-select: none; }
+                       background: var(--grid-head); border-right: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong);
+                       font-size: 12px; color: var(--fg-soft); text-align: center; line-height: 25px; user-select: none; }
   /* Phase 5 §8.1：主体双栏（左证据栏 + 右主区[文档/表格]）——
      #editor / #grid-panel / #view-tabs 的 id 与结构不变，只加外层 flex 容器 */
   #main-row { display: flex; align-items: flex-start; }
@@ -89,73 +126,73 @@
   /* ---- 证据侧栏（evidence_panel）---- */
   #evidence-panel { flex: 0 0 300px; width: 300px; margin: 12px 0 0 16px;
                     height: calc(100vh - 190px); display: flex; flex-direction: column;
-                    border: 1px solid #d7dbe2; border-radius: 6px; background: #fbfbfc;
+                    border: 1px solid var(--border-strong); border-radius: 6px; background: var(--canvas-bg);
                     font-size: 13px; overflow: hidden; }
-  #ev-toolbar { padding: 10px; border-bottom: 1px solid #e2e5ea; }
-  #ev-counts { display: block; color: #556; margin-bottom: 8px; font-size: 12px; }
-  .ev-btn { font: inherit; font-size: 12px; padding: 3px 10px; margin: 0 4px 4px 0; border: 1px solid #cfd4dc;
-            border-radius: 6px; background: #f7f8fa; cursor: pointer; }
-  .ev-btn:hover:not(:disabled) { background: #eef0f4; }
+  #ev-toolbar { padding: 10px; border-bottom: 1px solid var(--border-soft); }
+  #ev-counts { display: block; color: var(--fg-soft); margin-bottom: 8px; font-size: 12px; }
+  .ev-btn { font: inherit; font-size: 12px; padding: 3px 10px; margin: 0 4px 4px 0; border: 1px solid var(--border);
+            border-radius: 6px; background: var(--panel); cursor: pointer; }
+  .ev-btn:hover:not(:disabled) { background: var(--panel-hover); }
   .ev-btn:disabled { opacity: .45; cursor: default; }
   #ev-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; }
-  .ev-card { border: 1px solid #e2e5ea; border-radius: 6px; background: #fff; padding: 8px 10px; margin-bottom: 8px; }
+  .ev-card { border: 1px solid var(--border-soft); border-radius: 6px; background: var(--bg); padding: 8px 10px; margin-bottom: 8px; }
   .ev-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 12px; }
-  .ev-id { font-weight: 600; color: #222; }
+  .ev-id { font-weight: 600; color: var(--fg); }
   .ev-badge { font-size: 11px; padding: 1px 6px; border-radius: 8px; border: 1px solid; font-weight: 500; }
   .linkage-valid { color: #1a7f37; border-color: #9fc9ab; }
   .linkage-stale { color: #b45309; border-color: #d9a35b; }
-  .linkage-missing { color: #667; border-color: #aab; }
+  .linkage-missing { color: var(--fg-muted); border-color: #aab; }
   .linkage-ambiguous { color: #7c3aed; border-color: #b79ae8; }
   .calc-passed { color: #1a7f37; border-color: #9fc9ab; }
-  .calc-failed { color: #b00; border-color: #d98080; }
-  .calc-na { color: #667; border-color: #aab; }
+  .calc-failed { color: var(--danger); border-color: #d98080; }
+  .calc-na { color: var(--fg-muted); border-color: #aab; }
   .review-pending { color: #a16207; border-color: #d9b95b; }
   .review-approved { color: #1a7f37; border-color: #9fc9ab; }
-  .review-rejected { color: #b00; border-color: #d98080; }
+  .review-rejected { color: var(--danger); border-color: #d98080; }
   .ev-claim { margin: 6px 0 2px; cursor: pointer; }
   .ev-claim:hover { text-decoration: underline; }
-  .ev-meta { color: #667; font-size: 12px; word-break: break-all; }
+  .ev-meta { color: var(--fg-muted); font-size: 12px; word-break: break-all; }
   .ev-actions { margin-top: 6px; display: flex; gap: 6px; }
-  .ev-actions button { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid #cfd4dc;
-                       border-radius: 6px; background: #f7f8fa; cursor: pointer; }
-  .ev-actions button:hover:not(:disabled) { background: #eef0f4; }
+  .ev-actions button { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid var(--border);
+                       border-radius: 6px; background: var(--panel); cursor: pointer; }
+  .ev-actions button:hover:not(:disabled) { background: var(--panel-hover); }
   .ev-actions button:disabled { opacity: .45; cursor: default; }
-  #ev-report { border-top: 1px solid #e2e5ea; padding: 8px 10px; }
-  #ev-report summary { cursor: pointer; color: #556; font-size: 12px; }
+  #ev-report { border-top: 1px solid var(--border-soft); padding: 8px 10px; }
+  #ev-report summary { cursor: pointer; color: var(--fg-soft); font-size: 12px; }
   #ev-report pre { font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap; max-height: 180px;
                    overflow: auto; margin: 6px 0 0; }
-  #ev-status { border-top: 1px solid #e2e5ea; padding: 6px 10px; font-size: 12px; color: #667;
+  #ev-status { border-top: 1px solid var(--border-soft); padding: 6px 10px; font-size: 12px; color: var(--fg-muted);
                min-height: 26px; word-break: break-all; }
-  #ev-status.ev-error { color: #b00; }
-  #grid-edit-input { position: absolute; z-index: 50; box-sizing: border-box; border: 2px solid #1a73e8;
+  #ev-status.ev-error { color: var(--danger); }
+  #grid-edit-input { position: absolute; z-index: 50; box-sizing: border-box; border: 2px solid var(--accent);
                      border-radius: 0; padding: 2px 4px; font: inherit; font-size: 13px; outline: none;
-                     background: #fff; }
+                     background: var(--bg); }
   /* ---- Phase 5 §8.4：PDF 表面视图（pdf_view.ts）---- */
   #pdf-panel { display: none; max-width: 1128px; margin: 8px auto 0; padding: 0 16px;
                height: calc(100vh - 170px); }
   #pdf-toolbar { display: flex; align-items: center; gap: 6px; font-size: 13px; height: 32px;
                  flex-wrap: wrap; }
-  .pdf-btn { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid #cfd4dc;
-             border-radius: 6px; background: #f7f8fa; cursor: pointer; }
-  .pdf-btn:hover:not(:disabled) { background: #eef0f4; }
+  .pdf-btn { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid var(--border);
+             border-radius: 6px; background: var(--panel); cursor: pointer; }
+  .pdf-btn:hover:not(:disabled) { background: var(--panel-hover); }
   .pdf-btn:disabled { opacity: .45; cursor: default; }
-  #pdf-page-label { min-width: 56px; text-align: center; color: #455; font-variant-numeric: tabular-nums; }
-  #pdf-zoom-label { min-width: 42px; text-align: center; color: #455; font-variant-numeric: tabular-nums; }
-  #pdf-search { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid #cfd4dc;
-                border-radius: 6px; background: #fff; width: 140px; }
-  #pdf-search-count { color: #667; min-width: 48px; }
-  #pdf-annot-mode { font: inherit; font-size: 13px; padding: 2px 4px; border: 1px solid #cfd4dc;
-                    border-radius: 6px; background: #fff; }
-  #pdf-status { margin-top: 4px; font-size: 12px; color: #667; min-height: 26px;
+  #pdf-page-label { min-width: 56px; text-align: center; color: var(--fg-soft); font-variant-numeric: tabular-nums; }
+  #pdf-zoom-label { min-width: 42px; text-align: center; color: var(--fg-soft); font-variant-numeric: tabular-nums; }
+  #pdf-search { font: inherit; font-size: 13px; padding: 2px 6px; border: 1px solid var(--border);
+                border-radius: 6px; background: var(--bg); width: 140px; }
+  #pdf-search-count { color: var(--fg-muted); min-width: 48px; }
+  #pdf-annot-mode { font: inherit; font-size: 13px; padding: 2px 4px; border: 1px solid var(--border);
+                    border-radius: 6px; background: var(--bg); }
+  #pdf-status { margin-top: 4px; font-size: 12px; color: var(--fg-muted); min-height: 26px;
                 word-break: break-all; }
-  #pdf-status .pdf-error { color: #b00; }
-  #pdf-status .pdf-warn-line { display: block; background: #fff3d6; color: #7a5a00;
+  #pdf-status .pdf-error { color: var(--danger); }
+  #pdf-status .pdf-warn-line { display: block; background: var(--warn-bg); color: #7a5a00;
                                padding: 1px 6px; border-radius: 4px; margin-top: 2px; }
   #pdf-viewport { position: relative; overflow: auto; height: calc(100% - 64px);
-                  border: 1px solid #d7dbe2; background: #525659; outline: none; }
-  #pdf-viewport:focus { border-color: #9ab4e8; }
+                  border: 1px solid var(--border-strong); background: #525659; outline: none; }
+  #pdf-viewport:focus { border-color: var(--accent); }
   #pdf-content { position: relative; padding: 16px 0; width: max-content; margin: 0 auto; }
-  .pdf-page { position: relative; background: #fff; margin: 0 16px 16px; overflow: hidden;
+  .pdf-page { position: relative; background: var(--bg); margin: 0 16px 16px; overflow: hidden;
               box-shadow: 0 1px 4px rgb(0 0 0 / 0.35); }
   .pdf-canvas { position: absolute; inset: 0; z-index: 1; display: block; }
   /* pdf.js 标准文字层（v6 viewer CSS 移植——透明文字 + 原生选区；
@@ -186,7 +223,7 @@
   .pdf-annot-note { position: absolute; width: 18px; height: 18px; background: #ffd54f;
                     border: 1px solid #b8860b; border-radius: 3px 3px 3px 0; cursor: help;
                     pointer-events: auto; font-size: 11px; line-height: 16px; text-align: center; }
-  .pdf-annot-freetext { position: absolute; font-size: 12px; color: #222;
+  .pdf-annot-freetext { position: absolute; font-size: 12px; color: var(--fg);
                         background: rgb(255 255 255 / 0.85); border: 1px dashed #cfd4dc;
                         padding: 1px 4px; white-space: pre; }
   .pdf-annot-ink, .pdf-ink-preview { position: absolute; inset: 0; overflow: visible;
@@ -195,33 +232,33 @@
   .pdf-search-hit.active { background: rgb(255 100 0 / 0.55); }
   .pdf-evidence-region { position: absolute; box-shadow: inset 0 0 0 2px #4a7dff;
                          background: rgb(74 125 255 / 0.15); }
-  .pdf-freetext-input { position: absolute; z-index: 10; border: 1px solid #1a73e8;
+  .pdf-freetext-input { position: absolute; z-index: 10; border: 1px solid var(--accent);
                         border-radius: 0; padding: 1px 4px; font: inherit; font-size: 12px;
-                        outline: none; background: #fff; pointer-events: auto; }
+                        outline: none; background: var(--bg); pointer-events: auto; }
   /* ---- Phase 5 §8.5：Canvas 表面视图（canvas_view.ts）——双面板布局
      （主画布 + AI 端只读镜像），SVG 元素样式/选中态/工具条 ---- */
   #canvas-panel { display: none; max-width: 1128px; margin: 8px auto 0; padding: 0 16px;
                   height: calc(100vh - 170px); }
   #canvas-toolbar { display: flex; align-items: center; gap: 6px; font-size: 13px; height: 32px;
                    flex-wrap: wrap; }
-  .cv-btn { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid #cfd4dc;
-            border-radius: 6px; background: #f7f8fa; cursor: pointer; }
-  .cv-btn:hover:not(:disabled) { background: #eef0f4; }
+  .cv-btn { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid var(--border);
+            border-radius: 6px; background: var(--panel); cursor: pointer; }
+  .cv-btn:hover:not(:disabled) { background: var(--panel-hover); }
   .cv-btn:disabled { opacity: .45; cursor: default; }
-  .cv-btn.active { background: #1a73e8; border-color: #1a73e8; color: #fff; }
-  #canvas-status { margin-left: 8px; color: #667; font-size: 12px; min-height: 16px;
+  .cv-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #canvas-status { margin-left: 8px; color: var(--fg-muted); font-size: 12px; min-height: 16px;
                    word-break: break-all; }
-  #canvas-status.cv-error { color: #b00; }
+  #canvas-status.cv-error { color: var(--danger); }
   #canvas-body { display: flex; gap: 10px; height: calc(100% - 64px); }
   #canvas-scroll { flex: 1 1 auto; min-width: 0; overflow: auto; position: relative;
-                   border: 1px solid #d7dbe2; background: #fff; outline: none; }
-  #canvas-scroll:focus { border-color: #9ab4e8; }
+                   border: 1px solid var(--border-strong); background: var(--bg); outline: none; }
+  #canvas-scroll:focus { border-color: var(--accent); }
   #canvas-svg { display: block; touch-action: none; user-select: none; }
-  #canvas-svg text { font: 12px/1.4 -apple-system, "Segoe UI", sans-serif; fill: #222;
+  #canvas-svg text { font: 12px/1.4 -apple-system, "Segoe UI", sans-serif; fill: var(--fg);
                      pointer-events: none; }
   #canvas-svg .node rect { fill: #eef3ff; stroke: #4a7dff; stroke-width: 1.5; }
   #canvas-svg .node:hover rect { fill: #e2ebff; }
-  #canvas-svg .node.selected rect { stroke: #1a73e8; stroke-width: 2.5; }
+  #canvas-svg .node.selected rect { stroke: var(--accent); stroke-width: 2.5; }
   #canvas-svg .node.dragging rect { fill: #ffe9b8; stroke: #b45309; }
   #canvas-svg .node.edge-source rect { stroke: #b45309; stroke-width: 3; stroke-dasharray: 4 3; }
   #canvas-svg .edge { stroke: #8895a7; stroke-width: 1.5; }
@@ -230,33 +267,65 @@
   #canvas-svg .group.selected rect { stroke: #7c3aed; stroke-width: 2; }
   #canvas-svg .group text { fill: #667; font-size: 11px; }
   #canvas-ai-panel { flex: 0 0 260px; width: 260px; display: flex; flex-direction: column;
-                    border: 1px solid #d7dbe2; border-radius: 6px; background: #fbfbfc;
+                    border: 1px solid var(--border-strong); border-radius: 6px; background: var(--canvas-bg);
                     overflow: hidden; }
-  #canvas-ai-head { padding: 6px 10px; font-size: 12px; color: #455;
-                    border-bottom: 1px solid #e2e5ea; display: flex; align-items: center;
+  #canvas-ai-head { padding: 6px 10px; font-size: 12px; color: var(--fg-soft);
+                    border-bottom: 1px solid var(--border-soft); display: flex; align-items: center;
                     justify-content: space-between; gap: 6px; flex-wrap: wrap; }
   #canvas-ai-head .cv-btn { font-size: 11px; padding: 2px 8px; }
-  #canvas-ai-svg-wrap { flex: 1 1 auto; min-height: 0; overflow: hidden; background: #fff; }
+  #canvas-ai-svg-wrap { flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--bg); }
   #canvas-ai-svg { display: block; width: 100%; height: 100%; }
   #canvas-edit-input { position: absolute; z-index: 50; box-sizing: border-box;
-                       border: 2px solid #1a73e8; border-radius: 0; padding: 2px 4px;
-                       font: inherit; font-size: 12px; outline: none; background: #fff; }
+                       border: 2px solid var(--accent); border-radius: 0; padding: 2px 4px;
+                       font: inherit; font-size: 12px; outline: none; background: var(--bg); }
 </style>
+<script>
+  // #3 主题防闪白：wasm boot 前先以 localStorage 缓存定档（权威 =
+  // CONTRACT §4 appearance.theme——设置变更事件同步写缓存）；
+  // system 态跟随 prefers-color-scheme。
+  (function () {
+    try {
+      var t = localStorage.getItem('mdc-theme') || 'system';
+      var dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    } catch (e) { /* 隐私模式等：默认 light */ }
+  })();
+</script>
 </head>
 <body>
 <div id="toolbar">
-  <label class="import-btn" for="docx-file">import .docx</label>
-  <input type="file" id="docx-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
-  <span id="docx-status"></span>
-  <label class="import-btn" for="xlsx-file">import .xlsx</label>
-  <input type="file" id="xlsx-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
-  <span id="xlsx-status"></span>
-  <button type="button" class="import-btn" id="docx-export-btn">export .docx</button>
-  <span id="docx-export-status"></span>
-  <button type="button" class="import-btn" id="xlsx-export-btn">export .xlsx</button>
-  <span id="xlsx-export-status"></span>
-  <label class="import-btn" for="grid-file">open .xlsx grid</label>
-  <input type="file" id="grid-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+  <!-- #3 产品化：三分组（文件/导出/表格）+ 内联 SVG 图标 + title 快捷提示；
+       全部 id/class 与 label-for 关联零变更（DOM 契约面不动）。 -->
+  <span class="tb-group" aria-label="文件组">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm3.5 7.75H8.75V11.5h-1.5V8.75H4.5v-1.5h2.75V4.5h1.5v2.75h2.75v1.5Z"/></svg>
+    <label class="import-btn" for="docx-file" title="导入 Word 文档（.docx → 可编辑 Markdown）">import .docx</label>
+    <input type="file" id="docx-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
+    <span id="docx-status"></span>
+    <label class="import-btn" for="xlsx-file" title="导入 Excel 工作簿（.xlsx → 表格块）">import .xlsx</label>
+    <input type="file" id="xlsx-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+    <span id="xlsx-status"></span>
+  </span>
+  <span class="tb-group" aria-label="导出组">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1ZM7.25 4h1.5v4.19l1.97-1.97 1.06 1.06L8 12.06 4.22 8.28l1.06-1.06 1.97 1.97V4Z"/></svg>
+    <button type="button" class="import-btn" id="docx-export-btn" title="导出 Word 文档（当前文档 → .docx 下载）">export .docx</button>
+    <span id="docx-export-status"></span>
+    <button type="button" class="import-btn" id="xlsx-export-btn" title="导出 Excel 工作簿（表格块 → .xlsx 下载）">export .xlsx</button>
+    <span id="xlsx-export-status"></span>
+  </span>
+  <span class="tb-group" aria-label="表格组">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h12v12H2V2Zm1.5 3v7.5h9V5h-9Zm0-1.5h9V3.5h-9V3.5Zm2 3h1.5V10H5.5V6.5Zm3 0H10V10H8.5V6.5Z"/></svg>
+    <label class="import-btn" for="grid-file" title="在 Grid 页签打开工作簿（虚拟滚动全表浏览）">open .xlsx grid</label>
+    <input type="file" id="grid-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+  </span>
+  <span class="tb-spacer"></span>
+  <button type="button" class="import-btn" id="theme-toggle-btn" title="主题：浅色 / 深色 / 跟随系统（设置键 appearance.theme）">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.5A6.5 6.5 0 1 0 14.5 8h-1.6A4.9 4.9 0 1 1 8 3.1V1.5Zm.75 3.75v3.44l2.4 2.4-1.06 1.06-2.84-2.85V5.25h1.5Z"/></svg>
+    <span id="theme-label">theme</span>
+  </button>
+  <button type="button" class="import-btn" id="settings-btn" title="设置（CONTRACT §4 设置面 v1.1）">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M9.1 1.5 9.4 3a5.6 5.6 0 0 1 1.6.93l1.44-.5.9 1.56-1.06 1.08c.07.3.1.6.1.93s-.03.63-.1.93l1.06 1.08-.9 1.56-1.44-.5c-.48.4-1.02.71-1.6.93l-.3 1.5H7.3l-.3-1.5a5.6 5.6 0 0 1-1.6-.93l-1.44.5-.9-1.56 1.06-1.08A5 5 0 0 1 4 8.5c0-.33.03-.63.1-.93L3.04 6.5l.9-1.56 1.44.5c.48-.4 1.02-.71 1.6-.93l.3-1.5h1.82ZM8.2 6a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></svg>
+    <span>settings</span>
+  </button>
 </div>
 <div id="main-row">
   <div id="evidence-panel"></div>

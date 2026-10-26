@@ -1504,6 +1504,9 @@ async function main(): Promise<void> {
 
   window.__ready = true;
 
+  setupThemeControl();
+  setupSettingsButton();
+
   // 启动态收口：debug 行在 boot 期间显示 "booting…"（index.html 初始文案），
   // 启动完成后必须换掉——否则用户看到的是永久 "booting…"，功能其实已就绪。
   // 首次编辑后的实时 rev/blocks 读数由 debugLine() 接管。
@@ -1914,3 +1917,60 @@ main().catch((e: unknown) => {
   if (el) el.textContent = `boot failed: ${String(e)}`;
   throw e;
 });
+
+
+// ---------------------------------------------------------------------------
+// #3 UI 产品化：主题控制（消费 CONTRACT §4 appearance.theme）与设置入口
+// ---------------------------------------------------------------------------
+
+/** 三态循环序（appearance.theme 值域：light | dark | system）。 */
+const THEME_CYCLE = ['light', 'dark', 'system'] as const;
+
+/** 应用主题到 DOM（data-theme 二值化：system 解析为当前系统偏好）。 */
+function applyThemeToDom(theme: string): void {
+  const dark =
+    theme === 'dark' ||
+    (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+}
+
+/** 主题按钮：三态循环 + __setSetting 写回（权威面）+ localStorage
+ * 缓存同步（防闪白脚本消费）+ 设置事件回听（他端改主题同步刷新）。 */
+function setupThemeControl(): void {
+  const btn = document.getElementById('theme-toggle-btn') as HTMLButtonElement | null;
+  const label = document.getElementById('theme-label');
+  if (!btn || !label) return;
+  const refresh = (): void => {
+    const snap = window.__settings?.();
+    const cur = snap?.appearance?.theme ?? 'system';
+    applyThemeToDom(cur);
+    label.textContent = `theme: ${cur}`;
+    try { localStorage.setItem('mdc-theme', cur); } catch { /* 私密模式 */ }
+  };
+  btn.addEventListener('click', () => {
+    const cur = window.__settings?.().appearance?.theme ?? 'system';
+    const idx = THEME_CYCLE.indexOf(cur as (typeof THEME_CYCLE)[number]);
+    const next = THEME_CYCLE[(idx + 1 + THEME_CYCLE.length) % THEME_CYCLE.length];
+    window.__setSetting?.('appearance.theme', next);
+    // __setSetting 拒绝（值域外）时不动——next 恒在值域内，理论不触发。
+    refresh();
+  });
+  window.addEventListener('mdc-settings-changed', (e) => {
+    const detail = (e as CustomEvent<{ path: string }>).detail;
+    if (detail?.path === 'appearance.theme') refresh();
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    const cur = window.__settings?.().appearance?.theme ?? 'system';
+    if (cur === 'system') applyThemeToDom('system');
+  });
+  refresh();
+}
+
+/** 设置按钮（#settings-panel 的入口——面板本体由后续批挂载）。 */
+function setupSettingsButton(): void {
+  const btn = document.getElementById('settings-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    window.dispatchEvent(new CustomEvent('mdc-open-settings'));
+  });
+}
