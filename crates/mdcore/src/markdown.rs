@@ -101,6 +101,20 @@ fn render(
 // ---------- 解析 ----------
 
 pub fn markdown_to_tree(md: &str) -> BlockTree {
+    // TR-1（issue #9）：行尾规范化前置——CRLF / 孤立 CR 统一为 LF。
+    // CommonMark 规范三种行尾等价；模型 = 权威层持有 LF 规范形，使
+    // CM6 视图（输入即规范化 LF）、__md() 投影（to_markdown）、
+    // docx/xlsx 导出面三面一致（保存内容 = 所见）。三条解析入口
+    // （from_markdown / sync_from_markdown / extend_from_markdown）
+    // 全部漏斗经本函数，单点覆盖；快路径零分配（无 \r 时 contains
+    // 单扫通过，不进入 replace 分支）。
+    let normalized;
+    let md: &str = if md.contains('\r') {
+        normalized = md.replace("\r\n", "\n").replace('\r', "\n");
+        &normalized
+    } else {
+        md
+    };
     let mut tree = BlockTree::new();
     let lines: Vec<&str> = md.split('\n').collect();
     // 深度栈：(kind, depth, node)
