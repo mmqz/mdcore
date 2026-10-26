@@ -26,6 +26,26 @@
   }
   body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
   #editor { max-width: 760px; margin: 24px auto; padding: 0 16px; }
+  /* 格式工具条（TR-UI 批 A）——编辑器上方常驻 */
+  #format-toolbar {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+    max-width: 760px; margin: 12px auto 0; padding: 6px 10px;
+    background: var(--panel); border: 1px solid var(--border-soft); border-radius: 8px;
+  }
+  #format-toolbar button {
+    min-width: 28px; height: 26px; padding: 0 7px; margin: 0;
+    font: 600 13px/1 -apple-system, "Segoe UI", sans-serif;
+    color: var(--fg); background: transparent;
+    border: 1px solid transparent; border-radius: 5px; cursor: pointer;
+  }
+  #format-toolbar button:hover { background: var(--panel-active); }
+  #format-toolbar button:active { background: var(--edit-hl); }
+  #format-toolbar button.ft-b { font-weight: 800; }
+  #format-toolbar button.ft-i { font-style: italic; }
+  #format-toolbar button.ft-code { font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 12px; }
+  #format-toolbar button.ft-del { text-decoration: line-through; }
+  #format-toolbar .ft-sep { width: 1px; height: 18px; margin: 0 5px; background: var(--border); }
   .cm-editor { outline: none; }
   .cm-content { font: inherit; }
   .cm-line.cm-heading { font-weight: 700; }
@@ -419,6 +439,21 @@
       <button type="button" id="tab-grid" class="view-tab">Grid</button>
       <button type="button" id="tab-pdf" class="view-tab">PDF</button>
       <button type="button" id="tab-canvas" class="view-tab">Canvas</button>
+    </div>
+    <div id="format-toolbar" role="toolbar" aria-label="格式工具条">
+      <button type="button" class="ft-b" data-format="bold" title="粗体（Mod-B）">B</button>
+      <button type="button" class="ft-i" data-format="italic" title="斜体（Mod-I）">I</button>
+      <button type="button" class="ft-code" data-format="code" title="行内代码（Mod-E）">code</button>
+      <button type="button" class="ft-del" data-format="del" title="删除线（Mod-Shift-X）">S</button>
+      <span class="ft-sep"></span>
+      <button type="button" data-format="h1" title="一级标题（Mod-Shift-1）">H1</button>
+      <button type="button" data-format="h2" title="二级标题（Mod-Shift-2）">H2</button>
+      <button type="button" data-format="h3" title="三级标题（Mod-Shift-3）">H3</button>
+      <button type="button" data-format="para" title="正文（清除前缀，Mod-Shift-0）">¶</button>
+      <span class="ft-sep"></span>
+      <button type="button" data-format="quote" title="引用块（> 前缀 toggle）">&gt;</button>
+      <button type="button" data-format="ul" title="无序列表（- 前缀 toggle）">•</button>
+      <button type="button" data-format="ol" title="有序列表（1. 前缀 toggle）">1.</button>
     </div>
     <div id="editor"></div>
     <div id="grid-panel"></div>

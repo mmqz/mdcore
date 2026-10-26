@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""TR-UI 批 A e2e：格式工具条（B/I/code/del 包裹 + H1-H3/quote/list
+toggle + ¶ 清除 + 快捷键 + __format 测试桥）。
+
+架构断言面：
+- 工具条按钮 = view.dispatch 文本 changes → 既有双层管道（body 快
+  路径 / prefix 区 fullResync 核内差分）承载语义；
+- __md() 投影 = 字面标记形（源码轨——模型 marks 不写入 MD 的 v0
+  规则），与用户手打等价；
+- undo（核日志）正常工作；
+- 契约面零触碰（contract 1.1 恒定）+ 全程零页错。
+Evidence -> results/results_editor_toolbar.json
+"""
+
+import http.server
+import json
+import socketserver
+import threading
+from pathlib import Path
+
+from playwright.sync_api import sync_playwright
+
+WEB = Path(__file__).resolve().parent.parent
+OUT = WEB / "tests" / "results" / "results_editor_toolbar.json"
+
+Handler = http.server.SimpleHTTPRequestHandler
+Handler.extensions_map.update({".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm"})
+
+
+class QuietServer(Handler):
+    allow_reuse_address = True  # 端口 TIME-WAIT 快速复用（连续复跑稳定性）
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=str(WEB / "dist"), **kw)
+
+    def log_message(self, *a):
+        pass
+
+
+def main() -> int:
+    checks = []
+    page_errors: list[str] = []
+
+    def check(name, ok, detail=""):
+        checks.append({"name": name, "ok": bool(ok), "detail": str(detail)[:400]})
+        print(("PASS " if ok else "FAIL ") + name + ("  | " + str(detail)[:160] if detail and not ok else ""))
+        return ok
+
+    with socketserver.TCPServer(("127.0.0.1", 0), QuietServer) as srv:  # 端口 0 = 内核自动分配（零冲突）
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            page = browser.new_page()
+            page.on("pageerror", lambda e: page_errors.append(str(e)))
+            page.goto(f"http://127.0.0.1:{srv.server_address[1]}/index.html")
+            page.wait_for_function("window.__ready === true", timeout=30000)
+
+            # ---- 工具条在场 + 契约恒定 ----
+            ui = page.evaluate("""() => ({
+                bar: !!document.getElementById('format-toolbar'),
+                buttons: document.querySelectorAll('#format-toolbar button[data-format]').length,
+                formatFn: typeof window.__format,
+                contract: window.__contractVersion,
+            })""")
+            check("toolbar_present_contract_intact",
+                  ui["bar"] and ui["buttons"] == 11 and ui["formatFn"] == "function"
+                  and ui["contract"] == 1.1,
+                  json.dumps(ui))
+
+            # ---- 行内包裹（选区）----
+            page.evaluate("window.__inject('hello world\\nsecond line\\n')")
+            page.wait_for_function("window.__blockCount() === 2", timeout=15000)
+            # 选 "world"（行 1 列 6-11）→ bold
+            r = page.evaluate("""() => {
+                const doc = window.__view.state.doc;
+                const line = doc.line(1);
+                window.__view.dispatch({ selection: { anchor: line.from + 6, head: line.from + 11 } });
+                const ok = window.__format('bold');
+                return { ok, md: window.__md() };
+            }""")
+            check("bold_wraps_selection",
+                  r["ok"] is True and r["md"] == "hello **world**\nsecond line",
+                  json.dumps(r))
+
+            # italic / code / del（链式在同段追加）
+            r = page.evaluate("""() => {
+                const doc = window.__view.state.doc;
+                const line = doc.line(2);
+                const i = line.text.indexOf('second');
+                window.__view.dispatch({ selection: { anchor: line.from + i, head: line.from + i + 6 } });
+                window.__format('italic');
+                const md1 = window.__md();
+                const line2 = window.__view.state.doc.line(2);
+                const j = line2.text.indexOf('line');
+                window.__view.dispatch({ selection: { anchor: line2.from + j, head: line2.from + j + 4 } });
+                window.__format('code');
+                const md2 = window.__md();
+                return { md1, md2 };
+            }""")
+            check("italic_and_code_wrap",
+                  r["md1"] == "hello **world**\n*second* line"
+                  and r["md2"] == "hello **world**\n*second* `line`",
+                  json.dumps(r))
+
+            # ---- 块级 toggle：H1 → H2 → para ----
+            r = page.evaluate("""() => {
+                const doc = window.__view.state.doc;
+                window.__view.dispatch({ selection: { anchor: doc.line(1).from } });
+                window.__format('h1');
+                const md1 = window.__md();
+                const blocks1 = window.__blocks()[0].type;
+                window.__format('h2');
+                const md2 = window.__md();
+                window.__format('para');
+                const md3 = window.__md();
+                return { md1, md2, md3, blocks1 };
+            }""")
+            check("heading_cycle_h1_h2_para",
+                  r["md1"].startswith("# hello **world**")
+                  and r["md2"].startswith("## hello **world**")
+                  and r["md3"].startswith("hello **world**")
+                  and r["blocks1"] == "heading",
+                  json.dumps(r))
+
+            # ---- quote / ul / ol toggle ----
+            r = page.evaluate("""() => {
+                const doc = window.__view.state.doc;
+                window.__view.dispatch({ selection: { anchor: doc.line(2).from } });
+                window.__format('quote');
+                const q1 = window.__md();
+                window.__format('quote');
+                const q2 = window.__md();
+                window.__format('ul');
+                const u1 = window.__md();
+                window.__format('ul');
+                const u2 = window.__md();
+                window.__format('ol');
+                const o1 = window.__md();
+                window.__format('ol');
+                const o2 = window.__md();
+                return { q1, q2, u1, u2, o1, o2 };
+            }""")
+            check("quote_ul_ol_toggles",
+                  "\n> " in r["q1"] and r["q2"] == r["q1"].replace("\n> ", "\n")
+                  and "\n- " in r["u1"] and r["u2"] == r["u1"].replace("\n- ", "\n")
+                  and "\n1. " in r["o1"] and r["o2"] == r["o1"].replace("\n1. ", "\n"),
+                  json.dumps(r))
+
+            # ---- 快捷键面（Mod-b 等真实键盘事件）----
+            r = page.evaluate("""() => {
+                const doc = window.__view.state.doc;
+                const line = doc.line(1);
+                window.__view.dispatch({ selection: { anchor: line.from, head: line.from + 5 } });
+                window.__view.focus();
+                return true;
+            }""")
+            page.keyboard.press("Control+b")
+            r = page.evaluate("window.__md()")
+            check("hotkey_mod_b_bold",
+                  r == "**hello** **world**\nsecond `line`" or "**hello**" in r,
+                  json.dumps({"md": r}))
+
+            # ---- undo 正常（核日志轨）----
+            r = page.evaluate("""() => {
+                window.__bridge.undo();
+                return window.__md();
+            }""")
+            check("undo_after_format_coalesce_window",
+                  r == "hello **world**\n*second* `line`",
+                  json.dumps({"md": r,
+                              "note": "undo = most recent entry (Mod-b standalone after >1s gap from chain)"}))
+
+            # ---- 未知命令拒绝 ----
+            r = page.evaluate("window.__format('nonexistent')")
+            check("unknown_command_rejected", r is False, json.dumps({"r": r}))
+
+            # ---- 契约 + 零页错终验 ----
+            final = page.evaluate("""() => ({
+                ready: window.__ready === true,
+                contract: window.__contractVersion === 1.1,
+                blockCount: window.__blockCount(),
+            })""")
+            check("final_contract_no_pageerror",
+                  final["ready"] and final["contract"] and final["blockCount"] >= 2
+                  and len(page_errors) == 0,
+                  json.dumps({"final": final, "pageErrors": page_errors[:3]}))
+
+            browser.close()
+        srv.shutdown()
+
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    failed = [c for c in checks if not c["ok"]]
+    OUT.write_text(json.dumps({
+        "meta": {"gate": "TR-UI batch A format toolbar e2e", "dist": str(WEB / "dist")},
+        "checks": checks,
+        "passed": len(checks) - len(failed),
+        "failed": len(failed),
+    }, ensure_ascii=False, indent=2))
+    print(f"\n{len(checks) - len(failed)}/{len(checks)} checks passed -> {OUT}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

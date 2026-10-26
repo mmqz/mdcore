@@ -670,6 +670,15 @@ class CM6View {
             { key: 'ArrowRight', run: cursorCharRight },
             { key: 'Shift-ArrowLeft', run: selectCharLeft },
             { key: 'Shift-ArrowRight', run: selectCharRight },
+            // ---- 工具栏快捷键（TR-UI 批 A：与 __format 同源命令面）----
+            { key: 'Mod-b', preventDefault: true, run: () => owner.wrapSelection('**', '**') },
+            { key: 'Mod-i', preventDefault: true, run: () => owner.wrapSelection('*', '*') },
+            { key: 'Mod-e', preventDefault: true, run: () => owner.wrapSelection('`', '`') },
+            { key: 'Mod-Shift-x', preventDefault: true, run: () => owner.wrapSelection('~~', '~~') },
+            { key: 'Mod-Shift-1', preventDefault: true, run: () => owner.toggleLinePrefix('heading', 1) },
+            { key: 'Mod-Shift-2', preventDefault: true, run: () => owner.toggleLinePrefix('heading', 2) },
+            { key: 'Mod-Shift-3', preventDefault: true, run: () => owner.toggleLinePrefix('heading', 3) },
+            { key: 'Mod-Shift-0', preventDefault: true, run: () => owner.clearLinePrefix() },
           ]),
           EditorView.lineWrapping,
         ],
@@ -803,6 +812,13 @@ class CM6View {
 
   // ---------- 桥：CM6 → core ----------
 
+  /** TR-UI 批 A：结构命令强制全量同步标志——行首前缀变更（heading/
+   * quote/list toggle）不能进快路径：快路径会把前缀字面插进块文本
+   * （`# ` 吸收为 paragraph 正文 = 语义破损——e2e 实证）；置位后
+   * onDocChanged 直接 fullResync（核内差分产 SetBlockType/SetAttrs
+   * 正确 op 序），消费即复位。 */
+  private forceFullSync = false;
+
   private onDocChanged(u: ViewUpdate): void {
     if (this.syncing || this.locked) return;
     this.syncing = true;
@@ -812,13 +828,14 @@ class CM6View {
       u.changes.iterChanges((fromA, toA, _fB, _tB, inserted) =>
         changes.push([fromA, toA, _fB, _tB, inserted.toString()]));
       let fast = false;
-      if (changes.length === 1) {
+      if (changes.length === 1 && !this.forceFullSync) {
         try {
           fast = this.tryFastPath(u.startState, changes[0]);
         } catch {
           fast = false; // 核 reject（BadRange/BadPath）→ 兜底修复
         }
       }
+      this.forceFullSync = false;
       if (!fast) this.fullResync(u.state.doc.toString());
     } finally {
       this.syncing = false;
@@ -984,6 +1001,110 @@ class CM6View {
   }
 
   // ---------- 核驱动结构命令 ----------
+
+  // ---------- 工具栏格式命令（TR-UI 批 A：程序化文本编辑模式）----------
+  //
+  // 设计同构声明：工具栏不做独立 op 面——操作 = view.dispatch 文本
+  // changes，语义由既有双层管道承载（body 区快路径 replace_text /
+  // prefix 区与跨行 fullResync 核内差分）。undo（核日志）、装饰
+  // （CM6 mark）、BlockMap 映射全部自动一致——与用户手打等价。
+
+  /**
+   * 行内包裹（bold/italic/code/del）：选区首尾插标记对。
+   * 空选区 = 插入成对标记（光标居中）；单行内任意区间（body/prefix
+   * 不限——字面标记是合法正文）。标记选择态 v1 不感知（幂等：重复
+   * 应用产生嵌套字面 = 与手打一致，模型/导出面语义稳定）。
+   */
+  wrapSelection(before: string, after: string): boolean {
+    const sel = this.view.state.selection.main;
+    this.view.dispatch({
+      changes: [
+        { from: sel.from, insert: before },
+        { from: sel.to, insert: after },
+      ],
+      selection: sel.empty
+        ? { anchor: sel.from + before.length }
+        : { anchor: sel.from + before.length, head: sel.to + before.length },
+    });
+    return true;
+  }
+
+  /**
+   * 行前缀 toggle（heading/quote/list）：选区覆盖的每一行行首变换。
+   * - heading：`#{1,6} ` 互斥替换（已有任意级标题前缀 → 换为目标级；
+   *   目标级与现级相同 → 移除 = 回正文）；
+   * - quote/list：已有同类前缀 → 移除（toggle）；否则加（quote 加在
+   *   heading 之后 = `> # x` 复合——与解析器栈式嵌套一致）。
+   */
+  toggleLinePrefix(kind: 'heading' | 'quote' | 'ul' | 'ol', level = 1): boolean {
+    const { state } = this.view;
+    const sel = state.selection.main;
+    const first = state.doc.lineAt(sel.from);
+    const last = state.doc.lineAt(sel.to);
+    const changes: { from: number; to?: number; insert: string }[] = [];
+    for (let ln = first.number; ln <= last.number; ln++) {
+      const line = state.doc.line(ln);
+      if (!line.text.trim() && kind !== 'quote') continue; // 空行跳过（quote 可结构化空行）
+      const cur = /^(#{1,6} |> |[-*+] |\d+\. )?(.*)$/.exec(line.text);
+      const curPrefix = cur?.[1] ?? '';
+      const curHead = /^(#{1,6}) $/.exec(curPrefix);
+      const curQuote = curPrefix === '> ';
+      const curUl = /^[-*+] $/.test(curPrefix);
+      const curOl = /^\d+\. $/.test(curPrefix);
+      const body = cur?.[2] ?? line.text;
+      let next: string;
+      if (kind === 'heading') {
+        if (curQuote) {
+          // quote+heading 复合：`> # t` → 只动 # 部分（quote 保留）
+          const innerHead = /^(#{1,6}) /.exec(body);
+          next = innerHead && innerHead[1].length === level
+            ? '> ' + body.slice(innerHead[0].length)
+            : '> ' + '#'.repeat(level) + ' ' + body.replace(/^(#{1,6} )?/, '');
+        } else {
+          const target = '#'.repeat(level) + ' ';
+          next = curHead && curHead[1].length === level ? body : target + body;
+        }
+      } else if (kind === 'quote') {
+        next = curQuote ? body : '> ' + line.text;
+      } else if (kind === 'ul') {
+        next = curUl ? body : '- ' + body.replace(/^> /, '');
+      } else { // ol
+        next = curOl ? body : '1. ' + body.replace(/^> /, '');
+      }
+      if (next !== line.text) {
+        changes.push({ from: line.from, to: line.to, insert: next });
+      }
+    }
+    if (changes.length) {
+      this.forceFullSync = true; // 行首结构变更 → 全量同步（快路径吸收 = 字面破损）
+      this.view.dispatch({ changes });
+    }
+    return true;
+  }
+
+  /**
+   * 清除行首块前缀（回正文）：heading `#{1,6} ` / list `- |*|+ |1. ` /
+   * quote `> ` 逐层剥除（复合形 `> # t` 全清）。选区覆盖行批量。
+   */
+  clearLinePrefix(): boolean {
+    const { state } = this.view;
+    const sel = state.selection.main;
+    const first = state.doc.lineAt(sel.from);
+    const last = state.doc.lineAt(sel.to);
+    const changes: { from: number; to: number; insert: string }[] = [];
+    for (let ln = first.number; ln <= last.number; ln++) {
+      const line = state.doc.line(ln);
+      const stripped = line.text.replace(/^(#{1,6} |> |[-*+] |\d+\. )+/g, '');
+      if (stripped !== line.text) {
+        changes.push({ from: line.from, to: line.to, insert: stripped });
+      }
+    }
+    if (changes.length) {
+      this.forceFullSync = true; // 同 toggleLinePrefix：前缀剥除走全量
+      this.view.dispatch({ changes });
+    }
+    return true;
+  }
 
   /**
    * Enter 分段守卫：
@@ -1181,6 +1302,12 @@ declare global {
       locked: boolean;
       undo: () => boolean;
       redo: () => boolean;
+      /** TR-UI 批 A：行内包裹（选区首尾插标记对——源码轨字面形）。 */
+      wrapSelection: (before: string, after: string) => boolean;
+      /** TR-UI 批 A：行前缀 toggle（heading[level]/quote/ul/ol）。 */
+      toggleLinePrefix: (kind: 'heading' | 'quote' | 'ul' | 'ol', level?: number) => boolean;
+      /** TR-UI 批 A：清除行首块前缀（heading/quote/list 逐层剥除回正文）。 */
+      clearLinePrefix: () => boolean;
       /** R15：强制走全量重建路径（W12 等价性护栏的基线） */
       computeDecorations: () => number;
       /** R15：装饰集快照（W12 增量↔全量逐项对比） */
@@ -1233,6 +1360,8 @@ declare global {
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
+    /** TR-UI 批 A：格式命令统一入口（UI 按钮/keymap/测试桥同源；未知命令拒 false）。 */
+    __format: (kind: string) => boolean;
     /** TR-4（issue #10）：读当前导出格式选项（预设名 + 组装后的 options JSON）。 */
     __getDocxExportOptions: () => { preset: string; json: string };
     /** TR-4（issue #10）：设导出格式选项（预设名或 'custom' + 三选值；非法预设名拒 false 零触碰）。 */
@@ -1996,6 +2125,54 @@ function setupDocxExport(): void {
 }
 
 setupDocxExport();
+
+// ---------------------------------------------------------------------------
+// TR-UI 批 A — 格式工具条（B/I/code/del + H1-H3/¶ + 引用/列表 toggle）
+//
+// 设计同构：按钮 = view.dispatch 文本 changes（CM6View::wrapSelection/
+// toggleLinePrefix/clearLinePrefix），语义由既有双层管道承载（body 快
+// 路径 / prefix 区 fullResync 核内差分）——undo/装饰/BlockMap 全自动
+// 一致，与用户手打等价（独立 op 面的替代方案被评估并否决：模型 marks
+// 不写入 MD 投影 [markdown.rs v0 规则]，op 轨操作视图零反馈 = 破损
+// UX；源码轨字面标记 = 既有语义，导出面字面保留已钉定）。
+// ---------------------------------------------------------------------------
+
+/** 格式命令统一入口（UI 按钮 / keymap / 测试桥 __format 同源）。 */
+function applyFormatCommand(kind: string): boolean {
+  const bridge = window.__bridge as
+    | { wrapSelection(b: string, a: string): boolean; toggleLinePrefix(k: 'heading' | 'quote' | 'ul' | 'ol', l?: number): boolean; clearLinePrefix(): boolean }
+    | undefined;
+  if (!bridge) return false;
+  switch (kind) {
+    case 'bold': return bridge.wrapSelection('**', '**');
+    case 'italic': return bridge.wrapSelection('*', '*');
+    case 'code': return bridge.wrapSelection('`', '`');
+    case 'del': return bridge.wrapSelection('~~', '~~');
+    case 'h1': return bridge.toggleLinePrefix('heading', 1);
+    case 'h2': return bridge.toggleLinePrefix('heading', 2);
+    case 'h3': return bridge.toggleLinePrefix('heading', 3);
+    case 'para': return bridge.clearLinePrefix();
+    case 'quote': return bridge.toggleLinePrefix('quote');
+    case 'ul': return bridge.toggleLinePrefix('ul');
+    case 'ol': return bridge.toggleLinePrefix('ol');
+    default: return false;
+  }
+}
+
+function setupFormatToolbar(): void {
+  const bar = document.getElementById('format-toolbar');
+  bar?.querySelectorAll<HTMLButtonElement>('button[data-format]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyFormatCommand(btn.dataset.format ?? '');
+      (window.__view as unknown as { focus(): void } | undefined)?.focus();
+    });
+  });
+  // 测试桥：统一命令入口（e2e 与 UI 按钮同源；未知命令拒 false 零触碰）。
+  window.__format = (kind: string): boolean => applyFormatCommand(kind);
+}
+
+setupFormatToolbar();
+
 
 // ---------------------------------------------------------------------------
 // t19 — XLSX 导出（编辑器当前文档 → .xlsx 下载；office-io 写面经 wasm 桥）
