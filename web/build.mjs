@@ -63,7 +63,10 @@ if (existsSync('pkg_pdf/pdf_wasm.js')) {
   cpSync('pkg_pdf', 'dist/pkg_pdf', { recursive: true });
   console.log('pdf wasm pkg -> dist/pkg_pdf/');
 } else {
-  console.log('note: web/pkg_pdf absent (mdc-pdf-wasm pending) — pdf_view runs display-only');
+  // #5：absent 不再含混——给可执行路径（默认 build 不重编译 wasm：
+  // 前端构建 ~30s 语义；模型面 = 显式 npm run build:wasm:pdf 或一键
+  // npm run build:full）。
+  console.log('note: web/pkg_pdf absent — pdf_view runs display-only; run `npm run build:wasm:pdf` (or `npm run build:full`) to enable the model face');
 }
 
 // ---- §八.5: canvas wasm 桥胶水（pkg/mdcore_wasm.js 的运行时副本——

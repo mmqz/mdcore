@@ -43,11 +43,26 @@
 ## 2. 构建与运行
 
 ```bash
-./build-wasm.sh        # 步骤一：cargo build (wasm32) + wasm-bindgen → pkg/
-npm install            # 首次
-npm run build          # 步骤二：esbuild → dist/（自包含：main.js + index.html + .wasm）
-npm run serve          # 静态服务 dist/（或 python3 -m http.server -d dist）
+./build-wasm.sh            # 步骤一：cargo build (wasm32) + wasm-bindgen → pkg/
+npm install                # 首次
+npm run build              # 步骤二：esbuild → dist/（自包含：main.js + index.html + .wasm）
+npm run serve              # 静态服务 dist/（或 python3 -m http.server -d dist）
 ```
+
+**PDF 模型面（pkg_pdf——issue #5）**：PDF 表面的标注写回/页内文本
+注入走 `mdc-pdf` 独立 wasm 包（`web/pkg_pdf/`）。**默认 `npm run
+build` 不重编译 wasm**（前端构建 ~30s 语义）；`pkg_pdf` 缺席时
+pdf_view 降级 display-only（`__pdfState().wasm = false`，
+`pdf_view.py` 会话用例走 SKIP 门）。启用模型面：
+
+```bash
+npm run build:wasm:pdf      # 仅构建 PDF 模型面包（build-pdf-wasm.sh → pkg_pdf/）
+npm run build:full          # 一键：主 wasm + PDF wasm + 前端
+```
+
+依赖：`cargo`（rust-toolchain.toml 钉 1.99.0 + wasm32 target）+
+`wasm-bindgen-cli 0.2.129`（与 Cargo.lock 精确一致——版本漂移 =
+wire 面破坏）。
 
 页面 query 参数：`?doc=big&kb=1024` 加载 1MB 生成文档（W4/压测入口）；
 `&chunks=K` 启用 R10 渐进打开（首段 TTI 后追加余段，ingest 窗口
