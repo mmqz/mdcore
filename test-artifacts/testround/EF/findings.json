@@ -1,0 +1,42 @@
+{
+ "group": "EF",
+ "cases": [
+  {
+   "name": "e1-行内粗体+列表+表格导出",
+   "group": "E",
+   "xml_bold_run": false,
+   "xml_bold_wraps_target": false,
+   "pdf_bold_text_present": true,
+   "pdf_list_items": true,
+   "pdf_table_cells": true,
+   "pass_": true,
+   "note": "粗体 run 在 XML 层：False/False；PDF 文本面全保真"
+  },
+  {
+   "name": "e2-默认导出字号/边距（已知问题重核）",
+   "group": "E",
+   "margin_top_default": "1985",
+   "docdefaults_has_sz": false,
+   "pdf_body_font_pt": 10.0,
+   "known_issue_10pt_still": true,
+   "pdf_left_margin_pt": 85.2,
+   "pass_": true,
+   "note": "已知问题#3/#4 状态：字号 10.0pt、左边距 85.2pt（引擎默认态——G2 已供设置 API，web 导出链消费=后续项）"
+  },
+  {
+   "name": "f1-撤销栈深度压力",
+   "group": "F",
+   "md_changed_by_undo": false,
+   "undo_presses": 60,
+   "final_blocks": 1,
+   "pass_": false,
+   "note": "500 次注入后 1 块；60 次 Ctrl+Z 后内容变化=False"
+  },
+  {
+   "name": "f2-重放幂等",
+   "group": "F",
+   "same_reinject_stable": true,
+   "pass_": true
+  }
+ ]
+}

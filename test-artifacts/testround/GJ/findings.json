@@ -1,0 +1,96 @@
+{
+ "group": "GJ",
+ "cases": [
+  {
+   "name": "g1-主题三态+设置回环",
+   "group": "G",
+   "cycle": [
+    [
+     "dark",
+     true,
+     "dark",
+     "dark",
+     "dark"
+    ],
+    [
+     "light",
+     true,
+     "light",
+     "light",
+     "light"
+    ],
+    [
+     "system",
+     true,
+     "light",
+     "system",
+     "system"
+    ]
+   ],
+   "pass_": true,
+   "font_size_roundtrip": [
+    true,
+    18
+   ],
+   "out_of_range_rejected": true
+  },
+  {
+   "name": "g2-证据面板折叠",
+   "group": "G",
+   "before": 300,
+   "collapsed": 0,
+   "display_kept": "flex",
+   "restored": 300,
+   "pass_": true
+  },
+  {
+   "name": "h1-1MB文档注入TTI",
+   "group": "H",
+   "input_bytes": 780889,
+   "inject_ms": 220,
+   "blocks": 12000,
+   "count_ms": 4,
+   "to_md_ms": 73,
+   "md_len": 300889,
+   "pass_": false
+  },
+  {
+   "name": "h2-12k块导出耗时",
+   "group": "H",
+   "export_ms": 189.8,
+   "size": 2096743,
+   "pass_": true
+  },
+  {
+   "name": "i1-javascriptURL导出消毒",
+   "group": "I",
+   "js_in_doc": true,
+   "js_in_rels": false,
+   "normal_link_kept": false,
+   "pass_": false
+  },
+  {
+   "name": "i2-script标签导出",
+   "group": "I",
+   "script_in_text": false,
+   "text_present": true,
+   "pass_": true,
+   "note": "script 字面保留=False（docx 文本层无执行面）"
+  },
+  {
+   "name": "j1-导出确定性",
+   "group": "J",
+   "hashes": [
+    "7bd070f57f1641eb",
+    "7bd070f57f1641eb"
+   ],
+   "pass_": true
+  },
+  {
+   "name": "j2-导入导出回环",
+   "group": "J",
+   "roundtrip_recall": 1.0,
+   "pass_": true
+  }
+ ]
+}

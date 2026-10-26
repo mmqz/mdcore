@@ -1,0 +1,356 @@
+{
+ "group": "A",
+ "cases": [
+  {
+   "name": "nested-list-depth-1",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 4,
+   "fx_len": 3
+  },
+  {
+   "name": "nested-list-depth-3",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 18,
+   "fx_len": 17
+  },
+  {
+   "name": "nested-list-depth-5",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 40,
+   "fx_len": 39
+  },
+  {
+   "name": "nested-list-depth-8",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 88,
+   "fx_len": 87
+  },
+  {
+   "name": "nested-list-depth-9-clamp",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 108,
+   "fx_len": 107
+  },
+  {
+   "name": "nested-list-depth-12-out-of-domain",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 180,
+   "fx_len": 179
+  },
+  {
+   "name": "unclosed-fence",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 21,
+   "fx_len": 25
+  },
+  {
+   "name": "four-backtick-fence-with-three-inside",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 24,
+   "fx_len": 24
+  },
+  {
+   "name": "tilde-fence",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 25,
+   "fx_len": 24
+  },
+  {
+   "name": "fence-bold-not-parsed",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 37,
+   "fx_len": 36
+  },
+  {
+   "name": "setext-h1-eq",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 12,
+   "fx_len": 11
+  },
+  {
+   "name": "setext-h2-dash",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 15,
+   "fx_len": 14
+  },
+  {
+   "name": "indented-code-block",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 39,
+   "fx_len": 38
+  },
+  {
+   "name": "tab-indented-code",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 19,
+   "fx_len": 18
+  },
+  {
+   "name": "task-list",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 32,
+   "fx_len": 31
+  },
+  {
+   "name": "footnote-like",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 50,
+   "fx_len": 49
+  },
+  {
+   "name": "definition-list-like",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 18,
+   "fx_len": 17
+  },
+  {
+   "name": "html-block",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 32,
+   "fx_len": 31
+  },
+  {
+   "name": "inline-html",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 26,
+   "fx_len": 25
+  },
+  {
+   "name": "script-tag",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 26,
+   "fx_len": 25
+  },
+  {
+   "name": "link-title",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 30,
+   "fx_len": 29
+  },
+  {
+   "name": "autolink-mailto",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 15,
+   "fx_len": 14
+  },
+  {
+   "name": "javascript-url",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 29,
+   "fx_len": 28
+  },
+  {
+   "name": "hardbreak-two-spaces",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 20,
+   "fx_len": 19
+  },
+  {
+   "name": "hardbreak-backslash",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 19,
+   "fx_len": 18
+  },
+  {
+   "name": "intraword-underscore",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 12,
+   "fx_len": 11
+  },
+  {
+   "name": "intraword-asterisk",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 12,
+   "fx_len": 11
+  },
+  {
+   "name": "cjk-adjacent-bold",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 12,
+   "fx_len": 11
+  },
+  {
+   "name": "table-escaped-pipe",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 35,
+   "fx_len": 34
+  },
+  {
+   "name": "table-cell-newline",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 35,
+   "fx_len": 34
+  },
+  {
+   "name": "table-missing-separator",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 20,
+   "fx_len": 19
+  },
+  {
+   "name": "table-ragged-columns",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 40,
+   "fx_len": 39
+  },
+  {
+   "name": "table-cjk",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 32,
+   "fx_len": 31
+  },
+  {
+   "name": "single-line-100k",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 100001,
+   "fx_len": 100000
+  },
+  {
+   "name": "3000-paragraphs",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 28890,
+   "fx_len": 28889
+  },
+  {
+   "name": "empty-document",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 0,
+   "fx_len": 0
+  },
+  {
+   "name": "whitespace-only",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 11,
+   "fx_len": 0
+  },
+  {
+   "name": "heading-inline-marks",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 30,
+   "fx_len": 29
+  },
+  {
+   "name": "ordered-list-nonconsecutive",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [],
+   "input_len": 24,
+   "fx_len": 23
+  }
+ ]
+}

@@ -1,0 +1,107 @@
+{
+ "group": "CD",
+ "cases": [
+  {
+   "name": "c1-中文段落-LO",
+   "group": "C",
+   "recall": 1.0,
+   "md_len": 47,
+   "pass_": true
+  },
+  {
+   "name": "c2-表格-LO",
+   "group": "C",
+   "recall": 1.0,
+   "md_len": 59,
+   "pass_": true
+  },
+  {
+   "name": "c3-特殊字符-LO",
+   "group": "C",
+   "recall": 1.0,
+   "md_len": 35,
+   "pass_": true
+  },
+  {
+   "name": "c4-emoji-LO",
+   "group": "C",
+   "recall": 1.0,
+   "md_len": 19,
+   "pass_": true
+  },
+  {
+   "name": "c5-长段落-LO",
+   "group": "C",
+   "recall": 1.0,
+   "md_len": 1507,
+   "pass_": true
+  },
+  {
+   "name": "c6-xlsx-中文-LO",
+   "group": "C",
+   "recall": 1.0,
+   "md_len": 86,
+   "pass_": true
+  },
+  {
+   "name": "d1-伪zip-文本文件",
+   "group": "D",
+   "size": 460,
+   "got": {
+    "result": "object",
+    "ms": 0.20000000018626451
+   },
+   "wall_s": 0.0,
+   "page_alive": true,
+   "pass_": true
+  },
+  {
+   "name": "d2-空字节",
+   "group": "D",
+   "size": 1024,
+   "got": {
+    "result": "object",
+    "ms": 0.19999999972060323
+   },
+   "wall_s": 0.01,
+   "page_alive": true,
+   "pass_": true
+  },
+  {
+   "name": "d3-zip-但非ooxml",
+   "group": "D",
+   "size": 139,
+   "got": {
+    "result": "object",
+    "ms": 0.5
+   },
+   "wall_s": 0.0,
+   "page_alive": true,
+   "pass_": true
+  },
+  {
+   "name": "d4-巨文档-20000段",
+   "group": "D",
+   "size": 2590,
+   "got": {
+    "result": "object",
+    "ms": 19.800000000279397
+   },
+   "wall_s": 0.03,
+   "page_alive": true,
+   "pass_": true
+  },
+  {
+   "name": "d5-xml实体炸弹-billion-laughs",
+   "group": "D",
+   "size": 1091,
+   "got": {
+    "result": "object",
+    "ms": 0.900000000372529
+   },
+   "wall_s": 0.01,
+   "page_alive": true,
+   "pass_": true
+  }
+ ]
+}

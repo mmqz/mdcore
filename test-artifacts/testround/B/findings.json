@@ -1,0 +1,319 @@
+{
+ "group": "B",
+ "cases": [
+  {
+   "name": "emoji-4byte",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 11,
+   "input_chars": 11,
+   "char_loss": true,
+   "fx_len": 10
+  },
+  {
+   "name": "emoji-zwj-family",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 15,
+   "input_chars": 15,
+   "char_loss": true,
+   "fx_len": 14
+  },
+  {
+   "name": "emoji-skin-tone",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 8,
+   "input_chars": 8,
+   "char_loss": true,
+   "fx_len": 7
+  },
+  {
+   "name": "bom-prefix",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 13,
+   "input_chars": 13,
+   "char_loss": true,
+   "fx_len": 12
+  },
+  {
+   "name": "bom-midline",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 15,
+   "input_chars": 15,
+   "char_loss": true,
+   "fx_len": 14
+  },
+  {
+   "name": "combining-diacritics",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 16,
+   "input_chars": 16,
+   "char_loss": true,
+   "fx_len": 15
+  },
+  {
+   "name": "hangul-jamo",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 18,
+   "input_chars": 18,
+   "char_loss": true,
+   "fx_len": 17
+  },
+  {
+   "name": "zero-width-joiner-only",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 4,
+   "input_chars": 4,
+   "char_loss": true,
+   "fx_len": 3
+  },
+  {
+   "name": "zero-width-space",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 4,
+   "input_chars": 4,
+   "char_loss": true,
+   "fx_len": 3
+  },
+  {
+   "name": "rtl-arabic",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 14,
+   "input_chars": 14,
+   "char_loss": true,
+   "fx_len": 13
+  },
+  {
+   "name": "rtl-hebrew",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 10,
+   "input_chars": 10,
+   "char_loss": true,
+   "fx_len": 9
+  },
+  {
+   "name": "bidi-mixed",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 18,
+   "input_chars": 18,
+   "char_loss": true,
+   "fx_len": 17
+  },
+  {
+   "name": "bidi-override-chars",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 14,
+   "input_chars": 14,
+   "char_loss": true,
+   "fx_len": 13
+  },
+  {
+   "name": "cjk-ext-b",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 13,
+   "input_chars": 13,
+   "char_loss": true,
+   "fx_len": 12
+  },
+  {
+   "name": "cjk-compat",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 14,
+   "input_chars": 14,
+   "char_loss": true,
+   "fx_len": 13
+  },
+  {
+   "name": "fullwidth-mixed",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 7,
+   "input_chars": 7,
+   "char_loss": true,
+   "fx_len": 6
+  },
+  {
+   "name": "crlf-line-endings",
+   "crash": false,
+   "mirror": false,
+   "idempotent": true,
+   "notes": [
+    "镜像不一致",
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 20,
+   "input_chars": 20,
+   "char_loss": true,
+   "fx_len": 19
+  },
+  {
+   "name": "cr-only",
+   "crash": false,
+   "mirror": false,
+   "idempotent": true,
+   "notes": [
+    "镜像不一致",
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 18,
+   "input_chars": 18,
+   "char_loss": true,
+   "fx_len": 17
+  },
+  {
+   "name": "ls-ps-separators",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 29,
+   "input_chars": 29,
+   "char_loss": true,
+   "fx_len": 28
+  },
+  {
+   "name": "nbsp",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 17,
+   "input_chars": 17,
+   "char_loss": true,
+   "fx_len": 16
+  },
+  {
+   "name": "mongolian-vowel-sep",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 4,
+   "input_chars": 4,
+   "char_loss": true,
+   "fx_len": 3
+  },
+  {
+   "name": "long-emoji-line",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 5001,
+   "input_chars": 5001,
+   "char_loss": true,
+   "fx_len": 5000
+  },
+  {
+   "name": "mixed-cjk-emoji-deep",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 3}"
+   ],
+   "input_len": 60,
+   "input_chars": 60,
+   "char_loss": true,
+   "fx_len": 57
+  },
+  {
+   "name": "nfc-vs-nfd",
+   "crash": false,
+   "mirror": true,
+   "idempotent": true,
+   "notes": [
+    "字符丢失: {'\\n': 1}"
+   ],
+   "input_len": 17,
+   "input_chars": 17,
+   "char_loss": true,
+   "fx_len": 16
+  }
+ ]
+}
