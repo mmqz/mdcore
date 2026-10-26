@@ -145,6 +145,7 @@ def main() -> int:
             page.wait_for_function("window.__lastDocxExport && window.__lastDocxExport.ok === true",
                                    timeout=15000)
             r = page.evaluate("window.__exportDocx()")
+            r_plain_keep = {"ok": r.get("ok"), "bytes": as_bytes(r["bytes"])}  # TR-4 检查4对照：默认态字节基线
             ok_zip = False
             part_names = []
             try:
@@ -287,6 +288,98 @@ def main() -> int:
                   and "imported:" in reimport_status,
                   json.dumps({"reimport": {k: reimport.get(k) for k in ("ok", "code")},
                               "md": md_roundtrip[:160], "status": reimport_status}))
+
+            # ---- TR-4（issue #10）：导出格式选项——G2 格式面 web 消费 ----
+            # 1) UI + 测试桥在场，默认态 = 引擎基态（options JSON = "{}"）
+            tr4_ui = page.evaluate("""() => ({
+                optBtn: !!document.getElementById('docx-export-options-btn'),
+                panel: !!document.getElementById('docx-export-options'),
+                presetSel: !!document.getElementById('deo-preset'),
+                getFn: typeof window.__getDocxExportOptions,
+                setFn: typeof window.__setDocxExportOptions,
+                styledFace: typeof (window.__core || {}).export_docx_styled,
+                cur: window.__getDocxExportOptions ? window.__getDocxExportOptions() : null,
+            })""")
+            check("tr4_options_ui_and_bridge_present",
+                  tr4_ui["optBtn"] and tr4_ui["panel"] and tr4_ui["presetSel"]
+                  and tr4_ui["getFn"] == "function" and tr4_ui["setFn"] == "function"
+                  and tr4_ui["styledFace"] == "function"
+                  and tr4_ui["cur"] and tr4_ui["cur"]["preset"] == "default"
+                  and tr4_ui["cur"]["json"] == "{}",
+                  json.dumps(tr4_ui))
+
+            # 2) 公文 A4 预设：排版 + 几何全量发射（styles.xml docDefaults +
+            #    document.xml sectPr 双部件断言——Rust 侧 E1 的 web 镜像）
+            set_ok = page.evaluate("window.__setDocxExportOptions('official-a4')")
+            r_preset = page.evaluate("window.__exportDocx()")
+            st_preset = ""
+            doc_preset = ""
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(as_bytes(r_preset["bytes"])))
+                st_preset = zip_part(zf, "word/styles.xml")
+                doc_preset = zip_part(zf, "word/document.xml")
+            except Exception as e:  # noqa: BLE001
+                set_ok = f"zip error: {e}"
+            check("tr4_official_a4_preset_emission",
+                  set_ok is True
+                  and 'w:val="28"' in st_preset and "宋体" in st_preset
+                  and 'w:line="360"' in st_preset
+                  and 'w:left="1800"' in doc_preset and 'w:right="1800"' in doc_preset,
+                  json.dumps({"setOk": set_ok, "sz28": 'w:val="28"' in st_preset,
+                              "songti": "宋体" in st_preset, "line360": 'w:line="360"' in st_preset,
+                              "m1800": 'w:left="1800"' in doc_preset}))
+
+            # 3) 自定义三选值：21 半磅 + 单倍 240 + 2cm 1134 边距
+            page.evaluate("window.__setDocxExportOptions('custom', '21', '240', '1134')")
+            r_custom = page.evaluate("window.__exportDocx()")
+            st_custom = ""
+            doc_custom = ""
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(as_bytes(r_custom["bytes"])))
+                st_custom = zip_part(zf, "word/styles.xml")
+                doc_custom = zip_part(zf, "word/document.xml")
+            except Exception:  # noqa: BLE001
+                pass
+            check("tr4_custom_values_emission",
+                  'w:val="21"' in st_custom and 'w:line="240"' in st_custom
+                  and 'w:left="1134"' in doc_custom,
+                  json.dumps({"sz21": 'w:val="21"' in st_custom,
+                              "line240": 'w:line="240"' in st_custom,
+                              "m1134": 'w:left="1134"' in doc_custom}))
+
+            # 4) 回默认态：语义等价（zip 容器 DOS 时间戳随导出时刻漂移
+            #    [2 秒粒度]——字节级断言不可用；document.xml/styles.xml
+            #    逐部件内容相等 = 映射面等价，且与预设产物部件可区分）。
+            #    复位文档 = 基线保存时的 EXPORT_MD（全环检查已改注入内容）。
+            page.evaluate("(s) => window.__inject(s)", EXPORT_MD)
+            page.wait_for_function("window.__blockCount() === 3", timeout=15000)
+            page.evaluate("window.__setDocxExportOptions('default')")
+            r_default = page.evaluate("window.__exportDocx()")
+            try:
+                zf_d = zipfile.ZipFile(io.BytesIO(as_bytes(r_default["bytes"])))
+                zf_k = zipfile.ZipFile(io.BytesIO(r_plain_keep["bytes"]))
+                doc_eq = (zip_part(zf_d, "word/document.xml") == zip_part(zf_k, "word/document.xml")
+                          and zip_part(zf_d, "word/styles.xml") == zip_part(zf_k, "word/styles.xml"))
+                doc_differs_preset = (zip_part(zf_d, "word/styles.xml")
+                                      != zip_part(zipfile.ZipFile(io.BytesIO(as_bytes(r_preset["bytes"]))),
+                                                  "word/styles.xml"))
+            except Exception as e:  # noqa: BLE001
+                doc_eq = f"zip error: {e}"
+                doc_differs_preset = False
+            check("tr4_default_restores_plain_parts",
+                  r_default.get("ok") is True and doc_eq is True and doc_differs_preset,
+                  json.dumps({"partsEqualPlain": doc_eq,
+                              "differsPreset": doc_differs_preset,
+                              "defaultBytes": len(as_bytes(r_default["bytes"])),
+                              "presetBytes": len(as_bytes(r_preset["bytes"]))}))
+
+            # 5) 非法预设名拒绝：状态零触碰
+            bad_set = page.evaluate("window.__setDocxExportOptions('nonexistent')")
+            cur_after_bad = page.evaluate("window.__getDocxExportOptions()")
+            check("tr4_invalid_preset_rejected",
+                  bad_set is False and cur_after_bad["preset"] == "default"
+                  and cur_after_bad["json"] == "{}",
+                  json.dumps({"badSet": bad_set, "cur": cur_after_bad}))
 
             # ---- 契约面 + 零页错（启动/导出/导入全程无 JS 异常逃逸）----
             final = page.evaluate("""() => ({

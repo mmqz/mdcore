@@ -1233,6 +1233,10 @@ declare global {
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
+    /** TR-4（issue #10）：读当前导出格式选项（预设名 + 组装后的 options JSON）。 */
+    __getDocxExportOptions: () => { preset: string; json: string };
+    /** TR-4（issue #10）：设导出格式选项（预设名或 'custom' + 三选值；非法预设名拒 false 零触碰）。 */
+    __setDocxExportOptions: (preset: string, size?: string, spacing?: string, margin?: string) => boolean;
     /** t19：当前编辑器文档 → XLSX 字节导出（块模型→WorkbookWriter 栅格映射 + 降级面；wasm 面/错误码 = xlsx_export.rs 模块文档单一真源）。 */
     __exportXlsx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t19：最近一次 XLSX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
@@ -1746,6 +1750,100 @@ setupXlsxImport();
 // ---------------------------------------------------------------------------
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
+// ---------------------------------------------------------------------------
+// issue #10（TR-4）：导出格式选项（G2 格式面消费——export_docx_styled）。
+//
+// 状态模型：预设名 + 自定义三选值（字号半磅/行距 line/边距 twips）。
+// JSON 组装镜像 office-io 公开 API（snake_case 1:1）：
+//   typography: { ascii_font, east_asia_font, complex_script_font,
+//                 size_half_points, line_spacing: { line, line_rule, before, after } }
+//   page_geometry: { width, height, margin_top/right/bottom/left/header/footer, gutter }
+// 预设 = 排版 + 几何全量；自定义 = 按需部分面（其余引擎默认）。
+// 字体槽预设固定（公文场景宋体/Times New Roman）——自定义面保持最小
+// （字号/行距/边距三项）；扩展槽位留待 UI 迭代。
+// ---------------------------------------------------------------------------
+
+/** 预设表（issue #10 场景锚定：公文 A4 = 四号 28 半磅 + 1.5 倍 360 auto
+ * + 1800 twips 边距 = G2 LO 实测 90.1pt/14pt 口径）。 */
+const DOCX_EXPORT_PRESETS: Record<string, string> = {
+  'default': '{}',
+  'official-a4': JSON.stringify({
+    typography: {
+      ascii_font: 'Times New Roman',
+      east_asia_font: '宋体',
+      complex_script_font: 'Times New Roman',
+      size_half_points: 28,
+      line_spacing: { line: 360, line_rule: 'auto' },
+    },
+    page_geometry: {
+      width: 11906, height: 16838,
+      margin_top: 1800, margin_right: 1800, margin_bottom: 1800, margin_left: 1800,
+      margin_header: 851, margin_footer: 992, gutter: 0,
+    },
+  }),
+  'compact': JSON.stringify({
+    typography: {
+      ascii_font: 'Calibri',
+      east_asia_font: '等线',
+      complex_script_font: 'Calibri',
+      size_half_points: 21,
+      line_spacing: { line: 240, line_rule: 'auto' },
+    },
+    page_geometry: {
+      width: 11906, height: 16838,
+      margin_top: 1134, margin_right: 1134, margin_bottom: 1134, margin_left: 1134,
+      margin_header: 567, margin_footer: 567, gutter: 0,
+    },
+  }),
+  'large-print': JSON.stringify({
+    typography: {
+      ascii_font: 'Arial',
+      east_asia_font: '黑体',
+      complex_script_font: 'Arial',
+      size_half_points: 32,
+      line_spacing: { line: 480, line_rule: 'auto' },
+    },
+    page_geometry: {
+      width: 11906, height: 16838,
+      margin_top: 1440, margin_right: 1440, margin_bottom: 1440, margin_left: 1440,
+      margin_header: 720, margin_footer: 720, gutter: 0,
+    },
+  }),
+};
+
+/** 当前选项状态（UI 单一真源；default = 引擎基态）。 */
+const docxExportOptions: { preset: string; size: string; spacing: string; margin: string } = {
+  preset: 'default', size: '28', spacing: '360', margin: '1800',
+};
+
+/** 状态 → options JSON（导出调用点单点组装；测试桥同源）。 */
+function buildDocxExportOptionsJson(): string {
+  if (docxExportOptions.preset !== 'custom') {
+    return DOCX_EXPORT_PRESETS[docxExportOptions.preset] ?? '{}';
+  }
+  // 自定义：三选值各自成面（其余缺省 = 引擎默认——显式全量状态语义
+  // 在子对象内维持：出现的子对象必带全字段）。
+  const typo: {
+    ascii_font: string; east_asia_font: string; complex_script_font: string;
+    size_half_points: number; line_spacing: { line: number; line_rule: string };
+  } = {
+    ascii_font: 'Times New Roman',
+    east_asia_font: '宋体',
+    complex_script_font: 'Times New Roman',
+    size_half_points: Number(docxExportOptions.size),
+    line_spacing: { line: Number(docxExportOptions.spacing), line_rule: 'auto' },
+  };
+  const m = Number(docxExportOptions.margin);
+  return JSON.stringify({
+    typography: typo,
+    page_geometry: {
+      width: 11906, height: 16838,
+      margin_top: m, margin_right: m, margin_bottom: m, margin_left: m,
+      margin_header: 851, margin_footer: 992, gutter: 0,
+    },
+  });
+}
+
 /** 降级块计数（t20 后仅 code_block——lang/fence 结构仍丢弃；blockquote/
  * list_item/thematic_break 已全表达不计数；详见 docx_export.rs 模块文档）。 */
 function degradedBlockCount(): number {
@@ -1787,7 +1885,17 @@ function setupDocxExport(): void {
       return { ok: false, code, message: 'editor boot incomplete' };
     }
     try {
-      const bytes = core.export_docx(); // Uint8Array（wasm-bindgen Vec<u8> 面）
+      // TR-4：优先走 styled 面（选项 = UI 状态组装；空对象 ≡ 旧
+      // export_docx 字节级等价——Rust 侧 E2 钉定）。旧 pkg 构建
+      //（export_docx_styled 未发射）运行时鸭子探测回退——与
+      // pdf_view.ts 桥探测同惯例（issue #5 修复面）。
+      const coreAny = core as unknown as {
+        export_docx(): Uint8Array;
+        export_docx_styled?: (json: string) => Uint8Array;
+      };
+      const bytes = typeof coreAny.export_docx_styled === 'function'
+        ? coreAny.export_docx_styled(buildDocxExportOptionsJson())
+        : coreAny.export_docx(); // Uint8Array（wasm-bindgen Vec<u8> 面）
       downloadDocx(bytes);
       const kb = bytes.length >= 1024 ? `${(bytes.length / 1024).toFixed(1)} KB` : `${bytes.length} B`;
       const blocks = core.blocks_count();
@@ -1819,6 +1927,72 @@ function setupDocxExport(): void {
     window.__exportDocx();
   });
   window.__lastDocxExport = null;
+
+  // ---- TR-4 导出选项 UI（预设/自定义面板 + 测试桥）----
+  const panel = document.getElementById('docx-export-options');
+  const optBtn = document.getElementById('docx-export-options-btn') as HTMLButtonElement | null;
+  const presetSel = document.getElementById('deo-preset') as HTMLSelectElement | null;
+  const sizeSel = document.getElementById('deo-size') as HTMLSelectElement | null;
+  const spacingSel = document.getElementById('deo-spacing') as HTMLSelectElement | null;
+  const marginSel = document.getElementById('deo-margin') as HTMLSelectElement | null;
+  const hintEl = document.getElementById('deo-hint');
+  const setCustomEnabled = (on: boolean): void => {
+    if (sizeSel) sizeSel.disabled = !on;
+    if (spacingSel) spacingSel.disabled = !on;
+    if (marginSel) marginSel.disabled = !on;
+  };
+  const refreshHint = (): void => {
+    if (!hintEl) return;
+    if (docxExportOptions.preset === 'default') {
+      hintEl.textContent = '预设 = 排版 + 页面几何全量应用；自定义可单选字号/行距/边距（其余引擎默认）。';
+    } else if (docxExportOptions.preset === 'custom') {
+      hintEl.textContent = `自定义：${docxExportOptions.size} 半磅字号 · line=${docxExportOptions.spacing} · 边距 ${docxExportOptions.margin} twips`;
+    } else {
+      hintEl.textContent = `已应用预设「${docxExportOptions.preset}」——下次 export .docx 生效。`;
+    }
+  };
+  optBtn?.addEventListener('click', () => {
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    optBtn.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+  document.addEventListener('click', (ev: MouseEvent) => {
+    // 点击面板外关闭（不含触发按钮自身——事件冒泡顺序）。
+    if (panel?.hidden) return;
+    const t = ev.target as Node | null;
+    if (panel && optBtn && t !== optBtn && !panel.contains(t) && !optBtn.contains(t)) {
+      panel.hidden = true;
+      optBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+  presetSel?.addEventListener('change', () => {
+    docxExportOptions.preset = presetSel.value;
+    setCustomEnabled(presetSel.value === 'custom');
+    refreshHint();
+  });
+  sizeSel?.addEventListener('change', () => { docxExportOptions.size = sizeSel.value; refreshHint(); });
+  spacingSel?.addEventListener('change', () => { docxExportOptions.spacing = spacingSel.value; refreshHint(); });
+  marginSel?.addEventListener('change', () => { docxExportOptions.margin = marginSel.value; refreshHint(); });
+  refreshHint();
+
+  // 测试桥（e2e 面：读状态/设预设或自定义——与 UI 同一状态真源）。
+  window.__getDocxExportOptions = (): { preset: string; json: string } => ({
+    preset: docxExportOptions.preset,
+    json: buildDocxExportOptionsJson(),
+  });
+  window.__setDocxExportOptions = (preset: string, size?: string, spacing?: string, margin?: string): boolean => {
+    if (preset !== 'custom' && !(preset in DOCX_EXPORT_PRESETS)) return false;
+    docxExportOptions.preset = preset;
+    if (size !== undefined) docxExportOptions.size = size;
+    if (spacing !== undefined) docxExportOptions.spacing = spacing;
+    if (margin !== undefined) docxExportOptions.margin = margin;
+    if (presetSel) {
+      presetSel.value = preset;
+      setCustomEnabled(preset === 'custom');
+    }
+    refreshHint();
+    return true;
+  };
 }
 
 setupDocxExport();
