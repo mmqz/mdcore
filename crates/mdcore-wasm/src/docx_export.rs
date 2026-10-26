@@ -77,7 +77,10 @@
 use crate::WasmCore;
 #[cfg(test)]
 use mdc_office_io::docx::read_docx_from_bytes;
-use mdc_office_io::docx::{DocxError, DocxWriter, ListKind, RunSpec};
+use mdc_office_io::docx::{
+    DefaultTypography, DocxError, DocxWriter, LineRuleSpec, LineSpacingSpec, ListKind,
+    PageGeometry, RunSpec,
+};
 use mdcore::tree::{Attrs, BlockKind, BlockTree, MarkSpan, NodeId};
 use wasm_bindgen::prelude::*;
 
@@ -474,6 +477,239 @@ pub fn export_docx_core(tree: &BlockTree) -> Result<Vec<u8>, ExportError> {
 }
 
 // ---------------------------------------------------------------------------
+// issue #10（TR-4）：G2 格式面消费——export_docx_styled 加性导出面。
+//
+// 现状勘误（立项依据）：G2（office-g `3f16779`）已供
+// [`DocxWriter::default_typography`]（字体三槽 + 半磅字号 + 行距）与
+// [`DocxWriter::page_geometry`]（twips 全八字段）+ V9 save 漏斗域校验，
+// 但本模块 [`WasmCore::export_docx`] 的 BlockTree→DocxWriter 映射未
+// 消费——web 默认导出恒为引擎默认态（实测 10.0pt / 85.2pt 边距）。
+//
+// 设计（加性面，零破坏既有契约）：
+// - 新方法 [`WasmCore::export_docx_styled`]（options JSON 参数）；
+//   既有 [`WasmCore::export_docx`] 字节级零变化（空 options = 引擎
+//   默认态等价，测试钉定）。
+// - options 字段**镜像 office-io 公开 API**（snake_case 1:1）：
+//   `{"typography": {...}, "page_geometry": {...}}`——两者皆可选；
+//   显式全量状态语义（子字段必填，不做局部补丁——避免本层发明
+//   缺省值；调用方 UI 面负责呈现完整期望状态）。
+// - 分层校验：**形状**（JSON 合法/对象形/未知顶层键/类型/缺字段/
+//   line_rule 枚举）= 本层 `docx_options` 立拒；**值域语义**（twips
+//   1-40000、边距非负、字号 1-32767、行距正/段距 ≤31680）= 经
+//   writer 落 office-io V9 save 漏斗粘性拒绝（`docx_invalid_input`）
+//   ——本层零自立数字，单一真源维持。
+// ---------------------------------------------------------------------------
+
+/// `docx_options`：options JSON 形状错误（与 V9 值域拒绝可区分）。
+fn options_err(path: &str, detail: String) -> ExportError {
+    ExportError {
+        code: "docx_options",
+        message: format!("export options `{path}`: {detail}"),
+    }
+}
+
+/// 必填字符串字段提取（路径化错误——调用方可定位到字段）。
+fn req_str(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    field: &str,
+) -> Result<String, ExportError> {
+    match obj.get(field) {
+        Some(serde_json::Value::String(s)) => Ok(s.clone()),
+        Some(other) => Err(options_err(
+            path,
+            format!("`{field}` must be a string, got {other}"),
+        )),
+        None => Err(options_err(
+            path,
+            format!("missing required field `{field}`"),
+        )),
+    }
+}
+
+/// 必填整数字段提取 + Rust 表示域 cast 检查（语义值域 = V9 单一真源，
+/// 本处只保证 cast 不截断：`lo..=hi` 传目标类型的全域）。
+fn req_int(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    field: &str,
+    lo: i64,
+    hi: i64,
+) -> Result<i64, ExportError> {
+    match obj.get(field) {
+        Some(v) => {
+            let n = v.as_i64().ok_or_else(|| {
+                options_err(path, format!("`{field}` must be an integer, got {v}"))
+            })?;
+            if n < lo || n > hi {
+                return Err(options_err(
+                    path,
+                    format!("`{field}` = {n} outside representable {lo}..={hi}"),
+                ));
+            }
+            Ok(n)
+        }
+        None => Err(options_err(
+            path,
+            format!("missing required field `{field}`"),
+        )),
+    }
+}
+
+/// 可选整数字段（`None`/`null` → `None`；有值走 [`req_int`] 同款域检）。
+fn opt_int(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    field: &str,
+    lo: i64,
+    hi: i64,
+) -> Result<Option<i64>, ExportError> {
+    match obj.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(_) => req_int(obj, path, field, lo, hi).map(Some),
+    }
+}
+
+/// 解析后的导出格式选项（已构造为 office-io 公开类型——值域校验
+/// 延迟到 save 漏斗 V9）。
+pub struct StyleOptions {
+    pub typography: Option<DefaultTypography>,
+    pub page_geometry: Option<PageGeometry>,
+}
+
+/// options JSON → [`StyleOptions`]（形状校验层；JsValue-free 原生可测）。
+pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| options_err("$", format!("invalid JSON ({e})")))?;
+    let obj = v
+        .as_object()
+        .ok_or_else(|| options_err("$", "must be an object".into()))?;
+    for key in obj.keys() {
+        if key != "typography" && key != "page_geometry" {
+            return Err(options_err(
+                "$",
+                format!("unknown field `{key}` (allowed: typography, page_geometry)"),
+            ));
+        }
+    }
+
+    let typography = match obj.get("typography") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(t) => {
+            let t = t
+                .as_object()
+                .ok_or_else(|| options_err("typography", "must be an object".into()))?;
+            let ascii_font = req_str(t, "typography", "ascii_font")?;
+            let east_asia_font = req_str(t, "typography", "east_asia_font")?;
+            let complex_script_font = req_str(t, "typography", "complex_script_font")?;
+            let size_half_points =
+                req_int(t, "typography", "size_half_points", 0, u16::MAX as i64)? as u16;
+            let line_spacing = match t.get("line_spacing") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(ls) => {
+                    let p = "typography.line_spacing";
+                    let ls = ls
+                        .as_object()
+                        .ok_or_else(|| options_err(p, "must be an object".into()))?;
+                    let line =
+                        opt_int(ls, p, "line", i32::MIN as i64, i32::MAX as i64)?.map(|n| n as i32);
+                    let line_rule = match ls.get("line_rule") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(serde_json::Value::String(s)) => match s.as_str() {
+                            // 镜像 w:spacing w:lineRule 属性值（office-io
+                            // LineRuleSpec 文档口径）。
+                            "auto" => Some(LineRuleSpec::Auto),
+                            "atLeast" => Some(LineRuleSpec::AtLeast),
+                            "exact" => Some(LineRuleSpec::Exact),
+                            other => {
+                                return Err(options_err(
+                                    p,
+                                    format!(
+                                        "`line_rule` must be auto|atLeast|exact, got {other:?}"
+                                    ),
+                                ))
+                            }
+                        },
+                        Some(other) => {
+                            return Err(options_err(
+                                p,
+                                format!("`line_rule` must be a string, got {other}"),
+                            ))
+                        }
+                    };
+                    let before = opt_int(ls, p, "before", 0, u32::MAX as i64)?.map(|n| n as u32);
+                    let after = opt_int(ls, p, "after", 0, u32::MAX as i64)?.map(|n| n as u32);
+                    Some(LineSpacingSpec {
+                        line,
+                        line_rule,
+                        before,
+                        after,
+                    })
+                }
+            };
+            Some(DefaultTypography {
+                ascii_font,
+                east_asia_font,
+                complex_script_font,
+                size_half_points,
+                line_spacing,
+            })
+        }
+    };
+
+    let page_geometry = match obj.get("page_geometry") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(g) => {
+            let p = "page_geometry";
+            let g = g
+                .as_object()
+                .ok_or_else(|| options_err(p, "must be an object".into()))?;
+            Some(PageGeometry {
+                width: req_int(g, p, "width", 0, u32::MAX as i64)? as u32,
+                height: req_int(g, p, "height", 0, u32::MAX as i64)? as u32,
+                margin_top: req_int(g, p, "margin_top", i32::MIN as i64, i32::MAX as i64)? as i32,
+                margin_right: req_int(g, p, "margin_right", i32::MIN as i64, i32::MAX as i64)?
+                    as i32,
+                margin_bottom: req_int(g, p, "margin_bottom", i32::MIN as i64, i32::MAX as i64)?
+                    as i32,
+                margin_left: req_int(g, p, "margin_left", i32::MIN as i64, i32::MAX as i64)? as i32,
+                margin_header: req_int(g, p, "margin_header", i32::MIN as i64, i32::MAX as i64)?
+                    as i32,
+                margin_footer: req_int(g, p, "margin_footer", i32::MIN as i64, i32::MAX as i64)?
+                    as i32,
+                gutter: req_int(g, p, "gutter", i32::MIN as i64, i32::MAX as i64)? as i32,
+            })
+        }
+    };
+
+    Ok(StyleOptions {
+        typography,
+        page_geometry,
+    })
+}
+
+/// 编辑器核心块树 + 格式选项 → DOCX 字节。选项消费 = 写器两设置面
+/// （几何/排版）；值域违规经 save 漏斗 V9 拒（错误码
+/// `docx_invalid_input`）——形状违规 [`parse_style_options`] 已拦。
+pub fn export_docx_styled_core(
+    tree: &BlockTree,
+    options_json: &str,
+) -> Result<Vec<u8>, ExportError> {
+    let opts = parse_style_options(options_json)?;
+    let mut w = DocxWriter::new();
+    if let Some(g) = opts.page_geometry {
+        w.page_geometry(g);
+    }
+    if let Some(t) = opts.typography {
+        w.default_typography(t);
+    }
+    for &child in tree.top_level() {
+        emit_block(tree, child, &mut w, 0)?;
+    }
+    w.save_to_vec().map_err(|e| map_error(&e))
+}
+
+// ---------------------------------------------------------------------------
 // wasm 壳（WasmCore 增量方法——既有类面零变化，t16/t17 自由函数模式的
 // 差异 = 导出读 self 状态，故为方法；本 crate 内 impl 分文件合法）
 // ---------------------------------------------------------------------------
@@ -486,6 +722,21 @@ impl WasmCore {
     #[wasm_bindgen]
     pub fn export_docx(&self) -> Result<Vec<u8>, JsValue> {
         export_docx_core(&self.inner.tree).map_err(|e| {
+            JsValue::from_str(
+                &serde_json::json!({ "code": e.code, "message": e.message }).to_string(),
+            )
+        })
+    }
+
+    /// 当前文档 + 格式选项 JSON → DOCX 字节（issue #10 / TR-4：G2 格式
+    /// 面消费——排版[字体三槽/半磅字号/行距]与页面几何[twips 全八字段]）。
+    /// 失败 = 抛 JSON 串
+    /// `"code": "docx_options"|"docx_invalid_input"|"docx_limit"|"docx_build"`。
+    /// 选项字段镜像 office-io 公开 API（snake_case 1:1）；两者皆可选、
+    /// 子字段必填（显式全量状态语义）。空对象 `{}` ≡ [`Self::export_docx`]。
+    #[wasm_bindgen]
+    pub fn export_docx_styled(&self, options_json: &str) -> Result<Vec<u8>, JsValue> {
+        export_docx_styled_core(&self.inner.tree, options_json).map_err(|e| {
             JsValue::from_str(
                 &serde_json::json!({ "code": e.code, "message": e.message }).to_string(),
             )
@@ -1118,5 +1369,195 @@ mod tests {
             "See [docs](https://x.example/) and [top](#sec1)."
         );
         assert_eq!(ps[0].runs[0].hyperlink, None, "纯文本 run——无目标");
+    }
+
+    // -----------------------------------------------------------------
+    // issue #10（TR-4）：export_docx_styled——G2 格式面消费
+    // -----------------------------------------------------------------
+
+    /// TR-4 选项 JSON（issue #10 场景：14pt 四号 + 1800 twips 边距——
+    /// G2 LO 实测口径：90.1pt = 1800 twips、14pt = 四号）。
+    fn tr4_full_options() -> String {
+        r#"{
+            "typography": {
+                "ascii_font": "Times New Roman",
+                "east_asia_font": "宋体",
+                "complex_script_font": "Times New Roman",
+                "size_half_points": 28,
+                "line_spacing": {
+                    "line": 360,
+                    "line_rule": "auto",
+                    "before": 120,
+                    "after": 120
+                }
+            },
+            "page_geometry": {
+                "width": 11906,
+                "height": 16838,
+                "margin_top": 1800,
+                "margin_right": 1800,
+                "margin_bottom": 1800,
+                "margin_left": 1800,
+                "margin_header": 851,
+                "margin_footer": 992,
+                "gutter": 0
+            }
+        }"#
+        .to_string()
+    }
+
+    /// TR-4-E1：全选项发射——styles.xml docDefaults（rFonts 三槽/字号/
+    /// 行距）+ document.xml sectPr（pgSz/pgMar）双部件 XML 断言。
+    #[test]
+    fn tr4_e1_styled_emission_full_options() {
+        let tree = markdown_to_tree("# 标题\n\n正文段落。\n");
+        let bytes = export_docx_styled_core(&tree, &tr4_full_options()).expect("styled export");
+        // styles.xml：docDefaults 排版三面
+        let st = zip_stored_part(&bytes, "word/styles.xml");
+        assert!(st.contains("Times New Roman"), "ascii 字体在场");
+        assert!(st.contains("宋体"), "eastAsia 字体在场");
+        assert!(
+            st.contains(r#"w:val="28""#),
+            "字号 28 半磅（14pt 四号）在场"
+        );
+        assert!(
+            st.contains(r#"w:line="360""#),
+            "行距 360（1.5 倍 auto）在场"
+        );
+        assert!(st.contains("auto"), "lineRule=auto 在场");
+        assert!(
+            st.contains(r#"w:before="120""#) && st.contains(r#"w:after="120""#),
+            "段前/段后 120 twips 在场"
+        );
+        // document.xml：sectPr 几何
+        let doc = zip_stored_part(&bytes, "word/document.xml");
+        assert!(
+            doc.contains(r#"<w:pgSz w:w="11906" w:h="16838""#),
+            "pgSz A4 在场"
+        );
+        assert!(
+            doc.contains(r#"w:left="1800""#) && doc.contains(r#"w:right="1800""#),
+            "pgMar 左右 1800 twips（= G2 LO 实测 90.1pt）在场"
+        );
+        // 读回全环（容器门 + 模型解析）
+        let back = read_docx_from_bytes(&bytes).expect("read back");
+        assert!(paras(&back.blocks).iter().any(|p| p.text() == "正文段落。"));
+    }
+
+    /// TR-4-E2：空选项 ≡ 既有导出（字节级零变化——既有契约保护）；
+    /// `null` 字段与缺省同义。
+    #[test]
+    fn tr4_e2_empty_options_byte_equivalence() {
+        let tree = markdown_to_tree("para one\n\npara two\n");
+        let plain = export_docx_core(&tree).expect("plain export");
+        let empty = export_docx_styled_core(&tree, "{}").expect("empty options");
+        assert_eq!(plain, empty, "空对象选项必须与无选项导出逐字节相等");
+        let nulls = export_docx_styled_core(&tree, r#"{"typography":null,"page_geometry":null}"#)
+            .expect("null options");
+        assert_eq!(plain, nulls, "null 字段与缺省同义");
+    }
+
+    /// TR-4-E3：形状错误面 `docx_options`（六面：坏 JSON/非对象/未知
+    /// 顶层键/缺必填字段/类型错/line_rule 枚举外值）。
+    #[test]
+    fn tr4_e3_shape_errors_docx_options() {
+        let tree = markdown_to_tree("x\n");
+        let cases: Vec<(&str, &str)> = vec![
+            ("bad json", "{not json"),
+            ("non object", "[1,2]"),
+            ("unknown key", r#"{"margins": 1}"#),
+            ("missing field", r#"{"typography": {"ascii_font": "A"}}"#),
+            (
+                "wrong type",
+                r#"{"typography": {"ascii_font": 5, "east_asia_font": "S", "complex_script_font": "C", "size_half_points": 21}}"#,
+            ),
+            (
+                "bad line_rule",
+                r#"{"typography": {"ascii_font": "A", "east_asia_font": "S", "complex_script_font": "C", "size_half_points": 21, "line_spacing": {"line": 240, "line_rule": "double"}}}"#,
+            ),
+        ];
+        for (name, json) in cases {
+            let e = export_docx_styled_core(&tree, json).expect_err("shape error must reject");
+            assert_eq!(e.code, "docx_options", "{name}: {e:?}");
+        }
+    }
+
+    /// TR-4-E4：V9 值域拒绝经 save 漏斗——`docx_invalid_input`（与
+    /// 形状面 `docx_options` 可区分；本层零自立数字的单一真源验证）。
+    #[test]
+    fn tr4_e4_v9_domain_reject_docx_invalid_input() {
+        let tree = markdown_to_tree("x\n");
+        // 几何零宽
+        let e = export_docx_styled_core(
+            &tree,
+            r#"{"page_geometry": {"width": 0, "height": 16838, "margin_top": 1800, "margin_right": 1800, "margin_bottom": 1800, "margin_left": 1800, "margin_header": 851, "margin_footer": 992, "gutter": 0}}"#,
+        )
+        .expect_err("zero width must reject");
+        assert_eq!(e.code, "docx_invalid_input");
+        assert!(e.message.contains("V9"), "V9 单一真源消息: {e:?}");
+        // 负边距
+        let e = export_docx_styled_core(
+            &tree,
+            r#"{"page_geometry": {"width": 11906, "height": 16838, "margin_top": -5, "margin_right": 1800, "margin_bottom": 1800, "margin_left": 1800, "margin_header": 851, "margin_footer": 992, "gutter": 0}}"#,
+        )
+        .expect_err("negative margin must reject");
+        assert_eq!(e.code, "docx_invalid_input");
+        // 字号零
+        let e = export_docx_styled_core(
+            &tree,
+            r#"{"typography": {"ascii_font": "A", "east_asia_font": "S", "complex_script_font": "C", "size_half_points": 0}}"#,
+        )
+        .expect_err("zero size must reject");
+        assert_eq!(e.code, "docx_invalid_input");
+        // 行距非正
+        let e = export_docx_styled_core(
+            &tree,
+            r#"{"typography": {"ascii_font": "A", "east_asia_font": "S", "complex_script_font": "C", "size_half_points": 21, "line_spacing": {"line": 0, "line_rule": "auto"}}}"#,
+        )
+        .expect_err("zero line must reject");
+        assert_eq!(e.code, "docx_invalid_input");
+    }
+
+    /// TR-4-E5：带样式导出的文本层往返零损（格式面不碰内容面）。
+    #[test]
+    fn tr4_e5_styled_roundtrip_text_preserved() {
+        let md = "# 标题一\n\n段落甲。\n\n- 列表项 1\n- 列表项 2\n";
+        let tree = markdown_to_tree(md);
+        let bytes = export_docx_styled_core(&tree, &tr4_full_options()).expect("export");
+        let back = read_docx_from_bytes(&bytes).expect("read back");
+        let ps = paras(&back.blocks);
+        let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
+        assert!(texts.contains(&"标题一".to_string()));
+        assert!(texts.contains(&"段落甲。".to_string()));
+        assert!(texts.contains(&"列表项 1".to_string()));
+        assert!(texts.contains(&"列表项 2".to_string()));
+    }
+
+    /// TR-4-E6：部分选项面——仅排版（几何缺省 = 引擎默认 sectPr）、
+    /// 仅几何（排版缺省 = 无 docDefaults 覆盖）各自独立生效。
+    #[test]
+    fn tr4_e6_partial_options_independent() {
+        let tree = markdown_to_tree("x\n");
+        // 仅排版
+        let bytes = export_docx_styled_core(
+            &tree,
+            r#"{"typography": {"ascii_font": "Fira Code", "east_asia_font": "楷体", "complex_script_font": "Fira Code", "size_half_points": 21}}"#,
+        )
+        .expect("typo only");
+        let st = zip_stored_part(&bytes, "word/styles.xml");
+        assert!(st.contains("Fira Code") && st.contains("楷体"));
+        assert!(st.contains(r#"w:val="21""#), "10.5pt = 21 半磅在场");
+        // 仅几何：默认 styles.xml 无自定义字号覆盖（docx-rs 引擎基态
+        // 不含 21——上一断言的值在本面不得复现）
+        let bytes2 = export_docx_styled_core(
+            &tree,
+            r#"{"page_geometry": {"width": 11906, "height": 16838, "margin_top": 1440, "margin_right": 1440, "margin_bottom": 1440, "margin_left": 1440, "margin_header": 851, "margin_footer": 992, "gutter": 0}}"#,
+        )
+        .expect("geom only");
+        let doc = zip_stored_part(&bytes2, "word/document.xml");
+        assert!(
+            doc.contains(r#"w:left="1440""#) && doc.contains(r#"w:right="1440""#),
+            "仅几何面：pgMar 生效"
+        );
     }
 }
