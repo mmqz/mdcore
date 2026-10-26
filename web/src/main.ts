@@ -1360,6 +1360,10 @@ declare global {
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
+    /** TR-UI 批 A-2：Ctrl+S 保存动作（mdc-save 事件 + dirty 清位；宿主桥路径 = __md() + save_document）。 */
+    __save: () => boolean;
+    /** TR-UI 批 A-2：最近一次保存结果（{ok, revision, bytes}）。 */
+    __lastSave: { ok: boolean; revision?: number; bytes?: number } | null;
     /** TR-UI 批 A：格式命令统一入口（UI 按钮/keymap/测试桥同源；未知命令拒 false）。 */
     __format: (kind: string) => boolean;
     /** TR-4（issue #10）：读当前导出格式选项（预设名 + 组装后的 options JSON）。 */
@@ -2172,6 +2176,78 @@ function setupFormatToolbar(): void {
 }
 
 setupFormatToolbar();
+
+// ---------------------------------------------------------------------------
+// TR-UI 批 A-2 — 状态栏（字数/词数/块数/光标行列/rev/保存态）+ Ctrl+S
+//
+// 更新模型：500ms 轮询（读 view.state.selection + core 快照——e2e 断言
+// 同源零竞态；CM6 facet 扩展方案被否决：构造期扩展表封装在 CM6View，
+// 轮询零侵入且断言友好）。保存态 = dirty 标志（docChanged 置位 /
+// Ctrl+S 清位）：web 独立态的「保存」= 派发 mdc-save 事件（宿主
+// CONTRACT 路径 = __md() + save_document；无宿主时提示文本自足）。
+// ---------------------------------------------------------------------------
+
+function setupStatusBar(): void {
+  const countsEl = document.getElementById('sb-counts');
+  const blocksEl = document.getElementById('sb-blocks');
+  const cursorEl = document.getElementById('sb-cursor');
+  const revEl = document.getElementById('sb-rev');
+  const saveEl = document.getElementById('sb-save');
+  let dirty = false;
+  let lastSeenRev = -1;
+
+  const refresh = (): void => {
+    const core = window.__core;
+    const view = window.__view as unknown as
+      | { state: { selection: { main: { head: number } }; doc: { lineAt(pos: number): { number: number; from: number }; length: number; toString(): string } } }
+      | undefined;
+    if (!core || !view) return; // 启动竞态防御
+    const md = core.to_markdown();
+    // 字符数（CJK 逐字计）+ 词数（CJK 字符逐个 + 西文空白切分词）
+    const cjk = (md.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []).length;
+    const latinWords = (md.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, ' ').match(/[A-Za-z0-9_'\-]+/g) ?? []).length;
+    if (countsEl) countsEl.textContent = `${md.length} 字符 · ${cjk + latinWords} 词`;
+    if (blocksEl) blocksEl.textContent = `${core.blocks_count()} 块`;
+    const sel = view.state.selection.main.head;
+    const line = view.state.doc.lineAt(sel);
+    if (cursorEl) cursorEl.textContent = `Ln ${line.number}, Col ${sel - line.from + 1}`;
+    const rev = Number(core.revision());
+    if (revEl) revEl.textContent = `rev ${rev}`;
+    if (lastSeenRev >= 0 && rev !== lastSeenRev) dirty = true;
+    lastSeenRev = rev;
+    if (saveEl) {
+      saveEl.textContent = dirty ? '未保存 · Ctrl+S' : '已保存';
+      saveEl.classList.toggle('sb-dirty', dirty);
+    }
+  };
+  window.setInterval(refresh, 500);
+  refresh();
+
+  // Ctrl+S：preventDefault（浏览器下载对话框拦截）+ mdc-save 事件
+  //（宿主桥消费；web 独立态 = 提示自足）+ dirty 清位 + 测试桥。
+  const doSave = (): boolean => {
+    const core = window.__core;
+    if (!core) return false;
+    dirty = false;
+    if (saveEl) {
+      saveEl.textContent = `已保存 · rev ${Number(core.revision())}`;
+      saveEl.classList.remove('sb-dirty');
+    }
+    window.dispatchEvent(new CustomEvent('mdc-save', { detail: { revision: Number(core.revision()) } }));
+    window.__lastSave = { ok: true, revision: Number(core.revision()), bytes: core.to_markdown().length };
+    return true;
+  };
+  document.addEventListener('keydown', (ev: KeyboardEvent) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's' && !ev.shiftKey) {
+      ev.preventDefault();
+      doSave();
+    }
+  });
+  window.__save = doSave;
+  window.__lastSave = null;
+}
+
+setupStatusBar();
 
 
 // ---------------------------------------------------------------------------

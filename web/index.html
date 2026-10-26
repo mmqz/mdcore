@@ -46,6 +46,16 @@
   #format-toolbar button.ft-code { font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 12px; }
   #format-toolbar button.ft-del { text-decoration: line-through; }
   #format-toolbar .ft-sep { width: 1px; height: 18px; margin: 0 5px; background: var(--border); }
+  /* 状态栏（TR-UI 批 A-2）：编辑器下方常驻——字数/块数/行列/rev/保存态 */
+  #status-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    max-width: 760px; margin: 4px auto 24px; padding: 4px 12px;
+    font-size: 12px; color: var(--fg-muted);
+    border-top: 1px solid var(--border-soft);
+  }
+  #status-bar .sb-item { white-space: nowrap; }
+  #status-bar .sb-save { margin-left: auto; }
+  #status-bar .sb-save.sb-dirty { color: var(--danger); }
   .cm-editor { outline: none; }
   .cm-content { font: inherit; }
   .cm-line.cm-heading { font-weight: 700; }
@@ -456,6 +466,13 @@
       <button type="button" data-format="ol" title="有序列表（1. 前缀 toggle）">1.</button>
     </div>
     <div id="editor"></div>
+    <div id="status-bar" role="status" aria-label="文档状态">
+      <span class="sb-item" id="sb-counts">0 字符 · 0 词</span>
+      <span class="sb-item" id="sb-blocks">0 块</span>
+      <span class="sb-item" id="sb-cursor">Ln 1, Col 1</span>
+      <span class="sb-item" id="sb-rev">rev 0</span>
+      <span class="sb-item sb-save" id="sb-save" title="Ctrl+S 保存（宿主桥接路径 = __md() + save_document）">已保存</span>
+    </div>
     <div id="grid-panel"></div>
     <div id="pdf-panel"></div>
     <div id="canvas-panel"></div>

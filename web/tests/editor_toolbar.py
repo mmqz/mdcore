@@ -175,6 +175,47 @@ def main() -> int:
             r = page.evaluate("window.__format('nonexistent')")
             check("unknown_command_rejected", r is False, json.dumps({"r": r}))
 
+            # ---- TR-UI 批 A-2：状态栏 + Ctrl+S ----
+            sb = page.evaluate("""() => ({
+                bar: !!document.getElementById('status-bar'),
+                counts: (document.getElementById('sb-counts') || {}).textContent,
+                blocks: (document.getElementById('sb-blocks') || {}).textContent,
+                cursor: (document.getElementById('sb-cursor') || {}).textContent,
+                saveFn: typeof window.__save,
+            })""")
+            check("status_bar_present",
+                  sb["bar"] and sb["counts"] and "块" in (sb["blocks"] or "")
+                  and (sb["cursor"] or "").startswith("Ln ") and sb["saveFn"] == "function",
+                  json.dumps(sb))
+            # dirty 态：编辑（注入触发 docChanged）→ 轮询窗 700ms → 未保存
+            # 真实编辑路径（__inject = 核重建非编辑——不触发 dirty 语义；
+            # __ready = first-chunk 可交互，boot 完全收敛前 locked 窗会吞编辑——
+            # 800ms 稳定窗规避竞态）
+            page.wait_for_timeout(800)
+            page.evaluate("""() => {
+                const doc = window.__view.state.doc;
+                const end = doc.length;
+                window.__view.dispatch({ changes: { from: end, insert: ' edited' } });
+            }""")
+            page.wait_for_function("window.__core.revision() > 0", timeout=15000)
+            page.wait_for_timeout(700)
+            dirty_txt = page.evaluate("(document.getElementById('sb-save') || {}).textContent")
+            check("status_bar_dirty_after_edit",
+                  dirty_txt is not None and "未保存" in (dirty_txt or ""),
+                  json.dumps({"save": dirty_txt}))
+            # Ctrl+S 真实键盘：dirty 清位 + __lastSave 落账
+            page.evaluate("window.__view.focus()")
+            page.keyboard.press("Control+s")
+            saved = page.evaluate("""() => ({
+                last: window.__lastSave,
+                save: (document.getElementById('sb-save') || {}).textContent,
+            })""")
+            check("ctrl_s_saves",
+                  saved["last"] and saved["last"]["ok"] is True
+                  and saved["last"]["revision"] >= 1 and saved["last"]["bytes"] > 0
+                  and "已保存" in (saved["save"] or ""),
+                  json.dumps(saved))
+
             # ---- 契约 + 零页错终验 ----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
