@@ -29,13 +29,13 @@ def main() -> int:
         checks.append({"name": name, "ok": bool(ok)})
         print(("PASS " if ok else "FAIL ") + name)
 
-    with socketserver.TCPServer(("127.0.0.1", 8937), QuietServer) as srv:
+    with socketserver.TCPServer(("127.0.0.1", 0), QuietServer) as srv:  # 端口 0 自动分配（避免与 evidence_panel 的 8937 冲突）
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             page = browser.new_page()
-            page.goto("http://127.0.0.1:8937/index.html")
+            page.goto(f"http://127.0.0.1:{srv.server_address[1]}/index.html")
             page.wait_for_function("window.__ready === true", timeout=30000)
 
             # issue #9 复现形：CRLF 注入

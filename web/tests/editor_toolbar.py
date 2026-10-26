@@ -292,6 +292,44 @@ def main() -> int:
             fp2 = page.evaluate("document.getElementById('find-panel').hidden")
             check("escape_closes_panel", fp2 is True, json.dumps({"hidden": fp2}))
 
+            # ---- TR-UI 批 C：字号调节 / 打印样式 / 帮助面板 ----
+            fs0 = page.evaluate("window.__edFontSize()")
+            page.evaluate("window.__setEdFontSize(20)")
+            fs20 = page.evaluate("window.__edFontSize()")
+            page.evaluate("window.__setEdFontSize(99)")   # clamp 上界
+            fsClamp = page.evaluate("window.__edFontSize()")
+            page.keyboard.press("Control+0")               # 真实键盘重置
+            fsReset = page.evaluate("window.__edFontSize()")
+            check("font_size_clamp_and_reset",
+                  fs0 == 15 and fs20 == 20 and fsClamp == 28 and fsReset == 15,
+                  json.dumps({"fs0": fs0, "fs20": fs20, "fsClamp": fsClamp, "fsReset": fsReset}))
+            # Ctrl+= 真实键盘放大
+            page.keyboard.press("Control+=")
+            fsUp = page.evaluate("window.__edFontSize()")
+            check("font_size_hotkey_grow", fsUp == 16, json.dumps({"fsUp": fsUp}))
+            # 打印样式在场（@media print 规则解析态断言——stylesheet 扫描）
+            pr = page.evaluate("""() => {
+                let found = false;
+                for (const sheet of document.styleSheets) {
+                    try {
+                        for (const rule of sheet.cssRules) {
+                            if (rule.media && rule.media.mediaText.includes('print')) found = true;
+                        }
+                    } catch (e) { /* 跨域 sheet 忽略 */ }
+                }
+                return found;
+            }""")
+            check("print_media_rule_present", pr is True, json.dumps({"printRule": pr}))
+            # 帮助面板 F1 开 / Esc 关
+            page.keyboard.press("F1")
+            hv = page.evaluate("window.__helpVisible()")
+            rows = page.evaluate("document.querySelectorAll('#help-panel table tr').length")
+            page.keyboard.press("Escape")
+            hv2 = page.evaluate("window.__helpVisible()")
+            check("help_panel_f1_escape",
+                  hv is True and rows >= 12 and hv2 is False,
+                  json.dumps({"visible": hv, "rows": rows, "afterEsc": hv2}))
+
             # ---- 契约 + 零页错终验 ----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,

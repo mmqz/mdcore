@@ -1360,6 +1360,12 @@ declare global {
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
+    /** TR-UI 批 C-3：帮助面板可见态。 */
+    __helpVisible: () => boolean;
+    /** TR-UI 批 C-1：当前编辑器字号（px，含 clamp 域 11-28）。 */
+    __edFontSize: () => number;
+    /** TR-UI 批 C-1：设编辑器字号（clamp 后返回实际值；localStorage 持久化）。 */
+    __setEdFontSize: (px: number) => number;
     /** TR-UI 批 B-2：查找匹配计数（全量 indexOf 收集）。 */
     __findMatches: (needle: string) => number;
     /** TR-UI 批 B-2：跳转下一/上一匹配（selection + scroll 居中）。 */
@@ -2478,6 +2484,84 @@ function setupFindPanel(): void {
 }
 
 setupFindPanel();
+
+// ---------------------------------------------------------------------------
+// TR-UI 批 C-1 — 编辑器字号调节（Ctrl+= 放大 / Ctrl+- 缩小 / Ctrl+0
+// 重置；localStorage 持久化——与主题键同模式）。作用面 = 编辑器根容器
+// font-size（CM6 .cm-content 继承 body——独立 CSS 变量 --ed-font-size
+// 注入，避免全局污染）。
+// ---------------------------------------------------------------------------
+
+const ED_FONT_KEY = 'mdc-ed-font-size';
+
+function applyEditorFontSize(px: number): void {
+  const clamped = Math.min(28, Math.max(11, px));
+  document.documentElement.style.setProperty('--ed-font-size', `${clamped}px`);
+  try { localStorage.setItem(ED_FONT_KEY, String(clamped)); } catch { /* 私密模式 */ }
+}
+
+function getEditorFontSize(): number {
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--ed-font-size').trim();
+  const n = Number.parseFloat(v);
+  return Number.isFinite(n) ? n : 15;
+}
+
+function setupFontSize(): void {
+  // boot 恢复（防闪白同模式：main.ts 加载即应用）
+  try {
+    const saved = localStorage.getItem(ED_FONT_KEY);
+    if (saved) applyEditorFontSize(Number.parseFloat(saved));
+  } catch { /* 私密模式 */ }
+  document.addEventListener('keydown', (ev: KeyboardEvent) => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.shiftKey || ev.altKey) return;
+    const k = ev.key.toLowerCase();
+    const cur = getEditorFontSize();
+    if (k === '=' || k === '+') {
+      ev.preventDefault();
+      applyEditorFontSize(cur + 1);
+    } else if (k === '-') {
+      ev.preventDefault();
+      applyEditorFontSize(cur - 1);
+    } else if (k === '0') {
+      ev.preventDefault();
+      applyEditorFontSize(15);
+    }
+  });
+  // 测试桥
+  window.__edFontSize = (): number => getEditorFontSize();
+  window.__setEdFontSize = (px: number): number => {
+    applyEditorFontSize(px);
+    return getEditorFontSize();
+  };
+}
+
+setupFontSize();
+
+// ---------------------------------------------------------------------------
+// TR-UI 批 C-3 — 帮助面板（F1 / Shift+? 快捷键速查；Esc / 点击空白关）。
+// ---------------------------------------------------------------------------
+
+function setupHelpPanel(): void {
+  const overlay = document.getElementById('help-overlay');
+  const toggle = (force?: boolean): void => {
+    if (!overlay) return;
+    const show = force ?? overlay.hidden;
+    overlay.hidden = !show;
+  };
+  document.addEventListener('keydown', (ev: KeyboardEvent) => {
+    if (ev.key === 'F1' || (ev.shiftKey && ev.key === '?')) {
+      ev.preventDefault();
+      toggle();
+    }
+    if (ev.key === 'Escape' && overlay && !overlay.hidden) toggle(false);
+  });
+  overlay?.addEventListener('click', (ev: MouseEvent) => {
+    if (ev.target === overlay) toggle(false); // 空白处点击关（面板内容不关）
+  });
+  window.__helpVisible = (): boolean => !!overlay && !overlay.hidden;
+}
+
+setupHelpPanel();
 
 
 // ---------------------------------------------------------------------------

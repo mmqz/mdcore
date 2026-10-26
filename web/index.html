@@ -25,6 +25,33 @@
     --grid-head: #2b2f35; --edit-hl: #4d4436; --warn-bg: #4d4436;
   }
   body { margin: 0; font: 15px/1.6 -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  html { --ed-font-size: 15px; } /* TR-UI 批 C-1：编辑器字号（Ctrl+=/-/0） */
+  .cm-content { font-size: var(--ed-font-size); }
+  /* 打印样式（TR-UI 批 C-2）：Ctrl+P = 轻量纸面输出（隐藏一切 chrome，
+     只留文档正文——重排 max-width 适配纸面） */
+  @media print {
+    body { background: #fff !important; color: #000 !important; }
+    #topbar, #view-tabs, #format-toolbar, #status-bar, #find-panel, #toc-panel,
+    #docx-export-options, #evidence-panel, #grid-panel, #pdf-panel, #canvas-panel,
+    #settings-overlay { display: none !important; }
+    #editor { max-width: 100% !important; margin: 0 !important; }
+    .cm-editor { background: #fff !important; }
+    .cm-line.cm-heading { color: #000 !important; }
+  }
+  /* 帮助面板（TR-UI 批 C-3）：快捷键速查 */
+  #help-overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.38);
+                  display: flex; align-items: center; justify-content: center; }
+  #help-overlay[hidden] { display: none; }
+  #help-panel { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 80px);
+                overflow-y: auto; background: var(--panel); color: var(--fg);
+                border: 1px solid var(--border-strong); border-radius: 10px; padding: 18px 22px; }
+  #help-panel h3 { margin: 0 0 4px; font-size: 16px; }
+  #help-panel .hp-hint { color: var(--fg-muted); font-size: 12px; margin-bottom: 12px; }
+  #help-panel table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  #help-panel td { padding: 4px 8px; border-bottom: 1px solid var(--border-soft); }
+  #help-panel td:first-child { white-space: nowrap; color: var(--fg-muted); width: 130px; }
+  #help-panel kbd { display: inline-block; padding: 1px 6px; font: 12px/1.5 ui-monospace, monospace;
+                    background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; }
   #editor { max-width: 760px; margin: 24px auto; padding: 0 16px; }
   /* 格式工具条（TR-UI 批 A）——编辑器上方常驻 */
   #format-toolbar {
@@ -535,5 +562,25 @@
 </div>
 <pre id="debug">booting…</pre>
 <script type="module" src="./main.js"></script>
+  <div id="help-overlay" hidden>
+    <div id="help-panel" role="dialog" aria-label="快捷键速查">
+      <h3>快捷键速查</h3>
+      <div class="hp-hint">Esc 或点击空白处关闭 · 帮助面板 F1 / Shift+?</div>
+      <table>
+        <tr><td><kbd>Mod</kbd> + <kbd>B</kbd></td><td>粗体（选区包裹 <b>**</b>）</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>I</kbd></td><td>斜体（<i>*</i>）</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>E</kbd></td><td>行内代码（<code>`</code>）</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>Shift</kbd> + <kbd>X</kbd></td><td>删除线（<s>~~</s>）</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>Shift</kbd> + <kbd>1/2/3</kbd></td><td>标题 H1 / H2 / H3</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>Shift</kbd> + <kbd>0</kbd></td><td>回正文（清除块前缀）</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>Z</kbd> / <kbd>Mod</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd></td><td>撤销 / 重做</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>F</kbd></td><td>查找替换面板</td></tr>
+        <tr><td><kbd>Enter</kbd> / <kbd>Shift</kbd> + <kbd>Enter</kbd></td><td>查找下一个 / 上一个</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>S</kbd></td><td>保存（宿主桥路径；独立态 = mdc-save 事件）</td></tr>
+        <tr><td><kbd>Mod</kbd> + <kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd></td><td>编辑器字号 放大 / 缩小 / 重置</td></tr>
+        <tr><td><kbd>F1</kbd> / <kbd>Shift</kbd> + <kbd>?</kbd></td><td>本帮助面板</td></tr>
+      </table>
+    </div>
+  </div>
 </body>
 </html>
