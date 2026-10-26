@@ -2168,6 +2168,13 @@ pub enum FieldSpec {
     Page,
     /// 总页数域（`<w:instrText>NUMPAGES</w:instrText>`）。
     NumPages,
+    /// 目录域（TOC——issue #6 G1）：fldChar begin[dirty=true——
+    /// Word/LO 打开提示更新域] + instrText `TOC \o "lo-hi"` +
+    /// separate + 占位提示文本 + end 五连（比 PAGE/NUMPAGES 三连多
+    /// 域结果占位两 run——无占位的裸域合法但打开即空白，占位 +
+    /// dirty 给出可操作提示）。`heading_range` = `\o` 开关（None =
+    /// 不发射开关——Word 默认收录全部标题层级）。
+    TableOfContents { heading_range: Option<(u8, u8)> },
 }
 
 // ---------------------------------------------------------------------------
@@ -2386,6 +2393,29 @@ impl RunSpec {
             field: Some(FieldSpec::NumPages),
         }
     }
+
+    /// 目录域 run（`TOC`——全标题层级，Word 默认收录；dirty=true
+    /// 打开提示更新域，占位文本提示 F9 操作）。
+    pub fn field_toc() -> Self {
+        Self {
+            field: Some(FieldSpec::TableOfContents {
+                heading_range: None,
+            }),
+            ..Self::field_page()
+        }
+    }
+
+    /// 目录域 run（`TOC \o "lo-hi"`——收录标题层级 lo..=hi）。
+    /// 域校验 V8（1-9 + lo ≤ hi）在 save 漏斗粘性拒绝（与 V7 同
+    /// 语义——构造器保持人体工学签名）。
+    pub fn field_toc_heading_range(lo: u8, hi: u8) -> Self {
+        Self {
+            field: Some(FieldSpec::TableOfContents {
+                heading_range: Some((lo, hi)),
+            }),
+            ..Self::field_page()
+        }
+    }
 }
 
 /// DOCX 新建文档写器（**仅新建语义**——不存在已有文档编辑往返，
@@ -2518,6 +2548,21 @@ impl DocxWriter {
                 if let Some(a) = &r.anchor {
                     if a.is_empty() {
                         self.validation_error = Some("V7: anchor_link 目标书签名为空串".into());
+                    }
+                }
+            }
+            // G1 V8（TOC 标题层级域）粘性检查——1-9 域与 lo ≤ hi
+            // （与 heading 级域同纪律；违规 save 漏斗拒绝零产物）。
+            if self.validation_error.is_none() {
+                if let Some(FieldSpec::TableOfContents {
+                    heading_range: Some((lo, hi)),
+                }) = &r.field
+                {
+                    let bad = *lo == 0 || *hi == 0 || *lo > 9 || *hi > 9 || lo > hi;
+                    if bad {
+                        self.validation_error = Some(format!(
+                            "V8: TOC 标题层级域违规（{lo}-{hi}——须 1-9 且 lo ≤ hi）"
+                        ));
                     }
                 }
             }
@@ -2936,9 +2981,27 @@ fn add_spec_to_paragraph(p: docx_rs::Paragraph, spec: &RunSpec) -> docx_rs::Para
     // 简单域（begin/instrText/end 三连——引擎 add_tc 同构先例
     // run.rs:202-208）。
     if let Some(field) = spec.field {
+        // G1 TOC：五连（begin[dirty] + instrText + separate + 占位 + end）
+        // ——域结果占位给打开者可操作提示；dirty=true 让 Word/LO 打开
+        // 即提示更新域生成目录。
+        if let FieldSpec::TableOfContents { heading_range } = field {
+            let mut toc = docx_rs::InstrToC::new();
+            if let Some((lo, hi)) = heading_range {
+                toc = toc.heading_styles_range(lo as usize, hi as usize);
+            }
+            return p
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, true))
+                .add_run(docx_rs::Run::new().add_instr_text(docx_rs::InstrText::TOC(toc)))
+                .add_run(
+                    docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false),
+                )
+                .add_run(docx_rs::Run::new().add_text("（目录域——打开后全选再按 F9 更新生成）"))
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
+        }
         let instr = match field {
             FieldSpec::Page => docx_rs::InstrText::PAGE(docx_rs::InstrPAGE::new()),
             FieldSpec::NumPages => docx_rs::InstrText::NUMPAGES(docx_rs::InstrNUMPAGES::new()),
+            FieldSpec::TableOfContents { .. } => unreachable!("TOC 已在上方分支返回"),
         };
         return p
             .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
@@ -4733,6 +4796,91 @@ mod tests {
             zip_part_bytes(&anon, "docProps/core.xml").is_none(),
             "未注入新部件（最小干预）"
         );
+    }
+
+    /// G1-T1：TOC 域五连发射（begin dirty + instrText + separate +
+    /// 占位 + end）——XML 面断言。
+    #[test]
+    fn g1_t1_toc_five_part_emission() {
+        let mut w = DocxWriter::new();
+        w.heading(1, "章一").unwrap();
+        w.heading(2, "节 1.1").unwrap();
+        w.paragraph(&[RunSpec::field_toc_heading_range(1, 3)]);
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(doc.contains("TOC"), "instrText TOC 在场: 无");
+        assert!(
+            doc.contains(r#"\o "1-3""#) || doc.contains("1-3"),
+            "heading range 开关在场"
+        );
+        assert!(doc.contains("separate"), "separate 域结果分界在场");
+        assert!(
+            doc.contains("（目录域——打开后全选再按 F9 更新生成）"),
+            "占位提示在场"
+        );
+        // begin dirty：w:fldChar w:fldCharType="begin" w:dirty="true"
+        assert!(
+            doc.contains(r#"w:dirty="true""#),
+            "begin dirty=true 在场（打开提示更新域）"
+        );
+        // 可解析往返（读面域结构提取面外为既有登记——这里只证容器完好）
+        assert!(read_docx_from_bytes(&bytes).is_ok());
+    }
+
+    /// G1-T2：全层级构造器（无 \o 开关——Word 默认收录）。
+    #[test]
+    fn g1_t2_toc_full_range_no_switch() {
+        let mut w = DocxWriter::new();
+        w.paragraph(&[RunSpec::field_toc()]);
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(doc.contains("TOC"));
+        assert!(!doc.contains(r"\o "), r"无 \o 开关（默认全层级）");
+    }
+
+    /// G1-T3：V8 域校验——越界/倒序粘性拒绝（save 零产物）。
+    #[test]
+    fn g1_t3_v8_domain_reject() {
+        for (lo, hi) in [(0, 3), (1, 10), (5, 2), (0, 0), (10, 12)] {
+            let mut w = DocxWriter::new();
+            w.paragraph(&[RunSpec::field_toc_heading_range(lo, hi)]);
+            let err = w.save_to_vec().unwrap_err();
+            assert!(
+                matches!(err, DocxError::InvalidInput(ref m) if m.starts_with("V8")),
+                "({lo},{hi}) 期望 V8 拒绝，实得 {err:?}"
+            );
+        }
+        // 合法边界恰过：1-9 全域
+        let mut w = DocxWriter::new();
+        w.paragraph(&[RunSpec::field_toc_heading_range(1, 9)]);
+        assert!(w.save_to_vec().is_ok());
+    }
+
+    /// G1-T4：TOC + PAGE/NUMPAGES 混排共存（页脚页码 + 正文目录）。
+    #[test]
+    fn g1_t4_toc_mixed_with_page_fields() {
+        let mut w = DocxWriter::new();
+        w.heading(1, "章").unwrap();
+        w.paragraph(&[RunSpec::field_toc()]);
+        w.footer(&[
+            RunSpec::text("第 "),
+            RunSpec::field_page(),
+            RunSpec::text(" / 共 "),
+            RunSpec::field_num_pages(),
+            RunSpec::text(" 页"),
+        ]);
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(doc.contains("TOC"));
+        let footer = zip_part_bytes(&bytes, "word/footer1.xml")
+            .or_else(|| zip_part_bytes(&bytes, "word/footer2.xml"));
+        let footer = footer.expect("footer 部件在场");
+        let fs = String::from_utf8(footer).unwrap();
+        assert!(
+            fs.contains("PAGE") && fs.contains("NUMPAGES"),
+            "页脚双域在场"
+        );
+        assert!(read_docx_from_bytes(&bytes).is_ok());
     }
 
     /// T4：非 docx 伪产物 fail-closed（无 word/document.xml 的 zip 拒）。
