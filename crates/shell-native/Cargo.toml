@@ -9,6 +9,13 @@ description = "R10 原生宿主壳（tao + wry + GTK3，ADR-H1 定谳：Slint �
 [dependencies]
 mdcore = { path = "../mdcore" }
 mdshell = { path = "../shell" }
+
+# 平台门（issue #4）：GUI 面 = Linux-only（ADR-H1 GTK3/WebKitGTK 栈
+# 架构定谳）。wry/tao/gtk 的 sys 底座（gobject-sys/glib-sys/
+# webkit2gtk-sys）在无 GTK 环境与交叉目标下必然构建失败——
+# 「保编译」面用 cfg 门实现：非 Linux = 无依赖空壳（cargo check
+# --workspace --target x86_64-pc-windows-msvc 全绿的可验证形态）。
+[target.'cfg(target_os = "linux")'.dependencies]
 wry = "0.46"
 tao = "0.30"
 gtk = "0.18"   # GTK3 绑定（Linux 面板控件；Slint 因 GPL 证与 ADR-C1 排除）

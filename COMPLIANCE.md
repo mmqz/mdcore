@@ -119,3 +119,27 @@ gates.md「T1 卫生修复轮 · feature 面前置 bootstrap」。默认面常�
   diff 即增量清单。禁 force-push 不变。
 - **首推验证**：product 面 denylist 0 命中；Cargo.lock/package-lock 与 R23-e
   终态一致（依赖零增）；无 token/凭据落盘（凭据卫生纪律）。
+
+## 8. 支持平台矩阵（单一真源——issue #4，2026-10-26）
+
+> v0 正式支持面的**产品裁决**（商品名/平台矩阵/闭源分发——issue #7
+> 需用户决策三项）尚未落定；本节为**技术侧现状真源**，裁决后翻转
+> 对应行并移除本注记。
+
+| 平台 | 引擎核心（15 crate） | web 工作台 | GUI 壳（mdshell-native） | 打包模板（packaging/） |
+|------|---------------------|-----------|-------------------------|----------------------|
+| **Linux x86_64** | ✅ 正式开发与验证面（全门禁 782+ 口径） | ✅（dist 自包含） | ✅ 完整构建运行（GTK3/WebKitGTK 栈，ADR-H1） | deb ✅ / AppImage 模板在 |
+| Windows x64 | ✅ 仅保编译（`cargo check --workspace --target x86_64-pc-windows-msvc` 绿——cfg 分支有 check 覆盖） | ✅（浏览器宿主平台无关） | 仅保编译 stub（GUI = Linux-only 架构定谳） | NSIS 模板在（WebView2 检测引导待实装） |
+| macOS | 未验证（无实机口径） | ✅（同上） | 仅保编译（同 Windows） | Info.plist 模板在 |
+
+**纪律**：
+
+1. **测试标准命令**（无 GTK 机器/CI）：`cargo test --workspace
+   --exclude mdshell-native`——GUI 壳的 gobject-sys/glib-sys
+   build script 在无 GTK 环境必然失败，与被测语义无关（详见
+   `crates/shell-native/README.md`）。
+2. **cfg 分支编译覆盖**：`cargo check --workspace --target
+   x86_64-pc-windows-msvc` 进收口门禁（本仓全部
+   `#[cfg(not(unix))]`/`#[cfg(target_os)]` 分支不再「写到哪算哪」）。
+3. 平台门形态：wry/tao/gtk 挂 `[target.'cfg(target_os =
+   "linux")'.dependencies]`（非 Linux = 无依赖空壳，check 可绿）。

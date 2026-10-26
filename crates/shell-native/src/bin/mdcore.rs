@@ -15,6 +15,7 @@
 //! 自动化冒烟参数（CI/Xvfb）：`--smoke-sec <n>`（看门狗）、`--probe-js <js>`
 //! （导航通道探针）、`--flush-ms <n>`。无参数运行 = 常驻窗口直至关闭。
 
+#[cfg(target_os = "linux")]
 use mdshell_native::native::{run_smoke, ShellConfig};
 
 fn dist_candidates(explicit: Option<&str>) -> Vec<std::path::PathBuf> {
@@ -92,17 +93,29 @@ fn main() {
         }
     };
 
-    let cfg = ShellConfig {
-        url: url.unwrap_or_else(|| "mdapp://localhost/".into()),
-        title: "mdcore".into(),
-        size: (1280, 900),
-        quit_after: smoke_sec.map(std::time::Duration::from_secs),
-        flush_millis: flush_ms,
-        probe_js,
-        dist_root,
-    };
-    if let Err(e) = run_smoke(cfg) {
-        eprintln!("mdcore: 壳构建失败：{e}");
-        std::process::exit(2);
+    #[cfg(target_os = "linux")]
+    {
+        let cfg = ShellConfig {
+            url: url.unwrap_or_else(|| "mdapp://localhost/".into()),
+            title: "mdcore".into(),
+            size: (1280, 900),
+            quit_after: smoke_sec.map(std::time::Duration::from_secs),
+            flush_millis: flush_ms,
+            probe_js,
+            dist_root,
+        };
+        if let Err(e) = run_smoke(cfg) {
+            eprintln!("mdcore: 壳构建失败：{e}");
+            std::process::exit(2);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // 保编译 stub（issue #4）：GUI 面 = Linux-only（ADR-H1 GTK3/
+        // WebKitGTK 栈）。非 Linux 目标本 bin 仅保编译与 --version 面。
+        let _ = (explicit_dist, url, smoke_sec, flush_ms, probe_js, dist_root);
+        eprintln!(
+            "mdcore: GUI 壳仅支持 Linux（ADR-H1：tao+wry+GTK3/WebKitGTK 栈）；本目标为仅保编译面。"
+        );
     }
 }

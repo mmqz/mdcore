@@ -65,6 +65,7 @@ pub const BLUEPRINT_NOTE: &str = "see module docs; enable deps in Cargo.toml on 
 /// 2. [`native::ShellConfig`] / [`native::run_smoke`]：tao 事件循环 +
 ///    wry WebView 的可退出冒烟运行器（examples/xvfb_smoke.rs 消费）；
 /// 3. `escape_js_string`：注入脚本的 JSON 字符串转义（无三方 serde 依赖）。
+#[cfg(target_os = "linux")]
 pub mod native {
     use std::cell::Cell;
     use std::rc::Rc;
