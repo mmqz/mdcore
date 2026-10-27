@@ -55,16 +55,25 @@
 //!   语义；**kind 不改显示面**：前导零文本 `00123` 逐字、日期格 =
 //!   序列数）；清洗：`|` → `\|` 转义、`\n`/`\r` → 空格（GFM 单元格
 //!   不承载换行）、首尾空白去；
-//! - **公式格 = 缓存值**（Excel 显示语义——`values` 面即含缓存值的
-//!   值矩阵）：**公式文本不导入**，计数入 stats（`formulas_flattened`）。
-//!   依据：office-io 写面模块文档登记「cached = None 读回
-//!   `Float(0.0)`（与真值 0 不可区分）」——「有缓存值用缓存值、否则
-//!   公式文本」不可实现（两义性），值面消费取显示语义为诚实选择；
+//! - **公式格（P2-3 双通道接入）**：单元格 = 反引号包裹公式原文
+//!   （`` `=SUM(B2:B4)` ``——calamine 读侧无 `=` 前缀[office-io
+//!   FIDELITY §1 在档]，本层补 `=`；写面对称接受带/不带前缀）；
+//!   缓存值进 stats `formulas` 清单（`{sheet, cell, text, cached}`
+//!   ——结构化面向下游消费方[标书侧 EngineReader 族]，md 单元格
+//!   保持 GFM 洁净）；渲染窗内计数 `formulas_imported`，越限（行/
+//!   列超出渲染窗）计数 `formulas_flattened`（值与文本同弃——
+//!   `rows_dropped`/`cols_dropped` 已登记其丢弃面）；
+//! - **超链接格（P2-3 四字段保留）**：单元格 = `[text](target)`
+//!   GFM 形（外链 `target` 优先；内链 `location` → `#锚` 形[docx
+//!   导入内链同族]；`tooltip` → GFM title ` "tooltip"`；显示文本
+//!   缺省回落单元格值，仍空回落目标串——零静默丢）；四字段
+//!   （target/location/displayed_text/tooltip）+ 锚格文本进 stats
+//!   `hyperlinks` 清单；锚格在渲染窗内计数 `hyperlinks_imported`，
+//!   锚格越限计数 `hyperlinks_dropped`；range 形链接以锚格承载
+//!   （覆盖区其余格为值面——不重复渲染）；公式格带链接 = 链接形
+//!   包裹公式形（双通道叠加，零丢弃）；
 //! - **合并单元格**：值矩阵自然编码（左上值 + 其余空——Excel 语义），
 //!   计数入 stats（`merged_ranges`）；
-//! - **超链接**：单元格文本（显示文本）保留在表中，**目标 URL 丢弃**
-//!   （GFM 表格单元格不承载链接元数据），计数入 stats
-//!   （`hyperlinks_dropped`）；
 //! - **空表**（值矩阵空）：`## {表名}` + `(empty sheet)` 段落
 //!   （表清单可见性——不静默丢表），计数 `empty_sheets`。
 //!
@@ -88,7 +97,11 @@
 //!
 //! ```json
 //! { "sheets": 3, "tables": 2, "empty_sheets": 1, "rows": 6, "cells": 14,
-//!   "formulas_flattened": 1, "merged_ranges": 1, "hyperlinks_dropped": 1,
+//!   "formulas_imported": 1, "hyperlinks_imported": 1,
+//!   "formulas": [{"sheet": "Data", "cell": "B3", "text": "=SUM(B2:B2)*2", "cached": "9"}],
+//!   "hyperlinks": [{"sheet": "Data", "cell": "C3", "text": "docs",
+//!                    "target": "https://example.com/docs", "location": null, "tooltip": null}],
+//!   "formulas_flattened": 0, "merged_ranges": 1, "hyperlinks_dropped": 0,
 //!   "sheets_dropped": 0, "rows_dropped": 0, "cols_dropped": 0,
 //!   "warnings": [{ "part": "...", "kind": "...", "detail": "..." }] }
 //! ```
@@ -97,7 +110,13 @@
 //!   （sheets = tables + empty_sheets + 越限前已渲染的…——恒
 //!   tables + empty_sheets）；
 //! - `rows`：全部渲染表的数据行合计（含表头行）；`cells`：渲染窗口内
-//!   非空文本单元格合计；
+//!   非空内容单元格合计（P2-3：公式格计入——公式原文即内容）；
+//! - P2-3 键：`formulas_imported`/`hyperlinks_imported`（渲染窗内
+//!   接入数）+ `formulas`/`hyperlinks` 清单（≤200 条——超过部分计数
+//!   仍全量在 `*_imported`，清单截断仅影响明细面）；
+//!   `formulas_flattened`/`hyperlinks_dropped` 语义收窄为**渲染窗外**
+//!   丢弃（行/列越限或锚格越位——正常表恒 0；P2-3 前为全量丢弃
+//!   计数）；
 //! - `warnings`：兼容模式结构化警告（office-io [`Book::warnings`] 透传，
 //!   kind 取 snake_case 字符串——t16 同形）。
 //!
@@ -131,6 +150,11 @@ pub const MAX_SHEETS: usize = 16;
 pub const MAX_ROWS: usize = 50;
 /// 每表渲染列数上限（使用区列序前缀）。
 pub const MAX_COLS: usize = 32;
+
+/// P2-3：stats `formulas`/`hyperlinks` 明细清单上限（200 条——计数键
+/// `*_imported` 恒全量，清单截断仅影响明细面；渲染窗 16×50×32 内
+/// 公式/链接数理论上限远大于此，截断防 stats 无界膨胀）。
+const FORMULA_INVENTORY_CAP: usize = 200;
 
 // ---------------------------------------------------------------------------
 // typed 错误面（t16 族同构）
@@ -227,6 +251,92 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
 }
 
 /// 单表渲染产物（book_to_markdown 的聚合单元——纯数据）。
+/// 列号（0 基）→ Excel 列字母（A..Z, AA..ZZ…——覆盖全列域 16,384
+/// = XFD；渲染窗 32 列内恒 ≤ AI）。
+fn col_letters(mut col: u32) -> String {
+    let mut out = Vec::new();
+    loop {
+        out.push(b'A' + (col % 26) as u8);
+        if col < 26 {
+            break;
+        }
+        col = col / 26 - 1;
+    }
+    out.reverse();
+    String::from_utf8(out).expect("ASCII")
+}
+
+/// 绝对坐标（0 基）→ A1 形引用（stats 清单定位用）。
+fn cell_ref(row: u32, col: u32) -> String {
+    format!("{}{}", col_letters(col), row + 1)
+}
+
+/// GFM destination 形规整（空/空白/`)`/`<>` → 角括号包裹——docx
+/// 导入 `angle_wrap` 同族镜像；本模块私有[两导入模块各自内聚，
+/// 不建跨模块耦合]）。
+fn gfm_angle_wrap(target: &str) -> String {
+    if target.is_empty()
+        || target
+            .chars()
+            .any(|c| c.is_whitespace() || c == ')' || c == '<' || c == '>')
+    {
+        format!("<{target}>")
+    } else {
+        target.to_string()
+    }
+}
+
+/// 超链接格 → GFM 链接形（P2-3：四字段消费——外链 `target` 优先 /
+/// 内链 `location` → `#锚` 形[docx 导入内链同族] / `tooltip` → GFM
+/// title ` "tooltip"`（引号→单引号防 GFM title 提前闭合）/ 显示文本
+/// 缺省回落单元格值、仍空回落目标串——零静默丢）。`target`/
+/// `location` 双缺 = 降级纯文本（calamine 面不可达——防御分支）。
+fn render_xlsx_link(
+    target: Option<&str>,
+    location: Option<&str>,
+    tooltip: Option<&str>,
+    displayed_text: Option<&str>,
+    fallback: &str,
+) -> String {
+    let dest = if let Some(t) = target {
+        gfm_angle_wrap(t)
+    } else if let Some(l) = location {
+        format!("#{}", gfm_angle_wrap(l))
+    } else {
+        return fallback.to_string();
+    };
+    let text = displayed_text
+        .filter(|s| !s.is_empty())
+        .or_else(|| (!fallback.is_empty()).then_some(fallback))
+        .unwrap_or(dest.as_str());
+    match tooltip.filter(|t| !t.is_empty()) {
+        Some(t) => format!("[{text}]({dest} \"{}\")", t.replace('"', "'")),
+        None => format!("[{text}]({dest})"),
+    }
+}
+
+/// P2-3：渲染窗内公式格清单条目（sheet 名在 book 级聚合时注入）。
+struct FormulaEntry {
+    row: u32,
+    col: u32,
+    /// 公式原文（含本层补的 `=` 前缀——calamine 读侧无 = 形）。
+    text: String,
+    /// 缓存值显示面（CellData::display；None = 无缓存[Empty]）。
+    cached: Option<String>,
+}
+
+/// P2-3：渲染窗内超链接清单条目（四字段 + 锚格文本）。
+struct HyperlinkEntry {
+    row: u32,
+    col: u32,
+    /// 锚格基础文本（链接形包裹前的值面/公式面文本）。
+    text: String,
+    target: Option<String>,
+    location: Option<String>,
+    tooltip: Option<String>,
+}
+
+/// 单表渲染结果（含 P2-3 双通道清单与越限丢弃计数）。
 struct SheetOutcome {
     section: String,
     /// 渲染数据行数（含表头行）；0 = 空表。
@@ -234,8 +344,18 @@ struct SheetOutcome {
     /// 越限丢弃行/列数（使用区 − 渲染前缀）。
     rows_dropped: usize,
     cols_dropped: usize,
-    /// 渲染窗口内非空文本单元格数（Empty 与空串同视为空）。
+    /// 渲染窗口内非空内容单元格数（P2-3：公式格计入——公式原文即
+    /// 内容；Empty 与空串同视为空）。
     non_empty_cells: usize,
+    /// P2-3：渲染窗内公式格清单。
+    formulas: Vec<FormulaEntry>,
+    /// P2-3：渲染窗内超链接清单（锚格承载）。
+    hyperlinks: Vec<HyperlinkEntry>,
+    /// P2-3：渲染窗外公式格数（行/列越限或公式网格越出值网格——
+    /// 值与文本同弃，`rows/cols_dropped` 已登记其丢弃面）。
+    formulas_dropped: usize,
+    /// P2-3：锚格越限（渲染窗外）超链接数。
+    hyperlinks_dropped: usize,
 }
 
 /// 单表 → SheetOutcome。空表（使用区空）→ 标题 + `(empty sheet)`
@@ -247,33 +367,91 @@ fn sheet_to_section(sheet: &SheetData) -> SheetOutcome {
     let height = sheet.values.height();
     let width = sheet.values.width();
     if height == 0 || width == 0 {
+        // 空使用区但公式/链接面在场：全部计越限丢弃（无表可渲染
+        // ——计数可见，不静默）。
         return SheetOutcome {
             section: format!("{heading}\n\n(empty sheet)"),
             rows: 0,
             rows_dropped: 0,
             cols_dropped: 0,
             non_empty_cells: 0,
+            formulas: Vec::new(),
+            hyperlinks: Vec::new(),
+            formulas_dropped: count_formulas_outside(sheet, 0, 0),
+            hyperlinks_dropped: count_hyperlinks_outside(sheet, 0, 0),
         };
     }
     let rows = height.min(MAX_ROWS);
     let cols = width.min(MAX_COLS);
+    // 值网格锚点（绝对坐标基准——P2-3 公式/链接定位用；非空网格
+    // 恒有 start）。
+    let (base_r, base_c) = sheet.values.start().unwrap_or((0, 0));
     let mut lines: Vec<String> = Vec::with_capacity(rows + 1);
     let mut non_empty_cells = 0usize;
+    let mut formulas: Vec<FormulaEntry> = Vec::new();
+    let mut hyperlinks: Vec<HyperlinkEntry> = Vec::new();
     for r in 0..rows {
         let mut cells: Vec<String> = Vec::with_capacity(cols);
         for c in 0..cols {
+            let abs_r = base_r + r as u32;
+            let abs_c = base_c + c as u32;
             // r4-t1：类型化模型显示面（CellData::display——与 calamine
             // Data Display 逐字等值，office-io tests/cell_types.rs 钉定；
-            // Empty → ""；显示面兼容 = 既有断言即钉定）。
-            let text = sheet
+            // Empty → ""；显示面兼容 = 既有断言即钉定）。公式格的
+            // typed 值 = 缓存计算结果（值面语义——缓存通道进清单）。
+            let value_text = sheet
                 .typed
                 .get((r, c))
                 .map(|d| d.display())
                 .unwrap_or_default();
-            if !text.is_empty() {
+            // P2-3 公式双通道：单元格 = 反引号包裹公式原文（补 = 前缀
+            // ——calamine 读侧无 = 形，office-io FIDELITY §1）；缓存值
+            // 进 stats 清单（结构化面——md 单元格保持 GFM 洁净）。
+            let formula_text = sheet.formula_at(abs_r, abs_c).map(|f| format!("={f}"));
+            let mut raw = match &formula_text {
+                Some(f) => {
+                    formulas.push(FormulaEntry {
+                        row: abs_r,
+                        col: abs_c,
+                        text: f.clone(),
+                        cached: if value_text.is_empty() {
+                            None
+                        } else {
+                            Some(value_text.clone())
+                        },
+                    });
+                    format!("`{f}`")
+                }
+                None => value_text.clone(),
+            };
+            // P2-3 超链接四字段：锚格（range.start）承载——range 形
+            // 链接覆盖区其余格为值面（不重复渲染）；公式格带链接 =
+            // 链接形包裹公式形（双通道叠加，零丢弃）。
+            if let Some(h) = sheet
+                .hyperlinks
+                .iter()
+                .find(|h| h.range.start == (abs_r, abs_c))
+            {
+                hyperlinks.push(HyperlinkEntry {
+                    row: abs_r,
+                    col: abs_c,
+                    text: raw.clone(),
+                    target: h.target.clone(),
+                    location: h.location.clone(),
+                    tooltip: h.tooltip.clone(),
+                });
+                raw = render_xlsx_link(
+                    h.target.as_deref(),
+                    h.location.as_deref(),
+                    h.tooltip.as_deref(),
+                    h.displayed_text.as_deref(),
+                    &raw,
+                );
+            }
+            if !raw.is_empty() {
                 non_empty_cells += 1;
             }
-            cells.push(sanitize_cell(&text));
+            cells.push(sanitize_cell(&raw));
         }
         lines.push(render_row(&cells));
     }
@@ -286,7 +464,48 @@ fn sheet_to_section(sheet: &SheetData) -> SheetOutcome {
         rows_dropped: height - rows,
         cols_dropped: width - cols,
         non_empty_cells,
+        formulas,
+        hyperlinks,
+        formulas_dropped: count_formulas_outside(sheet, rows, cols),
+        hyperlinks_dropped: count_hyperlinks_outside(sheet, rows, cols),
     }
+}
+
+/// P2-3：渲染窗外公式格计数（全公式网格扫描——行/列越限或公式
+/// 网格越出值网格；`rows`/`cols` = 渲染窗尺寸，0×0 = 空表全量）。
+fn count_formulas_outside(sheet: &SheetData, rows: usize, cols: usize) -> usize {
+    let Some((fr, fc)) = sheet.formulas.start() else {
+        return 0;
+    };
+    let (base_r, base_c) = sheet.values.start().unwrap_or((0, 0));
+    let mut dropped = 0usize;
+    for r in 0..sheet.formulas.height() {
+        for c in 0..sheet.formulas.width() {
+            if sheet.formulas.get((r, c)).is_some_and(|f| !f.is_empty()) {
+                let rel_r = fr as i64 + r as i64 - base_r as i64;
+                let rel_c = fc as i64 + c as i64 - base_c as i64;
+                if rel_r < 0 || rel_c < 0 || rel_r >= rows as i64 || rel_c >= cols as i64 {
+                    dropped += 1;
+                }
+            }
+        }
+    }
+    dropped
+}
+
+/// P2-3：锚格越限超链接计数（range.start 为锚——覆盖区其余格不
+/// 重复计；锚格在渲染窗外或先于值网格起点 = 丢弃）。
+fn count_hyperlinks_outside(sheet: &SheetData, rows: usize, cols: usize) -> usize {
+    let (base_r, base_c) = sheet.values.start().unwrap_or((0, 0));
+    sheet
+        .hyperlinks
+        .iter()
+        .filter(|h| {
+            let rel_r = h.range.start.0 as i64 - base_r as i64;
+            let rel_c = h.range.start.1 as i64 - base_c as i64;
+            rel_r < 0 || rel_c < 0 || rel_r >= rows as i64 || rel_c >= cols as i64
+        })
+        .count()
 }
 
 /// Book → (markdown, stats JSON)。纯函数（原生直测；宿主消费经
@@ -299,6 +518,13 @@ fn book_to_markdown(book: &Book) -> (String, serde_json::Value) {
     let mut cells_total = 0usize;
     let mut rows_dropped = 0usize;
     let mut cols_dropped = 0usize;
+    // P2-3：双通道聚合（接入计数 + 越限丢弃 + 明细清单 ≤200 条）。
+    let mut formulas_imported = 0usize;
+    let mut hyperlinks_imported = 0usize;
+    let mut formulas_dropped = 0usize;
+    let mut hyperlinks_dropped = 0usize;
+    let mut formula_inventory: Vec<serde_json::Value> = Vec::new();
+    let mut hyperlink_inventory: Vec<serde_json::Value> = Vec::new();
 
     let rendered = book.sheets.len().min(MAX_SHEETS);
     for sheet in &book.sheets[..rendered] {
@@ -312,32 +538,36 @@ fn book_to_markdown(book: &Book) -> (String, serde_json::Value) {
         }
         rows_dropped += out.rows_dropped;
         cols_dropped += out.cols_dropped;
+        formulas_imported += out.formulas.len();
+        hyperlinks_imported += out.hyperlinks.len();
+        formulas_dropped += out.formulas_dropped;
+        hyperlinks_dropped += out.hyperlinks_dropped;
+        for f in out.formulas {
+            if formula_inventory.len() < FORMULA_INVENTORY_CAP {
+                formula_inventory.push(serde_json::json!({
+                    "sheet": sheet.name,
+                    "cell": cell_ref(f.row, f.col),
+                    "text": f.text,
+                    "cached": f.cached,
+                }));
+            }
+        }
+        for h in out.hyperlinks {
+            if hyperlink_inventory.len() < FORMULA_INVENTORY_CAP {
+                hyperlink_inventory.push(serde_json::json!({
+                    "sheet": sheet.name,
+                    "cell": cell_ref(h.row, h.col),
+                    "text": h.text,
+                    "target": h.target,
+                    "location": h.location,
+                    "tooltip": h.tooltip,
+                }));
+            }
+        }
         sections.push(out.section);
     }
 
-    // 公式文本丢弃计数（全表——见 sheet_to_section 文档）。
-    let formulas_flattened: usize = book.sheets[..rendered]
-        .iter()
-        .map(|s| {
-            (0..s.formulas.height())
-                .map(|r| {
-                    (0..s.formulas.width())
-                        .filter(|&c| {
-                            s.formulas
-                                .get((r, c))
-                                .map(|f| !f.is_empty())
-                                .unwrap_or(false)
-                        })
-                        .count()
-                })
-                .sum::<usize>()
-        })
-        .sum();
     let merged_ranges: usize = book.sheets[..rendered].iter().map(|s| s.merges.len()).sum();
-    let hyperlinks_dropped: usize = book.sheets[..rendered]
-        .iter()
-        .map(|s| s.hyperlinks.len())
-        .sum();
 
     let stats = serde_json::json!({
         "sheets": rendered,
@@ -345,7 +575,14 @@ fn book_to_markdown(book: &Book) -> (String, serde_json::Value) {
         "empty_sheets": empty_sheets,
         "rows": rows_total,
         "cells": cells_total,
-        "formulas_flattened": formulas_flattened,
+        // P2-3：双通道接入计数 + 明细清单（≤200 条——计数恒全量）。
+        "formulas_imported": formulas_imported,
+        "hyperlinks_imported": hyperlinks_imported,
+        "formulas": formula_inventory,
+        "hyperlinks": hyperlink_inventory,
+        // P2-3 语义收窄：渲染窗外（越限）丢弃——正常表恒 0（P2-3 前
+        // 为全量丢弃计数——键保留，消费方兼容）。
+        "formulas_flattened": formulas_dropped,
         "merged_ranges": merged_ranges,
         "hyperlinks_dropped": hyperlinks_dropped,
         "sheets_dropped": book.sheets.len() - rendered,
@@ -472,6 +709,7 @@ mod tests {
     }
 
     /// 写读映射全环精确等值（夹具 = 产线单一真源 build_sample_xlsx）。
+    /// P2-3：公式格 = 反引号包裹公式原文；超链接格 = [text](url) GFM 形。
     #[test]
     fn writer_roundtrip_import_maps_structure() {
         let payload = import_json(&build_sample_xlsx());
@@ -483,7 +721,7 @@ mod tests {
              | Item | Qty | Note |\n\
              | --- | --- | --- |\n\
              | Widget | 4.5 | has \\| pipe |\n\
-             | Gadget | 9 | docs |\n\
+             | Gadget | `=SUM(B2:B2)*2` | [docs](https://example.com/docs) |\n\
              | merged top |  |  |\n\
              \n\
              ## Notes\n\
@@ -501,14 +739,53 @@ mod tests {
         assert_eq!(stats["tables"], 2);
         assert_eq!(stats["empty_sheets"], 1);
         assert_eq!(stats["rows"], 6); // Data 4（含表头）+ Notes 2
-        assert_eq!(stats["cells"], 14); // Data 10 + Notes 4
-        assert_eq!(stats["formulas_flattened"], 1);
+        assert_eq!(stats["cells"], 14); // Data 10 + Notes 4（公式格计入）
+                                        // P2-3：双通道接入——渲染窗内计数恒全量，越限丢弃恒 0。
+        assert_eq!(stats["formulas_imported"], 1);
+        assert_eq!(stats["hyperlinks_imported"], 1);
+        assert_eq!(stats["formulas_flattened"], 0);
+        assert_eq!(stats["hyperlinks_dropped"], 0);
+        // P2-3：明细清单（公式含缓存值通道；链接四字段）。
+        assert_eq!(
+            stats["formulas"],
+            serde_json::json!([{
+                "sheet": "Data", "cell": "B3",
+                "text": "=SUM(B2:B2)*2", "cached": "9"
+            }])
+        );
+        assert_eq!(
+            stats["hyperlinks"],
+            serde_json::json!([{
+                "sheet": "Data", "cell": "C3", "text": "docs",
+                "target": "https://example.com/docs",
+                "location": null, "tooltip": null
+            }])
+        );
         assert_eq!(stats["merged_ranges"], 1);
-        assert_eq!(stats["hyperlinks_dropped"], 1);
         assert_eq!(stats["sheets_dropped"], 0);
         assert_eq!(stats["rows_dropped"], 0);
         assert_eq!(stats["cols_dropped"], 0);
         assert_eq!(stats["warnings"].as_array().map(Vec::len), Some(0));
+    }
+
+    /// P2-3：公式双通道——单元格 = 反引号公式原文；缓存值进 stats
+    /// 清单（结构化面；渲染窗内零丢弃）。
+    #[test]
+    fn formula_policy_keeps_text_and_cached_channels() {
+        let payload = import_json(&build_sample_xlsx());
+        let md = payload["markdown"].as_str().expect("markdown");
+        assert!(
+            md.contains("| Gadget | `=SUM(B2:B2)*2` | [docs](https://example.com/docs) |"),
+            "公式格应为反引号包裹公式原文 + 链接格 GFM 形: {md}"
+        );
+        assert!(!md.contains("| Gadget | 9 |"), "缓存值不再直接渲染: {md}");
+        // 双通道：文本在 md，缓存在清单（"cached": "9"）。
+        assert_eq!(payload["stats"]["formulas_imported"], 1);
+        assert_eq!(
+            payload["stats"]["formulas"][0]["cached"],
+            serde_json::json!("9")
+        );
+        assert_eq!(payload["stats"]["formulas_flattened"], 0);
     }
 
     /// 值面渲染（Data Display 家族）：布尔/数值/错误码经写读全环落
@@ -586,20 +863,6 @@ mod tests {
             "## T\n\n| code | qty | ok | day |\n| --- | --- | --- | --- |\n| 00123 | 4.5 | true | 44927 |",
             "前导零逐字 + 日期格 = 序列数（kind 进 office-io 模型，显示面不变）"
         );
-    }
-
-    /// 公式格策略：缓存值渲染（Excel 显示语义），公式文本丢弃计数
-    ///（缓存缺失两义性在档——模块文档映射规则）。
-    #[test]
-    fn formula_policy_renders_cached_value() {
-        let payload = import_json(&build_sample_xlsx());
-        let md = payload["markdown"].as_str().expect("markdown");
-        assert!(
-            md.contains("| Gadget | 9 | docs |"),
-            "公式格应为缓存值 9: {md}"
-        );
-        assert!(!md.contains("SUM"), "公式文本不得进入 markdown: {md}");
-        assert_eq!(payload["stats"]["formulas_flattened"], 1);
     }
 
     /// 合并范围：值矩阵自然编码（左上值 + 其余空）。
@@ -724,6 +987,148 @@ mod tests {
             payload["markdown"]
         );
         assert_eq!(payload["stats"]["tables"], 2);
-        assert_eq!(payload["stats"]["formulas_flattened"], 1);
+        // P2-3：夹具内公式/链接接入（原 flattened=1 → imported=1）。
+        assert_eq!(payload["stats"]["formulas_imported"], 1);
+        assert_eq!(payload["stats"]["hyperlinks_imported"], 1);
+        assert_eq!(payload["stats"]["formulas_flattened"], 0);
+        assert_eq!(payload["stats"]["hyperlinks_dropped"], 0);
+    }
+
+    /// P2-3：render_xlsx_link 纯函数矩阵——外链/内链/tooltip/显示
+    ///文本回落/双缺降级五面（无 calamine 类型依赖——字段经 &str 传参）。
+    #[test]
+    fn render_xlsx_link_matrix() {
+        // 外链 + 显示文本。
+        assert_eq!(
+            render_xlsx_link(
+                Some("https://example.com/tender"),
+                None,
+                None,
+                Some("招标公告"),
+                "cell text"
+            ),
+            "[招标公告](https://example.com/tender)"
+        );
+        // 外链 + tooltip → GFM title（双引号防提前闭合 → 单引号）。
+        assert_eq!(
+            render_xlsx_link(
+                Some("https://example.com"),
+                None,
+                Some("点我\"看\"详情"),
+                None,
+                "cell text"
+            ),
+            "[cell text](https://example.com \"点我'看'详情\")"
+        );
+        // 内链 location → #锚形（docx 导入内链同族；无空白/`)` 不需角括号）。
+        assert_eq!(
+            render_xlsx_link(None, Some("'Sheet2'!A1"), None, Some("去表二"), ""),
+            "[去表二](#'Sheet2'!A1)"
+        );
+        // 显示文本缺省回落单元格值。
+        assert_eq!(
+            render_xlsx_link(Some("https://x.io"), None, None, None, "值面文本"),
+            "[值面文本](https://x.io)"
+        );
+        // 双空显示 → 回落目标串（零静默丢）。
+        assert_eq!(
+            render_xlsx_link(Some("https://x.io"), None, None, None, ""),
+            "[https://x.io](https://x.io)"
+        );
+        // target/location 双缺 → 降级纯文本（calamine 面不可达——防御）。
+        assert_eq!(
+            render_xlsx_link(None, None, None, Some("x"), "fallback"),
+            "fallback"
+        );
+    }
+
+    /// P2-3 验收钉定（#22）：真 Excel 夹具 excel-complex.xlsx——
+    /// `=SUM(B2:B4)` 与超链接 URL 都在输出中。夹具：
+    /// test-artifacts/TR2/fixtures/excel-complex.xlsx（真 Excel 生成，
+    /// TR-2D 报告源——含 2 公式 + 1 外链[rels 形，openpyxl 漏读、
+    /// calamine 面读到的那个]）。
+    #[test]
+    fn excel_complex_fixture_formula_link_acceptance() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-artifacts/TR2/fixtures/excel-complex.xlsx"
+        );
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"));
+        let payload = import_json(&bytes);
+        let md = payload["markdown"].as_str().expect("markdown");
+        // 验收：公式文本（含 = 前缀）在输出中。
+        assert!(md.contains("`=SUM(B2:B4)`"), "公式原文缺失: {md}");
+        assert!(md.contains("`=SUM(C2:C4)`"), "第二公式缺失: {md}");
+        // 验收：超链接 URL 在输出中（GFM 链接形；夹具自带 tooltip
+        // = 显示文本 → GFM title 形）。
+        assert!(
+            md.contains("[招标公告](https://example.com/tender \"招标公告\")"),
+            "超链接 GFM 形缺失: {md}"
+        );
+        let stats = &payload["stats"];
+        assert_eq!(stats["formulas_imported"], 2);
+        assert_eq!(stats["hyperlinks_imported"], 1);
+        assert_eq!(stats["formulas_flattened"], 0);
+        assert_eq!(stats["hyperlinks_dropped"], 0);
+        // 双通道：缓存值进清单（B5 = 100；C5 = 1）。
+        let formulas = stats["formulas"].as_array().expect("formulas");
+        assert_eq!(formulas.len(), 2);
+        assert_eq!(formulas[0]["cell"], "B5");
+        assert_eq!(formulas[0]["text"], "=SUM(B2:B4)");
+        assert_eq!(formulas[0]["cached"], "100");
+        assert_eq!(formulas[1]["cell"], "C5");
+        assert_eq!(formulas[1]["cached"], "1");
+        // 链接四字段清单。
+        let links = stats["hyperlinks"].as_array().expect("hyperlinks");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0]["cell"], "A7");
+        assert_eq!(links[0]["target"], "https://example.com/tender");
+    }
+
+    /// P2-3：越限丢弃计数语义——渲染窗外（行 > MAX_ROWS）公式与
+    /// 锚格越限链接计 `formulas_flattened`/`hyperlinks_dropped`，
+    /// 窗内计数零漂移。
+    #[test]
+    fn over_limit_formulas_and_links_count_dropped() {
+        use mdc_office_io::write::{CellValue, FormulaCache, HyperlinkSpec, WorkbookWriter};
+        let mut w = WorkbookWriter::new();
+        let mut s = w.add_sheet("Big").expect("sheet");
+        s.write_row(0, &[CellValue::Text("h".into())]).expect("row");
+        // MAX_ROWS + 5 行：首行 + 越限区公式（行索引 MAX_ROWS+2）。
+        let far_row = (MAX_ROWS + 2) as u32;
+        s.write(
+            far_row,
+            0,
+            CellValue::Formula {
+                text: "1+1".into(),
+                cached: Some(FormulaCache::Number(2.0)),
+            },
+            None,
+        )
+        .expect("far formula");
+        // 越限区链接（锚格同行）。
+        s.write_hyperlink(
+            far_row,
+            1,
+            HyperlinkSpec {
+                url: "https://example.com/far".into(),
+                display_text: None,
+                tooltip: None,
+            },
+        )
+        .expect("far link");
+        let payload = import_json(&w.save_to_vec().expect("save"));
+        let stats = &payload["stats"];
+        // 窗内零公式零链接（唯一公式/链接都在越限行）。
+        assert_eq!(stats["formulas_imported"], 0);
+        assert_eq!(stats["hyperlinks_imported"], 0);
+        assert_eq!(stats["formulas_flattened"], 1);
+        assert_eq!(stats["hyperlinks_dropped"], 1);
+        assert_eq!(stats["rows_dropped"], far_row as usize + 1 - MAX_ROWS);
+        assert_eq!(stats["formulas"].as_array().map(Vec::len), Some(0));
+        assert_eq!(stats["hyperlinks"].as_array().map(Vec::len), Some(0));
+        let md = payload["markdown"].as_str().expect("markdown");
+        assert!(!md.contains("1+1"), "越限公式不得进 md: {md}");
+        assert!(!md.contains("far"), "越限链接不得进 md: {md}");
     }
 }

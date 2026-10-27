@@ -31,7 +31,7 @@ EXPECTED_MD = (
     "| Item | Qty | Note |\n"
     "| --- | --- | --- |\n"
     "| Widget | 4.5 | has \\| pipe |\n"
-    "| Gadget | 9 | docs |\n"
+    "| Gadget | `=SUM(B2:B2)*2` | [docs](https://example.com/docs) |\n"
     "| merged top |  |  |\n"
     "## Notes\n"
     "| Key | Value |\n"
@@ -116,12 +116,20 @@ def main() -> int:
             check("import_stats_and_status_line",
                   stats.get("sheets") == 3 and stats.get("tables") == 2
                   and stats.get("empty_sheets") == 1 and stats.get("rows") == 6
-                  and stats.get("cells") == 14 and stats.get("formulas_flattened") == 1
-                  and stats.get("merged_ranges") == 1 and stats.get("hyperlinks_dropped") == 1
+                  and stats.get("cells") == 14
+                  # P2-3（#22）：双通道接入——imported 计数 + 越限丢弃恒 0
+                  #（正常表）+ 状态行展示接入计数。
+                  and stats.get("formulas_imported") == 1
+                  and stats.get("hyperlinks_imported") == 1
+                  and stats.get("formulas_flattened") == 0
+                  and stats.get("merged_ranges") == 1
+                  and stats.get("hyperlinks_dropped") == 0
                   and stats.get("sheets_dropped") == 0
+                  and (stats.get("formulas") or [{}])[0].get("cached") == "9"
+                  and (stats.get("hyperlinks") or [{}])[0].get("target") == "https://example.com/docs"
                   and status_text.startswith("imported:")
-                  and "2 tables" in status_text and "1 formula flattened" in status_text
-                  and "1 link dropped" in status_text,
+                  and "2 tables" in status_text and "1 formula kept" in status_text
+                  and "1 link kept" in status_text and "1 merge" in status_text,
                   json.dumps({"stats": stats, "status": status_text}))
 
             # ---- 导入文档是活编辑器文档（全桥：op/sync/事件管道）----
