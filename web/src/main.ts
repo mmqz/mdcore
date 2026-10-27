@@ -1721,8 +1721,14 @@ type DocxImportStats = {
    * （wasm stats 直传，宿主按需读取——e2e 断言消费），不进本类型。 */
   list_items: number;
   images_skipped: number;
+  /** P2-1 前键（未消费槽位数）——页眉/页脚全量接入后恒 0；键保留
+   * （stats 消费方兼容），可见性移交 headers/footers_imported。 */
   headers_skipped: number;
   footers_skipped: number;
+  /** P2-1（#22）：接入计数（有可见内容的页眉/页脚部件数——来源标记
+   * `<!-- mdcore-import: header:default -->` 行随 markdown 注入）。 */
+  headers_imported?: number;
+  footers_imported?: number;
   warnings: { part: string; kind: string; detail: string }[];
 };
 
@@ -1759,8 +1765,11 @@ function docxStatusLine(stats: DocxImportStats): string {
   ];
   if (stats.list_items > 0) parts.push(`${stats.list_items} list item${stats.list_items === 1 ? '' : 's'}`);
   if (stats.images_skipped > 0) parts.push(`${stats.images_skipped} image${stats.images_skipped === 1 ? '' : 's'} skipped`);
-  const slots = stats.headers_skipped + stats.footers_skipped;
-  if (slots > 0) parts.push(`${slots} header/footer slot${slots === 1 ? '' : 's'} skipped`);
+  // P2-1（#22）：页眉/页脚接入计数（markdown 前导/尾接可见；
+  // headers/footers_skipped 恒 0 后不再作为展示源——兼容旧 stats 形
+  // 防御 ?? 0）。
+  const importedParts = (stats.headers_imported ?? 0) + (stats.footers_imported ?? 0);
+  if (importedParts > 0) parts.push(`${importedParts} header/footer part${importedParts === 1 ? '' : 's'} imported`);
   if (stats.warnings.length > 0) parts.push(`${stats.warnings.length} warning${stats.warnings.length === 1 ? '' : 's'}`);
   return `imported: ${parts.join(' · ')}`;
 }

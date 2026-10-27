@@ -16,9 +16,9 @@
 //!    + 页眉页脚六槽位读/写 + 引擎崩溃面直探针（#[should_panic]）。
 
 use mdc_office_io::docx::{
-    read_docx, read_docx_from_bytes_with_options, Block, DocxWriter, HeaderFooterVariant,
-    HyperlinkTarget, ListKind, ParagraphIndent, ParagraphIndentSpecial, ParagraphNumbering,
-    RunSpec,
+    read_docx, read_docx_from_bytes_with_options, Block, BlockSource, DocxWriter,
+    HeaderFooterVariant, HyperlinkTarget, ListKind, ParagraphIndent, ParagraphIndentSpecial,
+    ParagraphNumbering, RunSpec,
 };
 use mdc_office_io::io::{ReadOptions, WarningKind};
 use std::io::Write as _;
@@ -462,6 +462,8 @@ fn header_footer_roundtrip() {
     match &doc.headers[0].blocks[0] {
         Block::Paragraph(pd) => {
             assert_eq!(pd.text(), "最终页眉", "第二次调用替换第一次");
+            // P2-1：页眉部件内块源 = Header（读面按部件定值）。
+            assert_eq!(pd.source, BlockSource::Header);
         }
         other => panic!("页眉应为段落, got {other:?}"),
     }
@@ -469,11 +471,22 @@ fn header_footer_roundtrip() {
     assert_eq!(doc.footers.len(), 1);
     assert_eq!(doc.footers[0].variant, HeaderFooterVariant::Default);
     match &doc.footers[0].blocks[0] {
-        Block::Paragraph(pd) => assert_eq!(pd.text(), "第 1 页"),
+        Block::Paragraph(pd) => {
+            assert_eq!(pd.text(), "第 1 页");
+            // P2-1：页脚部件内块源 = Footer。
+            assert_eq!(pd.source, BlockSource::Footer);
+        }
         other => panic!("页脚应为段落, got {other:?}"),
     }
-    // 文档体不受影响。
+    // 文档体不受影响 + P2-1：正文块源恒 Body（段/表双面钉定）。
     assert_eq!(doc.blocks.len(), 6, "sample_writer 六块");
+    for b in &doc.blocks {
+        match b {
+            Block::Paragraph(pd) => assert_eq!(pd.source, BlockSource::Body),
+            Block::Table(td) => assert_eq!(td.source, BlockSource::Body),
+            Block::TextBox(tb) => assert_eq!(tb.source, BlockSource::Body),
+        }
+    }
     let _ = std::fs::remove_file(&p);
 }
 

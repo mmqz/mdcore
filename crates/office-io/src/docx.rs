@@ -1507,6 +1507,10 @@ pub struct ParagraphData {
     /// 段引用位不标注（body 段落标记面）。尾注引用位不标注（内容面
     /// [`DocxDocument::endnotes`] 承载）。
     pub footnote_refs: Vec<i64>,
+    /// 块来源（#22 P2-1）：本段所在文档位置——正文（含脚注/尾注/
+    /// 批注等文档内容面）恒 `Body`；页眉/页脚部件内的段
+    /// `Header`/`Footer`（读面提取时按部件定值）。
+    pub source: BlockSource,
 }
 
 impl ParagraphData {
@@ -1514,6 +1518,20 @@ impl ParagraphData {
     pub fn text(&self) -> String {
         self.runs.iter().map(|r| r.text.as_str()).collect()
     }
+}
+
+/// 块来源面（#22 P2-1）：块在文档中的位置标记——页眉/页脚内容
+/// 接入导入输出后，消费方需要区分块源（正文流 vs 页面装置）。
+///
+/// 语义二分 = **文档内容** vs **页面装置**：`Body` 覆盖正文及文档
+/// 附属内容面（脚注/尾注/批注——其承载通道独立于正文块序，语义
+/// 上仍是文档内容而非页面装置）；`Header`/`Footer` 仅对应六槽位
+/// 挂接部件（`HeaderFooterData::blocks` 内的块）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockSource {
+    Body,
+    Header,
+    Footer,
 }
 
 /// 文档块（有序）。
@@ -1532,6 +1550,9 @@ pub struct TextBoxData {
     /// 文本框内块序（段落/表，经与正文同一提取机制——样式/域/修订
     /// 通道全承载）。
     pub blocks: Vec<Block>,
+    /// 块来源（#22 P2-1）：与宿主块同源（文本框当前仅正文段承载——
+    /// 页眉/页脚内浮动文本框读面未提取，登记面外）。
+    pub source: BlockSource,
 }
 
 /// #19：批注（word/comments.xml + 正文锚关联）。
@@ -1569,6 +1590,9 @@ pub struct FootnoteData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableData {
     pub rows: Vec<Vec<String>>,
+    /// 块来源（#22 P2-1）：表所在文档位置——正文 `Body` / 页眉
+    /// `Header` / 页脚 `Footer`（表内段落继承表来源）。
+    pub source: BlockSource,
 }
 
 /// 页眉/页脚槽位变体（透传 `headerReference/@w:type`——first/even
@@ -2121,6 +2145,7 @@ fn text_box_blocks(
     index: &NumberingIndex,
     styles: &StyleIndex,
     part: &str,
+    source: BlockSource,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<Vec<Block>, io::ReadError> {
@@ -2128,10 +2153,10 @@ fn text_box_blocks(
     for c in children {
         match c {
             docx_rs::TextBoxContentChild::Paragraph(p) => out.push(Block::Paragraph(
-                extract_paragraph(p, table, index, styles, part, strict, warnings)?,
+                extract_paragraph(p, table, index, styles, part, source, strict, warnings)?,
             )),
             docx_rs::TextBoxContentChild::Table(t) => out.push(Block::Table(extract_table(
-                t, table, index, styles, part, strict, warnings,
+                t, table, index, styles, part, source, strict, warnings,
             )?)),
         }
     }
@@ -2272,6 +2297,9 @@ fn parse_textbox_region(
         index,
         styles,
         part,
+        // VML 第二趟仅扫描 document.xml（apply_vml_textboxes）——文本
+        // 框区域恒正文源；页眉/页脚内 VML 文本框读面未提取（登记面外）。
+        BlockSource::Body,
         strict,
         warnings,
     )
@@ -2509,13 +2537,27 @@ fn parse_note_region(
                     let p = docx_rs::Paragraph::read(&mut er, &attributes)
                         .map_err(|_| parse_err("note paragraph parse failed"))?;
                     blocks.push(Block::Paragraph(extract_paragraph(
-                        &p, table, index, styles, part, strict, warnings,
+                        &p,
+                        table,
+                        index,
+                        styles,
+                        part,
+                        BlockSource::Body,
+                        strict,
+                        warnings,
                     )?));
                 } else if local == "tbl" {
                     let t = docx_rs::Table::read(&mut er, &attributes)
                         .map_err(|_| parse_err("note table parse failed"))?;
                     blocks.push(Block::Table(extract_table(
-                        &t, table, index, styles, part, strict, warnings,
+                        &t,
+                        table,
+                        index,
+                        styles,
+                        part,
+                        BlockSource::Body,
+                        strict,
+                        warnings,
                     )?));
                 }
             }
@@ -2583,6 +2625,9 @@ fn extract_comments(
                         index,
                         styles,
                         "word/comments.xml",
+                        // 批注 = 文档内容面（BlockSource 语义二分：内容
+                        // vs 页面装置——批注非页面槽位）。
+                        BlockSource::Body,
                         strict,
                         warnings,
                     )?))
@@ -2593,6 +2638,7 @@ fn extract_comments(
                     index,
                     styles,
                     "word/comments.xml",
+                    BlockSource::Body,
                     strict,
                     warnings,
                 )?)),
@@ -2643,7 +2689,13 @@ fn apply_vml_textboxes(
             continue;
         }
         let insert_at = (*host + 1).min(blocks.len());
-        blocks.insert(insert_at, Block::TextBox(TextBoxData { blocks: tb_blocks }));
+        blocks.insert(
+            insert_at,
+            Block::TextBox(TextBoxData {
+                blocks: tb_blocks,
+                source: BlockSource::Body,
+            }),
+        );
     }
     Ok(blocks)
 }
@@ -2678,6 +2730,7 @@ fn extract_blocks(
                     index,
                     styles,
                     "word/document.xml",
+                    BlockSource::Body,
                     strict,
                     warnings,
                 )?;
@@ -2703,11 +2756,15 @@ fn extract_blocks(
                         index,
                         styles,
                         "word/document.xml",
+                        BlockSource::Body,
                         strict,
                         warnings,
                     )?;
                     if !tb_blocks.is_empty() {
-                        blocks.push(Block::TextBox(TextBoxData { blocks: tb_blocks }));
+                        blocks.push(Block::TextBox(TextBoxData {
+                            blocks: tb_blocks,
+                            source: BlockSource::Body,
+                        }));
                     }
                 }
             }
@@ -2720,6 +2777,7 @@ fn extract_blocks(
                     index,
                     styles,
                     "word/document.xml",
+                    BlockSource::Body,
                     strict,
                     warnings,
                 )?;
@@ -2871,13 +2929,15 @@ fn carry_indent(ind: &docx_rs::Indent) -> ParagraphIndent {
 }
 
 /// 段落提取：样式透传 + run 序（Run + Hyperlink 内 run[目标联接]）+
-/// 编号/缩进承载（r4-t3）。
+/// 编号/缩进承载（r4-t3）+ 块源定值（P2-1 `source` 参数）。
+#[allow(clippy::too_many_arguments)]
 fn extract_paragraph(
     p: &docx_rs::Paragraph,
     table: Option<&RelationshipTable>,
     index: &NumberingIndex,
     styles: &StyleIndex,
     part: &str,
+    source: BlockSource,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<ParagraphData, io::ReadError> {
@@ -2972,6 +3032,7 @@ fn extract_paragraph(
         numbering,
         indent,
         footnote_refs: Vec::new(),
+        source,
     })
 }
 
@@ -3033,13 +3094,16 @@ fn count_del_text(r: &docx_rs::Run) -> usize {
 /// 内容控件跳过——登记）。单元格内超链接目标丢弃（TableData 扁平
 /// 文本面——登记），但悬空引用仍按严格/兼容纪律处置（包完整性）；
 /// 单元格段落的 numPr/ind 同为扁平面外承载（提取后弃置——TableData
-/// 无结构载荷，登记）。
+/// 无结构载荷，登记）。块源定值（P2-1 `source` 参数——表内段落
+/// 继承表来源）。
+#[allow(clippy::too_many_arguments)]
 fn extract_table(
     t: &docx_rs::Table,
     table: Option<&RelationshipTable>,
     index: &NumberingIndex,
     styles: &StyleIndex,
     part: &str,
+    source: BlockSource,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<TableData, io::ReadError> {
@@ -3055,7 +3119,9 @@ fn extract_table(
             let mut parts = Vec::new();
             for content in &c.children {
                 if let docx_rs::TableCellContent::Paragraph(p) = content {
-                    let pd = extract_paragraph(p, table, index, styles, part, strict, warnings)?;
+                    // 表内段落继承表来源（P2-1——单元格段与表同位置）。
+                    let pd =
+                        extract_paragraph(p, table, index, styles, part, source, strict, warnings)?;
                     parts.push(pd.text());
                 }
             }
@@ -3063,7 +3129,7 @@ fn extract_table(
         }
         rows.push(cells);
     }
-    Ok(TableData { rows })
+    Ok(TableData { rows, source })
 }
 
 /// 页眉/页脚槽位引用校验：r:id 在文档关系表 + 目标部件在包内 +
@@ -3179,11 +3245,27 @@ fn extract_headers_footers(
         let mut blocks = Vec::new();
         for child in &header.children {
             match child {
-                docx_rs::HeaderChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                    extract_paragraph(p, table, index, styles, part_name, strict, warnings)?,
-                )),
+                docx_rs::HeaderChild::Paragraph(p) => {
+                    blocks.push(Block::Paragraph(extract_paragraph(
+                        p,
+                        table,
+                        index,
+                        styles,
+                        part_name,
+                        BlockSource::Header,
+                        strict,
+                        warnings,
+                    )?))
+                }
                 docx_rs::HeaderChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t, table, index, styles, part_name, strict, warnings,
+                    t,
+                    table,
+                    index,
+                    styles,
+                    part_name,
+                    BlockSource::Header,
+                    strict,
+                    warnings,
                 )?)),
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}
@@ -3222,11 +3304,27 @@ fn extract_headers_footers(
         let mut blocks = Vec::new();
         for child in &footer.children {
             match child {
-                docx_rs::FooterChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                    extract_paragraph(p, table, index, styles, part_name, strict, warnings)?,
-                )),
+                docx_rs::FooterChild::Paragraph(p) => {
+                    blocks.push(Block::Paragraph(extract_paragraph(
+                        p,
+                        table,
+                        index,
+                        styles,
+                        part_name,
+                        BlockSource::Footer,
+                        strict,
+                        warnings,
+                    )?))
+                }
                 docx_rs::FooterChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t, table, index, styles, part_name, strict, warnings,
+                    t,
+                    table,
+                    index,
+                    styles,
+                    part_name,
+                    BlockSource::Footer,
+                    strict,
+                    warnings,
                 )?)),
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}

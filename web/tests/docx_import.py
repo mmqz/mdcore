@@ -27,8 +27,12 @@ OUT = WEB / "tests" / "results" / "results_docx.json"
 # 在 ingestion 时被跳过，块间无空行；导入串的 \n\n 分隔是宿主可读性面，
 # 编辑器 canonical 化后即单行分隔）。r5-t1：列表节（有序×2 + 嵌套
 # ilvl1 → 2 空格缩进 + 无序×2）进期望串——numbering 读面 → markdown
-# 列表映射的消费面证据。
+# 列表映射的消费面证据。P2-1（#22）：页眉前导（来源标记段 +
+# Header Slot）+ 页脚尾接（标记段 + Footer Slot）——页眉/页脚内容
+# 接入导入输出（headers/footers_imported = 1/1，skipped 恒 0）。
 EXPECTED_MD = (
+    "<!-- mdcore-import: header:default -->\n"
+    "Header Slot\n"
     "# Imported Title\n"
     "plain **bold** and *italic* and [docs](https://example.com/docs)\n"
     "| Name | Value |\n"
@@ -38,12 +42,17 @@ EXPECTED_MD = (
     "2. Second step\n"
     "  1. Nested step\n"
     "- Bullet one\n"
-    "- Bullet two"
+    "- Bullet two\n"
+    "<!-- mdcore-import: footer:default -->\n"
+    "Footer Slot"
 )
 
 # 导入后先序块序列（blocks_json：type + 嵌套 depth 字段，0 = 顶层；
-# Nested step 为 Second step 的子块 → depth 1）。
+# Nested step 为 Second step 的子块 → depth 1）。P2-1：页眉/页脚四段
+# （标记段 + 内容段 ×2 端）进块序。
 EXPECTED_BLOCKS = [
+    {"type": "paragraph", "depth": 0},  # P2-1 页眉来源标记段
+    {"type": "paragraph", "depth": 0},  # P2-1 Header Slot
     {"type": "heading", "depth": 0},
     {"type": "paragraph", "depth": 0},
     {"type": "table", "depth": 0},
@@ -52,6 +61,8 @@ EXPECTED_BLOCKS = [
     {"type": "list_item", "depth": 1},
     {"type": "list_item", "depth": 0},
     {"type": "list_item", "depth": 0},
+    {"type": "paragraph", "depth": 0},  # P2-1 页脚来源标记段
+    {"type": "paragraph", "depth": 0},  # P2-1 Footer Slot
 ]
 
 # 列表项 attrs（mdcore 解析保留 marker 文本 + markdown 深度 1 基）。
@@ -137,9 +148,9 @@ def main() -> int:
             list_blocks = [b for b in blocks_full if b["type"] == "list_item"]
             nesting_ok = (
                 len(list_blocks) == 5
-                and blocks_full[5]["depth"] == 1  # Nested step = Second step 子块
-                and blocks_full[4]["depth"] == 0
-                and all(b["depth"] == 0 for i, b in enumerate(blocks_full) if b["type"] == "list_item" and i != 5)
+                and blocks_full[7]["depth"] == 1  # Nested step = Second step 子块（P2-1 前导 2 块后移）
+                and blocks_full[6]["depth"] == 0
+                and all(b["depth"] == 0 for i, b in enumerate(blocks_full) if b["type"] == "list_item" and i != 7)
             )
             check("import_list_nesting_depth",
                   nesting_ok,
@@ -158,27 +169,34 @@ def main() -> int:
             stats = page.evaluate("window.__lastDocxImport.stats")
             status_text = page.evaluate("document.getElementById('docx-status').textContent")
             check("import_stats_and_status_line",
-                  stats.get("headings") == 1 and stats.get("paragraphs") == 1
+                  stats.get("headings") == 1 and stats.get("paragraphs") == 3
                   and stats.get("tables") == 1 and stats.get("hyperlinks") == 1
                   and stats.get("list_items") == 5
                   and stats.get("list_items_degraded") == 0
                   and stats.get("list_numbering_dropped") == 0
                   and stats.get("list_depth_clamped") == 0
                   and stats.get("list_markers_normalized") == 0
-                  and stats.get("images_skipped") == 1 and stats.get("headers_skipped") == 1
-                  and stats.get("footers_skipped") == 1
+                  and stats.get("images_skipped") == 1
+                  # P2-1（#22）：页眉/页脚全量接入——skipped 恒 0 +
+                  # imported 计数（页眉/页脚各 1 部件）；状态行展示接入计数。
+                  and stats.get("headers_skipped") == 0 and stats.get("footers_skipped") == 0
+                  and stats.get("headers_imported") == 1 and stats.get("footers_imported") == 1
                   and status_text.startswith("imported:")
                   and "1 table" in status_text and "image skipped" in status_text
-                  and "5 list items" in status_text,
+                  and "5 list items" in status_text
+                  and "2 header/footer parts imported" in status_text,
                   json.dumps({"stats": stats, "status": status_text}))
 
             # ---- 导入文档是活编辑器文档（全桥：op/sync/事件管道）；
             #      列表块在编辑后存活（r5-t1）----
             page.evaluate("window.__view.dispatch({ changes: { from: window.__view.state.doc.length, insert: '\\ntyped tail' } })")
-            page.wait_for_function("window.__blockCount() === 9", timeout=15000)
+            page.wait_for_function("window.__blockCount() === 13", timeout=15000)
             md_live = page.evaluate("window.__md()")
             check("imported_doc_is_live_editor",
-                  "typed tail" in md_live and md_live.startswith("# Imported Title")
+                  "typed tail" in md_live
+                  and md_live.startswith("<!-- mdcore-import: header:default -->")
+                  and "# Imported Title" in md_live
+                  and "Header Slot" in md_live and "Footer Slot" in md_live
                   and "1. First step" in md_live and "  1. Nested step" in md_live
                   and "- Bullet two" in md_live,
                   repr(md_live[-80:]))
