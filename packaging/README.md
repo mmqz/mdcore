@@ -6,7 +6,11 @@
 
 ## 定名阻塞纪律（强制，TRADEMARK_RULES §4）
 
-**正式商品名未定**（用户决策项 + 商标检索强制门）。本目录所有模板以
+> ⚠️ **流程缺口**：本文与 `checklist.md` 引用的 `TRADEMARK_RULES`（§1/§2.5/§4）
+> **在仓库中不存在**。A2 的近似判定标准、类别范围、驳回处置因此无据可依，需先补齐。
+
+**正式商品名已定：`mang`（中文「芒」），2026-10-27 决议**；但 **A2 商标检索尚未闭合**（见 §定名记录），
+故 `{{APP_NAME}}` 占位符**暂不替换**。本目录所有模板以
 `{{APP_NAME}}`（对外显示名）占位；可执行名/包名/scheme 用自研命名域
 `mdcore`（TRADEMARK_RULES §1 允许域）。**替换 `{{APP_NAME}}` 前**必须：
 
@@ -22,12 +26,44 @@
 
 | 占位符 | 语义 | 当前值 |
 |---|---|---|
-| `{{APP_NAME}}` | 对外显示名（窗口标题/安装器/桌面入口） | **待定名**（见上） |
+| `{{APP_NAME}}` | 对外显示名（窗口标题/安装器/桌面入口） | `mang`（已定名；**A2 未闭合，暂不替换**） |
 | `{{APP_EXEC}}` | 可执行文件名（自研命名域，无需等待定名） | `mdcore` |
 | `{{APP_ID}}` | 反向域名标识（macOS bundle / GNOME app id） | `dev.mdcore.editor`（待定名后复核） |
 | `{{VERSION}}` | 版本号（构建脚本从 `mdcore::VERSION` 注入，**禁止手抄**） | `mdcore::VERSION` |
 | `{{BUNDLE_ICON}}` | 图标集根名（ASSET_CHECK 登记后填充） | 待资产轮 |
 
+## 定名记录
+
+| 项 | 值 |
+|---|---|
+| 对外显示名 | **mang** |
+| 中文名 | **芒** |
+| 决议日期 | 2026-10-27 |
+| 检索记录 | [`compliance_release/trademark_search_2026-10-27.md`](../compliance_release/trademark_search_2026-10-27.md) |
+| A2 五步检索 | ⬜ **未闭合**（CNIPA 9/42、WIPO、common-law、whois、账号名待人工） |
+| A3 denylist | ✅ 通过（`mang` 与 typora/muya/delta/zed/gpui/obsidian 均不近似） |
+| `{{APP_NAME}}` 替换 | ⛔ **阻塞**（A2 闭合后才可执行 A4） |
+
+### 三件套一致性（A1）
+
+| 项 | 当前 | 待决 |
+|---|---|---|
+| 商品名 | `mang` / 芒 | — |
+| 域名 | 未取得（`.dev`/`.app`/`getmang.com` 已占，`.com` 待 whois） | 需选定并注册 |
+| 仓库组织名 | `mmqz`（现有） | 是否新建 Org `mang` 待定 |
+
+**A1 尚未三件套一致**——域名未定，故 A1 亦未闭合。
+
+### 已知风险（决议时接受）
+
+- ma- 词族联想（mango / manga / mangle），且 Mango 系产品在协作/文档类目已有占位；
+- 中文「忙」歧义；
+- npm 裸名 `mang` 已占用（web 包需 scope）；
+- 4 字母域名基本售罄。
+
+详见检索记录 §3。
+
+---
 ## 版本单源（R24-c 机制合同）
 
 ```
