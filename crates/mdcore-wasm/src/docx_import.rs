@@ -291,6 +291,9 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         mdc_office_io::io::WarningKind::MalformedXml => "malformed_xml",
         mdc_office_io::io::WarningKind::ControlChars => "control_chars",
         mdc_office_io::io::WarningKind::BrokenReference => "broken_reference",
+        // #17：修订删除文本登记（docx 面专用；xlsx 面无此类别使用面
+        // ——完备性映射）。
+        mdc_office_io::io::WarningKind::RevisionDelete => "revision_delete",
     }
 }
 
@@ -603,6 +606,7 @@ mod tests {
             bold: false,
             italic: false,
             hyperlink: None,
+            revision_inserted: false,
         }
     }
 
@@ -1179,7 +1183,8 @@ mod tests {
         assert!(!md.contains("11.1"), "域缓存残留零容忍");
         assert_eq!(stats["fields_dropped"], 1, "剥离计数: {stats}");
         // 回归（不过度修正）：中文序数标题逐字。
-        assert!(md.contains("## 第一章 概述"), "无编号标题不变: {md}");
+        // #17：ins 文本=当前生效——REV-INSERT- 前缀在场（逐字不变仍成立）。
+        assert!(md.contains("## REV-INSERT-第一章 概述"), "无编号标题不变: {md}");
     }
 
     #[test]

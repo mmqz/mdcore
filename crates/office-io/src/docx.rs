@@ -158,7 +158,11 @@
 //! - **表格单元格内超链接目标**（单元格文本保留，目标丢弃——
 //!   TableData 扁平文本面；引擎解析能力在档
 //!   [docx-r1/CAPABILITY_NOTES §2，分析仓]）；
-//! - 修订追踪（Insert/Delete/MoveFrom/MoveTo 容器——内容不入提取）；
+//! - 修订追踪：**`w:ins` = 当前生效文本，已提取**（run 级
+//!   `revision_inserted` 标记——#17；跳过整容器会静默丢失生效条款）；
+//!   `w:del`/`delText` = 已删除内容不提取（逐段计数登记
+//!   `WarningKind::RevisionDelete`）；MoveFrom/MoveTo（移动修订）v0
+//!   不提取（幽灵文本/移动目标——登记，#17 范围外）；
 //! - 页码/总页数域（PageNum/NumPages）、书签、批注、
 //!   StructuredDataTag（内容控件）；
 //! - 脚注/尾注（**读面引擎受限**：docx-rs 从不读 footnotes.xml 且
@@ -1412,6 +1416,9 @@ pub struct RunData {
     /// run 所在超链接的解析结果（None = 普通文本 run；同一超链接内
     /// 的各 run 共享同一目标）。
     pub hyperlink: Option<HyperlinkTarget>,
+    /// #17：run 来自修订插入容器（`w:ins` 内 = 当前生效文本，正常
+    /// 提取；标记面供消费方识别修订通道——如标书仓的澄清条款抽取）。
+    pub revision_inserted: bool,
 }
 
 /// 段落编号承载（r4-t3 读面：numPr 透传 + 语义解析）。
@@ -2151,24 +2158,70 @@ fn extract_paragraph(
     // #14（A2）：域状态机——段落级单实例（域可跨 run：begin 与 end
     // 分属不同 run，状态必须段落作用域）。dropped 计数随段落透出。
     let mut fm = FieldMachine::default();
+    // #17：修订删除文本（w:delText）计数——OOXML 语义 = 已删除内容
+    // 不提取；逐段登记可见性（WarningKind::RevisionDelete）。
+    let mut del_text_runs = 0usize;
     for child in &p.children {
         match child {
-            docx_rs::ParagraphChild::Run(r) => runs.push(extract_run(r, &mut fm)),
+            docx_rs::ParagraphChild::Run(r) => {
+                del_text_runs += count_del_text(r);
+                runs.push(extract_run(r, &mut fm, false))
+            }
             // 超链接：内文本保留（run 边界保持）+ 目标联接（docx-r1）。
             docx_rs::ParagraphChild::Hyperlink(h) => {
                 let target = resolve_hyperlink(h, table, part, strict, warnings)?;
                 for c in &h.children {
                     if let docx_rs::ParagraphChild::Run(r) = c {
-                        let mut rd = extract_run(r, &mut fm);
+                        let mut rd = extract_run(r, &mut fm, false);
                         rd.hyperlink = Some(target.clone());
                         runs.push(rd);
                     }
                 }
             }
-            // 修订追踪/书签/批注/内容控件——面外跳过（登记）。域机制
-            // 在 run 级状态机消费（FieldMachine——#14）。
+            // #17：修订插入（w:ins）= 当前生效文本——正常提取 + run 级
+            // revision_inserted 标记（消费方可辨修订通道）。域机器同段
+            // 作用域延续（域可跨 ins 边界）。
+            docx_rs::ParagraphChild::Insert(ins) => {
+                for c in &ins.children {
+                    if let docx_rs::InsertChild::Run(r) = c {
+                        del_text_runs += count_del_text(r);
+                        runs.push(extract_run(r, &mut fm, true));
+                    }
+                    // ins 内嵌套 w:del（删除容器在插入容器内——罕见）：
+                    // delText 计数、内容不提取（同一语义）。
+                    if let docx_rs::InsertChild::Delete(del) = c {
+                        for dc in &del.children {
+                            if let docx_rs::DeleteChild::Run(r) = dc {
+                                del_text_runs += count_del_text(r);
+                            }
+                        }
+                    }
+                }
+            }
+            // #17：修订删除容器（w:del）——内容整体不提取（已删除）；
+            // delText 计数入告警。
+            docx_rs::ParagraphChild::Delete(del) => {
+                for dc in &del.children {
+                    if let docx_rs::DeleteChild::Run(r) = dc {
+                        del_text_runs += count_del_text(r);
+                    }
+                }
+            }
+            // 书签/批注/MoveFrom/MoveTo/内容控件——面外跳过（登记：
+            // MoveFrom=幽灵文本/MoveTo=移动目标——v0 均不提取，修订
+            // 面仅 w:ins 通道，#17 范围）。域机制在 run 级状态机消费
+            //（FieldMachine——#14）。
             _ => {}
         }
+    }
+    if del_text_runs > 0 {
+        warnings.push(CompatibilityWarning {
+            part: part.to_string(),
+            kind: WarningKind::RevisionDelete,
+            detail: format!(
+                "{del_text_runs} revision-deleted text run(s) skipped                  (w:delText = removed content, not extracted)"
+            ),
+        });
     }
     Ok(ParagraphData {
         style,
@@ -2185,7 +2238,7 @@ fn extract_paragraph(
 /// #14（A2）：域机器先行——FieldChar 状态转移 + 指令累积；表现型
 /// 域缓存结果区文本剥离（suppress）；空文本 run 保留（run 边界
 /// 语义零变化——合并面归导入侧 merge_runs）。
-fn extract_run(r: &docx_rs::Run, fm: &mut FieldMachine) -> RunData {
+fn extract_run(r: &docx_rs::Run, fm: &mut FieldMachine, revision_inserted: bool) -> RunData {
     let mut text = String::new();
     for child in &r.children {
         match child {
@@ -2221,7 +2274,17 @@ fn extract_run(r: &docx_rs::Run, fm: &mut FieldMachine) -> RunData {
         bold: r.run_property.bold.is_some(),
         italic: r.run_property.italic.is_some(),
         hyperlink: None,
+        revision_inserted,
     }
+}
+
+/// #17：run 内修订删除文本（`w:delText`）计数——不提取（已删除
+/// 内容），计数供段落级可见性告警。
+fn count_del_text(r: &docx_rs::Run) -> usize {
+    r.children
+        .iter()
+        .filter(|c| matches!(c, docx_rs::RunChild::DeleteText(_)))
+        .count()
 }
 
 /// 表提取：行 × 单元格拼接文本（单元格内多段落 `\n` 连接；嵌套表/

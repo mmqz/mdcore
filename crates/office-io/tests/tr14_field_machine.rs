@@ -73,7 +73,9 @@ fn unnumbered_headings_verbatim_no_overcorrection() {
         texts,
         vec![
             "项目技术方案书".to_string(),
-            "第一章 概述".to_string(),
+            // #17 后正确形态：该标题段含 w:ins（REV-INSERT- 前缀=当前生效
+            // 文本，带 revision_inserted 标记提取——逐字保留仍成立）。
+            "REV-INSERT-第一章 概述".to_string(),
             "1.1 表格".to_string(),
             "第二章 报价".to_string(),
         ],

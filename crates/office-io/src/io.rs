@@ -284,6 +284,10 @@ pub enum WarningKind {
     /// 警告随文档返回；严格模式为 typed reject 不产警告）。XLSX 面
     /// 无此类别使用面（关系引用不进 XLSX 模型）。
     BrokenReference,
+    /// #17：修订删除文本（w:delText）按 OOXML 语义不提取（仅当前生效
+    /// 文本入读回——delText 是已删除内容）；逐段登记计数提升可见性
+    /// （澄清/更正类采购文件的修订通道不静默）。
+    RevisionDelete,
 }
 
 /// 兼容模式结构化警告（随 [`Book::warnings`] 返回）。

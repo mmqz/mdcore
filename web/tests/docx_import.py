@@ -253,9 +253,30 @@ def main() -> int:
                   "### 1.1 表格" in tr13_md
                   and "11.1" not in tr13_md
                   and tr13_stats.get("fields_dropped") == 1
-                  and "## 第一章 概述" in tr13_md,
+                  and "## REV-INSERT-第一章 概述" in tr13_md,  # #17: ins=当前文本（前缀在场）
                   json.dumps({"fields_dropped": tr13_stats.get("fields_dropped"),
                               "h3_ok": "### 1.1 表格" in tr13_md}))
+
+            # ---- TR-17（issue #17 P0）：修订插入当前文本提取——真
+            #      澄清样本（ai-bid-research corpus-R D2a）：w:ins 文本
+            #      进 md 流 + delText 零提取 + revision_delete 登记。----
+            d2a = WEB.parent / "test-artifacts" / "corpusR" / "D2a-nonbody.docx"
+            d2a_bytes = d2a.read_bytes()
+            d2a_b64 = base64.b64encode(d2a_bytes).decode()
+            tr17 = page.evaluate(IMPORT_JS, d2a_b64)
+            tr17_stats = page.evaluate("window.__lastDocxImport.stats")
+            tr17_md = page.evaluate("window.__md()")
+            tr17_warns = tr17_stats.get("warnings") or []
+            check("tr17_revision_insert_current_text",
+                  tr17.get("ok") is True
+                  and "（修订插入：响应截止时间顺延至 2026-12-01 09:30）" in tr17_md
+                  and "原表述：响应截止时间 2026-11-20 09:30" not in tr17_md
+                  and any(w.get("kind") == "revision_delete" for w in tr17_warns)
+                  and len(page_errors) == 0,
+                  json.dumps({"ok": tr17.get("ok"),
+                              "ins_ok": "修订插入" in tr17_md,
+                              "del_leak": "原表述" in tr17_md,
+                              "warns": tr17_warns[:2]}))
 
             browser.close()
         srv.shutdown()

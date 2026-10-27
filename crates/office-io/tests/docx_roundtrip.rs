@@ -125,6 +125,7 @@ fn run_data(spec: RunSpec) -> mdc_office_io::docx::RunData {
         bold: spec.bold,
         italic: spec.italic,
         hyperlink: None,
+        revision_inserted: false,
     }
 }
 

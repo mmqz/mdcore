@@ -220,6 +220,9 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         mdc_office_io::io::WarningKind::MalformedXml => "malformed_xml",
         mdc_office_io::io::WarningKind::ControlChars => "control_chars",
         mdc_office_io::io::WarningKind::BrokenReference => "broken_reference",
+        // #17：修订删除文本登记（docx 面专用；xlsx 面无此类别使用面
+        // ——完备性映射）。
+        mdc_office_io::io::WarningKind::RevisionDelete => "revision_delete",
     }
 }
 
