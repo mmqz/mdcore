@@ -1,0 +1,61 @@
+name: windows-check
+
+# 目标：把 #[cfg(not(unix))] / #[cfg(windows)] 分支纳入编译覆盖。
+# 由来：bid-parse guidance E0596 与本地 guard.rs 回归都是因为 Windows 分支从未编译。
+# 范围纪律：只做 cargo check（不做完整 test），保证分钟数可控且能抓到编译级回归。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # 依赖下载重试：Windows runner 偶发网络抖动
+  CARGO_NET_RETRY: 3
+
+jobs:
+  check:
+    name: windows / cargo check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: cargo check (workspace, excluding GTK-only shell)
+        # mdshell-native 依赖 GTK3/WebKitGTK，Windows 上无实体 -> 排除。
+        # 其余全部 crate 必须能编译：这是 Windows 平台的编译契约。
+        run: cargo check --workspace --all-targets --exclude mdshell-native
+
+      - name: cargo check wasm target
+        run: cargo check -p mdcore-wasm --target wasm32-unknown-unknown
+
+      - name: Report excluded crate
+        if: always()
+        run: |
+          echo '### Windows CI 覆盖范围' >> $env:GITHUB_STEP_SUMMARY
+          echo '' >> $env:GITHUB_STEP_SUMMARY
+          echo '| 项 | 状态 |' >> $env:GITHUB_STEP_SUMMARY
+          echo '|---|---|' >> $env:GITHUB_STEP_SUMMARY
+          echo '| 引擎核心 crate | 编译覆盖 |' >> $env:GITHUB_STEP_SUMMARY
+          echo '| wasm target | 编译覆盖 |' >> $env:GITHUB_STEP_SUMMARY
+          echo '| mdshell-native (GTK) | **不覆盖**（Windows 无 GTK 依赖实体） |' >> $env:GITHUB_STEP_SUMMARY
