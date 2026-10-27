@@ -183,11 +183,20 @@ fn naming_gate_documented_before_placeholder_replacement() {
     for gate in ["商标检索五步完成", "占位符全量替换", "版本单源"] {
         assert!(checklist.contains(gate), "核对单必须含门：{gate}");
     }
-    // 模板尚未定名（占位符在位）——定名提交必须同步改写本断言 +
-    // checklist A4 勾选记录 + packaging/README 变量表（三处一体）。
+    // 已定名（2026-10-27：mang / 芒）——A4 门已执行，断言随定名改写（三处一体：
+    // 本断言 + checklist A4 记录 + packaging/README 变量表/定名记录）。
     let desktop = read("packaging/shared/app.desktop.tpl");
     assert!(
-        desktop.contains("{{APP_NAME}}"),
-        "未定名：显示名占位符必须在位（定名时随 A4 门替换）"
+        !desktop.contains("{{APP_NAME}}"),
+        "定名后占位符必须已替换（A4 门）"
+    );
+    assert!(
+        desktop.contains("Name=mang"),
+        "桌面入口显示名必须为定名后的 mang"
+    );
+    // 定名决议与 A4 执行记录必须可追溯（README 定名记录节）。
+    assert!(
+        readme.contains("mang") && readme.contains("A4 执行记录"),
+        "定名决议与 A4 执行记录必须在 packaging/README.md 在档"
     );
 }

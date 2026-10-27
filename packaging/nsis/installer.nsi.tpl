@@ -1,11 +1,11 @@
 ; NSIS 安装器模板（R24-c；实体验证留 R24-d）
-; 注入：{{APP_NAME}} {{VERSION}}（构建脚本从 mdcore::VERSION 取值）
+; 注入：mang {{VERSION}}（构建脚本从 mdcore::VERSION 取值）
 ; 方言：NSIS 3.x；宿主壳 = tao+wry（Windows 下 WebView2 运行时）
 ; 注意：可执行名/安装目录用自研命名域 mdcore（TRADEMARK_RULES §1）；
-;       {{APP_NAME}}（显示名）待定名后注入——checklist A4。
+;       mang（显示名）待定名后注入——checklist A4。
 
 !define APPEXEC "mdcore"
-!define APPNAME "{{APP_NAME}}"
+!define APPNAME "mang"
 !define APPVERSION "{{VERSION}}"
 !define APPID "dev.mdcore.editor"
 ; WebView2 Evergreen 引导（wry Windows 运行时面；R24-d 实测后锁版本）

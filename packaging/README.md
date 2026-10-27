@@ -26,7 +26,7 @@
 
 | 占位符 | 语义 | 当前值 |
 |---|---|---|
-| `{{APP_NAME}}` | 对外显示名（窗口标题/安装器/桌面入口） | `mang`（已定名；**A2 未闭合，暂不替换**） |
+| `{{APP_NAME}}` | 对外显示名（窗口标题/安装器/桌面入口） | `mang`（**已替换，2026-10-27**） |
 | `{{APP_EXEC}}` | 可执行文件名（自研命名域，无需等待定名） | `mdcore` |
 | `{{APP_ID}}` | 反向域名标识（macOS bundle / GNOME app id） | `dev.mdcore.editor`（待定名后复核） |
 | `{{VERSION}}` | 版本号（构建脚本从 `mdcore::VERSION` 注入，**禁止手抄**） | `mdcore::VERSION` |
@@ -40,9 +40,9 @@
 | 中文名 | **芒** |
 | 决议日期 | 2026-10-27 |
 | 检索记录 | [`compliance_release/trademark_search_2026-10-27.md`](../compliance_release/trademark_search_2026-10-27.md) |
-| A2 五步检索 | ⬜ **未闭合**（CNIPA 9/42、WIPO、common-law、whois、账号名待人工） |
+| A2 五步检索 | ⚠️ **降级为风险登记**（所有者决议：不注册域名、不承诺商用 → 不阻塞 A4；**商用/公开发行前必须重跑**） |
 | A3 denylist | ✅ 通过（`mang` 与 typora/muya/delta/zed/gpui/obsidian 均不近似） |
-| `{{APP_NAME}}` 替换 | ⛔ **阻塞**（A2 闭合后才可执行 A4） |
+| `{{APP_NAME}}` 替换 | ✅ **已执行**（2026-10-27，见下 §A4 执行记录） |
 
 ### 三件套一致性（A1）
 
@@ -52,7 +52,31 @@
 | 域名 | 未取得（`.dev`/`.app`/`getmang.com` 已占，`.com` 待 whois） | 需选定并注册 |
 | 仓库组织名 | `mmqz`（现有） | 是否新建 Org `mang` 待定 |
 
-**A1 尚未三件套一致**——域名未定，故 A1 亦未闭合。
+**A1 按「软件显示名」口径闭合**：所有者明确 **不注册域名、不承诺商用**，
+故三件套中仅商品名适用；域名与仓库组织名**豁免**（豁免理由记录在案，非遗漏）。
+
+### A4 执行记录（2026-10-27）
+
+`{{APP_NAME}}` 已全量替换为 `mang`，涉及文件：
+
+```
+packaging/shared/app.desktop.tpl      Linux 桌面入口 Name=
+packaging/nsis/installer.nsi.tpl      Windows 安装器显示名
+packaging/macos/Info.plist.tpl        macOS bundle 显示名
+packaging/appimage/build-appimage.sh  AppImage 元数据
+packaging/deb/build-deb.sh            deb 包元数据
+```
+
+同步改写门禁断言：`crates/shell/tests/r24_packaging.rs::naming_gate_documented_before_placeholder_replacement`
+（原断言「占位符必须在位」→ 现断言「占位符已替换且显示名 = mang」）。
+
+**未改动项（有意为之）**：
+
+| 项 | 保持 | 理由 |
+|---|---|---|
+| `{{APP_EXEC}}` | `mdcore` | 自研命名域，与显示名解耦；改可执行名会破坏 CONTRACT/scheme |
+| `{{APP_ID}}` | `dev.mdcore.editor` | 反向域名标识；**待复核是否随显示名改为 `dev.mang.editor`**（涉及 macOS bundle 迁移成本） |
+| URL scheme | `mdcore://` | CONTRACT §2 冻结面 |
 
 ### 已知风险（决议时接受）
 

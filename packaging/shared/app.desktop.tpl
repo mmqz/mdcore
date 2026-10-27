@@ -1,10 +1,10 @@
 # Linux 桌面入口（deb / AppImage 共用模板；R24-c）
-# 注入：{{APP_NAME}} {{APP_EXEC}} {{BUNDLE_ICON}}
+# 注入：mang {{APP_EXEC}} {{BUNDLE_ICON}}
 # 方言：Desktop Entry Specification 1.5（GNOME/KDE/Cinnamon 通用）
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name={{APP_NAME}}
+Name=mang
 GenericName=Markdown Editor
 Comment=Modular Markdown editing core with native shell
 # 可执行名用自研命名域（TRADEMARK_RULES §1）；不等待定名。
