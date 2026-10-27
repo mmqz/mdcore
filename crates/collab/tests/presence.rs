@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use mdc_collab::{CollabError, Presence, SessionOptions};
+use mdc_collab::{CollabError, Presence, PresenceState, SessionOptions};
 
 fn session(id: u64) -> mdc_collab::CollabSession {
     mdc_collab::CollabSession::open(SessionOptions {
@@ -209,8 +209,18 @@ fn multi_client_states_sorted_and_merge() {
     let sa = a.presence_mut().states();
     let sb = b.presence_mut().states();
     let sc = c.presence_mut().states();
-    assert_eq!(sa, sb);
-    assert_eq!(sb, sc);
+    // 跨视图收敛断言只比较语义面（client_id/clock/json）：
+    // last_updated_ms 是接收方本地活性时钟（yrs Awareness 语义
+    // ——「何时见到该状态」），本端 set 时刻与对端 apply 时刻
+    // 天然不同，毫秒边界跨拍即合法失配，不属收敛不变量（新鲜
+    // 环境实测复现：同条目两视图 ...019 vs ...020）。
+    let semantic = |v: &[PresenceState]| -> Vec<(u64, u32, Option<String>)> {
+        v.iter()
+            .map(|s| (s.client_id, s.clock, s.json.clone()))
+            .collect()
+    };
+    assert_eq!(semantic(&sa), semantic(&sb), "A/B 视图语义收敛");
+    assert_eq!(semantic(&sb), semantic(&sc), "B/C 视图语义收敛");
     assert_eq!(sa.len(), 3);
     assert!(
         sa.windows(2).all(|w| w[0].client_id < w[1].client_id),
