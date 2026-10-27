@@ -1832,9 +1832,16 @@ type XlsxImportStats = {
   empty_sheets: number;
   rows: number;
   cells: number;
+  /** P2-3 前键（全量丢弃计数）——语义收窄为渲染窗外（越限）丢弃，
+   * 正常表恒 0；键保留（stats 消费方兼容）。 */
   formulas_flattened: number;
   merged_ranges: number;
   hyperlinks_dropped: number;
+  /** P2-3（#22）：双通道接入计数（渲染窗内公式/超链接格数）。
+   * 明细清单键（formulas/hyperlinks，≤200 条）为 additive JSON 面
+   * （wasm stats 直传，宿主按需读取），不进本类型。 */
+  formulas_imported?: number;
+  hyperlinks_imported?: number;
   sheets_dropped: number;
   rows_dropped: number;
   cols_dropped: number;
@@ -1869,8 +1876,14 @@ function xlsxStatusLine(stats: XlsxImportStats): string {
     `${stats.rows} row${stats.rows === 1 ? '' : 's'}`,
   ];
   if (stats.empty_sheets > 0) parts.push(`${stats.empty_sheets} empty`);
+  // P2-3（#22）：双通道接入计数优先展示（公式原文反引号形 + 链接
+  // GFM 形已进表体）；越限丢弃键语义收窄后仍保留（仅越限非 0）。
+  const formulasKept = stats.formulas_imported ?? 0;
+  if (formulasKept > 0) parts.push(`${formulasKept} formula${formulasKept === 1 ? '' : 's'} kept`);
   if (stats.formulas_flattened > 0) parts.push(`${stats.formulas_flattened} formula${stats.formulas_flattened === 1 ? '' : 's'} flattened`);
   if (stats.merged_ranges > 0) parts.push(`${stats.merged_ranges} merge${stats.merged_ranges === 1 ? '' : 's'}`);
+  const linksKept = stats.hyperlinks_imported ?? 0;
+  if (linksKept > 0) parts.push(`${linksKept} link${linksKept === 1 ? '' : 's'} kept`);
   if (stats.hyperlinks_dropped > 0) parts.push(`${stats.hyperlinks_dropped} link${stats.hyperlinks_dropped === 1 ? '' : 's'} dropped`);
   if (stats.sheets_dropped > 0) parts.push(`${stats.sheets_dropped} sheet${stats.sheets_dropped === 1 ? '' : 's'} truncated`);
   if (stats.rows_dropped > 0 || stats.cols_dropped > 0) parts.push(`${stats.rows_dropped} rows/${stats.cols_dropped} cols truncated`);
