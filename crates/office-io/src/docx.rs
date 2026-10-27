@@ -1514,6 +1514,17 @@ impl ParagraphData {
 pub enum Block {
     Paragraph(ParagraphData),
     Table(TableData),
+    /// #18：文本框（`w:txbxContent`——VML `v:textbox` 与 DrawingML
+    /// `wps:txbx` 双形态）。内层块与正文同构（段落/表——嵌套承载）。
+    TextBox(TextBoxData),
+}
+
+/// #18：文本框内容（内层块序——宿主段之后的文档序位置发射）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextBoxData {
+    /// 文本框内块序（段落/表，经与正文同一提取机制——样式/域/修订
+    /// 通道全承载）。
+    pub blocks: Vec<Block>,
 }
 
 /// 文本表格：行 × 单元格拼接文本。
@@ -1621,7 +1632,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     drop(za);
 
     // OPC 关系层 + 内容类型 + 媒体清单（同一门后字节——零门绕过）。
-    let (bundle, images) = {
+    let (bundle, images, document_xml) = {
         let cursor = std::io::Cursor::new(bytes);
         let mut za = zip::ZipArchive::new(cursor)
             .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
@@ -1655,7 +1666,13 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         };
         let images =
             build_image_inventory(&mut za, &bundle, &content_types, strict, &mut warnings)?;
-        (bundle, images)
+        // #18：document.xml 原始字节（VML 文本框第二趟——引擎读面
+        // 不承载 v:pict→v:textbox 形态，文档级补提取）。
+        let mut document_xml = String::new();
+        if let Ok(mut zf) = za.by_name("word/document.xml") {
+            let _ = zf.read_to_string(&mut document_xml);
+        }
+        (bundle, images, document_xml)
     };
 
     let docx = docx_rs::read_docx(bytes).map_err(|e| DocxError::Parse(format!("{e}")))?;
@@ -1667,6 +1684,17 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     let style_index = StyleIndex::build(&docx.styles);
     let blocks = extract_blocks(
         &docx,
+        &bundle,
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+    )?;
+    // #18：VML 文本框插入（宿主块后——DrawingML 形态已在
+    // extract_blocks 模型面发射，mc:Fallback 副本防双取）。
+    let blocks = apply_vml_textboxes(
+        blocks,
+        &document_xml,
         &bundle,
         &numbering_index,
         &style_index,
@@ -1960,6 +1988,235 @@ fn resolve_heading_level(
     None
 }
 
+/// #18：段落内 DrawingML 文本框内容子序（w:drawing → DrawingData::
+/// TextBox——run 级 + 超链接内 run 级两路收集）。
+fn paragraph_text_box_children(p: &docx_rs::Paragraph) -> Vec<&Vec<docx_rs::TextBoxContentChild>> {
+    fn walk_run<'a>(r: &'a docx_rs::Run, out: &mut Vec<&'a Vec<docx_rs::TextBoxContentChild>>) {
+        for c in &r.children {
+            if let docx_rs::RunChild::Drawing(d) = c {
+                if let Some(docx_rs::DrawingData::TextBox(tb)) = &d.data {
+                    out.push(&tb.children);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for child in &p.children {
+        match child {
+            docx_rs::ParagraphChild::Run(r) => walk_run(r, &mut out),
+            docx_rs::ParagraphChild::Hyperlink(h) => {
+                for c in &h.children {
+                    if let docx_rs::ParagraphChild::Run(r) = c {
+                        walk_run(r, &mut out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// #18：文本框内层块提取（与正文同一机制——样式索引/域状态机/修订
+/// 通道/超链接联接全承载；TextBoxContentChild 段落/表两型）。
+#[allow(clippy::too_many_arguments)]
+fn text_box_blocks(
+    children: &[docx_rs::TextBoxContentChild],
+    table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    part: &str,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<Block>, io::ReadError> {
+    let mut out = Vec::new();
+    for c in children {
+        match c {
+            docx_rs::TextBoxContentChild::Paragraph(p) => out.push(Block::Paragraph(
+                extract_paragraph(p, table, index, styles, part, strict, warnings)?,
+            )),
+            docx_rs::TextBoxContentChild::Table(t) => out.push(Block::Table(extract_table(
+                t, table, index, styles, part, strict, warnings,
+            )?)),
+        }
+    }
+    Ok(out)
+}
+
+/// #18：VML 文本框第二趟扫描（`w:pict → v:shape → v:textbox →
+/// w:txbxContent`——引擎读面不承载该形态，文档级补提取）。
+///
+/// 返回 (宿主块索引, txbxContent 原始 XML 区段) 序列（文档序）。
+/// 宿主块索引 = 区段所在顶层块（w:p/w:tbl 的 body 直接子层序——
+/// 与 extract_blocks 的块序一一对应；捕获态下顶层计数冻结——
+/// txbxContent 内层 w:p 非顶层）。两类区域跳过：
+/// · **`w:drawing` 子树内**（DrawingML `wps:txbx` 形态——模型面
+///   extract_blocks 已发射，第二趟再取 = 双提取）；
+/// · **mc:Fallback 内**（AlternateContent 双写形态：DrawingML 主选
+///   已由模型面提取，Fallback 的 VML 副本再取 = 双提取）。
+fn scan_vml_textbox_regions(xml: &str) -> Vec<(usize, String)> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth: usize = 0;
+    let mut body_child_depth: Option<usize> = None;
+    let mut block_idx: usize = 0;
+    let mut in_fallback: usize = 0;
+    // DrawingML 子树深度（`w:drawing → wps:txbx → w:txbxContent`——
+    // 模型面领地，第二趟不碰）。
+    let mut in_drawing: usize = 0;
+    // 外层 txbxContent 捕获态（嵌套文本框并入外层区段——内层经
+    // TextBoxContent::read 的段落解析自然展开，边界登记）。
+    let mut capture: Option<(usize, usize)> = None; // (host, txbx 嵌套深度)
+    let mut span_start = 0usize;
+    let mut out: Vec<(usize, String)> = Vec::new();
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "body" => body_child_depth = Some(depth + 1),
+                    "Fallback" => in_fallback += 1,
+                    "drawing" => in_drawing += 1,
+                    "txbxContent" => {
+                        if in_fallback == 0 && in_drawing == 0 && capture.is_none() {
+                            // 宿主 = 最近一个已计数的顶层块（承载 pict 的段）。
+                            capture = Some((block_idx.saturating_sub(1), 1));
+                            span_start = pos_before;
+                        } else if let Some((_, d)) = capture.as_mut() {
+                            *d += 1;
+                        }
+                    }
+                    "p" | "tbl"
+                        // 顶层块计数：Start 时 depth = 该元素自身层（body
+                        // 直接子层 = body_child_depth）——depth 在 match 后
+                        // 才自增，此处比 body_child_depth 本值（非 +1）。
+                        if capture.is_none() && in_fallback == 0 && body_child_depth == Some(depth)
+                        => {
+                            block_idx += 1;
+                        }
+                    _ => {}
+                }
+                depth += 1;
+            }
+            // 自闭合 `<w:p/>`（空段——真 Word 形态）：与 Start+End 等
+            // 价计一个顶层块（depth 不变）；自闭合 txbxContent 无内容
+            // 不捕获。
+            Ok(Event::Empty(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                if (name == "p" || name == "tbl")
+                    && capture.is_none()
+                    && in_fallback == 0
+                    && body_child_depth == Some(depth)
+                {
+                    block_idx += 1;
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "Fallback" => in_fallback = in_fallback.saturating_sub(1),
+                    "drawing" => in_drawing = in_drawing.saturating_sub(1),
+                    "txbxContent" => {
+                        if let Some((host, d)) = capture.as_mut() {
+                            *d -= 1;
+                            if *d == 0 {
+                                let host = *host;
+                                capture = None;
+                                let span_end = reader.buffer_position() as usize;
+                                out.push((host, xml[span_start..span_end].to_string()));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => break, // 门 2+3 已过结构校验（严格）；兼容面防御终止
+        }
+    }
+    out
+}
+
+/// #18：VML 区段 → 内层块（docx-rs 读面复用：EventReader 直喂
+/// `TextBoxContent::read`——零第二解析器，约束 #1/#2 纪律）。
+#[allow(clippy::too_many_arguments)]
+fn parse_textbox_region(
+    region: &str,
+    table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    part: &str,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<Block>, io::ReadError> {
+    // 读面项经 crate 根重导出（lib.rs `pub use reader::*`——reader
+    // 模块本体私有）。
+    use docx_rs::{ElementReader, EventReader, XmlEvent};
+    let mut er = EventReader::new(region.as_bytes());
+    // 首事件 = txbxContent Start（区段起点恒是）——属性透传。
+    let attrs = match er.next_event() {
+        Ok(XmlEvent::StartElement { attributes, .. }) => attributes,
+        _ => {
+            return Err(io::ReadError::InvalidPart {
+                part: part.to_string(),
+                detail: "textbox region malformed (missing txbxContent open)".into(),
+            })
+        }
+    };
+    let content =
+        docx_rs::TextBoxContent::read(&mut er, &attrs).map_err(|_| io::ReadError::InvalidPart {
+            part: part.to_string(),
+            detail: "textbox region parse failed".into(),
+        })?;
+    text_box_blocks(
+        &content.children,
+        table,
+        index,
+        styles,
+        part,
+        strict,
+        warnings,
+    )
+}
+
+/// #18：VML 文本框块序插入（宿主块后——降序插入保索引稳定）。
+#[allow(clippy::too_many_arguments)]
+fn apply_vml_textboxes(
+    mut blocks: Vec<Block>,
+    document_xml: &str,
+    bundle: &RelsBundle,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<Block>, io::ReadError> {
+    if !document_xml.contains("txbxContent") {
+        return Ok(blocks); // 快路径零成本
+    }
+    let table = bundle.document.as_ref();
+    let regions = scan_vml_textbox_regions(document_xml);
+    for (host, region) in regions.iter().rev() {
+        let tb_blocks = parse_textbox_region(
+            region,
+            table,
+            index,
+            styles,
+            "word/document.xml",
+            strict,
+            warnings,
+        )?;
+        if tb_blocks.is_empty() {
+            continue;
+        }
+        let insert_at = (*host + 1).min(blocks.len());
+        blocks.insert(insert_at, Block::TextBox(TextBoxData { blocks: tb_blocks }));
+    }
+    Ok(blocks)
+}
+
 fn extract_blocks(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
@@ -1981,7 +2238,24 @@ fn extract_blocks(
                     "word/document.xml",
                     strict,
                     warnings,
-                )?))
+                )?));
+                // #18：DrawingML 文本框（w:drawing → wps:txbx——引擎
+                // 读面已承载）宿主段后发射；VML 形态走文档级第二趟
+                // （apply_vml_textboxes——读面不承载，登记）。
+                for tb in paragraph_text_box_children(p) {
+                    let tb_blocks = text_box_blocks(
+                        tb,
+                        table,
+                        index,
+                        styles,
+                        "word/document.xml",
+                        strict,
+                        warnings,
+                    )?;
+                    if !tb_blocks.is_empty() {
+                        blocks.push(Block::TextBox(TextBoxData { blocks: tb_blocks }));
+                    }
+                }
             }
             docx_rs::DocumentChild::Table(t) => blocks.push(Block::Table(extract_table(
                 t,

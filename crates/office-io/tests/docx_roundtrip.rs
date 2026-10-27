@@ -2138,6 +2138,9 @@ fn r4t3_roundtrip_read_modify_write() {
                 w2.paragraph(&runs_to_specs(&pd.runs));
             }
             Block::Table(t) => w2.table(&t.rows),
+            // #18：文本框（写面不回放——读面加性承载；往返丢集登记
+            // 与脚注/图片锚段同语义）。
+            Block::TextBox(_) => {}
         }
     }
     for h in &doc.headers {

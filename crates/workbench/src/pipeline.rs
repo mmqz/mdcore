@@ -1256,6 +1256,22 @@ impl Workbench {
                         }
                     }
                 }
+                // #18：文本框内层块递归入文本流（验证面——全文本收集）。
+                mdc_office_io::docx::Block::TextBox(tb) => {
+                    for inner in &tb.blocks {
+                        match inner {
+                            mdc_office_io::docx::Block::Paragraph(p) => texts.push(p.text()),
+                            mdc_office_io::docx::Block::Table(t) => {
+                                for row in &t.rows {
+                                    for cell in row {
+                                        texts.push(cell.clone());
+                                    }
+                                }
+                            }
+                            mdc_office_io::docx::Block::TextBox(_) => {}
+                        }
+                    }
+                }
             }
         }
         for hf in doc.headers.iter().chain(doc.footers.iter()) {

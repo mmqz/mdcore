@@ -55,6 +55,14 @@ fn docx_paragraphs(path: &std::path::Path) -> Vec<String> {
                     }
                 }
             }
+            // #18：文本框内层递归（demo 面）。
+            mdc_office_io::docx::Block::TextBox(tb) => {
+                for inner in &tb.blocks {
+                    if let mdc_office_io::docx::Block::Paragraph(p) = inner {
+                        out.push(p.text());
+                    }
+                }
+            }
         }
     }
     out

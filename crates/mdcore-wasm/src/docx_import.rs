@@ -398,8 +398,31 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
     let mut list_numbering_dropped = 0usize;
     let mut list_depth_clamped = 0usize;
     let mut list_markers_normalized = 0usize;
+    // #18：文本框（Block::TextBox）——md 无文本框概念，内层块扁平化
+    // 进主映射（段落/表与正文同构；嵌套文本框多趟展开至定点）；
+    // stats.text_boxes 计数（承载可见）。
+    let mut text_boxes = 0usize;
+    let mut flat_blocks: Vec<&Block> = doc.blocks.iter().collect();
+    loop {
+        let mut next: Vec<&Block> = Vec::with_capacity(flat_blocks.len());
+        let mut expanded = false;
+        for b in flat_blocks.into_iter() {
+            match b {
+                Block::TextBox(tb) => {
+                    text_boxes += 1;
+                    expanded = true;
+                    next.extend(tb.blocks.iter());
+                }
+                _ => next.push(b),
+            }
+        }
+        flat_blocks = next;
+        if !expanded {
+            break;
+        }
+    }
     let mut counters = ListCounters::default();
-    for block in &doc.blocks {
+    for block in &flat_blocks {
         match block {
             Block::Paragraph(p) => {
                 let (text, links) = render_runs(&p.runs);
@@ -462,6 +485,8 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
                     tables += 1;
                 }
             }
+            // #18：预处理定点已展开全部文本框——此臂类型穷尽性专用。
+            Block::TextBox(_) => unreachable!("text boxes flattened in preprocessing"),
         }
     }
     let images_skipped = doc.images.iter().filter(|a| a.body_uses > 0).count();
@@ -486,6 +511,7 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
         "list_depth_clamped": list_depth_clamped,
         "list_markers_normalized": list_markers_normalized,
         "images_skipped": images_skipped,
+        "text_boxes": text_boxes,
         "fields_dropped": fields_dropped,
         "headers_skipped": doc.headers.len(),
         "footers_skipped": doc.footers.len(),
@@ -1184,7 +1210,10 @@ mod tests {
         assert_eq!(stats["fields_dropped"], 1, "剥离计数: {stats}");
         // 回归（不过度修正）：中文序数标题逐字。
         // #17：ins 文本=当前生效——REV-INSERT- 前缀在场（逐字不变仍成立）。
-        assert!(md.contains("## REV-INSERT-第一章 概述"), "无编号标题不变: {md}");
+        assert!(
+            md.contains("## REV-INSERT-第一章 概述"),
+            "无编号标题不变: {md}"
+        );
     }
 
     #[test]

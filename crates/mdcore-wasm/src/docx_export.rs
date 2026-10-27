@@ -824,7 +824,7 @@ mod tests {
             .iter()
             .filter_map(|b| match b {
                 Block::Paragraph(p) => Some(p.clone()),
-                Block::Table(_) => None,
+                Block::Table(_) | Block::TextBox(_) => None,
             })
             .collect()
     }
@@ -1186,7 +1186,7 @@ mod tests {
             .into_iter()
             .filter_map(|b| match b {
                 Block::Table(t) => Some(t),
-                _ => None,
+                Block::Paragraph(_) | Block::TextBox(_) => None,
             })
             .collect();
         assert_eq!(tables.len(), 1);
