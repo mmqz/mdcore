@@ -313,6 +313,53 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
     }
 }
 
+/// 引擎警告 kind → 严重度（#22 P2-4 三档：`info` 可接受 / `warn` 有损 /
+/// `error` 需关注）。
+///
+/// 裁决链：`malformed_xml`/`broken_reference` = 部件降级或槽位跳过
+/// （兼容模式读面——**有损**，内容可能缺席）→ `warn`；`control_chars`
+/// = 控制字符清洗（可接受规范化）→ `info`；`revision_delete` =
+/// 修订删除文本登记（当前文本语义，非损失——#17 delText 本就不入
+/// 流）→ `info`。`error` 档预留给「内容整体不可见」面（见
+/// xlsx 导入的 sheets/rows/cols_dropped）——docx 面当前无此量级面
+///（丢弃均为段落/域/图片级）。
+fn warning_severity(kind: &mdc_office_io::io::WarningKind) -> &'static str {
+    match kind {
+        mdc_office_io::io::WarningKind::MalformedXml
+        | mdc_office_io::io::WarningKind::BrokenReference => "warn",
+        mdc_office_io::io::WarningKind::ControlChars
+        | mdc_office_io::io::WarningKind::RevisionDelete => "info",
+    }
+}
+
+/// 导入链有损项 → warnings 条目（#22 P2-4）：非 0 计数才进（0 = 无事
+/// 不噪声）；`count` = 项数（stats 同键值的镜像，聚合面单一真源在
+/// stats——本清单是**可见性通道**非第二计数器）；`part` = 格式面
+///（`"docx"`——引擎警告的 part = 具体包内部件路径，本层聚合项的
+/// part = 容器格式标识，语义差异在档）；severity 裁决同
+/// [`warning_severity`] 模块文档：丢弃/降级/越限 = `warn`，规范化/
+/// 钦位/结构登记 = `info`。
+fn import_lossy_warnings(
+    fields_dropped: usize,
+    images_skipped: usize,
+    total: &BlockMapper,
+) -> Vec<serde_json::Value> {
+    [
+        ("fields_dropped", fields_dropped, "warn"),
+        ("images_skipped", images_skipped, "warn"),
+        ("list_items_degraded", total.list_items_degraded, "warn"),
+        ("list_numbering_dropped", total.list_numbering_dropped, "warn"),
+        ("list_markers_normalized", total.list_markers_normalized, "info"),
+        ("list_depth_clamped", total.list_depth_clamped, "info"),
+    ]
+    .into_iter()
+    .filter(|&(_, count, _)| count > 0)
+    .map(|(kind, count, severity)| {
+        serde_json::json!({ "kind": kind, "part": "docx", "count": count, "severity": severity })
+    })
+    .collect()
+}
+
 // ---------------------------------------------------------------------------
 // 列表映射（r5-t1：numbering 读面承载 → markdown 列表行）
 // ---------------------------------------------------------------------------
@@ -629,6 +676,28 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
     // 面；标记行虽经解析成为段落块，但为导入元数据而非文档内容，
     // 口径与 P2-1 前的 body 行数可比）。
     let blocks_stat = lines.len() - headers_imported - footers_imported;
+    // #22 P2-4：可见警告面——引擎结构化警告（count=1 逐条 + severity
+    // 三档）+ 导入链有损项聚合（非 0 才进——count = stats 同键镜像，
+    // 单一真源在 stats 键）；既有消费方（web 状态行 / e2e tr17 kind
+    // 断言）读 kind/part 零破坏，新增字段为加性面。
+    let mut warnings: Vec<serde_json::Value> = doc
+        .warnings
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "part": w.part,
+                "kind": warning_kind(&w.kind),
+                "detail": w.detail,
+                "count": 1,
+                "severity": warning_severity(&w.kind),
+            })
+        })
+        .collect();
+    warnings.extend(import_lossy_warnings(
+        fields_dropped,
+        images_skipped,
+        &total,
+    ));
     let stats = serde_json::json!({
         "blocks": blocks_stat,
         "headings": total.headings,
@@ -657,11 +726,9 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
         // 计——无输出非丢失）。
         "headers_imported": headers_imported,
         "footers_imported": footers_imported,
-        "warnings": doc.warnings.iter().map(|w| serde_json::json!({
-            "part": w.part,
-            "kind": warning_kind(&w.kind),
-            "detail": w.detail,
-        })).collect::<Vec<_>>(),
+        // #22 P2-4：可见警告面（引擎警告 + 导入链有损项——组装在
+        // 上方 `warnings` 变量，此处引用）。
+        "warnings": warnings,
     });
     (lines.join("\n\n"), stats)
 }
@@ -959,7 +1026,12 @@ mod tests {
         assert_eq!(stats["footers_skipped"], 0);
         assert_eq!(stats["headers_imported"], 1);
         assert_eq!(stats["footers_imported"], 1);
-        assert_eq!(stats["warnings"].as_array().map(Vec::len), Some(0));
+        // #22 P2-4：有损项 images_skipped=1 → 恰一条 warn 可见警告
+        //（引擎警告 0——写面产物无悬空引用；其余零损项不进）。
+        assert_eq!(
+            stats["warnings"],
+            serde_json::json!([{ "kind": "images_skipped", "part": "docx", "count": 1, "severity": "warn" }])
+        );
     }
 
     /// r5-t1：列表映射矩阵——多级有序计数（父项推进子级重起）+ 中断
@@ -1529,6 +1601,15 @@ mod tests {
         // 孤儿媒体（body_uses=0）不计——非用户可见内容。
         assert_eq!(stats["images_skipped"], 1);
         assert_eq!(stats["warnings"][0]["kind"], "broken_reference");
+        // #22 P2-4：可见警告面——引擎条目 +count/severity（加性字段）；
+        // 有损项（images_skipped=1）聚合进 warnings（非 0 才进、
+        // count = stats 同键镜像）。
+        assert_eq!(stats["warnings"][0]["count"], 1);
+        assert_eq!(stats["warnings"][0]["severity"], "warn");
+        assert_eq!(stats["warnings"][1]["kind"], "images_skipped");
+        assert_eq!(stats["warnings"][1]["part"], "docx");
+        assert_eq!(stats["warnings"][1]["count"], 1);
+        assert_eq!(stats["warnings"][1]["severity"], "warn");
     }
 
     /// P2-1：变体标记矩阵 + 空部件无输出（挂接但无内容 → 不发射、

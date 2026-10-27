@@ -167,6 +167,25 @@
   button.import-btn { border: 0; font: inherit; }
   #docx-status, #xlsx-status { margin-left: 10px; color: var(--fg-muted); }
   #docx-status.docx-error, #xlsx-status.xlsx-error { color: var(--danger); }
+  /* #22 P2-4：可见警告面——状态行可展开提示 + 明细面板（docx/xlsx 同构；
+     面板挂状态行后（afterend），absolute 锚定需 span 相对定位） */
+  #docx-status, #xlsx-status { position: relative; }
+  #docx-status.has-warnings, #xlsx-status.has-warnings {
+    cursor: pointer; text-decoration: underline dotted var(--fg-muted);
+  }
+  .import-warning-panel {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 210;
+    min-width: 300px; max-width: 480px; max-height: 220px; overflow: auto;
+    padding: 8px 12px; font-size: 12px; line-height: 1.7;
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--border-strong); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    white-space: nowrap;
+  }
+  .import-warning-panel[hidden] { display: none; }
+  .import-warning.sev-error { color: var(--danger); }
+  .import-warning.sev-warn { color: var(--fg-soft); }
+  .import-warning.sev-info { color: var(--fg-muted); }
   #docx-export-status { margin-left: 10px; color: var(--fg-muted); }
   #docx-export-status.docx-export-error { color: var(--danger); }
   /* 导出格式选项面板（issue #10 TR-4——G2 格式面消费 UI） */

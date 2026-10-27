@@ -1709,6 +1709,60 @@ async function main(): Promise<void> {
 // 编辑器现状零触碰。wasm 面形状与错误码表 = crates/mdcore-wasm/src/
 // docx_import.rs 模块文档（单一真源）。
 // ---------------------------------------------------------------------------
+/** #22 P2-4：可见警告条目（wasm stats `warnings` 数组元素形——
+ * 引擎条目带 `detail`；导入链聚合条目 `{kind, part: "docx"|"xlsx",
+ * count, severity}` 无 detail）。severity 三档：`info` 可接受 /
+ * `warn` 有损 / `error` 需关注（内容整体不可见——xlsx 截断面）。 */
+type ImportWarning = {
+  kind: string;
+  part: string;
+  count: number;
+  severity: 'info' | 'warn' | 'error';
+  detail?: string;
+};
+
+/** 警告数摘要（#22 P2-4）：总数 + error 档显式提示（需关注面不
+ * 淹没在总数里）；0 条 = 空串（状态行零噪声）。 */
+function warningsSummary(warnings: ImportWarning[]): string {
+  if (warnings.length === 0) return '';
+  const errors = warnings.filter((w) => w.severity === 'error').length;
+  const base = `${warnings.length} warning${warnings.length === 1 ? '' : 's'}`;
+  return errors > 0 ? `${base} (${errors} error${errors === 1 ? '' : 's'})` : base;
+}
+
+/** 警告明细面板渲染（#22 P2-4）：状态行下方挂面板（首次创建、后续
+ * 重画）；`textContent`-only 内容（XSS 安全面——warning detail 来自
+ * 导入文件字节，永不进 innerHTML）；默认收起，状态行点击切换。 */
+function renderImportWarnings(statusEl: HTMLElement, panelId: string, warnings: ImportWarning[]): void {
+  let panel = document.getElementById(panelId);
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = panelId;
+    panel.className = 'import-warning-panel';
+    statusEl.insertAdjacentElement('afterend', panel);
+  }
+  panel.replaceChildren();
+  for (const w of warnings) {
+    const row = document.createElement('div');
+    row.className = `import-warning sev-${w.severity}`;
+    const detail = w.detail ? ` — ${w.detail}` : '';
+    row.textContent = `[${w.severity}] ${w.kind} × ${w.count} (${w.part})${detail}`;
+    panel.appendChild(row);
+  }
+  panel.hidden = true; // 新导入重置为收起态
+  statusEl.classList.toggle('has-warnings', warnings.length > 0);
+}
+
+/** 状态行点击 → 面板展开/收起（setup 阶段一次性绑定；面板无内容
+ * 时不动作——has-warnings 类同条件门控）。 */
+function bindWarningPanelToggle(statusEl: HTMLElement, panelId: string): void {
+  statusEl.addEventListener('click', () => {
+    if (!statusEl.classList.contains('has-warnings')) return;
+    const panel = document.getElementById(panelId);
+    if (panel) panel.hidden = !panel.hidden;
+  });
+}
+
 type DocxImportStats = {
   blocks: number;
   headings: number;
@@ -1729,7 +1783,9 @@ type DocxImportStats = {
    * `<!-- mdcore-import: header:default -->` 行随 markdown 注入）。 */
   headers_imported?: number;
   footers_imported?: number;
-  warnings: { part: string; kind: string; detail: string }[];
+  /** #22 P2-4：元素形升级（count/severity 加性——引擎条目保留
+   * detail；既有 kind/part 读取方零破坏）。 */
+  warnings: ImportWarning[];
 };
 
 /** wasm import_docx 的薄包装：JSON 出入口 + 异常 → typed 结果（不抛出）。 */
@@ -1770,17 +1826,28 @@ function docxStatusLine(stats: DocxImportStats): string {
   // 防御 ?? 0）。
   const importedParts = (stats.headers_imported ?? 0) + (stats.footers_imported ?? 0);
   if (importedParts > 0) parts.push(`${importedParts} header/footer part${importedParts === 1 ? '' : 's'} imported`);
-  if (stats.warnings.length > 0) parts.push(`${stats.warnings.length} warning${stats.warnings.length === 1 ? '' : 's'}`);
+  // #22 P2-4：可见警告数（error 档显式提示）；明细面板点击展开。
+  const warnSum = warningsSummary(stats.warnings);
+  if (warnSum) parts.push(warnSum);
   return `imported: ${parts.join(' · ')}`;
 }
 
 function setupDocxImport(): void {
   const fileInput = document.getElementById('docx-file') as HTMLInputElement | null;
   const statusEl = document.getElementById('docx-status') as HTMLElement | null;
+  // #22 P2-4：警告面板（点击状态行展开/收起；错误路径收起清空）。
+  if (statusEl) bindWarningPanelToggle(statusEl, 'docx-warning-panel');
+  const clearWarnings = (): void => {
+    if (!statusEl) return;
+    renderImportWarnings(statusEl, 'docx-warning-panel', []);
+    const panel = document.getElementById('docx-warning-panel');
+    if (panel) panel.hidden = true;
+  };
   const showStatus = (text: string, isError: boolean): void => {
     if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.classList.toggle('docx-error', isError);
+    if (isError) clearWarnings();
   };
   window.__importDocx = (bytes: Uint8Array):
     | { ok: true; markdown: string; stats: Record<string, unknown> }
@@ -1801,6 +1868,8 @@ function setupDocxImport(): void {
     window.__inject(result.markdown); // 既有宿主注入契约：整体重建核
     window.__lastDocxImport = { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
     showStatus(docxStatusLine(result.stats), false);
+    // #22 P2-4：可见警告面——面板渲染（收起态）+ 状态行可展开提示。
+    if (statusEl) renderImportWarnings(statusEl, 'docx-warning-panel', result.stats.warnings);
     return { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
   };
   fileInput?.addEventListener('change', () => {
@@ -1845,7 +1914,8 @@ type XlsxImportStats = {
   sheets_dropped: number;
   rows_dropped: number;
   cols_dropped: number;
-  warnings: { part: string; kind: string; detail: string }[];
+  /** #22 P2-4：元素形升级（同 docx 面——count/severity 加性）。 */
+  warnings: ImportWarning[];
 };
 
 /** wasm import_xlsx 的薄包装：JSON 出入口 + 异常 → typed 结果（不抛出）。 */
@@ -1887,17 +1957,29 @@ function xlsxStatusLine(stats: XlsxImportStats): string {
   if (stats.hyperlinks_dropped > 0) parts.push(`${stats.hyperlinks_dropped} link${stats.hyperlinks_dropped === 1 ? '' : 's'} dropped`);
   if (stats.sheets_dropped > 0) parts.push(`${stats.sheets_dropped} sheet${stats.sheets_dropped === 1 ? '' : 's'} truncated`);
   if (stats.rows_dropped > 0 || stats.cols_dropped > 0) parts.push(`${stats.rows_dropped} rows/${stats.cols_dropped} cols truncated`);
-  if (stats.warnings.length > 0) parts.push(`${stats.warnings.length} warning${stats.warnings.length === 1 ? '' : 's'}`);
+  // #22 P2-4：可见警告数（error 档显式提示——截断面需关注）；
+  // 明细面板点击展开（severity 三档行级着色）。
+  const warnSum = warningsSummary(stats.warnings);
+  if (warnSum) parts.push(warnSum);
   return `imported: ${parts.join(' · ')}`;
 }
 
 function setupXlsxImport(): void {
   const fileInput = document.getElementById('xlsx-file') as HTMLInputElement | null;
   const statusEl = document.getElementById('xlsx-status') as HTMLElement | null;
+  // #22 P2-4：警告面板（docx 面同构）。
+  if (statusEl) bindWarningPanelToggle(statusEl, 'xlsx-warning-panel');
+  const clearWarnings = (): void => {
+    if (!statusEl) return;
+    renderImportWarnings(statusEl, 'xlsx-warning-panel', []);
+    const panel = document.getElementById('xlsx-warning-panel');
+    if (panel) panel.hidden = true;
+  };
   const showStatus = (text: string, isError: boolean): void => {
     if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.classList.toggle('xlsx-error', isError);
+    if (isError) clearWarnings();
   };
   window.__importXlsx = (bytes: Uint8Array):
     | { ok: true; markdown: string; stats: Record<string, unknown> }
@@ -1918,6 +2000,8 @@ function setupXlsxImport(): void {
     window.__inject(result.markdown); // 既有宿主注入契约：整体重建核
     window.__lastXlsxImport = { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
     showStatus(xlsxStatusLine(result.stats), false);
+    // #22 P2-4：可见警告面（面板渲染收起态 + 状态行可展开）。
+    if (statusEl) renderImportWarnings(statusEl, 'xlsx-warning-panel', result.stats.warnings);
     return { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
   };
   fileInput?.addEventListener('change', () => {

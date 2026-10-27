@@ -275,6 +275,28 @@ def main() -> int:
                   json.dumps({"fields_dropped": tr13_stats.get("fields_dropped"),
                               "h3_ok": "### 1.1 表格" in tr13_md}))
 
+            # ---- #22 P2-4：可见警告面（真 Word 夹具验收）——
+            #      word-complex fields_dropped=1 → warnings 数组 warn 条目
+            #      + 状态行警告数 + 面板默认收起/点击展开/再点收起。----
+            p24_status = page.evaluate("document.getElementById('docx-status').textContent")
+            p24_warns = tr13_stats.get("warnings") or []
+            p24_expected = f"{len(p24_warns)} warning" + ("s" if len(p24_warns) != 1 else "")
+            p24_hidden0 = page.evaluate("document.getElementById('docx-warning-panel')?.hidden")
+            page.locator("#docx-status").click()
+            p24_open = page.evaluate("!document.getElementById('docx-warning-panel')?.hidden")
+            p24_panel = page.evaluate("document.getElementById('docx-warning-panel')?.textContent ?? ''")
+            page.locator("#docx-status").click()
+            p24_hidden1 = page.evaluate("document.getElementById('docx-warning-panel')?.hidden")
+            check("p2_4_visible_warnings_panel",
+                  any(w.get("kind") == "fields_dropped" and w.get("severity") == "warn"
+                      and w.get("count") == 1 and w.get("part") == "docx"
+                      for w in p24_warns)
+                  and p24_expected in p24_status
+                  and p24_hidden0 is True and p24_open is True and p24_hidden1 is True
+                  and "fields_dropped" in p24_panel and "warn" in p24_panel,
+                  json.dumps({"status": p24_status, "panel": p24_panel[:160],
+                              "warns": p24_warns}))
+
             # ---- TR-17（issue #17 P0）：修订插入当前文本提取——真
             #      澄清样本（ai-bid-research corpus-R D2a）：w:ins 文本
             #      进 md 流 + delText 零提取 + revision_delete 登记。----
