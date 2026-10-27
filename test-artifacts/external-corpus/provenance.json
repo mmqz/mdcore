@@ -1,0 +1,38 @@
+{
+  "note": "TR-2B 外部语料溯源（issue #11 §4.2 扒取纪律：只取输入数据，不取代码；GPL 源仅输入用例并在本表标注）",
+  "sources": [
+    {
+      "path": "commonmark/spec.txt",
+      "repo": "commonmark/commonmark-spec",
+      "commit": "master@2026-10-27 fetch",
+      "license": "CC-BY-SA 4.0",
+      "taken": "spec.txt example 块的 markdown 输入（655 例）——期望 html 未消费（引擎非 HTML 渲染面）",
+      "size_bytes": 206234
+    },
+    {
+      "path": "markdown-it/good.txt",
+      "repo": "markdown-it/markdown-it",
+      "commit": "master@2026-10-27 fetch（test/fixtures/commonmark/good.txt）",
+      "license": "MIT",
+      "taken": "自有测试集输入 652 例（src line 回溯 CommonMark spec）",
+      "size_bytes": 85467
+    },
+    {
+      "path": "pandoc/",
+      "repo": "jgm/pandoc",
+      "commit": "master@2026-10-27 fetch（test/ 四件）",
+      "license": "GPL-2.0+（仓）——仅取输入数据（.md/.txt 测试输入，非代码）",
+      "taken": "writer.markdown / tables.markdown / markdown-reader-more.txt / lhs-test.markdown 四件输入",
+      "size_bytes": 36789
+    },
+    {
+      "path": "poi/",
+      "repo": "apache/poi",
+      "commit": "master@2026-10-27 fetch（test-data/document/ 六件）",
+      "license": "Apache-2.0",
+      "taken": "51921-Word-Crash067 / 52288 / 52449 / 55733 / 56392 / 59030 六件真实回归 docx 样本",
+      "size_bytes": 77616
+    }
+  ],
+  "untaken_note": "mammoth.js / docx4j / LibreOffice sw/qa / unoserver / Marktext 诸源本轮未扒（TR-2B 时间盒），L1-L3 已覆盖 CommonMark 规范全量 + markdown-it 自有集 + pandoc 输入 + POI 真实件四层。"
+}
