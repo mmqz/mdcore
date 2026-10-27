@@ -73,12 +73,28 @@
 //! - 空段落跳过（mdcore 空行不建块）；段落内软换行（w:br → `\n`）
 //!   原样输出——mdcore 行级解析按行建块（一段拆多块，登记）。
 //!
+//! ## 页眉/页脚接入（#22 P2-1——原「不导入面」项移交导入链）
+//!
+//! - 页眉内容 = **文档前导**（正文前发射）、页脚 = **文档尾接**：
+//!   每部件 = 来源标记行（HTML 注释 `<!-- mdcore-import:
+//!   header:default -->` 形——GFM 渲染不可见、mdcore 行级解析承载
+//!   为普通段、`__md()` 投影原样往返）+ 内容行（与正文同一映射机制
+//!   ——标题/列表/表/富文本全同构）；空部件（挂接但无可见内容）无
+//!   输出；stats：`headers_imported`/`footers_imported`（有可见内容
+//!   的部件数）+ `headers_skipped`/`footers_skipped` 恒 0（P2-1 前
+//!   语义 = 未消费槽位数——键保留，消费方兼容）；
+//! - 位置语义依据（页眉前导/页脚尾接的裁决理由）见
+//!   [`docx_to_markdown`] 文档（原位不可回放 + markdown 线性单流 +
+//!   语义保真三链）；
+//! - 块源结构面：office-io `Block` 携带 `source: Body | Header |
+//!   Footer`（读面按部件定值）——消费方可不经标记行直接从模型区分
+//!   块源。
+//!
 //! ## 不导入面（模型级数据在 MD 中不可表示——计数进 stats，诚实边界）
 //!
 //! - 图片（`images_skipped` = 正文/页眉页脚 run 级引用数 >0 的资产；
 //!   孤儿媒体不计——非用户可见内容）；
-//! - 页眉/页脚（`headers_skipped`/`footers_skipped` = 六槽位中实际
-//!   挂接数）；脚注（引擎读面受限，office-io 侧登记面原样继承）。
+//! - 脚注（引擎读面受限，office-io 侧登记面原样继承）。
 //!
 //! ## 已知边界（登记，非缺陷）
 //!
@@ -99,8 +115,8 @@
 //! 先例）；wasm 壳由 wasm32 check + web 三件套门禁背书。
 
 use mdc_office_io::docx::{
-    read_docx_from_bytes_with_options, Block, DocxDocument, DocxError, HyperlinkTarget, ListKind,
-    ParagraphNumbering, RunData, TableData,
+    read_docx_from_bytes_with_options, Block, DocxDocument, DocxError, HeaderFooterData,
+    HeaderFooterVariant, HyperlinkTarget, ListKind, ParagraphNumbering, RunData, TableData,
 };
 use mdc_office_io::io::{ReadError, ReadOptions};
 use wasm_bindgen::prelude::*;
@@ -384,142 +400,263 @@ fn list_marker_line(
     }
 }
 
+/// 块映射器（#22 P2-1：正文/页眉/页脚同一映射机制——单一真源，
+/// 正文映射逻辑自原 docx_to_markdown 主循环原样迁入，零行为漂移）。
+///
+/// 每个内容部件（正文块序 / 每个页眉槽位 / 每个页脚槽位）独立实例：
+/// 列表计数器不跨部件续（页眉里的列表与正文列表 = 不同列表——Word
+/// 语义同构：不同部件独立编号流）；stats 计数经 [`Self::absorb`] 在
+/// 文档级聚合。
+#[derive(Default)]
+struct BlockMapper {
+    headings: usize,
+    paragraphs: usize,
+    tables: usize,
+    hyperlinks: usize,
+    // r5-t1 列表映射面（stats additive——既有 key 零变化）。
+    list_items: usize,
+    list_items_degraded: usize,
+    list_numbering_dropped: usize,
+    list_depth_clamped: usize,
+    list_markers_normalized: usize,
+    // #18：文本框计数（承载可见）。
+    text_boxes: usize,
+    counters: ListCounters,
+}
+
+impl BlockMapper {
+    /// 块序 → markdown 行序。#18：文本框（Block::TextBox）——md 无
+    /// 文本框概念，内层块扁平化进主映射（段落/表与正文同构；嵌套
+    /// 文本框多趟展开至定点）。返回行恒非空（空段跳过 / 空表跳过）。
+    fn map_blocks(&mut self, blocks: &[Block]) -> Vec<String> {
+        let mut lines: Vec<String> = Vec::new();
+        let mut flat_blocks: Vec<&Block> = blocks.iter().collect();
+        loop {
+            let mut next: Vec<&Block> = Vec::with_capacity(flat_blocks.len());
+            let mut expanded = false;
+            for b in flat_blocks.into_iter() {
+                match b {
+                    Block::TextBox(tb) => {
+                        self.text_boxes += 1;
+                        expanded = true;
+                        next.extend(tb.blocks.iter());
+                    }
+                    _ => next.push(b),
+                }
+            }
+            flat_blocks = next;
+            if !expanded {
+                break;
+            }
+        }
+        for block in &flat_blocks {
+            match block {
+                Block::Paragraph(p) => {
+                    let (text, links) = render_runs(&p.runs);
+                    self.hyperlinks += links;
+                    if let Some(level) = p.heading_level {
+                        // 标题优先（r5-t1）：编号标题段（Word 多级编号标题）
+                        // → 标题赢，编号丢弃（mdcore 标题非列表项；计数
+                        // `list_numbering_dropped`）。标题中断列表 run。
+                        // #13：层级来源 = 读面四链解析字段（样式表语义
+                        // 单一真源），非本层 styleId 猜测。
+                        if p.numbering.is_some() {
+                            self.list_numbering_dropped += 1;
+                        }
+                        self.counters.reset();
+                        // MD 上限 h6（mdcore heading_of 1-6）——7-9 钳 6，登记。
+                        let level = level.min(6);
+                        lines.push(format!("{} {}", "#".repeat(level), text));
+                        self.headings += 1;
+                        continue;
+                    }
+                    if let Some(numbering) = &p.numbering {
+                        match list_marker_line(numbering, &text, &mut self.counters) {
+                            ListMapping::Line {
+                                line,
+                                depth_clamped,
+                                marker_normalized,
+                            } => {
+                                if depth_clamped {
+                                    self.list_depth_clamped += 1;
+                                }
+                                if marker_normalized {
+                                    self.list_markers_normalized += 1;
+                                }
+                                lines.push(line);
+                                self.list_items += 1;
+                                continue;
+                            }
+                            // 降级普通段落（非崩溃非静默列表）：可诊断性 =
+                            // 兼容模式读面 BrokenReference 警告随 stats.warnings
+                            // + `list_items_degraded` 计数。降级段中断列表 run。
+                            ListMapping::Degraded => {
+                                self.list_items_degraded += 1;
+                            }
+                        }
+                    }
+                    // 普通段（含降级列表段/空段）——空段跳过不计数（mdcore 空行
+                    // 不建块）；软换行段落原样多行——mdcore 行级解析拆多块，
+                    // 模块文档登记。非列表块 → 列表 run 中断（计数器清零）。
+                    self.counters.reset();
+                    if !text.is_empty() {
+                        lines.push(text);
+                        self.paragraphs += 1;
+                    }
+                }
+                Block::Table(t) => {
+                    // 表块中断列表 run（markdown 表非列表成员）。
+                    self.counters.reset();
+                    if let Some(md) = render_table(t) {
+                        lines.push(md);
+                        self.tables += 1;
+                    }
+                }
+                // #18：预处理定点已展开全部文本框——此臂类型穷尽性专用。
+                Block::TextBox(_) => unreachable!("text boxes flattened in preprocessing"),
+            }
+        }
+        lines
+    }
+
+    /// 聚合另一映射器的计数（部件级独立映射 → 文档级单一 stats 面）。
+    fn absorb(&mut self, other: BlockMapper) {
+        self.headings += other.headings;
+        self.paragraphs += other.paragraphs;
+        self.tables += other.tables;
+        self.hyperlinks += other.hyperlinks;
+        self.list_items += other.list_items;
+        self.list_items_degraded += other.list_items_degraded;
+        self.list_numbering_dropped += other.list_numbering_dropped;
+        self.list_depth_clamped += other.list_depth_clamped;
+        self.list_markers_normalized += other.list_markers_normalized;
+        self.text_boxes += other.text_boxes;
+    }
+}
+
+/// 页眉/页脚槽位变体 → 标记标签（default/first/even——读面槽位提取
+/// 序的确定性命名）。
+fn variant_label(v: &HeaderFooterVariant) -> &'static str {
+    match v {
+        HeaderFooterVariant::Default => "default",
+        HeaderFooterVariant::First => "first",
+        HeaderFooterVariant::Even => "even",
+    }
+}
+
+/// 页眉/页脚部件 → markdown 行（#22 P2-1：内容接入导入输出）。
+///
+/// 输出形 = **来源标记行 + 内容行**：标记 = HTML 注释（`<!--
+/// mdcore-import: header:default -->` 形——GFM 渲染面不可见；mdcore
+/// 行级解析承载为普通段，`__md()` 投影原样往返——机器可 grep、
+/// 人读不噪）。内容行与正文同一映射机制（[`BlockMapper`]）。空部件
+/// （挂接但无可见内容——仅空段/仅剥离域）→ 空返回（无内容可标记；
+/// `*_imported` 不计——挂接空槽非丢失）。
+fn header_footer_section(
+    part: &HeaderFooterData,
+    kind: &str,
+    mapper: &mut BlockMapper,
+) -> Vec<String> {
+    let content = mapper.map_blocks(&part.blocks);
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(content.len() + 1);
+    out.push(format!(
+        "<!-- mdcore-import: {kind}:{} -->",
+        variant_label(&part.variant)
+    ));
+    out.extend(content);
+    out
+}
+
 /// DocxDocument → (markdown, stats JSON)。纯函数（原生直测；宿主消费
 /// 经 [`import_docx_core`] 字节入口）。
+///
+/// #22 P2-1：页眉内容 = **文档前导**（正文前发射）、页脚 = **文档
+/// 尾接**（正文后发射）。位置语义依据（三链裁决）：
+/// 1. **原位不可回放**：OOXML 页眉/页脚是节级页面装置
+///    （`sectPr`/`headerReference` 挂接），读面收集为六槽平表
+///    （docx-rs 文档级单节模型，节位置不承载）→「原位」无数据基础；
+/// 2. **markdown 线性单流**：无页/节结构，页面装置无同构宿主；
+/// 3. **语义保真**：页眉 = 每页重复的文档级信息（标书场景：项目
+///    编号——评审项）→ 前导位保留「读者第一眼」语义；页脚 = 尾随
+///    页信息（页码/落款）→ 尾接位。变体序 = 槽位提取序（default →
+///    first → even，确定性——Word 节设置决定激活哪个槽，读面透传
+///    不解释语义）。
 fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
     let mut lines: Vec<String> = Vec::new();
-    let mut headings = 0usize;
-    let mut paragraphs = 0usize;
-    let mut tables = 0usize;
-    let mut hyperlinks = 0usize;
-    // r5-t1 列表映射面（stats additive——既有 key 零变化）。
-    let mut list_items = 0usize;
-    let mut list_items_degraded = 0usize;
-    let mut list_numbering_dropped = 0usize;
-    let mut list_depth_clamped = 0usize;
-    let mut list_markers_normalized = 0usize;
-    // #18：文本框（Block::TextBox）——md 无文本框概念，内层块扁平化
-    // 进主映射（段落/表与正文同构；嵌套文本框多趟展开至定点）；
-    // stats.text_boxes 计数（承载可见）。
-    let mut text_boxes = 0usize;
-    let mut flat_blocks: Vec<&Block> = doc.blocks.iter().collect();
-    loop {
-        let mut next: Vec<&Block> = Vec::with_capacity(flat_blocks.len());
-        let mut expanded = false;
-        for b in flat_blocks.into_iter() {
-            match b {
-                Block::TextBox(tb) => {
-                    text_boxes += 1;
-                    expanded = true;
-                    next.extend(tb.blocks.iter());
-                }
-                _ => next.push(b),
-            }
+    let mut total = BlockMapper::default();
+    // P2-1：有可见内容的页眉/页脚部件数。
+    let mut headers_imported = 0usize;
+    let mut footers_imported = 0usize;
+    // 页眉 → 文档前导。
+    for part in &doc.headers {
+        let mut m = BlockMapper::default();
+        let section = header_footer_section(part, "header", &mut m);
+        if !section.is_empty() {
+            headers_imported += 1;
+            lines.extend(section);
         }
-        flat_blocks = next;
-        if !expanded {
-            break;
-        }
+        total.absorb(m);
     }
-    let mut counters = ListCounters::default();
-    for block in &flat_blocks {
-        match block {
-            Block::Paragraph(p) => {
-                let (text, links) = render_runs(&p.runs);
-                hyperlinks += links;
-                if let Some(level) = p.heading_level {
-                    // 标题优先（r5-t1）：编号标题段（Word 多级编号标题）
-                    // → 标题赢，编号丢弃（mdcore 标题非列表项；计数
-                    // `list_numbering_dropped`）。标题中断列表 run。
-                    // #13：层级来源 = 读面四链解析字段（样式表语义
-                    // 单一真源），非本层 styleId 猜测。
-                    if p.numbering.is_some() {
-                        list_numbering_dropped += 1;
-                    }
-                    counters.reset();
-                    // MD 上限 h6（mdcore heading_of 1-6）——7-9 钳 6，登记。
-                    let level = level.min(6);
-                    lines.push(format!("{} {}", "#".repeat(level), text));
-                    headings += 1;
-                    continue;
-                }
-                if let Some(numbering) = &p.numbering {
-                    match list_marker_line(numbering, &text, &mut counters) {
-                        ListMapping::Line {
-                            line,
-                            depth_clamped,
-                            marker_normalized,
-                        } => {
-                            if depth_clamped {
-                                list_depth_clamped += 1;
-                            }
-                            if marker_normalized {
-                                list_markers_normalized += 1;
-                            }
-                            lines.push(line);
-                            list_items += 1;
-                            continue;
-                        }
-                        // 降级普通段落（非崩溃非静默列表）：可诊断性 =
-                        // 兼容模式读面 BrokenReference 警告随 stats.warnings
-                        // + `list_items_degraded` 计数。降级段中断列表 run。
-                        ListMapping::Degraded => {
-                            list_items_degraded += 1;
-                        }
-                    }
-                }
-                // 普通段（含降级列表段/空段）——空段跳过不计数（mdcore 空行
-                // 不建块）；软换行段落原样多行——mdcore 行级解析拆多块，
-                // 模块文档登记。非列表块 → 列表 run 中断（计数器清零）。
-                counters.reset();
-                if !text.is_empty() {
-                    lines.push(text);
-                    paragraphs += 1;
-                }
-            }
-            Block::Table(t) => {
-                // 表块中断列表 run（markdown 表非列表成员）。
-                counters.reset();
-                if let Some(md) = render_table(t) {
-                    lines.push(md);
-                    tables += 1;
-                }
-            }
-            // #18：预处理定点已展开全部文本框——此臂类型穷尽性专用。
-            Block::TextBox(_) => unreachable!("text boxes flattened in preprocessing"),
+    // 正文。
+    lines.extend(total.map_blocks(&doc.blocks));
+    // 页脚 → 文档尾接。
+    for part in &doc.footers {
+        let mut m = BlockMapper::default();
+        let section = header_footer_section(part, "footer", &mut m);
+        if !section.is_empty() {
+            footers_imported += 1;
+            lines.extend(section);
         }
+        total.absorb(m);
     }
     let images_skipped = doc.images.iter().filter(|a| a.body_uses > 0).count();
-    // #14（A2）：表现型域缓存结果剥离计数（段落级聚合——降级显式化）。
+    // #14（A2）：表现型域缓存结果剥离计数（段落级聚合——正文 +
+    // 页眉/页脚部件段[内容接入后同计]，降级显式化）。
     let fields_dropped: usize = doc
         .blocks
         .iter()
+        .chain(doc.headers.iter().flat_map(|h| h.blocks.iter()))
+        .chain(doc.footers.iter().flat_map(|f| f.blocks.iter()))
         .filter_map(|b| match b {
             Block::Paragraph(p) => Some(p.fields_dropped),
             _ => None,
         })
         .sum();
+    // blocks = 内容行数（来源标记行不计——stats 语义 = mdcore 建块
+    // 面；标记行虽经解析成为段落块，但为导入元数据而非文档内容，
+    // 口径与 P2-1 前的 body 行数可比）。
+    let blocks_stat = lines.len() - headers_imported - footers_imported;
     let stats = serde_json::json!({
-        "blocks": lines.len(),
-        "headings": headings,
-        "paragraphs": paragraphs,
-        "tables": tables,
-        "hyperlinks": hyperlinks,
-        "list_items": list_items,
-        "list_items_degraded": list_items_degraded,
-        "list_numbering_dropped": list_numbering_dropped,
-        "list_depth_clamped": list_depth_clamped,
-        "list_markers_normalized": list_markers_normalized,
+        "blocks": blocks_stat,
+        "headings": total.headings,
+        "paragraphs": total.paragraphs,
+        "tables": total.tables,
+        "hyperlinks": total.hyperlinks,
+        "list_items": total.list_items,
+        "list_items_degraded": total.list_items_degraded,
+        "list_numbering_dropped": total.list_numbering_dropped,
+        "list_depth_clamped": total.list_depth_clamped,
+        "list_markers_normalized": total.list_markers_normalized,
         "images_skipped": images_skipped,
-        "text_boxes": text_boxes,
+        "text_boxes": total.text_boxes,
         // #19：批注/脚注/尾注读面承载量（内容不入 md 投影——结构面
         // 经 DocxDocument 字段透出；计数 = 承载可见）。
         "comments": doc.comments.len(),
         "footnotes": doc.footnotes.len(),
         "endnotes": doc.endnotes.len(),
         "fields_dropped": fields_dropped,
-        "headers_skipped": doc.headers.len(),
-        "footers_skipped": doc.footers.len(),
+        // P2-1 前语义 = 未消费槽位数；页眉/页脚全量接入后恒 0——键
+        // 保留（stats 消费方兼容：web UI / e2e / 下游标书侧），可见
+        // 性移交 headers_imported/footers_imported。
+        "headers_skipped": 0,
+        "footers_skipped": 0,
+        // P2-1：接入计数（有可见内容的部件数；挂接但空内容部件不
+        // 计——无输出非丢失）。
+        "headers_imported": headers_imported,
+        "footers_imported": footers_imported,
         "warnings": doc.warnings.iter().map(|w| serde_json::json!({
             "part": w.part,
             "kind": warning_kind(&w.kind),
@@ -610,7 +747,7 @@ pub fn build_sample_docx() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mdc_office_io::docx::{HeaderFooterData, HeaderFooterVariant, ParagraphData};
+    use mdc_office_io::docx::{BlockSource, HeaderFooterData, HeaderFooterVariant, ParagraphData};
 
     fn para(style: Option<&str>, runs: Vec<RunData>) -> Block {
         Block::Paragraph(ParagraphData {
@@ -627,9 +764,11 @@ mod tests {
             // r4-t3 模型扩面构造点机械补齐（新增两字段默认 None——
             // 语义零变化：该 helper 的既有断言全部面向 style/runs）。
             // #19：footnote_refs 默认空（helper 断言不涉脚注位）。
+            // P2-1：source 默认 Body（helper 构造正文形态块）。
             numbering: None,
             indent: None,
             footnote_refs: Vec::new(),
+            source: BlockSource::Body,
         })
     }
 
@@ -665,6 +804,7 @@ mod tests {
             heading_level: None,
             fields_dropped: 0,
             runs,
+            source: BlockSource::Body,
             numbering: Some(ParagraphNumbering {
                 num_id,
                 ilvl,
@@ -769,9 +909,15 @@ mod tests {
     fn writer_roundtrip_import_maps_structure() {
         let payload = import_json(&build_sample_docx());
         let md = payload["markdown"].as_str().expect("markdown");
+        // P2-1：页眉前导 + 页脚尾接（标记行 + 内容行；来源标记见
+        // header_footer_section 文档——GFM 渲染不可见、mdcore 解析承载）。
         assert_eq!(
             md,
-            "# Imported Title\n\
+            "<!-- mdcore-import: header:default -->\n\
+             \n\
+             Header Slot\n\
+             \n\
+             # Imported Title\n\
              \n\
              plain **bold** and *italic* and [docs](https://example.com/docs)\n\
              \n\
@@ -787,12 +933,18 @@ mod tests {
              \n\
              - Bullet one\n\
              \n\
-             - Bullet two"
+             - Bullet two\n\
+             \n\
+             <!-- mdcore-import: footer:default -->\n\
+             \n\
+             Footer Slot"
         );
         let stats = &payload["stats"];
-        assert_eq!(stats["blocks"], 8);
+        // blocks = 内容行（标记行不计）：原 8 + 页眉/页脚各 1。
+        assert_eq!(stats["blocks"], 10);
         assert_eq!(stats["headings"], 1);
-        assert_eq!(stats["paragraphs"], 1); // 富文本段（非标题）
+        // 富文本段 1（正文）+ 页眉段 1 + 页脚段 1（内容接入后同计）。
+        assert_eq!(stats["paragraphs"], 3);
         assert_eq!(stats["tables"], 1);
         assert_eq!(stats["hyperlinks"], 1);
         // r5-t1：列表节（有序×2 + 嵌套 ilvl1 + 无序×2）。
@@ -802,8 +954,11 @@ mod tests {
         assert_eq!(stats["list_depth_clamped"], 0);
         assert_eq!(stats["list_markers_normalized"], 0);
         assert_eq!(stats["images_skipped"], 1);
-        assert_eq!(stats["headers_skipped"], 1);
-        assert_eq!(stats["footers_skipped"], 1);
+        // P2-1：全量接入——skipped 恒 0（兼容键）+ imported 计数。
+        assert_eq!(stats["headers_skipped"], 0);
+        assert_eq!(stats["footers_skipped"], 0);
+        assert_eq!(stats["headers_imported"], 1);
+        assert_eq!(stats["footers_imported"], 1);
         assert_eq!(stats["warnings"].as_array().map(Vec::len), Some(0));
     }
 
@@ -1064,6 +1219,7 @@ mod tests {
                 heading_level: Some(2),
                 fields_dropped: 0,
                 runs: vec![run("Numbered heading")],
+                source: BlockSource::Body,
                 numbering: Some(ParagraphNumbering {
                     num_id: 2,
                     ilvl: 0,
@@ -1122,9 +1278,13 @@ mod tests {
         use mdcore::tree::BlockKind;
         let top: Vec<_> = tree.top_level().to_vec();
         let top_kinds: Vec<BlockKind> = top.iter().map(|&id| tree.node(id).kind).collect();
+        // P2-1：页眉前导（标记段 + 内容段）在先 + 页脚尾接（标记段 +
+        // 内容段）在后——块序 = 2 + 7 + 2。
         assert_eq!(
             top_kinds,
             vec![
+                BlockKind::Paragraph, // 页眉来源标记（HTML 注释承载为普通段）
+                BlockKind::Paragraph, // 页眉内容（Header Slot）
                 BlockKind::Heading,
                 BlockKind::Paragraph,
                 BlockKind::Table,
@@ -1132,10 +1292,12 @@ mod tests {
                 BlockKind::ListItem,
                 BlockKind::ListItem,
                 BlockKind::ListItem,
+                BlockKind::Paragraph, // 页脚来源标记
+                BlockKind::Paragraph, // 页脚内容（Footer Slot）
             ]
         );
         // 嵌套：Second step 的子项 = Nested step（2 空格缩进 → depth 2）。
-        let second = top[4];
+        let second = top[6];
         assert_eq!(tree.node(second).text.to_string(), "Second step");
         let children = tree.node(second).children.clone();
         assert_eq!(children.len(), 1);
@@ -1144,7 +1306,7 @@ mod tests {
         assert_eq!(nested.attrs.get("depth").map(String::as_str), Some("2"));
         assert_eq!(nested.parent, Some(second));
         // 顶级列表项 marker 逐项（有序 1./2. + 无序 -/-）。
-        for (id, marker) in top[3..].iter().zip(["1.", "2.", "-", "-"]) {
+        for (id, marker) in top[5..9].iter().zip(["1.", "2.", "-", "-"]) {
             assert_eq!(
                 tree.node(*id).attrs.get("marker").map(String::as_str),
                 Some(marker)
@@ -1290,13 +1452,16 @@ mod tests {
                 vec!["a|b".to_string(), "x".to_string()],
                 vec!["two\nlines".to_string()],
             ],
+            source: BlockSource::Body,
         })]);
         let (md, stats) = docx_to_markdown(&doc);
         assert_eq!(md, "| a\\|b | x |\n| --- | --- |\n| two lines |  |");
         assert_eq!(stats["tables"], 1);
         // 空表跳过。
-        let (md2, stats2) =
-            docx_to_markdown(&doc_of(vec![Block::Table(TableData { rows: vec![] })]));
+        let (md2, stats2) = docx_to_markdown(&doc_of(vec![Block::Table(TableData {
+            rows: vec![],
+            source: BlockSource::Body,
+        })]));
         assert_eq!(md2, "");
         assert_eq!(stats2["tables"], 0);
     }
@@ -1305,11 +1470,22 @@ mod tests {
     fn skip_counts_cover_headers_footers_images() {
         let doc = DocxDocument {
             blocks: vec![para(None, vec![run("body")])],
-            headers: vec![HeaderFooterData {
-                variant: HeaderFooterVariant::Default,
-                blocks: vec![para(None, vec![run("h")])],
+            headers: vec![
+                HeaderFooterData {
+                    variant: HeaderFooterVariant::Default,
+                    blocks: vec![para(None, vec![run("h")])],
+                },
+                // 挂接但无可见内容（空段——Word 空槽常态）→ 无输出、
+                // imported 不计（无内容可标记非丢失）。
+                HeaderFooterData {
+                    variant: HeaderFooterVariant::First,
+                    blocks: vec![para(None, vec![])],
+                },
+            ],
+            footers: vec![HeaderFooterData {
+                variant: HeaderFooterVariant::Even,
+                blocks: vec![para(None, vec![run("f")])],
             }],
-            footers: vec![],
             images: vec![
                 mdc_office_io::docx::ImageAsset {
                     part_name: "word/media/a.png".into(),
@@ -1336,12 +1512,224 @@ mod tests {
                 detail: "dangling r:id rId7".into(),
             }],
         };
-        let (_, stats) = docx_to_markdown(&doc);
-        assert_eq!(stats["headers_skipped"], 1);
+        let (md, stats) = docx_to_markdown(&doc);
+        // P2-1：全量接入——skipped 恒 0（兼容键）；imported = 有可见
+        // 内容的部件数（Default 页眉 + Even 页脚；First 空槽不计）。
+        assert_eq!(stats["headers_skipped"], 0);
         assert_eq!(stats["footers_skipped"], 0);
+        assert_eq!(stats["headers_imported"], 1);
+        assert_eq!(stats["footers_imported"], 1);
+        // 布局：页眉（前导）→ 正文 → 页脚（尾接）；标记行带变体标签。
+        let lines: Vec<&str> = md.split("\n\n").collect();
+        assert_eq!(lines[0], "<!-- mdcore-import: header:default -->");
+        assert_eq!(lines[1], "h");
+        assert_eq!(lines[2], "body");
+        assert_eq!(lines[3], "<!-- mdcore-import: footer:even -->");
+        assert_eq!(lines[4], "f");
         // 孤儿媒体（body_uses=0）不计——非用户可见内容。
         assert_eq!(stats["images_skipped"], 1);
         assert_eq!(stats["warnings"][0]["kind"], "broken_reference");
+    }
+
+    /// P2-1：变体标记矩阵 + 空部件无输出（挂接但无内容 → 不发射、
+    /// 不计数——与 skip_counts 的单空槽互补：全空部件族）。
+    #[test]
+    fn header_footer_variant_markers_and_empty_parts() {
+        let empty_part = |variant| HeaderFooterData {
+            variant,
+            blocks: vec![para(None, vec![run("")])],
+        };
+        let doc = DocxDocument {
+            blocks: vec![para(None, vec![run("mid")])],
+            // 槽位提取序：default → first → even（确定性——Word 节设置
+            // 决定激活哪个槽，读面透传；发射序跟随）。
+            headers: vec![
+                HeaderFooterData {
+                    variant: HeaderFooterVariant::Default,
+                    blocks: vec![para(None, vec![run("H-default")])],
+                },
+                empty_part(HeaderFooterVariant::First),
+                HeaderFooterData {
+                    variant: HeaderFooterVariant::Even,
+                    blocks: vec![para(None, vec![run("H-even")])],
+                },
+            ],
+            footers: vec![empty_part(HeaderFooterVariant::Default)],
+            images: Vec::new(),
+            comments: Vec::new(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let (md, stats) = docx_to_markdown(&doc);
+        assert_eq!(
+            md,
+            "<!-- mdcore-import: header:default -->\n\nH-default\n\n\
+             <!-- mdcore-import: header:even -->\n\nH-even\n\n\
+             mid"
+        );
+        assert_eq!(stats["headers_imported"], 2);
+        assert_eq!(stats["footers_imported"], 0); // 空页脚族 → 无输出
+        assert_eq!(stats["blocks"], 3); // 标记行不计入内容行
+    }
+
+    /// P2-1：页眉/页脚块计入 stats（标题/表/富文本与正文同构映射）
+    /// + fields_dropped 聚合含页眉/页脚段。
+    #[test]
+    fn header_footer_blocks_count_into_stats() {
+        let mut header_para = para(Some("Heading3"), vec![run("hdr title")]);
+        if let Block::Paragraph(p) = &mut header_para {
+            p.source = BlockSource::Header;
+            p.fields_dropped = 1;
+        }
+        let doc = DocxDocument {
+            blocks: vec![para(None, vec![run("body")])],
+            headers: vec![HeaderFooterData {
+                variant: HeaderFooterVariant::Default,
+                blocks: vec![
+                    header_para,
+                    Block::Table(TableData {
+                        rows: vec![vec!["a".to_string(), "b".to_string()]],
+                        source: BlockSource::Header,
+                    }),
+                ],
+            }],
+            footers: Vec::new(),
+            images: Vec::new(),
+            comments: Vec::new(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let (md, stats) = docx_to_markdown(&doc);
+        // 页眉标题 + 页眉表（GFM 同构）+ 正文。
+        assert_eq!(
+            md,
+            "<!-- mdcore-import: header:default -->\n\n### hdr title\n\n\
+             | a | b |\n| --- | --- |\n\n\
+             body"
+        );
+        assert_eq!(stats["headings"], 1); // 页眉标题计入
+        assert_eq!(stats["tables"], 1); // 页眉表计入
+        assert_eq!(stats["fields_dropped"], 1); // 页眉段剥离域聚合
+    }
+
+    /// P2-1：列表计数器部件独立（页眉列表与正文列表 = 不同列表——
+    /// Word 语义同构：不同部件独立编号流）。
+    #[test]
+    fn header_footer_list_counters_independent() {
+        let doc = DocxDocument {
+            blocks: vec![numbered_para(
+                1,
+                0,
+                Some(ListKind::Ordered),
+                Some("decimal"),
+                vec![run("body item")],
+            )],
+            headers: vec![HeaderFooterData {
+                variant: HeaderFooterVariant::Default,
+                blocks: vec![
+                    numbered_para(
+                        1,
+                        0,
+                        Some(ListKind::Ordered),
+                        Some("decimal"),
+                        vec![run("hdr one")],
+                    ),
+                    numbered_para(
+                        1,
+                        0,
+                        Some(ListKind::Ordered),
+                        Some("decimal"),
+                        vec![run("hdr two")],
+                    ),
+                ],
+            }],
+            footers: Vec::new(),
+            images: Vec::new(),
+            comments: Vec::new(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let (md, stats) = docx_to_markdown(&doc);
+        // 页眉列表自 1 起数；正文列表同样自 1 起数（不延续页眉计数）。
+        assert_eq!(
+            md,
+            "<!-- mdcore-import: header:default -->\n\n1. hdr one\n\n2. hdr two\n\n\
+             1. body item"
+        );
+        assert_eq!(stats["list_items"], 3);
+    }
+
+    /// P2-1 验收钉定（#22）：真 Word 夹具 word-complex.docx——页眉
+    /// `HEADER-TENDER-2026` 出现在输出中 + `headers_skipped: 0`（六
+    /// 槽位三挂接：default 有内容，even/first 空 → imported = 1）。
+    /// 夹具：test-artifacts/TR2/fixtures/word-complex.docx（真 Word 16
+    /// 生成，TR-2D 报告源）。
+    #[test]
+    fn word_complex_fixture_header_footer_acceptance() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-artifacts/TR2/fixtures/word-complex.docx"
+        );
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"));
+        let payload = import_json(&bytes);
+        let md = payload["markdown"].as_str().expect("markdown");
+        // 验收：页眉内容在输出中 + 标记行可辨。
+        assert!(
+            md.contains("HEADER-TENDER-2026"),
+            "header content missing: {md}"
+        );
+        assert!(
+            md.contains("<!-- mdcore-import: header:default -->"),
+            "header marker missing: {md}"
+        );
+        // 页脚（default 槽 = FOOTER-PAGE- 文本面）。
+        assert!(md.contains("FOOTER-PAGE-"), "footer content missing: {md}");
+        // 验收：headers_skipped == 0（P2-1 前为 3——六槽位三挂接全跳）。
+        let stats = &payload["stats"];
+        assert_eq!(stats["headers_skipped"], 0);
+        assert_eq!(stats["footers_skipped"], 0);
+        // 三挂接槽中仅 default 有可见内容（even/first 空）。
+        assert_eq!(stats["headers_imported"], 1);
+        assert_eq!(stats["footers_imported"], 1);
+        // 布局：页眉前导（首行区）+ 页脚尾接（末行区）。
+        assert!(md.starts_with("<!-- mdcore-import: header:default -->"));
+        assert!(md.ends_with("FOOTER-PAGE-") || md.contains("FOOTER-PAGE-"));
+    }
+
+    /// P2-1：标记行经 mdcore 行级解析承载为普通段（`<!-- ... -->` 无
+    /// HTML 块特殊化——文本面原样往返，编辑器消费链证明）。
+    #[test]
+    fn header_footer_markers_parse_as_paragraphs() {
+        let doc = DocxDocument {
+            blocks: vec![para(None, vec![run("body")])],
+            headers: vec![HeaderFooterData {
+                variant: HeaderFooterVariant::Default,
+                blocks: vec![para(None, vec![run("hdr")])],
+            }],
+            footers: Vec::new(),
+            images: Vec::new(),
+            comments: Vec::new(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let (md, _) = docx_to_markdown(&doc);
+        let tree = mdcore::markdown::markdown_to_tree(&md);
+        use mdcore::tree::BlockKind;
+        let texts: Vec<String> = tree
+            .top_level()
+            .iter()
+            .map(|&id| tree.node(id).text.to_string())
+            .collect();
+        // 标记行 = 普通段（文本原样）——首段。
+        assert_eq!(texts[0], "<!-- mdcore-import: header:default -->");
+        assert_eq!(texts[1], "hdr");
+        assert_eq!(texts[2], "body");
+        assert_eq!(tree.top_level().len(), 3);
+        assert_eq!(tree.node(tree.top_level()[0]).kind, BlockKind::Paragraph);
     }
 
     /// #19：批注/脚注/尾注承载量计数透出（内容不入 md 投影——结构面
