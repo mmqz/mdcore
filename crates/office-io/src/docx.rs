@@ -1586,13 +1586,36 @@ pub struct FootnoteData {
     pub blocks: Vec<Block>,
 }
 
-/// 文本表格：行 × 单元格拼接文本。
+/// 文本表格：**栅格展开形**（#22 P2-2）——行 × 栅格列；gridSpan 覆盖
+/// 列与 vMerge 续格置空（内容只出现于原点格——Word 显示语义），
+/// 丢失的合并结构由 [`TableData::merges`] 显式承载（与 xlsx 侧
+/// `SheetData`「值栅格 + merges 清单」同构——引擎侧两容器面统一）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableData {
     pub rows: Vec<Vec<String>>,
+    /// 合并区域清单（#22 P2-2）：栅格坐标 0 基、含端点——每区域
+    /// 一条矩形对角记录。`rows` 已展开为栅格（覆盖格空串），消费方
+    /// 渲染零重建；GFM 无合并面的降级可诊断性由本清单承载。
+    pub merges: Vec<MergeRange>,
     /// 块来源（#22 P2-1）：表所在文档位置——正文 `Body` / 页眉
     /// `Header` / 页脚 `Footer`（表内段落继承表来源）。
     pub source: BlockSource,
+}
+
+/// 表格合并区域（#22 P2-2）：`start`/`end` 为栅格矩形对角（0 基、
+/// 含端点）。三个面：纵向合并（vMerge restart-continue 链）、横向
+/// 合并（gridSpan > 1）、块合并（两者叠加——单条矩形，不拆两条）。
+/// 单行单列的 vMerge restart（标了续格但无人续）**不是合并**（不发
+/// 区域）；单行横向 gridSpan 仍发（跨列即结构）。与 xlsx 侧
+/// `SheetData::merges`（calamine `Dimensions`，绝对坐标 u32）对齐的
+/// 是**语义面**（矩形清单 + 值栅格）；docx 侧为文档内相对坐标
+/// `usize`（无绝对锚定概念）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeRange {
+    pub start_row: usize,
+    pub start_col: usize,
+    pub end_row: usize,
+    pub end_col: usize,
 }
 
 /// 页眉/页脚槽位变体（透传 `headerReference/@w:type`——first/even
@@ -3090,12 +3113,22 @@ fn count_del_text(r: &docx_rs::Run) -> usize {
         .count()
 }
 
-/// 表提取：行 × 单元格拼接文本（单元格内多段落 `\n` 连接；嵌套表/
-/// 内容控件跳过——登记）。单元格内超链接目标丢弃（TableData 扁平
-/// 文本面——登记），但悬空引用仍按严格/兼容纪律处置（包完整性）；
-/// 单元格段落的 numPr/ind 同为扁平面外承载（提取后弃置——TableData
-/// 无结构载荷，登记）。块源定值（P2-1 `source` 参数——表内段落
-/// 继承表来源）。
+/// 表提取：**栅格展开 + 合并区域清单**（#22 P2-2）——单元格内多
+/// 段落 `\n` 连接；嵌套表/内容控件跳过（登记）。单元格内超链接目标
+/// 丢弃（TableData 扁平文本面——登记），但悬空引用仍按严格/兼容纪律
+/// 处置（包完整性）；单元格段落的 numPr/ind 同为扁平面外承载（提取
+/// 后弃置——登记）。块源定值（P2-1 `source` 参数——表内段落继承表
+/// 来源）。
+///
+/// 合并语义（OOXML §17.4.22/§17.4.57）：
+/// - `gridSpan > 1` = 横向合并（覆盖列置空，内容居原点格）；
+/// - `vMerge restart` 起、`continue` 续 = 纵向合并（**续格内容置空**——
+///   Word 显示语义：续格文本不可见，原点格承载全部内容；部分生成器
+///   在续格放副本，本层丢弃）；
+/// - 两者叠加 = 块合并（单条矩形）；
+/// - 孤儿续格（`continue` 无前置 restart，OOXML 未定义）：不发明
+///   区域，按普通格落栅格（内容可见）；
+/// - 续格 span 与 restart 不一致：不匹配开放区，同孤儿处理（登记）。
 #[allow(clippy::too_many_arguments)]
 fn extract_table(
     t: &docx_rs::Table,
@@ -3110,12 +3143,70 @@ fn extract_table(
     // 注：docx-rs 0.4.22 模型中 TableChild/TableRowChild 均为单变体
     //（TableRow/TableCell）——直接解构；模型升级增变体时此函数
     // 编译期报非穷尽，而面外项处理策略不变（跳过+登记）。
-    let mut rows = Vec::new();
-    for row in &t.rows {
+    //
+    // gridSpan/vMerge 读取通道：docx-rs 0.4.22 `TableCellProperty` 字段
+    // 私有且无 getter（builder 面独占），`Serialize` derive（camelCase）
+    // 是模型面唯一公开读通道——serde_json 按值取出（`gridSpan`: u32 /
+    // `verticalMerge`: "restart"|"continue"|"unsupported"）。版本钉
+    // 0.4.22（Cargo.lock）；模型升级时此通道无编译期保护，须复验
+    //（序列化字段名/形变化 = 面外合并丢失，仅退化不崩溃）。
+    let cell_props = |c: &docx_rs::TableCell| -> (usize, Option<String>) {
+        let v = serde_json::to_value(&c.property).unwrap_or(serde_json::Value::Null);
+        let span = v
+            .get("gridSpan")
+            .and_then(|s| s.as_u64())
+            .map(|n| n.max(1) as usize) // 敌意 0/负数形（serde u64 域钳 0）→ 钉 1
+            .unwrap_or(1);
+        let vmerge = v
+            .get("verticalMerge")
+            .and_then(|s| s.as_str())
+            .map(str::to_string);
+        (span, vmerge)
+    };
+
+    // 开放纵向合并区（restart 起、continue 续；文档序确定性——Vec 线性查，
+    // 表内合并数有限）。`last_row` = 最近一次 continue 所在行（行末关账
+    // 用：本行未续即封）。
+    struct OpenVmerge {
+        start_row: usize,
+        start_col: usize,
+        end_col: usize,
+        last_row: usize,
+    }
+    let close_region = |o: &OpenVmerge, merges: &mut Vec<MergeRange>| {
+        if o.last_row > o.start_row {
+            // 真纵向/块合并（跨行）。
+            merges.push(MergeRange {
+                start_row: o.start_row,
+                start_col: o.start_col,
+                end_row: o.last_row,
+                end_col: o.end_col,
+            });
+        } else if o.end_col > o.start_col {
+            // 单行 restart 未续 + 跨列 = 横向合并（gridSpan 语义仍然在）。
+            merges.push(MergeRange {
+                start_row: o.start_row,
+                start_col: o.start_col,
+                end_row: o.start_row,
+                end_col: o.end_col,
+            });
+        }
+        // 单行单列 restart 未续：无覆盖非原点格——非合并，不发。
+    };
+
+    let mut grid_rows: Vec<Vec<String>> = Vec::new();
+    let mut merges: Vec<MergeRange> = Vec::new();
+    let mut open_v: Vec<OpenVmerge> = Vec::new();
+    // 栅格宽度：tblGrid 权威列数（空则 0），行和兜底（畸形表——无 tblGrid
+    // 而 gridSpan 撑宽；防御 max）。
+    let mut grid_width = t.grid.len();
+    for (ri, row) in t.rows.iter().enumerate() {
         let docx_rs::TableChild::TableRow(r) = row;
-        let mut cells = Vec::new();
+        let mut grid_row: Vec<String> = Vec::new();
+        let mut col = 0usize;
         for cell in &r.cells {
             let docx_rs::TableRowChild::TableCell(c) = cell;
+            let (span, vmerge) = cell_props(c);
             let mut parts = Vec::new();
             for content in &c.children {
                 if let docx_rs::TableCellContent::Paragraph(p) = content {
@@ -3125,11 +3216,85 @@ fn extract_table(
                     parts.push(pd.text());
                 }
             }
-            cells.push(parts.join("\n"));
+            let text = parts.join("\n");
+            // 落栅格：原点格承载内容，gridSpan 覆盖列置空。
+            for k in 0..span {
+                grid_row.push(if k == 0 { text.clone() } else { String::new() });
+            }
+            match vmerge.as_deref() {
+                Some("restart") => {
+                    // 同列区间既有开放区先封（restart 接续 = 新区域链）。
+                    if let Some(pos) = open_v
+                        .iter()
+                        .position(|o| o.start_col == col && o.end_col == col + span - 1)
+                    {
+                        let o = open_v.remove(pos);
+                        close_region(&o, &mut merges);
+                    }
+                    open_v.push(OpenVmerge {
+                        start_row: ri,
+                        start_col: col,
+                        end_col: col + span - 1,
+                        last_row: ri,
+                    });
+                }
+                Some("continue") => {
+                    // 同列区间匹配才续（Word 语义：续格内容不可见——
+                    // 覆盖置空，原点格已承载）；不匹配 = 孤儿续格（未定义
+                    // 行为）→ 普通格处理（内容保留，不发明区域）。
+                    if let Some(region) = open_v
+                        .iter_mut()
+                        .find(|o| o.start_col == col && o.end_col == col + span - 1)
+                    {
+                        region.last_row = ri;
+                        for k in 0..span {
+                            grid_row[col + k] = String::new();
+                        }
+                    }
+                }
+                _ => {
+                    // 普通格（无 vMerge / "unsupported"）：跨列即横向合并。
+                    if span > 1 {
+                        merges.push(MergeRange {
+                            start_row: ri,
+                            start_col: col,
+                            end_row: ri,
+                            end_col: col + span - 1,
+                        });
+                    }
+                }
+            }
+            debug_assert_eq!(grid_row.len(), col + span);
+            col += span;
+            // 注：vmerge 格的横向面由区域矩形承载（close_region 单行跨列
+            // 分支），不双发两条。
         }
-        rows.push(cells);
+        grid_width = grid_width.max(grid_row.len());
+        grid_rows.push(grid_row);
+        // 行末关账：本行未续的开放区封盘（区域终止于 last_row）。
+        let mut i = 0;
+        while i < open_v.len() {
+            if open_v[i].last_row < ri {
+                let o = open_v.remove(i);
+                close_region(&o, &mut merges);
+            } else {
+                i += 1;
+            }
+        }
     }
-    Ok(TableData { rows, source })
+    // 表末关账：仍开放的区域封盘。
+    for o in open_v.drain(..) {
+        close_region(&o, &mut merges);
+    }
+    // 行宽对齐：全行补齐到栅格宽（短行尾置空——ragged 行栅格完整形）。
+    for row in &mut grid_rows {
+        row.resize(grid_width, String::new());
+    }
+    Ok(TableData {
+        rows: grid_rows,
+        merges,
+        source,
+    })
 }
 
 /// 页眉/页脚槽位引用校验：r:id 在文档关系表 + 目标部件在包内 +
