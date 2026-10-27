@@ -2,3 +2,10 @@ target/
 
 # s5a-env：打包产物目录（deb 等——不入库，packaging/ 脚本可再生）
 build/
+
+# R-1 大文件夹具（生成器 + 度量脚本入库；大二进制不入库——
+# 生成：见 test-artifacts/large-file/ 各生成器头注）
+test-artifacts/large-file/*.docx
+test-artifacts/large-file/*.xlsx
+test-artifacts/large-file/*.pdf
+test-artifacts/large-file/results-r1.json
