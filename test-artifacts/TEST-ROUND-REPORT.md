@@ -80,3 +80,19 @@ python3 /home/z/my-project/scripts/testround_gj.py    # G-J 组
 
 产物：`mdcore/test-artifacts/testround/{A,B,CD,EF,GJ}/findings.json` +
 `B/crlf-export.docx`（TR-1 证据）。
+
+## 重核补遗（issue #8 K1-K6 全量闭环——2026-10-27，当前 main 0a622a9）
+
+> 首轮报告重核表只覆盖已知问题①-④（当时口径）；issue §7 的 K4/K5/K6
+> 由本补遗以当前构建实测补齐。K1-K6 现状（六条全闭环）：
+
+| # | 问题 | 当前实测状态 | 证据 |
+|---|---|---|---|
+| K1 | 行内 marks 导出丢失（`**粗体**` 星号原样进 Word） | **已修复**：#15（fd3f884）导出映射层行内解析——五位格式（粗体/斜体/删除线/行内码/粗斜体）run 化零残留 | #15 tr15 回归套件 + #18 关单链 |
+| K2 | 字体/字号/行距/首行缩进全不可设（全文 10pt Times New Roman） | **已修复**：#10（7f47558+d991cde）G2 `DefaultTypography` 引擎层 + #16（1b8e1ab）web 设置面产品化消费（CONTRACT §4 v1.4 + ⚙面板 + `__exportDocxStyled` 测试桥 + XML 直读验收） | #16 验收（TR-2D W1/W5 收口） |
+| K3 | 页边距写死 3.5/3.0/3.0/3.0 cm | **已修复**：同 G2 `PageGeometry` 链（#10 引擎 + #16 消费） | 同上 |
+| K4 | Canvas 只支持矩形节点 | **设计内形态清单**（非缺陷）：模型对象面 = node/edge/group 三类（流程图形态），node 渲染 = `g > rect` 矩形框——非矩形形状属能力清单扩展项（后续项登记，不立案） | `web/k45_recheck.py`：`canvas_node_svg_element = "g"`、state objects/nodes/edges/groups 计数面 |
+| K5 | canvas undo 栈实测 8 步 | **证伪（当前构建）**：连续 add×20 → undoDepth=20，20 次 undo 全撤回 objects=0——**无 8 步截断**（与文档面 TR-6 定谳一致：无限栈 + 合并窗） | `web/k5_recheck.py`：`NO-8-CAP` |
+| K6 | 表格行之间多出空段落 | **证伪（当前构建）**：3×4 表导出 docx（22455B）——表内行间空段 0、表后空段 0、全文档空段 0 | `web/k45_recheck.py`：`empty_p_between_rows_in_tbl=0 / total_empty_p=0` |
+
+复现：`python3 web/k45_recheck.py`（K4/K6）· `python3 web/k5_recheck.py`（K5）。
