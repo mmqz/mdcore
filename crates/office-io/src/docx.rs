@@ -1480,6 +1480,13 @@ pub struct ParagraphData {
     /// name="heading N" 双双覆盖）→ ④样式级 `w:outlineLvl`（0-8 → +1）。
     /// 越域值（outlineLvl 9+ / 层级 10+）防御忽略；钳 1-9。
     pub heading_level: Option<usize>,
+    /// #14（A2）：本段被剥离的**表现型域**缓存结果计数（0 = 无剥离）。
+    /// OOXML 域 = `fldChar begin` → 指令 → [`separate` → 缓存结果 runs]
+    /// → `end`：表现型域（PAGE/NUMPAGES/DATE/…——值随渲染上下文漂移
+    /// 的陈旧呈现数据，见 [`FieldMachine`] 域表）的缓存结果不入正文；
+    /// 内容型域（REF/HYPERLINK/TOC/…——结果承载作者可见内容）保留。
+    /// 诊断计数：导入面聚合进 `stats.fields_dropped`（降级显式化）。
+    pub fields_dropped: usize,
     pub runs: Vec<RunData>,
     /// 段落编号（r4-t3 读面承载——None = 非列表段；`w:numId w:val="0"`
     /// 的 OOXML 去编号惯例同样 → None）。
@@ -1816,6 +1823,105 @@ fn heading_level_from_style_id(style_id: &str) -> Option<usize> {
     (1..=9).contains(&n).then_some(n)
 }
 
+/// #14（A2）：域机制 run 级状态机。
+///
+/// OOXML 域 = `fldChar begin` → `instrText`（指令）→ [`fldChar
+/// separate` → 缓存结果 runs] → `fldChar end`。指令文本恒不入正文
+///（既有行为——非文本源）；缓存结果按域类型分派：
+///
+/// | 分派 | 域 | 理由 |
+///|---|---|---|
+///| **剥离**（表现型） | PAGE / NUMPAGES / SECTIONPAGES / PAGEREF /
+/// DATE / TIME / PRINTDATE / CREATEDATE / SAVEDATE / EDITTIME /
+/// REVNUM / FILENAME / FILESIZE / TEMPLATE / APPVERSION / SECTION |
+/// 值随渲染上下文漂移（页码/日期/时长/文件元数据）——缓存结果是
+/// 保存时快照，转换后必陈旧（真 Word 夹具的「11.1 表格」即 PAGE
+/// 域缓存结果 "1" 前缀拼接——TR-2D batch2 P1-1 真根因）；PAGEREF
+/// 同理：markdown 无分页，页码恒失真 |
+///| **保留**（内容型） | REF / HYPERLINK / MERGEFIELD / TOC / SEQ /
+/// DOCVARIABLE / QUOTE / STYLEREF / AUTHOR / TITLE / 未知域 |
+/// 结果承载作者可见内容（交叉引用文本/链接显示文本/目录内容/图表
+///序号/文档属性）——宁多勿丢，保守保留 |
+///
+/// 嵌套域（域中域——OOXML 允许，罕见）：Begin 重置活动域状态
+///（外层域的 separate/end 由内层 End 后的首个匹配态收束——v0
+/// 近似，登记）。
+#[derive(Default)]
+struct FieldMachine {
+    /// 活动域指令累积（begin 后收集，separate 时定格判定）。
+    instr: String,
+    /// separate 已见（缓存结果区）。
+    in_result: bool,
+    /// 活动域为表现型（缓存结果将剥离）。
+    volatile: bool,
+    /// 已剥离的表现型域计数（段落级透出 → stats.fields_dropped）。
+    dropped: usize,
+}
+
+impl FieldMachine {
+    /// 域指令首词 → 表现型判定（指令含开关参数如
+    /// ` PAGE \* MERGEFORMAT `——首词切分；大小写不敏感：Word 发射
+    /// 大写、手写文件常见小写）。
+    fn is_volatile(instr: &str) -> bool {
+        let head = instr
+            .trim_start()
+            .split([' ', '\\', '\t', '\u{a0}'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        matches!(
+            head.as_str(),
+            "PAGE"
+                | "NUMPAGES"
+                | "SECTIONPAGES"
+                | "PAGEREF"
+                | "DATE"
+                | "TIME"
+                | "PRINTDATE"
+                | "CREATEDATE"
+                | "SAVEDATE"
+                | "EDITTIME"
+                | "REVNUM"
+                | "FILENAME"
+                | "FILESIZE"
+                | "TEMPLATE"
+                | "APPVERSION"
+                | "SECTION"
+        )
+    }
+
+    /// fldChar 状态转移。Begin 重置（嵌套近似）；Separate 定格
+    /// 表现型判定并进入结果区；End 收束（表现型且含结果区 → 计数）。
+    fn transition(&mut self, ty: &docx_rs::FieldCharType) {
+        use docx_rs::FieldCharType;
+        match ty {
+            FieldCharType::Begin => {
+                self.instr.clear();
+                self.in_result = false;
+                self.volatile = false;
+            }
+            FieldCharType::Separate => {
+                self.in_result = true;
+                self.volatile = Self::is_volatile(&self.instr);
+            }
+            FieldCharType::End => {
+                if self.in_result && self.volatile {
+                    self.dropped += 1;
+                }
+                self.instr.clear();
+                self.in_result = false;
+                self.volatile = false;
+            }
+            FieldCharType::Unsupported => {}
+        }
+    }
+
+    /// 当前文本是否剥离（表现型域的缓存结果区）。
+    fn suppress(&self) -> bool {
+        self.in_result && self.volatile
+    }
+}
+
 /// 段落标题层级全链解析（见 [`ParagraphData::heading_level`] 文档——
 /// 直接 outlineLvl > pStyle 前缀 > 样式名 > 样式 outlineLvl）。
 /// outlineLvl 0-8 域（+1 → 1-9）；9+ 越域防御忽略。
@@ -2042,27 +2148,32 @@ fn extract_paragraph(
     };
     let indent = p.property.indent.as_ref().map(carry_indent);
     let mut runs = Vec::new();
+    // #14（A2）：域状态机——段落级单实例（域可跨 run：begin 与 end
+    // 分属不同 run，状态必须段落作用域）。dropped 计数随段落透出。
+    let mut fm = FieldMachine::default();
     for child in &p.children {
         match child {
-            docx_rs::ParagraphChild::Run(r) => runs.push(extract_run(r)),
+            docx_rs::ParagraphChild::Run(r) => runs.push(extract_run(r, &mut fm)),
             // 超链接：内文本保留（run 边界保持）+ 目标联接（docx-r1）。
             docx_rs::ParagraphChild::Hyperlink(h) => {
                 let target = resolve_hyperlink(h, table, part, strict, warnings)?;
                 for c in &h.children {
                     if let docx_rs::ParagraphChild::Run(r) = c {
-                        let mut rd = extract_run(r);
+                        let mut rd = extract_run(r, &mut fm);
                         rd.hyperlink = Some(target.clone());
                         runs.push(rd);
                     }
                 }
             }
-            // 修订追踪/书签/批注/域/内容控件——面外跳过（登记）。
+            // 修订追踪/书签/批注/内容控件——面外跳过（登记）。域机制
+            // 在 run 级状态机消费（FieldMachine——#14）。
             _ => {}
         }
     }
     Ok(ParagraphData {
         style,
         heading_level,
+        fields_dropped: fm.dropped,
         runs,
         numbering,
         indent,
@@ -2071,15 +2182,37 @@ fn extract_paragraph(
 
 /// run 提取：文本三源（Text/Tab/Break+CarriageReturn）+ 加粗斜体
 ///（超链接目标由调用面挂接——extract_paragraph 的 Hyperlink 分支）。
-fn extract_run(r: &docx_rs::Run) -> RunData {
+/// #14（A2）：域机器先行——FieldChar 状态转移 + 指令累积；表现型
+/// 域缓存结果区文本剥离（suppress）；空文本 run 保留（run 边界
+/// 语义零变化——合并面归导入侧 merge_runs）。
+fn extract_run(r: &docx_rs::Run, fm: &mut FieldMachine) -> RunData {
     let mut text = String::new();
     for child in &r.children {
         match child {
-            docx_rs::RunChild::Text(t) => text.push_str(&t.text),
-            docx_rs::RunChild::Tab(_) => text.push('\t'),
-            docx_rs::RunChild::Break(_) => text.push('\n'),
-            docx_rs::RunChild::CarriageReturn(_) => text.push('\r'),
-            // Sym/DeleteText/Drawing/Shape/域/批注锚——面外跳过（登记）。
+            docx_rs::RunChild::Text(t) => {
+                if !fm.suppress() {
+                    text.push_str(&t.text);
+                }
+            }
+            docx_rs::RunChild::Tab(_) => {
+                if !fm.suppress() {
+                    text.push('\t');
+                }
+            }
+            docx_rs::RunChild::Break(_) => {
+                if !fm.suppress() {
+                    text.push('\n');
+                }
+            }
+            docx_rs::RunChild::CarriageReturn(_) => {
+                if !fm.suppress() {
+                    text.push('\r');
+                }
+            }
+            // #14：域机器——状态转移 / 指令累积（指令恒不入正文）。
+            docx_rs::RunChild::FieldChar(f) => fm.transition(&f.field_char_type),
+            docx_rs::RunChild::InstrTextString(s) => fm.instr.push_str(s),
+            // Sym/DeleteText/Drawing/Shape/批注锚——面外跳过（登记）。
             _ => {}
         }
     }
@@ -3851,6 +3984,73 @@ mod tests {
             None,
             "outlineLvl 9 越域防御忽略"
         );
+    }
+
+    /// #14（A2）：域状态机单元矩阵（真夹具/写读环见
+    /// tests/tr14_field_machine.rs）。
+    #[test]
+    fn field_machine_volatile_matrix_and_lifecycle() {
+        use docx_rs::FieldCharType;
+        // 指令首词分派（含开关参数形 + 大小写混合）。
+        for instr in [
+            " PAGE \\* MERGEFORMAT ",
+            "page",
+            "NUMPAGES",
+            "PAGEREF _Toc1 \\h",
+            "DATE \\@ \"yyyy\"",
+            "TIME",
+            "PRINTDATE",
+            "CREATEDATE",
+            "SAVEDATE",
+            "EDITTIME",
+            "REVNUM",
+            "FILENAME",
+            "SECTIONPAGES",
+        ] {
+            assert!(FieldMachine::is_volatile(instr), "volatile: {instr:?}");
+        }
+        for instr in [
+            " REF _Toc1 \\h ",
+            " HYPERLINK \"http://x\" ",
+            " MERGEFIELD a ",
+            " TOC \\o \"1-3\" ",
+            " SEQ Figure ",
+            " DOCPROPERTY x ",
+            "",
+            "未知域指令",
+        ] {
+            assert!(!FieldMachine::is_volatile(instr), "content: {instr:?}");
+        }
+        // 生命周期：begin → instr → separate（判定定格）→ 结果区剥离
+        // → end（计数 + 复位）。
+        let mut fm = FieldMachine::default();
+        fm.transition(&FieldCharType::Begin);
+        assert!(!fm.suppress(), "begin 后未入结果区");
+        fm.instr.push_str(" PAGE \\* MERGEFORMAT ");
+        fm.transition(&FieldCharType::Separate);
+        assert!(fm.suppress(), "PAGE 域结果区剥离");
+        fm.transition(&FieldCharType::End);
+        assert_eq!(fm.dropped, 1, "表现型域含结果区 → 计数");
+        assert!(!fm.suppress(), "end 后复位");
+        // 内容型域：结果区不剥离、零计数。
+        let mut fm2 = FieldMachine::default();
+        fm2.transition(&FieldCharType::Begin);
+        fm2.instr.push_str(" REF _Toc1 \\h ");
+        fm2.transition(&FieldCharType::Separate);
+        assert!(!fm2.suppress(), "REF 域结果保留");
+        fm2.transition(&FieldCharType::End);
+        assert_eq!(fm2.dropped, 0);
+        // 无结果区（begin → instr → end：写面 PAGE 形）：零剥离零计数。
+        let mut fm3 = FieldMachine::default();
+        fm3.transition(&FieldCharType::Begin);
+        fm3.instr.push_str("PAGE");
+        fm3.transition(&FieldCharType::End);
+        assert_eq!(fm3.dropped, 0, "无 separate = 无缓存结果面");
+        // 静默 begin（无指令）→ separate：空指令非表现型 → 保守保留。
+        let mut fm4 = FieldMachine::default();
+        fm4.transition(&FieldCharType::Begin);
+        fm4.transition(&FieldCharType::Separate);
+        assert!(!fm4.suppress(), "未知/空指令保守保留");
     }
 
     #[test]

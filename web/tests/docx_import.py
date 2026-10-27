@@ -246,6 +246,17 @@ def main() -> int:
                   json.dumps({"ok": tr13.get("ok"), "stats": tr13_stats,
                               "levels": tr13_levels, "bytes": len(real_bytes)}))
 
+            # ---- TR-14（issue #14 A2）：PAGE 域缓存结果剥离（真根因：
+            #      h3 段内嵌 PAGE 域缓存 "1" + 正文 "1.1 表格" → 此前
+            #      "11.1 表格"）——域状态机分派（表现型剥离/内容型保留）----
+            check("tr14_page_field_result_stripped",
+                  "### 1.1 表格" in tr13_md
+                  and "11.1" not in tr13_md
+                  and tr13_stats.get("fields_dropped") == 1
+                  and "## 第一章 概述" in tr13_md,
+                  json.dumps({"fields_dropped": tr13_stats.get("fields_dropped"),
+                              "h3_ok": "### 1.1 表格" in tr13_md}))
+
             browser.close()
         srv.shutdown()
 

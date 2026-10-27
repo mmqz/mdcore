@@ -462,6 +462,15 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
         }
     }
     let images_skipped = doc.images.iter().filter(|a| a.body_uses > 0).count();
+    // #14（A2）：表现型域缓存结果剥离计数（段落级聚合——降级显式化）。
+    let fields_dropped: usize = doc
+        .blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::Paragraph(p) => Some(p.fields_dropped),
+            _ => None,
+        })
+        .sum();
     let stats = serde_json::json!({
         "blocks": lines.len(),
         "headings": headings,
@@ -474,6 +483,7 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
         "list_depth_clamped": list_depth_clamped,
         "list_markers_normalized": list_markers_normalized,
         "images_skipped": images_skipped,
+        "fields_dropped": fields_dropped,
         "headers_skipped": doc.headers.len(),
         "footers_skipped": doc.footers.len(),
         "warnings": doc.warnings.iter().map(|w| serde_json::json!({
@@ -578,6 +588,7 @@ mod tests {
                     .and_then(|r| r.parse::<usize>().ok())
                     .filter(|&n| (1..=9).contains(&n))
             }),
+            fields_dropped: 0,
             runs,
             // r4-t3 模型扩面构造点机械补齐（新增两字段默认 None——
             // 语义零变化：该 helper 的既有断言全部面向 style/runs）。
@@ -615,6 +626,7 @@ mod tests {
         Block::Paragraph(ParagraphData {
             style: None,
             heading_level: None,
+            fields_dropped: 0,
             runs,
             numbering: Some(ParagraphNumbering {
                 num_id,
@@ -1008,6 +1020,7 @@ mod tests {
             Block::Paragraph(ParagraphData {
                 style: Some("Heading2".to_string()),
                 heading_level: Some(2),
+                fields_dropped: 0,
                 runs: vec![run("Numbered heading")],
                 numbering: Some(ParagraphNumbering {
                     num_id: 2,
@@ -1147,6 +1160,26 @@ mod tests {
             .map(|l| l.chars().take_while(|&c| c == '#').count())
             .collect();
         assert_eq!(levels, vec![1, 2, 3, 2], "层级序列（夹具真实结构）");
+    }
+
+    /// #14（A2）真 Word 夹具全链：PAGE 域缓存结果剥离 → h3 md 行
+    /// `### 1.1 表格`（非 `### 11.1 表格`）+ stats.fields_dropped。
+    #[test]
+    fn tr14_real_word_page_field_stripped_chain() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-artifacts/TR2/fixtures/word-complex.docx");
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("fixture missing: {} ({e})", path.display()));
+        let out = import_docx_core(&bytes).expect("compat import");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("stats json");
+        let stats = &parsed["stats"];
+        let md = parsed["markdown"].as_str().expect("md");
+        // TR-2D P1-1 真根因收口：域缓存结果 "1" 剥离。
+        assert!(md.contains("### 1.1 表格"), "h3 行非 11.1: {md}");
+        assert!(!md.contains("11.1"), "域缓存残留零容忍");
+        assert_eq!(stats["fields_dropped"], 1, "剥离计数: {stats}");
+        // 回归（不过度修正）：中文序数标题逐字。
+        assert!(md.contains("## 第一章 概述"), "无编号标题不变: {md}");
     }
 
     #[test]
