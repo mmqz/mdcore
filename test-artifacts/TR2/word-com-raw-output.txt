@@ -1,0 +1,32 @@
+﻿
+pages=1 words=77
+
+=== paragraph style/size/bold ===
+[1] style=标题 1 size=10 bold=0 outline=1 | 项目技术方案书
+[2] style=标题 2 size=10 bold=0 outline=2 | 第一章 概述
+[3] style=正文 size=10 bold=0 outline=10 | 本项目含**智能文档平台**与*需求解析*两项内容。
+[4] style=正文 size=10 bold=0 outline=10 | 支持 Word 导入
+[5] style=正文 size=10 bold=0 outline=10 | 支持 Excel 导入
+[6] style=标题 3 size=10 bold=0 outline=3 | 1.1 表格
+[7] style=正文 size=10 bold=0 outline=10 | 阶段
+[8] style=正文 size=10 bold=0 outline=10 | 时间
+[9] style=正文 size=10 bold=0 outline=10 | 
+[10] style=正文 size=10 bold=0 outline=10 | 一期
+[11] style=正文 size=10 bold=0 outline=10 | 2026 Q1
+[12] style=正文 size=10 bold=0 outline=10 | 
+[13] style=标题 2 size=10 bold=0 outline=2 | 第二章 报价
+[14] style=正文 size=10 bold=0 outline=10 | 总计人民币 **壹佰贰拾万元整**。
+
+=== style defs (G2) ===
+Heading1: size=10 bold=0 font=Times New Roman
+Normal: size=10 font=Times New Roman
+
+=== page setup (G2 geometry) ===
+margins cm T3.5 B3 L3 R3
+
+=== bold loss check (P0) ===
+ASTERISK-RESIDUE [3]: 本项目含**智能文档平台**与*需求解析*两项内容。
+ASTERISK-RESIDUE [14]: 总计人民币 **壹佰贰拾万元整**。
+
+=== TOC ===
+TOC=0 fields=0
