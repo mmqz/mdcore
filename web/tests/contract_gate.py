@@ -55,7 +55,7 @@ def main() -> int:
 
             # ---- §3.1 启动面 ----
             check("ready", page.evaluate("window.__ready === true"))
-            check("contract_version", page.evaluate("window.__contractVersion === 1.1"))
+            check("contract_version", page.evaluate("window.__contractVersion === 1.2"))
             surf = page.evaluate("""() => ({
                 inject: typeof window.__inject,
                 injectChunk: typeof window.__inject_chunk,
@@ -114,7 +114,7 @@ def main() -> int:
             page.evaluate("window.__bridge.pushRender(undefined, { force: true })")
             check("inject_events_drain_on_render", page.evaluate("window.__mdcoreEvents.length > 0"))
             check("inject_keeps_surface",
-                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1.1"))
+                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1.2"))
 
             # ---- §3.2 渐进通道 ----
             page.evaluate("window.__inject_chunk('first chunk\\n\\n', true)")
@@ -136,13 +136,15 @@ def main() -> int:
             }""")
             check("unit_constitution", unit["u2c"] == 2 and unit["c2u"] == 3, json.dumps(unit))
 
-            # ---- §4 设置面（v1.1，R24-a）----
+            # ---- §4 设置面（v1.1，R24-a；#16 增补 docx_export 层 v1.2）----
             st = page.evaluate("window.__settings()")
             check("settings_read_surface",
                   st.get("schema_version") == 1
-                  and all(k in st for k in ("editor", "ai", "storage", "appearance"))
+                  and all(k in st for k in ("editor", "ai", "storage", "appearance", "docx_export"))
                   and st["editor"]["undo_coalesce_ms"] == 1000
-                  and st["appearance"]["theme"] == "system", json.dumps(st))
+                  and st["appearance"]["theme"] == "system"
+                  and st["docx_export"]["preset"] == "default"
+                  and st["docx_export"]["size_half_points"] == 28, json.dumps(st))
 
             page.evaluate("""() => {
                 window.__settingsSpy = [];
@@ -163,6 +165,11 @@ def main() -> int:
                 wrongType: window.__setSetting('appearance.theme', 123),
                 outOfRange: window.__setSetting('appearance.font_size_px', 99),
                 floatNotInt: window.__setSetting('editor.undo_coalesce_ms', 1.5),
+                docxPresetEnum: window.__setSetting('docx_export.preset', 'a4'),
+                docxPresetType: window.__setSetting('docx_export.preset', 1),
+                docxSizeDomain: window.__setSetting('docx_export.size_half_points', 22),
+                docxSpacingDomain: window.__setSetting('docx_export.line_spacing', 300),
+                docxMarginDomain: window.__setSetting('docx_export.margin_twips', 2000),
             })""")
             spy2 = page.evaluate("window.__settingsSpy")
             st3 = page.evaluate("window.__settings()")
@@ -170,7 +177,20 @@ def main() -> int:
                   all(v is False for v in rejected.values())
                   and len(spy2) == 1  # 拒绝写入不派事件
                   and st3["schema_version"] == 1 and st3["appearance"]["theme"] == "dark"
-                  and st3["appearance"]["font_size_px"] == 15, json.dumps(rejected))
+                  and st3["appearance"]["font_size_px"] == 15
+                  and st3["docx_export"]["preset"] == "default", json.dumps(rejected))
+
+            # #16：docx_export 层写入 + 事件 + 面板联动（mdc-settings-changed
+            # → docxExportOptions 同步——设置面三源归一）。
+            ok_docx_write = page.evaluate(
+                "window.__setSetting('docx_export.preset', 'official-a4')")
+            st4 = page.evaluate("window.__settings()")
+            docx_opts = page.evaluate("window.__getDocxExportOptions()")
+            check("tr16_settings_write_syncs_panel",
+                  ok_docx_write is True
+                  and st4["docx_export"]["preset"] == "official-a4"
+                  and docx_opts["preset"] == "official-a4"
+                  and docx_opts["json"].find('宋体') != -1, json.dumps(docx_opts))
 
             # ---- §3.1 F-1 对侧现状锁：渐进路径专属成员在场 ----
             # 默认启动缺席已由 boot_progressive_only_members_absent_by_default

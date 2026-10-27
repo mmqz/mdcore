@@ -163,7 +163,7 @@ def main() -> int:
             # ---- 契约面 + 零页错（启动/导入全程无 JS 异常逃逸）----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
-                contract: window.__contractVersion === 1.1,
+                contract: window.__contractVersion === 1.2,
                 inject: typeof window.__inject === 'function',
                 docx: typeof window.__importDocx === 'function',
                 md: window.__md(),

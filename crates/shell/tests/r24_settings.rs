@@ -384,10 +384,100 @@ fn settings_json_shape_roundtrips() {
     assert_eq!(back, s);
 
     // 结构面：四层 section 全在场（web contract gate 同款断言的 Rust 锚）。
+    // #16（A4）：第五层 docx_export（v1.2 增补）。
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    for section in ["editor", "ai", "storage", "appearance"] {
+    for section in ["editor", "ai", "storage", "appearance", "docx_export"] {
         assert!(v.get(section).is_some(), "{section} 层必须在 JSON 面");
     }
+}
+
+// ---------------------------------------------------------------------------
+// #16（A4）：docx 导出格式层四键（CONTRACT §4 v1.2 增补）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tr16_docx_export_keys_set_reload_and_domain() {
+    let mut store = SettingsStore::new_default();
+    // 全链：预设 → 自定义三值逐键写 → 快照 → 落盘重载读回。
+    assert!(store
+        .set(
+            "docx_export.preset",
+            SettingValue::Str("official-a4".into())
+        )
+        .is_ok());
+    assert!(store
+        .set("docx_export.preset", SettingValue::Str("custom".into()))
+        .is_ok());
+    assert!(store
+        .set("docx_export.size_half_points", SettingValue::Uint(24))
+        .is_ok());
+    assert!(store
+        .set("docx_export.line_spacing", SettingValue::Uint(480))
+        .is_ok());
+    assert!(store
+        .set("docx_export.margin_twips", SettingValue::Uint(1440))
+        .is_ok());
+    let dir = tmp_dir("tr16");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("settings.toml");
+    store.save(&path).expect("save");
+    let reloaded = SettingsStore::load(&path);
+    let s = reloaded.settings();
+    assert_eq!(s.docx_export.preset, "custom");
+    assert_eq!(s.docx_export.size_half_points, 24);
+    assert_eq!(s.docx_export.line_spacing, 480);
+    assert_eq!(s.docx_export.margin_twips, 1440);
+    std::fs::remove_dir_all(&dir).ok();
+
+    // 值域 typed 拒（枚举外预设/离散域外三值）+ 零触碰。
+    let mut store2 = SettingsStore::new_default();
+    assert!(matches!(
+        store2.set("docx_export.preset", SettingValue::Str("a4".into())),
+        Err(SettingError::OutOfRange { .. })
+    ));
+    assert!(matches!(
+        store2.set("docx_export.preset", SettingValue::Uint(1)),
+        Err(SettingError::WrongType { .. })
+    ));
+    for (path, bad) in [
+        ("docx_export.size_half_points", 22u64),
+        ("docx_export.line_spacing", 300u64),
+        ("docx_export.margin_twips", 2000u64),
+    ] {
+        assert!(
+            matches!(
+                store2.set(path, SettingValue::Uint(bad)),
+                Err(SettingError::OutOfRange { .. })
+            ),
+            "{path}={bad} 必须越域拒"
+        );
+    }
+    assert_eq!(
+        store2.to_toml().unwrap(),
+        default_document().to_string(),
+        "全部拒绝=零触碰"
+    );
+
+    // 文件面越域降级：越域值落盘后重载 → 该键回默认 + KeyDegraded。
+    let dir2 = tmp_dir("tr16b");
+    std::fs::create_dir_all(&dir2).unwrap();
+    let path2 = dir2.join("settings.toml");
+    std::fs::write(
+        &path2,
+        "schema_version = 1\n\n[docx_export]\npreset = \"unknown\"\nsize_half_points = 99\n",
+    )
+    .unwrap();
+    let degraded = SettingsStore::load(&path2);
+    let s2 = degraded.settings();
+    assert_eq!(s2.docx_export.preset, "default", "枚举外回默认");
+    assert_eq!(s2.docx_export.size_half_points, 28, "域外回默认");
+    assert_eq!(s2.docx_export.line_spacing, 360);
+    assert_eq!(s2.docx_export.margin_twips, 1800);
+    assert!(matches!(
+        degraded.status(),
+        mdshell::settings::LoadStatus::KeyDegraded { .. }
+    ));
+    std::fs::remove_dir_all(&dir2).ok();
 }
 
 // ---------------------------------------------------------------------------

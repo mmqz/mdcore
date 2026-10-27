@@ -51,6 +51,16 @@ pub mod bounds {
     pub const FONT_SIZE_PX: (u64, u64) = (8, 48);
     /// 外观主题枚举。
     pub const THEMES: [&str; 3] = ["light", "dark", "system"];
+    /// #16（A4）：docx 导出格式预设枚举（与 web DOCX_EXPORT_PRESETS
+    /// 表同源——web 面键值锁背书：contract_gate + docx_export e2e）。
+    pub const DOCX_EXPORT_PRESETS: [&str; 5] =
+        ["default", "official-a4", "compact", "large-print", "custom"];
+    /// #16：自定义字号（半磅）——UI 三选值域（五号/小四/四号/三号）。
+    pub const DOCX_SIZE_HALF_POINTS: [u64; 4] = [21, 24, 28, 32];
+    /// #16：自定义行距（line 值——单倍/1.5 倍/2 倍）。
+    pub const DOCX_LINE_SPACING: [u64; 3] = [240, 360, 480];
+    /// #16：自定义四边边距（twips——2cm/1 英寸/公文 90pt）。
+    pub const DOCX_MARGIN_TWIPS: [u64; 3] = [1134, 1440, 1800];
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +75,8 @@ pub struct Settings {
     pub ai: AiSettings,
     pub storage: StorageSettings,
     pub appearance: AppearanceSettings,
+    /// #16（A4）：docx 导出格式层（v1.2 增补——纯增量，v1.1 面零破坏）。
+    pub docx_export: DocxExportSettings,
 }
 
 /// undo 合并窗默认值（毫秒）。
@@ -111,6 +123,25 @@ pub struct AppearanceSettings {
     pub font_size_px: u16,
 }
 
+/// #16（A4）：docx 导出格式层（v1.2 增补）。
+///
+/// 消费链：⚙ 面板/`__setSetting` 写 → 快照 + localStorage 镜像 →
+/// 导出按钮 `export_docx_styled(options JSON)`（wasm 面——issue #10
+/// 已供）。预设 = 排版+几何全量（web 预设表）；自定义 = 三选值
+///（字号/行距/边距）+ 固定字体槽。默认 `default` = 空 options ≡
+/// 旧 `export_docx` 字节级等价（零破坏——Rust 侧 E2 钉定）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DocxExportSettings {
+    /// `default` | `official-a4` | `compact` | `large-print` | `custom`。
+    pub preset: String,
+    /// 自定义字号（半磅；预设模式不消费）。
+    pub size_half_points: u16,
+    /// 自定义行距（line 值：240 单倍 / 360 1.5 倍 / 480 2 倍）。
+    pub line_spacing: u16,
+    /// 自定义四边边距（twips）。
+    pub margin_twips: u16,
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -131,6 +162,12 @@ impl Default for Settings {
             appearance: AppearanceSettings {
                 theme: "system".into(),
                 font_size_px: 15,
+            },
+            docx_export: DocxExportSettings {
+                preset: "default".into(),
+                size_half_points: 28,
+                line_spacing: 360,
+                margin_twips: 1800,
             },
         }
     }
@@ -373,6 +410,43 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
             ),
         }
     }
+    // #16（A4）：docx 导出格式层四键。
+    if let Some(item) = item_of(&doc, "docx_export", "preset") {
+        match as_str(item) {
+            Some(v) => s.docx_export.preset = v,
+            None => degrade(&mut degraded, "docx_export.preset", "expected string"),
+        }
+    }
+    if let Some(item) = item_of(&doc, "docx_export", "size_half_points") {
+        match as_u64(item).and_then(|v| u16::try_from(v).ok()) {
+            Some(v) => s.docx_export.size_half_points = v,
+            None => degrade(
+                &mut degraded,
+                "docx_export.size_half_points",
+                "expected integer in u16 range",
+            ),
+        }
+    }
+    if let Some(item) = item_of(&doc, "docx_export", "line_spacing") {
+        match as_u64(item).and_then(|v| u16::try_from(v).ok()) {
+            Some(v) => s.docx_export.line_spacing = v,
+            None => degrade(
+                &mut degraded,
+                "docx_export.line_spacing",
+                "expected integer in u16 range",
+            ),
+        }
+    }
+    if let Some(item) = item_of(&doc, "docx_export", "margin_twips") {
+        match as_u64(item).and_then(|v| u16::try_from(v).ok()) {
+            Some(v) => s.docx_export.margin_twips = v,
+            None => degrade(
+                &mut degraded,
+                "docx_export.margin_twips",
+                "expected integer in u16 range",
+            ),
+        }
+    }
 
     // ---- 值域校验（与 set() 同表：越界键回默认，理由与类型降级一致）----
     if !in_range(s.editor.undo_coalesce_ms, bounds::UNDO_COALESCE_MS) {
@@ -416,6 +490,35 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
         degrade(
             &mut degraded,
             "appearance.font_size_px",
+            "value out of range",
+        );
+    }
+    // #16（A4）：docx 导出格式层值域（与 set() 同表）。
+    if !bounds::DOCX_EXPORT_PRESETS.contains(&s.docx_export.preset.as_str()) {
+        s.docx_export.preset = Settings::default().docx_export.preset;
+        degrade(&mut degraded, "docx_export.preset", "value out of range");
+    }
+    if !bounds::DOCX_SIZE_HALF_POINTS.contains(&(s.docx_export.size_half_points as u64)) {
+        s.docx_export.size_half_points = Settings::default().docx_export.size_half_points;
+        degrade(
+            &mut degraded,
+            "docx_export.size_half_points",
+            "value out of range",
+        );
+    }
+    if !bounds::DOCX_LINE_SPACING.contains(&(s.docx_export.line_spacing as u64)) {
+        s.docx_export.line_spacing = Settings::default().docx_export.line_spacing;
+        degrade(
+            &mut degraded,
+            "docx_export.line_spacing",
+            "value out of range",
+        );
+    }
+    if !bounds::DOCX_MARGIN_TWIPS.contains(&(s.docx_export.margin_twips as u64)) {
+        s.docx_export.margin_twips = Settings::default().docx_export.margin_twips;
+        degrade(
+            &mut degraded,
+            "docx_export.margin_twips",
             "value out of range",
         );
     }
@@ -655,6 +758,62 @@ impl SettingsStore {
                 ensure_range(path, v, bounds::FONT_SIZE_PX)?;
                 ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
                 self.settings.appearance.font_size_px = v as u16;
+            }
+            // #16（A4）：docx 导出格式层四键（枚举/离散值域——与 UI
+            // 三选值域一致；未知预设/越域值 typed 拒）。
+            ("docx_export", "preset") => {
+                let v = match &value {
+                    SettingValue::Str(v) => v.clone(),
+                    _ => {
+                        return Err(SettingError::WrongType {
+                            path: path.to_string(),
+                            expected: "string",
+                        })
+                    }
+                };
+                if !bounds::DOCX_EXPORT_PRESETS.contains(&v.as_str()) {
+                    return Err(SettingError::OutOfRange {
+                        path: path.to_string(),
+                        detail:
+                            "preset must be default | official-a4 | compact | large-print | custom"
+                                .into(),
+                    });
+                }
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v.as_str());
+                self.settings.docx_export.preset = v;
+            }
+            ("docx_export", "size_half_points") => {
+                let v = as_uint(path, &value)?;
+                if !bounds::DOCX_SIZE_HALF_POINTS.contains(&v) {
+                    return Err(SettingError::OutOfRange {
+                        path: path.to_string(),
+                        detail: "size_half_points must be one of 21 | 24 | 28 | 32".into(),
+                    });
+                }
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
+                self.settings.docx_export.size_half_points = v as u16;
+            }
+            ("docx_export", "line_spacing") => {
+                let v = as_uint(path, &value)?;
+                if !bounds::DOCX_LINE_SPACING.contains(&v) {
+                    return Err(SettingError::OutOfRange {
+                        path: path.to_string(),
+                        detail: "line_spacing must be one of 240 | 360 | 480".into(),
+                    });
+                }
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
+                self.settings.docx_export.line_spacing = v as u16;
+            }
+            ("docx_export", "margin_twips") => {
+                let v = as_uint(path, &value)?;
+                if !bounds::DOCX_MARGIN_TWIPS.contains(&v) {
+                    return Err(SettingError::OutOfRange {
+                        path: path.to_string(),
+                        detail: "margin_twips must be one of 1134 | 1440 | 1800".into(),
+                    });
+                }
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
+                self.settings.docx_export.margin_twips = v as u16;
             }
             // schema_version 为保留键：不可经 set 面（迁移框架独占）。
             _ => return Err(SettingError::UnknownPath(path.to_string())),

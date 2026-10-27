@@ -100,9 +100,16 @@ fn contract_doc_v1_1_session_face_present() {
     );
     assert!(doc.contains("session_restore"), "settings 消费联动必须在");
     assert!(doc.contains("mark_saved"), "Core 脏标记契约必须在");
+    // #16/A4（CONTRACT v1.4）：§5/§6 的 window 面零新增事实维持，
+    // 但 `__contractVersion` 已随 §4 v1.4 升 1.2——锁两向事实：
+    // §6 不碰 window 面 + 当前版本号来自 §4（防误升版/漏升版漂移）。
     assert!(
-        doc.contains("window 面零新增，`__contractVersion` 保持 1.1"),
-        "不升版裁决必须显式在档（防误升版/漏升版两向漂移）"
+        doc.contains("window 面零新增（§6 从未触碰 web window 面"),
+        "§6 不升版裁决必须显式在档"
+    );
+    assert!(
+        doc.contains("`__contractVersion` 1.1 → 1.2"),
+        "§4 v1.4 升版记录必须在档（当前 window 面版本 1.2）"
     );
     // Rust 侧权威实现锚（编译期常量锁）。
     const _: () = assert!(mdshell::session::DEFAULT_MAX_SESSIONS == 16);

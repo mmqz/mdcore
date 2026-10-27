@@ -8,7 +8,7 @@ toggle + ¶ 清除 + 快捷键 + __format 测试桥）。
 - __md() 投影 = 字面标记形（源码轨——模型 marks 不写入 MD 的 v0
   规则），与用户手打等价；
 - undo（核日志）正常工作；
-- 契约面零触碰（contract 1.1 恒定）+ 全程零页错。
+- 契约面零触碰（contract 1.2 恒定——§4 v1.4 后当前值）+ 全程零页错。
 Evidence -> results/results_editor_toolbar.json
 """
 
@@ -65,7 +65,7 @@ def main() -> int:
             })""")
             check("toolbar_present_contract_intact",
                   ui["bar"] and ui["buttons"] == 11 and ui["formatFn"] == "function"
-                  and ui["contract"] == 1.1,
+                  and ui["contract"] == 1.2,
                   json.dumps(ui))
 
             # ---- 行内包裹（选区）----
@@ -333,7 +333,7 @@ def main() -> int:
             # ---- 契约 + 零页错终验 ----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
-                contract: window.__contractVersion === 1.1,
+                contract: window.__contractVersion === 1.2,
                 blockCount: window.__blockCount(),
             })""")
             check("final_contract_no_pageerror",

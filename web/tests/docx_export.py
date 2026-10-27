@@ -144,7 +144,7 @@ def main() -> int:
             })""")
             check("export_ui_present",
                   ui["btn"] and ui["btnLabel"] == "export .docx" and ui["status"]
-                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.1,
+                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.2,
                   json.dumps(ui))
 
             # ---- 快乐路径：真实按钮点击（UI 路径）+ 程序化钩子取字节 ----
@@ -438,10 +438,82 @@ def main() -> int:
                   and cur_after_bad["json"] == "{}",
                   json.dumps({"badSet": bad_set, "cur": cur_after_bad}))
 
+            # ---- TR-16（issue #16 A4）：设置面消费（CONTRACT §4 v1.2
+            #      docx_export 层）+ __exportDocxStyled 测试桥 + XML
+            #      直读断言 + 重载持久化。----
+            # 1) __setSetting 写 docx_export 层（宿主/测试权威面）→ 面板
+            #    联动 + 导出按钮消费（custom：小四 24 半磅·2 倍 480·
+            #    1 英寸 1440）→ styles.xml + document.xml 直读。
+            ok_s1 = page.evaluate("window.__setSetting('docx_export.preset', 'custom')")
+            ok_s2 = page.evaluate("window.__setSetting('docx_export.size_half_points', 24)")
+            ok_s3 = page.evaluate("window.__setSetting('docx_export.line_spacing', 480)")
+            ok_s4 = page.evaluate("window.__setSetting('docx_export.margin_twips', 1440)")
+            r_set = page.evaluate("window.__exportDocx()")
+            st_set = doc_set = ""
+            try:
+                zf_set = zipfile.ZipFile(io.BytesIO(as_bytes(r_set["bytes"])))
+                st_set = zip_part(zf_set, "word/styles.xml")
+                doc_set = zip_part(zf_set, "word/document.xml")
+            except Exception:  # noqa: BLE001
+                pass
+            check("tr16_settings_keys_consume_to_xml",
+                  ok_s1 and ok_s2 and ok_s3 and ok_s4 and r_set.get("ok") is True
+                  and 'w:sz w:val="24"' in st_set
+                  and 'w:line="480"' in st_set
+                  and 'w:eastAsia="宋体"' in st_set
+                  and 'w:left="1440"' in doc_set and 'w:top="1440"' in doc_set,
+                  json.dumps({"sz24": 'w:sz w:val="24"' in st_set,
+                              "line480": 'w:line="480"' in st_set,
+                              "song": 'w:eastAsia="宋体"' in st_set,
+                              "m1440": 'w:left="1440"' in doc_set}))
+            # 2) __exportDocxStyled 测试桥：在场 + 显式 options 发射 +
+            #    值域 typed 拒（桥设计 = 不抛、返回 typed 结果——wasm
+            #    V9 漏斗经桥透出 docx_invalid_input）+ 零副作用。
+            bridge_fn = page.evaluate("typeof window.__exportDocxStyled")
+            r_bridge = page.evaluate("window.__exportDocxStyled()")
+            # 完整 typography 子对象 + 越域字号（40000：u16 可表示
+            # [形状面过] 但 > V9 上限 32767 [值域面拒]——99999 会被
+            # 形状层按不可表示先拒，实施发现）。
+            invalid_ret = page.evaluate(
+                'window.__exportDocxStyled(\'{"typography":{"ascii_font":"x","east_asia_font":"y","complex_script_font":"z","size_half_points":40000}}\')')
+            st_bridge = ""
+            try:
+                st_bridge = zip_part(zipfile.ZipFile(io.BytesIO(as_bytes(r_bridge["bytes"]))),
+                                     "word/styles.xml")
+            except Exception:  # noqa: BLE001
+                pass
+            check("tr16_export_docx_styled_bridge",
+                  bridge_fn == "function" and r_bridge.get("ok") is True
+                  and 'w:sz w:val="24"' in st_bridge
+                  and invalid_ret.get("ok") is False
+                  and invalid_ret.get("code") == "docx_invalid_input",
+                  json.dumps({"fn": bridge_fn, "ok": r_bridge.get("ok"),
+                              "invalid": {k: invalid_ret.get(k) for k in ("ok", "code")}}))
+            # 3) 重载持久化：localStorage 种子（mdc-docx-export）→
+            #    同页 reload（同上下文同源——localStorage 存活）→
+            #    docx_export 设置态存活。
+            page.reload()
+            page.wait_for_function("window.__ready === true", timeout=30000)
+            page.wait_for_timeout(300)
+            persisted = page.evaluate("""() => ({
+                settings: window.__settings().docx_export,
+                panel: window.__getDocxExportOptions(),
+            })""")
+            check("tr16_persistence_across_reload",
+                  persisted["settings"]["preset"] == "custom"
+                  and persisted["settings"]["size_half_points"] == 24
+                  and persisted["settings"]["line_spacing"] == 480
+                  and persisted["settings"]["margin_twips"] == 1440
+                  and persisted["panel"]["preset"] == "custom",
+                  json.dumps(persisted))
+            # 复位（后续检查/下次运行零污染）。
+            page.evaluate("window.__setDocxExportOptions('default')")
+            page.evaluate("localStorage.removeItem('mdc-docx-export')")
+
             # ---- 契约面 + 零页错（启动/导出/导入全程无 JS 异常逃逸）----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
-                contract: window.__contractVersion === 1.1,
+                contract: window.__contractVersion === 1.2,
                 inject: typeof window.__inject === 'function',
                 exportFn: typeof window.__exportDocx === 'function',
                 importFn: typeof window.__importDocx === 'function',

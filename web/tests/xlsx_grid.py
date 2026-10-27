@@ -473,7 +473,7 @@ def main() -> int:
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
                 gridReady: window.__gridReady === true,
-                contract: window.__contractVersion === 1.1,
+                contract: window.__contractVersion === 1.2,
                 md: typeof window.__md === 'function',
                 exportXlsx: typeof window.__exportXlsx === 'function',
             })""")

@@ -514,7 +514,7 @@ def main() -> int:
                   and vis["canvas"]["flags"]["ready"] and vis["canvas"]["flags"]["grid"]
                   and vis["canvas"]["flags"]["ev"] and vis["canvas"]["flags"]["pdf"]
                   and vis["canvas"]["flags"]["canvas"]
-                  and vis["canvas"]["contract"] == 1.1 and vis["canvas"]["md"] == "function"
+                  and vis["canvas"]["contract"] == 1.2 and vis["canvas"]["md"] == "function"
                   and len(page_errors) == 0,
                   json.dumps({"vis": vis, "pageErrors": page_errors[:3]}, ensure_ascii=False))
 

@@ -1360,6 +1360,8 @@ declare global {
     __lastXlsxImport: { ok: boolean; markdown?: string; stats?: Record<string, unknown>; code?: string; message?: string } | null;
     /** t18：当前编辑器文档 → DOCX 字节导出（块模型→DocxWriter 映射 + 降级面；wasm 面/错误码 = docx_export.rs 模块文档单一真源）。 */
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
+    /** #16（A4）：styled 导出测试桥——直通 wasm export_docx_styled（options 缺省 = 面板/设置态；零副作用）。 */
+    __exportDocxStyled: (optionsJson?: string) => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** t18：最近一次 DOCX 导出结果（成功 = {ok, sizeBytes}；失败 = {ok:false, code, message}）。 */
     __lastDocxExport: { ok: boolean; sizeBytes?: number; code?: string; message?: string } | null;
     /** TR-UI 批 C-3：帮助面板可见态。 */
@@ -1412,6 +1414,13 @@ interface SettingsSnapshot {
     session_restore: boolean;
   };
   appearance: { theme: string; font_size_px: number };
+  /** #16（A4）：docx 导出格式层（CONTRACT §4 v1.2 增补——纯增量）。 */
+  docx_export: {
+    preset: string;
+    size_half_points: number;
+    line_spacing: number;
+    margin_twips: number;
+  };
 }
 
 /** 默认快照（与 mdshell::settings::Settings::default 同值；contract_gate 锁样例）。 */
@@ -1426,6 +1435,7 @@ const DEFAULT_SETTINGS: SettingsSnapshot = {
     session_restore: true,
   },
   appearance: { theme: 'system', font_size_px: 15 },
+  docx_export: { preset: 'default', size_half_points: 28, line_spacing: 360, margin_twips: 1800 },
 };
 
 /** R24-a：web 侧快照（宿主 R24-d 接线后改为注入宿主权威快照）。 */
@@ -1442,6 +1452,13 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   'storage.session_restore': isBool,
   'appearance.theme': (v) => v === 'light' || v === 'dark' || v === 'system',
   'appearance.font_size_px': isUintInRange(8, 48),
+  // #16（A4）：docx 导出格式层四键（离散值域——与 Rust bounds 同表）。
+  'docx_export.preset':
+    (v) => typeof v === 'string'
+      && ['default', 'official-a4', 'compact', 'large-print', 'custom'].includes(v),
+  'docx_export.size_half_points': isUintIn(21, 24, 28, 32),
+  'docx_export.line_spacing': isUintIn(240, 360, 480),
+  'docx_export.margin_twips': isUintIn(1134, 1440, 1800),
 };
 
 function isBool(v: unknown): v is boolean {
@@ -1451,6 +1468,11 @@ function isBool(v: unknown): v is boolean {
 function isUintInRange(lo: number, hi: number): (v: unknown) => v is number {
   return (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+}
+
+/** #16：离散值域校验（UI 三选/预设枚举——与 Rust bounds 同表）。 */
+function isUintIn(...values: number[]): (v: unknown) => v is number {
+  return (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && values.includes(v);
 }
 
 /** 点路径写入快照（仅经 __setSetting 校验后的合法值）。 */
@@ -1620,7 +1642,7 @@ async function main(): Promise<void> {
     window.dispatchEvent(new CustomEvent('mdc-settings-changed', { detail: { path, value } }));
     return true;
   };
-  window.__contractVersion = 1.1;
+  window.__contractVersion = 1.2;
 
   // ---- Phase 5 §8.3: grid UI productization (xlsx_grid wiring) ----
   // WasmBook's lifecycle is independent of WasmCore (the installNewCore
@@ -1964,10 +1986,47 @@ const DOCX_EXPORT_PRESETS: Record<string, string> = {
   }),
 };
 
-/** 当前选项状态（UI 单一真源；default = 引擎基态）。 */
+/** 当前选项状态（UI 单一真源；default = 引擎基态）。
+ *  #16（A4）：设置面（CONTRACT §4 v1.2 docx_export 层）+ localStorage
+ *  镜像双持久化——重载存活；面板/`__setSetting`/宿主注入三源归一
+ *  （设置快照 = 权威态，localStorage = web 侧重载种子）。 */
 const docxExportOptions: { preset: string; size: string; spacing: string; margin: string } = {
   preset: 'default', size: '28', spacing: '360', margin: '1800',
 };
+const DOCX_EXPORT_LS_KEY = 'mdc-docx-export';
+
+/** 面板态 → 设置快照（经校验器——非法态不落快照）+ localStorage 镜像。 */
+function syncDocxExportOptionsToSettings(): void {
+  const pairs: [string, string | number][] = [
+    ['docx_export.preset', docxExportOptions.preset],
+    ['docx_export.size_half_points', Number(docxExportOptions.size)],
+    ['docx_export.line_spacing', Number(docxExportOptions.spacing)],
+    ['docx_export.margin_twips', Number(docxExportOptions.margin)],
+  ];
+  for (const [p, v] of pairs) {
+    if (SETTING_VALIDATORS[p]?.(v)) applySettingToSnapshot(p, v);
+  }
+  try {
+    localStorage.setItem(DOCX_EXPORT_LS_KEY, JSON.stringify(docxExportOptions));
+  } catch { /* 私密模式 */ }
+}
+
+/** 启动种子：localStorage → 面板态 → 设置快照（重载持久化主链）。 */
+function seedDocxExportOptionsFromPersisted(): void {
+  try {
+    const raw = localStorage.getItem(DOCX_EXPORT_LS_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw) as Record<string, unknown>;
+      if (saved && typeof saved === 'object') {
+        if (typeof saved.preset === 'string') docxExportOptions.preset = saved.preset;
+        if (saved.size !== undefined) docxExportOptions.size = String(saved.size);
+        if (saved.spacing !== undefined) docxExportOptions.spacing = String(saved.spacing);
+        if (saved.margin !== undefined) docxExportOptions.margin = String(saved.margin);
+      }
+    }
+  } catch { /* 私密模式/坏 JSON——默认态 */ }
+  syncDocxExportOptionsToSettings();
+}
 
 /** 状态 → options JSON（导出调用点单点组装；测试桥同源）。 */
 function buildDocxExportOptionsJson(): string {
@@ -2121,11 +2180,43 @@ function setupDocxExport(): void {
   presetSel?.addEventListener('change', () => {
     docxExportOptions.preset = presetSel.value;
     setCustomEnabled(presetSel.value === 'custom');
+    syncDocxExportOptionsToSettings();
     refreshHint();
   });
-  sizeSel?.addEventListener('change', () => { docxExportOptions.size = sizeSel.value; refreshHint(); });
-  spacingSel?.addEventListener('change', () => { docxExportOptions.spacing = spacingSel.value; refreshHint(); });
-  marginSel?.addEventListener('change', () => { docxExportOptions.margin = marginSel.value; refreshHint(); });
+  sizeSel?.addEventListener('change', () => { docxExportOptions.size = sizeSel.value; syncDocxExportOptionsToSettings(); refreshHint(); });
+  spacingSel?.addEventListener('change', () => { docxExportOptions.spacing = spacingSel.value; syncDocxExportOptionsToSettings(); refreshHint(); });
+  marginSel?.addEventListener('change', () => { docxExportOptions.margin = marginSel.value; syncDocxExportOptionsToSettings(); refreshHint(); });
+  // #16：启动种子（localStorage → 面板态 → 设置快照）+ UI 同步 +
+  // 外部写反应（__setSetting/宿主注入经 mdc-settings-changed 事件）。
+  seedDocxExportOptionsFromPersisted();
+  if (presetSel) {
+    presetSel.value = docxExportOptions.preset;
+    setCustomEnabled(docxExportOptions.preset === 'custom');
+  }
+  if (sizeSel) sizeSel.value = docxExportOptions.size;
+  if (spacingSel) spacingSel.value = docxExportOptions.spacing;
+  if (marginSel) marginSel.value = docxExportOptions.margin;
+  // 注意：事件经 window.dispatchEvent 派发（__setSetting 面）——监听
+  // 必须挂 window（document 不是 window 的祖先，window 派发不达
+  // document 监听器——实施发现）。
+  window.addEventListener('mdc-settings-changed', (ev) => {
+    const { path } = (ev as CustomEvent<{ path: string }>).detail;
+    if (!path.startsWith('docx_export.')) return;
+    const snap = window.__settings();
+    docxExportOptions.preset = snap.docx_export.preset;
+    docxExportOptions.size = String(snap.docx_export.size_half_points);
+    docxExportOptions.spacing = String(snap.docx_export.line_spacing);
+    docxExportOptions.margin = String(snap.docx_export.margin_twips);
+    if (presetSel) {
+      presetSel.value = docxExportOptions.preset;
+      setCustomEnabled(docxExportOptions.preset === 'custom');
+    }
+    if (sizeSel) sizeSel.value = docxExportOptions.size;
+    if (spacingSel) spacingSel.value = docxExportOptions.spacing;
+    if (marginSel) marginSel.value = docxExportOptions.margin;
+    try { localStorage.setItem(DOCX_EXPORT_LS_KEY, JSON.stringify(docxExportOptions)); } catch { /* 私密模式 */ }
+    refreshHint();
+  });
   refreshHint();
 
   // 测试桥（e2e 面：读状态/设预设或自定义——与 UI 同一状态真源）。
@@ -2139,12 +2230,43 @@ function setupDocxExport(): void {
     if (size !== undefined) docxExportOptions.size = size;
     if (spacing !== undefined) docxExportOptions.spacing = spacing;
     if (margin !== undefined) docxExportOptions.margin = margin;
+    syncDocxExportOptionsToSettings();
     if (presetSel) {
       presetSel.value = preset;
       setCustomEnabled(preset === 'custom');
     }
     refreshHint();
     return true;
+  };
+  // #16（验收要求 5）：__exportDocxStyled 测试桥——直通 wasm 面
+  //（options 缺省 = 当前面板/设置态组装——与导出按钮同一 JSON 源；
+  // 不下载/不触碰状态行——测试专用零副作用面）。旧 pkg 构建
+  //（export_docx_styled 未发射）返回 typed 降级面。
+  window.__exportDocxStyled = (optionsJson?: string):
+    | { ok: true; bytes: Uint8Array; sizeBytes: number }
+    | { ok: false; code: string; message: string } => {
+    const core = window.__core;
+    if (!core) {
+      return { ok: false, code: 'not_ready', message: 'editor boot incomplete' };
+    }
+    try {
+      const coreAny = core as unknown as {
+        export_docx_styled?: (json: string) => Uint8Array;
+      };
+      if (typeof coreAny.export_docx_styled !== 'function') {
+        return { ok: false, code: 'styled_absent', message: 'pkg build predates export_docx_styled' };
+      }
+      const bytes = coreAny.export_docx_styled(optionsJson ?? buildDocxExportOptionsJson());
+      return { ok: true, bytes, sizeBytes: bytes.length };
+    } catch (e: unknown) {
+      const raw = typeof e === 'string' ? e : (e as { message?: string })?.message ?? '';
+      try {
+        const parsed = JSON.parse(raw) as { code: string; message: string };
+        return { ok: false, code: parsed.code, message: parsed.message };
+      } catch {
+        return { ok: false, code: 'unknown', message: raw || String(e) };
+      }
+    }
   };
 }
 
