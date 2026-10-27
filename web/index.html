@@ -10,9 +10,9 @@
      颜色——主题切换零测试面风险）。 */
   :root {
     --bg: #fff; --fg: #222; --fg-muted: #667; --fg-soft: #556;
-    --panel: #f7f8fa; --panel-hover: var(--panel-hover); --panel-active: #f2f3f6;
-    --border: #cfd4dc; --border-strong: var(--border-strong); --border-soft: var(--border-soft);
-    --accent: var(--accent); --danger: #b00; --code-bg: #f4f4f5;
+    --panel: #f7f8fa; --panel-hover: #eef0f4; --panel-active: #f2f3f6;
+    --border: #cfd4dc; --border-strong: #aeb6c2; --border-soft: #e4e7ec;
+    --accent: #2f6fed; --danger: #b00; --code-bg: #f4f4f5;
     --marker: #b48eff; --marker-revealed: #fff3d6; --canvas-bg: #fbfbfc;
     --grid-head: #f3f4f6; --edit-hl: #fff3d6; --warn-bg: #fff3d6;
   }
@@ -67,6 +67,19 @@
     border: 1px solid transparent; border-radius: 5px; cursor: pointer;
   }
   #format-toolbar button:hover { background: var(--panel-active); }
+
+  /* #3 UI 批 E：表面空态引导卡片（PDF/Grid/Canvas——纯色块改引导；
+     主题全走既有变量，浅/深自动跟随）。 */
+  .surface-guide { position: absolute; inset: 0; display: flex; align-items: center;
+                   justify-content: center; pointer-events: none; }
+  .surface-guide[hidden] { display: none; }
+  .surface-guide .sg-card { display: flex; flex-direction: column; align-items: center;
+                   gap: 7px; padding: 26px 36px; max-width: 320px; text-align: center;
+                   background: var(--panel); color: var(--fg);
+                   border: 1px solid var(--border-soft); border-radius: 10px; }
+  .surface-guide .sg-icon { color: var(--fg-muted); }
+  .surface-guide .sg-title { font-size: 14px; font-weight: 600; }
+  .surface-guide .sg-hint { font-size: 12px; line-height: 1.5; color: var(--fg-muted); }
   #format-toolbar button:active { background: var(--edit-hl); }
   #format-toolbar button.ft-b { font-weight: 800; }
   #format-toolbar button.ft-i { font-style: italic; }

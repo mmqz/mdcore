@@ -31,6 +31,7 @@
 //   message}——本模块任何路径不向顶层抛出。
 
 import { wasmBoot } from './wasm_boot.js';
+import { mount_surface_guide } from './empty_state.js';
 import type {
   PageViewport,
   PDFDocumentProxy,
@@ -476,6 +477,8 @@ export class PdfViewUI {
   private panel!: HTMLElement;
   private viewportEl!: HTMLDivElement;
   private contentEl!: HTMLElement;
+  /** #3 UI 批 E：空态引导卡片层（文档在场 = hidden）。 */
+  private guideEl!: HTMLDivElement;
   private pageLabel!: HTMLElement;
   private zoomLabel!: HTMLElement;
   private searchInput!: HTMLInputElement;
@@ -597,6 +600,15 @@ export class PdfViewUI {
     this.panel = panel;
     this.viewportEl = viewport;
     this.contentEl = content;
+    // #3 UI 批 E：空态引导卡片（文档打开成功前——纯色块改引导）。
+    this.guideEl = mount_surface_guide(viewport, 'pdf-guide', {
+      icon: 'M7 2.5h7.5L19.5 7v14.5h-13V2.5z M14 2.5V7h5 M9.5 12.5h5 M9.5 16h5',
+      title: 'No PDF open',
+      hints: [
+        'Drop a .pdf on this panel to open',
+        'display: pdf.js · model: mdc-pdf wasm session',
+      ],
+    });
     this.pageLabel = pageLabel;
     this.zoomLabel = zoomLabel;
     this.searchInput = searchInput;
@@ -863,7 +875,13 @@ export class PdfViewUI {
 
     this.applySecurityStatus();
     this.syncButtons();
+    this.syncGuide();
     return { ok: true, value: { pages: doc.numPages } };
+  }
+
+  /** #3 UI 批 E：空态引导同步（文档在场 = 隐藏；打开失败/拆卸后回显）。 */
+  private syncGuide(): void {
+    this.guideEl.hidden = this.doc !== null;
   }
 
   /** 旧文档拆卸（IO/渲染任务/位图缓存/overlay/文本缓存全清）。 */
@@ -896,6 +914,8 @@ export class PdfViewUI {
       this.loadingTask = null;
     }
     this.doc = null;
+    // #3 UI 批 E：拆卸后表面归零——引导卡片回显（打开失败/换开路径）。
+    this.syncGuide();
   }
 
   /**

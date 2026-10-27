@@ -139,7 +139,7 @@ def main() -> int:
             })""")
             check("export_ui_present",
                   ui["btn"] and ui["btnLabel"] == "export .xlsx" and ui["status"]
-                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.1,
+                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.2,
                   json.dumps(ui))
 
             # ---- 快乐路径：真实按钮点击（UI 路径）+ 程序化钩子取字节 ----

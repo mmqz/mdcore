@@ -35,6 +35,7 @@
 
 import type { WasmBook } from '../pkg/mdcore_wasm.js';
 import { wasmBoot } from './wasm_boot.js';
+import { mount_surface_guide } from './empty_state.js';
 
 type WasmModule = typeof import('../pkg/mdcore_wasm.js');
 
@@ -245,6 +246,8 @@ export class XlsxGridUI {
 
   // DOM handles
   private viewport!: HTMLDivElement;
+  /** #3 UI 批 E：空态引导卡片层（工作簿在场 = hidden）。 */
+  private guideEl!: HTMLDivElement;
   private spacer!: HTMLDivElement;
   private colhead!: HTMLDivElement;
   private rowhead!: HTMLDivElement;
@@ -340,6 +343,15 @@ export class XlsxGridUI {
       this.rowhead, this.colhead, corner, this.editInput,
     );
     this.viewport = viewport;
+    // #3 UI 批 E：空态引导卡片（工作簿打开前——虚拟滚动空白改引导）。
+    this.guideEl = mount_surface_guide(viewport, 'grid-guide', {
+      icon: 'M3.5 3.5h17v17h-17V3.5z M3.5 9.5h17 M3.5 15.5h17 M9.5 3.5v17 M15.5 3.5v17',
+      title: 'No workbook open',
+      hints: [
+        'Drop a .xlsx on this panel to open',
+        'or use the top-bar “open .xlsx grid” button',
+      ],
+    });
     panel.append(toolbar, viewport);
     this.sheetSelect = select;
   }
@@ -1039,12 +1051,19 @@ export class XlsxGridUI {
       const summary = this.sheets.map((s) => `${s.name} ${s.rows}×${s.cols}`).join(', ');
       this.showStatus(`opened: ${this.sheets.length} sheet${this.sheets.length === 1 ? '' : 's'} (${summary})`, false);
       this.render();
+      this.syncGuide();
       return { ok: true, sheets: this.sheets };
     } catch (e) {
       const f = wasmFail(e);
       this.showStatus(`open failed (${f.code}): ${f.message}`, true);
+      this.syncGuide();
       return f;
     }
+  }
+
+  /** #3 UI 批 E：空态引导同步（工作簿在场 = 隐藏；失败/关闭后回显）。 */
+  private syncGuide(): void {
+    this.guideEl.hidden = this.book !== null;
   }
 
   private switchSheet(idx: number): void {

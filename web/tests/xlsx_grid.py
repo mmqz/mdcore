@@ -131,7 +131,7 @@ def main() -> int:
             check("grid_ready",
                   boot["ready"] and boot["viewport"] and boot["sheetSelect"] and boot["exportBtn"]
                   and boot["fileInput"] and boot["tabs"] and boot["importFn"] == "function"
-                  and boot["contract"] == 1.1,
+                  and boot["contract"] == 1.2,
                   json.dumps(boot))
 
             # ---- 1b. 视图 tab 切换（文档 ↔ 表格面板互斥显隐）----

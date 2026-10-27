@@ -52,6 +52,7 @@
 
 type WasmModule = typeof import('../pkg/mdcore_wasm.js');
 import { wasmBoot } from './wasm_boot.js';
+import { mount_surface_guide } from './empty_state.js';
 
 /** WasmCanvas 方法面（wasm-bindgen web-target，方法名 snake_case）。 */
 interface WasmCanvasFace {
@@ -322,6 +323,8 @@ export class CanvasViewUI {
   // DOM 句柄
   private panel: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
+  /** #3 UI 批 E：空态引导卡片层（对象计数零 = 显示）。 */
+  private guideEl!: HTMLDivElement;
   private scrollEl: HTMLDivElement | null = null;
   private svg: SVGSVGElement | null = null;
   private layerGroups: SVGGElement | null = null;
@@ -426,6 +429,15 @@ export class CanvasViewUI {
     ln.id = 'cv-l-nodes';
     svg.append(lg, le, ln);
     scroll.appendChild(svg);
+    // #3 UI 批 E：空态引导卡片（对象计数零 = 显示——svg 底盘仍在）。
+    this.guideEl = mount_surface_guide(scroll, 'canvas-guide', {
+      icon: 'M7.5 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z M13.5 13.5h7v7h-7z M4 21l7.5-7.5',
+      title: 'Canvas is empty',
+      hints: [
+        'Add a node from the canvas toolbar to start',
+        'the AI peer mirrors your objects live',
+      ],
+    });
 
     const aiPanel = document.createElement('div');
     aiPanel.id = 'canvas-ai-panel';
@@ -1495,6 +1507,16 @@ export class CanvasViewUI {
       `nodes ${this.countKind('node')} · edges ${this.countKind('edge')}`
       + ` · groups ${this.countKind('group')} · undo ${undo} · redo ${redo}`
       + ` · fp ${fp.slice(0, 22)}`;
+    // #3 UI 批 E：空态引导同步（对象计数零 = 显示；非零 = 隐藏）。
+    this.syncGuide();
+  }
+
+  /** #3 UI 批 E：空态引导同步（node+edge+group 全零 = 显示）。 */
+  private syncGuide(): void {
+    if (!this.guideEl) return; // 无壳页（bench）早退路径——卡片未挂载
+    const empty =
+      this.countKind('node') + this.countKind('edge') + this.countKind('group') === 0;
+    this.guideEl.hidden = !empty;
   }
 
   // -----------------------------------------------------------------------

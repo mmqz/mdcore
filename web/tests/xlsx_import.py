@@ -95,7 +95,7 @@ def main() -> int:
             })""")
             check("import_ui_present",
                   ui["file"] and ui["status"] and ui["importFn"] == "function"
-                  and ui["docxFn"] == "function" and ui["contract"] == 1.1,
+                  and ui["docxFn"] == "function" and ui["contract"] == 1.2,
                   json.dumps(ui))
 
             # ---- 快乐路径：真实 file input（Playwright set_input_files

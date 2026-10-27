@@ -53,9 +53,9 @@ def main() -> int:
 
     checks: list[dict] = []
 
-    def check(name: str, ok: bool, detail: str = "") -> None:
-        checks.append({"name": name, "ok": bool(ok), "skip": False, "detail": detail[:400]})
-        print(("PASS " if ok else "FAIL ") + name)
+    def check(name: str, ok: bool, detail: str = "", skip: bool = False) -> None:
+        checks.append({"name": name, "ok": bool(ok), "skip": bool(skip), "detail": detail[:400]})
+        print(("SKIP " if skip else ("PASS " if ok else "FAIL ")) + name)
 
     srv = serve()
     page_errors: list[str] = []
@@ -165,32 +165,39 @@ def main() -> int:
         )
 
         # ── 4. PDF 面：打开→选区→高亮→增量保存 ────────────────────
+        # pkg_pdf 缺席（issue #5——display-only）时注释/增量保存面
+        # bridge_absent：pdf_view.py 同款 SKIP 纪律（模型面就绪后恒跑）。
         page.click("#tab-pdf")
         pdf_b64 = base64.b64encode((FIXTURES / "sample.pdf").read_bytes()).decode()
         pdf_open = page.evaluate("b => window.__pdfOpenBytes(b)", pdf_b64)
         page.wait_for_timeout(1200)
         p_state = page.evaluate("window.__pdfState()")
-        annot = page.evaluate(
-            "() => window.__pdfAddHighlight(0, {x: 72, y: 700, w: 300, h: 24})"
-        )
-        flush = page.evaluate("window.__pdfFlush()")
-        check(
-            "journey_pdf_annotate_incremental_save",
-            pdf_open.get("ok") is True
-            and p_state.get("pages") == 3
-            and annot.get("ok") is True
-            and flush.get("ok") is True
-            and flush.get("bytes_appended", 0) > 0
-            and flush.get("prefix_bytes") == len(base64.b64decode(pdf_b64)),
-            json.dumps(
-                {
-                    "open": pdf_open.get("ok"),
-                    "pages": p_state.get("pages"),
-                    "annot": annot.get("ok"),
-                    "appended": flush.get("bytes_appended"),
-                }
-            ),
-        )
+        if p_state.get("wasm") is not True:
+            check("journey_pdf_annotate_incremental_save", True,
+                  "pending wasm (pkg_pdf absent — issue #5 display-only; "
+                  "annotate/flush bridge_absent by design)", skip=True)
+        else:
+            annot = page.evaluate(
+                "() => window.__pdfAddHighlight(0, {x: 72, y: 700, w: 300, h: 24})"
+            )
+            flush = page.evaluate("window.__pdfFlush()")
+            check(
+                "journey_pdf_annotate_incremental_save",
+                pdf_open.get("ok") is True
+                and p_state.get("pages") == 3
+                and annot.get("ok") is True
+                and flush.get("ok") is True
+                and flush.get("bytes_appended", 0) > 0
+                and flush.get("prefix_bytes") == len(base64.b64decode(pdf_b64)),
+                json.dumps(
+                    {
+                        "open": pdf_open.get("ok"),
+                        "pages": p_state.get("pages"),
+                        "annot": annot.get("ok"),
+                        "appended": flush.get("bytes_appended"),
+                    }
+                ),
+            )
 
         # ── 5. Canvas 面：建→拖→协同收敛 ──────────────────────────
         page.click("#tab-canvas")
