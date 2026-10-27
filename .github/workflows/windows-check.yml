@@ -18,8 +18,10 @@ env:
 
 jobs:
   check:
-    name: windows / cargo check
-    runs-on: windows-latest
+    name: windows / cargo check (self-hosted)
+    # self-hosted runner: GitHub Free 私有仓库无 Actions 配额，用本机 runner 替代
+    # 标签来自 runner 注册时的默认集：self-hosted, Windows, X64
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - uses: actions/checkout@v4
 
