@@ -146,6 +146,13 @@ impl AnnotationWriter for SharedLopdf {
     fn save_incremental(&mut self) -> Result<mdc_pdf::writer::IncrementalSave, CommandError> {
         self.0.lock().unwrap().save_incremental()
     }
+    // p5-t4 加性 trait 法（产物取回面）：测试包装器同源透传——
+    // 本文件 10-23 起在 engine-lopdf 特性下编译断裂（trait 法入库
+    // 时仅同步三实现漏本 impl，特性门同期未跑=覆盖回归，本轮复验
+    // 暴露）。
+    fn product_bytes(&self) -> Vec<u8> {
+        self.0.lock().unwrap().product_bytes()
+    }
 }
 
 /// 装配会话（页几何占位——写路径不消费几何；时钟注入使 /M 确定）。
