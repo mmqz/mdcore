@@ -38,8 +38,8 @@
 //!
 //! | mdcore 块 | DocxWriter 调用 | 降级（不可表达面，显式登记） |
 //! |---|---|---|
-//! | `Heading`（attrs.level，缺省/不可解析 → 1；钳 1-9） | [`DocxWriter::heading`]（Heading1-9 样式 + outline 级） | 模型 level 可为任意 usize（op 面），>9 钳 9；**标题 marks 丢弃**（[`DocxWriter::heading`] 纯文本面——html.rs 导入可产带 marks 的标题） |
-//! | `Paragraph`（text + marks） | [`DocxWriter::paragraph`] / 引用上下文 [`DocxWriter::quote_paragraph`] run 序 | mark kind 自由字符串：`strong`/`bold` → 加粗、`em`/`italic` → 斜体、`code` → 等宽（Consolas rFonts）、`del` → 删除线、`u` → 下画线（t20 消解）；**link kind → 纯文本**——模型 [`MarkSpan`] 无 URL 载荷，目标不可表达（html.rs 亦无 `<a>` 处理面——模型级无链接表示）；未知 kind → 纯文本 |
+//! | `Heading`（attrs.level，缺省/不可解析 → 1；钳 1-9） | [`DocxWriter::heading`]（Heading1-9 样式 + outline 级） | 模型 level 可为任意 usize（op 面），>9 钳 9；**标题 marks 丢弃**（[`DocxWriter::heading`] 纯文本面）——#15：行内定界符仍剥除（`# **报价**` → 净文本“报价”，格式不承载），未闭合定界符按字面量保留 |
+//! | `Paragraph`（text + marks） | [`DocxWriter::paragraph`] / 引用上下文 [`DocxWriter::quote_paragraph`] run 序 | mark kind 自由字符串：`strong`/`bold` → 加粗、`em`/`italic` → 斜体、`code` → 等宽（Consolas rFonts）、`del` → 删除线、`u` → 下画线（t20 消解）；**link kind → 纯文本**——模型 [`MarkSpan`] 无 URL 载荷，目标不可表达（html.rs 亦无 `<a>` 处理面——模型级无链接表示）；未知 kind → 纯文本。**#15（A3/P0）：行内 marks 消费**——模型文本是 markdown 源文本层，发射前经 [`mdcore::inline::parse_inline_marks`] 派生（`**粗**`/`*斜*`/`_斜_`/`` `码` ``/`~~删~~`/`<u>下</u>` → 净文本 + marks；未闭合 → 字面量）；node.marks 非空时 op 层覆盖赢（不二次解析——混合语义唯一化） |
 //! | `CodeBlock`（attrs.lang + text） | 每行 [`DocxWriter::code_line`] 双通道等宽（段落级+run 级 Courier New） | **等宽面已表达（t20 消解）；lang、fence 结构仍丢弃**（docx-rs 无语法高亮/元数据面——库层不可达，登记维持）；文本逐字保留 |
 //! | `Table`（text = 规范管道行） | [`DocxWriter::table`] | 第 2 行分隔行剔除（GFM 语义位）；`\|` 反转义 → `\|`；单元格内 `\n`/`\r` → 空格（GFM 单元格单行面，t17 同向）；孤立 `\` 原样透传（模型无内联转义层——t16 同边界登记）；单元格内 marks 本就不可承载（Table = 扁平文本面，html.rs 同边界）；0 行表跳过（空 `w:tbl` 非 OOXML 合法形——防御，markdown 解析不产空表） |
 //! | `Blockquote` | 引用面 [`DocxWriter::quote_paragraph`]（ind 720×depth 钳 8 + 左边框，嵌套步进）；子块递归（段落/嵌套引用承载引用面——markdown 解析器产出的唯一形态） | 空引用（无子且 text 非空）按 text 发射（markdown.rs 序列化语义镜像）；**引用上下文中的 heading/table/code/list/hr 子块不挂 ind/pBdr**（markdown 解析器不产此形态——attach 恒挂 root；op 面可构造，防御递归保持 t18 平铺行为，登记） |
@@ -296,6 +296,28 @@ fn emit_rich_paragraphs(w: &mut DocxWriter, text: &str, marks: &[MarkSpan], quot
     }
 }
 
+/// #15（A3/P0）：发射前有效 (text, marks) 派生。
+///
+/// 模型文本 = markdown 源文本层（CM6 同步协议基石——快路径
+/// `replace_text` 直写原始行文本，块级解析不剥行内定界符）。
+/// 本函数在发射面消费该层：
+/// - `node.marks` 非空（op 面程序化覆盖——html.rs 导入/op 测试构造）
+///   → 原样透传（偏移指向原始文本，op 契约一致），**不二次解析**
+///   （混合语义唯一化——覆盖与派生不叠加）；
+/// - 空（产品路径恒空——markdown 解析与 CM6 同步都不产 marks）→
+///   [`mdcore::inline::parse_inline_marks`] 派生：剥定界符净文本 +
+///   行内 marks；未闭合定界符按字面量保留（不猜测）。
+///
+/// 单一漏斗：Paragraph/Blockquote 空引用/ListItem 共用；Heading 仅取
+/// 净文本（格式丢弃——`DocxWriter::heading` 纯文本面，映射表登记）。
+fn effective_inline(text: &str, marks: &[MarkSpan]) -> (String, Vec<MarkSpan>) {
+    if marks.is_empty() {
+        mdcore::inline::parse_inline_marks(text)
+    } else {
+        (text.to_string(), marks.to_vec())
+    }
+}
+
 /// ListItem attrs → (列表类型, ilvl)：marker 首字符为 ASCII 数字 →
 /// Ordered（markdown.rs `1.`/`1)` 两形态）；`-`/`*`/`+`/缺失/其他 →
 /// Bullet（缺失 = op 面防御缺省，登记）。depth（1 基，markdown.rs
@@ -404,11 +426,17 @@ fn emit_block(
         }
         BlockKind::Heading => {
             let level = heading_level(&node.attrs);
-            for line in text_lines(&text) {
+            // #15：行内定界符剥除（净文本），格式丢弃——映射表登记；
+            // 未闭合定界符字面量保留。
+            let (clean, _) = effective_inline(&text, &node.marks);
+            for line in text_lines(&clean) {
                 w.heading(level, line).map_err(|e| map_error(&e))?;
             }
         }
-        BlockKind::Paragraph => emit_rich_paragraphs(w, &text, &node.marks, quote_depth),
+        BlockKind::Paragraph => {
+            let (clean, marks) = effective_inline(&text, &node.marks);
+            emit_rich_paragraphs(w, &clean, &marks, quote_depth)
+        }
         BlockKind::CodeBlock => {
             // 双通道等宽（t20 消解）；lang/fence 降级登记见模块文档。
             for line in text_lines(&text) {
@@ -426,7 +454,8 @@ fn emit_block(
             // text 发射——镜像 markdown.rs 序列化语义。
             let d = quote_depth + 1;
             if node.children.is_empty() {
-                emit_rich_paragraphs(w, &text, &node.marks, d);
+                let (clean, marks) = effective_inline(&text, &node.marks);
+                emit_rich_paragraphs(w, &clean, &marks, d);
             }
             for &c in &node.children {
                 emit_block(tree, c, w, d)?;
@@ -440,7 +469,8 @@ fn emit_block(
             // 续行与首行文字列对齐（每行 run 序由 rich_lines 平移行内
             // marks）。子块递归（嵌套 item 各自编号段，次序保持）。
             let (kind, ilvl) = list_shape(&node.attrs);
-            let lines = rich_lines(&text, &node.marks);
+            let (clean, eff_marks) = effective_inline(&text, &node.marks);
+            let lines = rich_lines(&clean, &eff_marks);
             let line_runs: Vec<Vec<RunSpec>> = lines
                 .iter()
                 .map(|(line, line_marks)| runs_from(line, line_marks))
@@ -983,6 +1013,169 @@ mod tests {
             ],
             "读模型无新位载荷——分段可见但不宣称往返等值（登记）"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // #15（A3/P0）：行内 marks 消费——markdown 源文本层在发射面派生。
+    // 产品路径（markdown_to_tree → export）此前把 `**` 原样输出进
+    // docx（TR-2D P0 复现：星号原样进 Word）。以下经 effective_inline
+    // 漏斗钉定：定界符剥除 + run 级格式 + 零星号残留。
+    // -----------------------------------------------------------------
+
+    /// #15 验收主用例（TR-2D W4 复现形）：加粗 + 斜体同行，零星号。
+    #[test]
+    fn tr15_bold_italic_from_markdown_source() {
+        let tree = markdown_to_tree("总计人民币 **壹佰贰拾万元整**，*非最终报价*。");
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps.len(), 1);
+        let (style, runs) = para_tuples(&ps[0]);
+        assert_eq!(style, None);
+        assert_eq!(
+            runs,
+            vec![
+                ("总计人民币 ".into(), false, false),
+                ("壹佰贰拾万元整".into(), true, false),
+                ("，".into(), false, false),
+                ("非最终报价".into(), false, true),
+                ("。".into(), false, false),
+            ],
+            "加粗/斜体 run 化；零星号残留（净文本断言）"
+        );
+    }
+
+    /// #15 五位 marks 全谱（XML 面——读模型仅 bold/italic 两位承载）：
+    /// code（Consolas run 通道）/del（w:strike）/u（w:u single）。
+    #[test]
+    fn tr15_code_del_underline_xml_emission() {
+        let tree = markdown_to_tree("等宽 `f(x)`、删除 ~~旧条款~~、下划线 <u>新条款</u>。");
+        let xml = doc_xml(&tree);
+        // run 级 Consolas（code mark → mono——runs_from 五位映射）。
+        assert!(
+            xml.contains(r#"<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas" />"#),
+            "code mark → run 级等宽 rFonts"
+        );
+        assert_eq!(xml.matches("<w:strike />").count(), 1, "del → 删除线");
+        assert_eq!(
+            xml.matches(r#"<w:u w:val="single" />"#).count(),
+            1,
+            "u → 下画线"
+        );
+        // 净文本零定界符残留（反引号/波浪线/标签全剥）。
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps[0].text(), "等宽 f(x)、删除 旧条款、下划线 新条款。");
+    }
+
+    /// #15 未闭合定界符按字面量（不猜测）——issue 验收要求 4。
+    #[test]
+    fn tr15_unclosed_markers_stay_literal() {
+        let tree = markdown_to_tree("总计人民币 **壹佰贰拾万元整。");
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps[0].text(), "总计人民币 **壹佰贰拾万元整。");
+        let (_, runs) = para_tuples(&ps[0]);
+        assert_eq!(runs.len(), 1, "单 run 纯文本——无格式派生");
+        assert!(!runs[0].1, "未闭合 → 无加粗");
+        // 转义形：`\*` 字面量星号不触发配对。
+        let tree2 = markdown_to_tree("转义 \\*形\\* 不加粗");
+        let ps2 = paras(&roundtrip(&tree2));
+        assert_eq!(ps2[0].text(), "转义 *形* 不加粗");
+        assert!(!ps2[0].runs.iter().any(|r| r.bold || r.italic));
+    }
+
+    /// #15 ListItem / Blockquote / Heading 三面消费：
+    /// 列表项与引用段 marks 表达；标题定界符剥除（格式丢弃——映射表）。
+    #[test]
+    fn tr15_list_quote_heading_consume_inline() {
+        let tree = markdown_to_tree("- **重点**：说明\n> 引用 **强调** 文本\n# **报价** 章节");
+        let ps = paras(&roundtrip(&tree));
+        // 三段：列表项 / 引用段 / 标题段。
+        assert_eq!(ps.len(), 3, "列表项 + 引用段 + 标题段");
+        // 列表项（numPr 段 + 加粗 run）。
+        let (s0, r0) = para_tuples(&ps[0]);
+        assert!(s0.is_none(), "列表段走 numPr 非样式通道");
+        assert_eq!(
+            r0,
+            vec![
+                ("重点".into(), true, false),
+                ("：说明".into(), false, false),
+            ],
+            "列表项行内加粗表达"
+        );
+        // 引用段。
+        let (_, r1) = para_tuples(&ps[1]);
+        assert_eq!(
+            r1,
+            vec![
+                ("引用 ".into(), false, false),
+                ("强调".into(), true, false),
+                (" 文本".into(), false, false),
+            ],
+            "引用段行内加粗表达"
+        );
+        // 标题：净文本（定界符剥除、格式丢弃——DocxWriter::heading
+        // 纯文本面，映射表登记）。
+        assert_eq!(ps[2].style.as_deref(), Some("Heading1"));
+        assert_eq!(ps[2].text(), "报价 章节", "标题定界符剥除、零星号");
+    }
+
+    /// #15 优先序钉定：node.marks 非空（op/html 程序化覆盖）→ 覆盖赢，
+    /// 原始文本（含字面定界符）原样透传，不二次解析。
+    #[test]
+    fn tr15_op_layer_marks_precedence_over_derivation() {
+        let tree = single(
+            BlockKind::Paragraph,
+            "**保持原样**",
+            Attrs::new(),
+            vec![span(0, 10, "strong")],
+        );
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps[0].text(), "**保持原样**", "覆盖路径文本原样（含定界符）");
+        let (_, runs) = para_tuples(&ps[0]);
+        assert_eq!(
+            runs,
+            vec![("**保持原样**".into(), true, false)],
+            "op 层 marks 生效；无二次解析（星号保留在文本中）"
+        );
+    }
+
+    /// #15 嵌套叠加（runs_from 五位覆盖集）：`**a *b* c**` → 全程加粗
+    /// + 内层斜体。
+    #[test]
+    fn tr15_nesting_overlay_bold_plus_italic() {
+        let tree = markdown_to_tree("**总则 *细则* 附则**");
+        let ps = paras(&roundtrip(&tree));
+        let (_, runs) = para_tuples(&ps[0]);
+        assert_eq!(
+            runs,
+            vec![
+                ("总则 ".into(), true, false),
+                ("细则".into(), true, true),
+                (" 附则".into(), true, false),
+            ],
+            "嵌套经 mark 交叠叠加：内层双格式 run"
+        );
+    }
+
+    /// #15 全环闭环（TR-2D 断链修复）：t16 导入 bold run → md `**` →
+    /// 模型源文本 → 导出 bold run——docx→md→docx 格式往返成立。
+    #[test]
+    fn tr15_docx_md_docx_bold_roundtrip() {
+        // 直接以导入面产物形态（md 含 `**`）构造——与 __importDocx 后
+        // __inject 重建核的产品链等价（docx_import 已钉定 bold→`**`）。
+        let tree = markdown_to_tree("本项目含**智能文档平台**与*需求解析*两项内容。");
+        let ps = paras(&roundtrip(&tree));
+        let (_, runs) = para_tuples(&ps[0]);
+        assert_eq!(
+            runs,
+            vec![
+                ("本项目含".into(), false, false),
+                ("智能文档平台".into(), true, false),
+                ("与".into(), false, false),
+                ("需求解析".into(), false, true),
+                ("两项内容。".into(), false, false),
+            ],
+            "TR-2D W4 复现文本：星号零残留 + 双格式 run"
+        );
+        assert!(!ps[0].text().contains('*'), "净文本零星号");
     }
 
     #[test]

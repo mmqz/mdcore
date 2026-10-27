@@ -21,6 +21,7 @@ pub mod fingerprint;
 pub mod history;
 pub mod html;
 pub mod id;
+pub mod inline;
 pub mod markdown;
 pub mod op;
 pub mod revision;

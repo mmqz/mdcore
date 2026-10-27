@@ -69,6 +69,15 @@ FULLCIRCLE_MD = (
     "| 1 | 2 |"
 )
 
+# TR-15 行内 marks 文档（issue #15 A3/P0：TR-2D W4 复现面——星号
+# 原样进 Word 的 P0）：标题 + 混合格式段 + 五位谱段 + 加粗列表项。
+MARKS_MD = (
+    "# 报价说明\n"
+    "总计人民币 **壹佰贰拾万元整**，*非最终报价*。\n"
+    "等宽 `f(x)`、删除 ~~旧条款~~、下划线 <u>新条款</u>。\n"
+    "- **重点**：加粗列表项"
+)
+
 Handler = http.server.SimpleHTTPRequestHandler
 Handler.extensions_map.update({".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm"})
 
@@ -261,6 +270,54 @@ def main() -> int:
                   and doc_xml5.count("<w:numPr>") == 1
                   and "item text" in doc_xml5 and "second line" in doc_xml5,
                   "multiline item: single-paragraph numPr + br + hanging ind")
+
+            # ---- TR-15（issue #15 A3/P0）：行内 marks 消费——markdown
+            #      源文本层在导出面派生（TR-2D W4 复现：星号原样进
+            #      Word 的 P0）。五位谱 XML 发射 + 零星号残留 + 标题
+            #      定界符剥除 + 导入全环闭环。----
+            page.evaluate("(s) => window.__inject(s)", MARKS_MD)
+            page.wait_for_function("window.__blockCount() === 4", timeout=15000)
+            r6 = page.evaluate("window.__exportDocx()")
+            raw6 = as_bytes(r6["bytes"])
+            zf6 = zipfile.ZipFile(io.BytesIO(raw6))
+            doc_xml6 = zip_part(zf6, "word/document.xml")
+            check("tr15_inline_marks_five_bit_emission",
+                  r6["ok"] is True
+                  and "<w:b />" in doc_xml6
+                  and "<w:i />" in doc_xml6
+                  and "<w:strike />" in doc_xml6
+                  and '<w:u w:val="single" />' in doc_xml6
+                  and 'w:ascii="Consolas"' in doc_xml6,
+                  "bold/italic/strike/underline/mono 五位 XML 发射")
+            check("tr15_zero_delimiter_residue",
+                  "壹佰贰拾万元整" in doc_xml6 and "非最终报价" in doc_xml6
+                  and "**" not in doc_xml6 and "~~" not in doc_xml6
+                  and "<u>" not in doc_xml6 and "报价说明" in doc_xml6
+                  and "加粗列表项" in doc_xml6,
+                  "净文本零定界符残留（星号/波浪线/标签全剥；列表项"
+                  " bold/普通两 run 切分——尾段子串断言）")
+            # 全环闭环：导出 bold run → t16 导入 → md 重新含 `**`——
+            # TR-2D 断链（导入产 `**`、导出不消费）修复钉定。
+            b64_6 = base64.b64encode(raw6).decode()
+            reimport6 = page.evaluate(IMPORT_JS, b64_6)
+            md_rt6 = page.evaluate("window.__md()")
+            check("tr15_full_circle_marks_roundtrip",
+                  reimport6.get("ok") is True
+                  and "**壹佰贰拾万元整**" in md_rt6
+                  and "*非最终报价*" in md_rt6
+                  and "**重点**：加粗列表项" in md_rt6,
+                  json.dumps({"reimport_ok": reimport6.get("ok"),
+                              "md": md_rt6[:200]}))
+            # 未闭合定界符 → 字面量（不猜测——issue 验收要求 4）。
+            page.evaluate("(s) => window.__inject(s)", "总计人民币 **壹佰贰拾万元整。")
+            page.wait_for_function("window.__blockCount() === 1", timeout=15000)
+            r7 = page.evaluate("window.__exportDocx()")
+            doc_xml7 = zip_part(zipfile.ZipFile(io.BytesIO(as_bytes(r7["bytes"]))),
+                                "word/document.xml")
+            check("tr15_unclosed_marker_literal",
+                  r7["ok"] is True and "**壹佰贰拾万元整。" in doc_xml7
+                  and "<w:b />" not in doc_xml7,
+                  "未闭合星号原样保留、零格式派生")
 
             # ---- 空文档 = 最小合法 docx ----
             page.evaluate("window.__inject('')")
