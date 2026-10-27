@@ -1500,6 +1500,13 @@ pub struct ParagraphData {
     pub numbering: Option<ParagraphNumbering>,
     /// 段落缩进（r4-t3 读面承载——None = 无 `w:ind`）。
     pub indent: Option<ParagraphIndent>,
+    /// #19：本段引用的脚注 id 序（文档序——`w:footnoteReference`）。
+    ///
+    /// 引擎 run 模型不承载引用位（CAPABILITY_NOTES §5），读面文档级
+    /// 第二趟标注（段落粒度——run 粒度需引擎模型承载，待上游）；表内
+    /// 段引用位不标注（body 段落标记面）。尾注引用位不标注（内容面
+    /// [`DocxDocument::endnotes`] 承载）。
+    pub footnote_refs: Vec<i64>,
 }
 
 impl ParagraphData {
@@ -1524,6 +1531,37 @@ pub enum Block {
 pub struct TextBoxData {
     /// 文本框内块序（段落/表，经与正文同一提取机制——样式/域/修订
     /// 通道全承载）。
+    pub blocks: Vec<Block>,
+}
+
+/// #19：批注（word/comments.xml + 正文锚关联）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommentData {
+    /// 批注 id（`w:comment/@w:id`——与正文锚 `commentRangeStart` 同源）。
+    pub id: usize,
+    /// 作者（`w:comment/@w:author`——缺省空串）。
+    pub author: String,
+    /// 日期（`w:comment/@w:date`——缺省空串）。
+    pub date: String,
+    /// 锚定正文块索引（`commentRangeStart` 首现块——最终块序数组
+    /// 索引；跨块区间归起始块；None = 孤儿批注：comments.xml 在场而
+    /// 正文无锚）。
+    pub anchor_block_idx: Option<usize>,
+    /// 批注内容块（段落/表——与正文同构提取）。
+    pub blocks: Vec<Block>,
+}
+
+/// #19：脚注/尾注条目（word/footnotes.xml / word/endnotes.xml——引擎
+/// 读面从不读，CAPABILITY_NOTES §5；读面文档级第二趟补提取）。
+///
+/// 分隔符条目（`w:type=separator`/`continuationSeparator`）与 `id < 1`
+/// 条目不入流（呈现辅助件非内容）；id 与正文 `w:footnoteReference`/
+/// `w:endnoteReference` 对偶。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FootnoteData {
+    /// 脚注/尾注 id（`w:footnote/@w:id`——分隔符惯例 -1/0 已滤）。
+    pub id: i64,
+    /// 脚注/尾注内容块（段落/表——与正文同构提取）。
     pub blocks: Vec<Block>,
 }
 
@@ -1563,6 +1601,13 @@ pub struct DocxDocument {
     /// 媒体清单（docx-r2：`word/media/*` 容器级枚举——字节/内容类型/
     /// 引用关系/run 级引用计数；块序内图片位置不入块模型，登记）。
     pub images: Vec<ImageAsset>,
+    /// #19：批注（word/comments.xml——锚关联最终块序；孤儿批注
+    /// anchor_block_idx = None）。
+    pub comments: Vec<CommentData>,
+    /// #19：脚注（word/footnotes.xml——分隔符条目已滤）。
+    pub footnotes: Vec<FootnoteData>,
+    /// #19：尾注（word/endnotes.xml——分隔符条目已滤）。
+    pub endnotes: Vec<FootnoteData>,
     pub warnings: Vec<CompatibilityWarning>,
 }
 
@@ -1632,7 +1677,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     drop(za);
 
     // OPC 关系层 + 内容类型 + 媒体清单（同一门后字节——零门绕过）。
-    let (bundle, images, document_xml) = {
+    let (bundle, images, document_xml, footnotes_xml, endnotes_xml) = {
         let cursor = std::io::Cursor::new(bytes);
         let mut za = zip::ZipArchive::new(cursor)
             .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
@@ -1672,7 +1717,17 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         if let Ok(mut zf) = za.by_name("word/document.xml") {
             let _ = zf.read_to_string(&mut document_xml);
         }
-        (bundle, images, document_xml)
+        // #19：脚注/尾注部件原始字节（引擎读面从不读——CAPABILITY_NOTES
+        // §5；文档级第二趟补提取。部件缺席 = 空串快路径）。
+        let mut footnotes_xml = String::new();
+        if let Ok(mut zf) = za.by_name("word/footnotes.xml") {
+            let _ = zf.read_to_string(&mut footnotes_xml);
+        }
+        let mut endnotes_xml = String::new();
+        if let Ok(mut zf) = za.by_name("word/endnotes.xml") {
+            let _ = zf.read_to_string(&mut endnotes_xml);
+        }
+        (bundle, images, document_xml, footnotes_xml, endnotes_xml)
     };
 
     let docx = docx_rs::read_docx(bytes).map_err(|e| DocxError::Parse(format!("{e}")))?;
@@ -1682,13 +1737,17 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     // #13（A1）：styles.xml 语义索引（styleId → 标题语义——引擎读面
     // styles 模型 pub，见 StyleIndex 文档）。
     let style_index = StyleIndex::build(&docx.styles);
-    let blocks = extract_blocks(
+    // #19：脚注引用位扫描（w:footnoteReference——引擎 run 模型不
+    // 承载，文档级第二趟；body 块索引 → id 序）。
+    let note_refs = scan_note_references(&document_xml);
+    let (blocks, comment_anchors) = extract_blocks(
         &docx,
         &bundle,
         &numbering_index,
         &style_index,
         strict,
         &mut warnings,
+        &note_refs,
     )?;
     // #18：VML 文本框插入（宿主块后——DrawingML 形态已在
     // extract_blocks 模型面发射，mc:Fallback 副本防双取）。
@@ -1704,6 +1763,39 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     let (headers, footers) = extract_headers_footers(
         &docx,
         &bundle,
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+    )?;
+    // #19：批注面（模型面 comments + 锚关联——VML 插入后的最终块序
+    // lockstep 重 walk 解析数组索引）。
+    let comments = extract_comments(
+        &docx,
+        &comment_anchors,
+        &blocks,
+        bundle.document.as_ref(),
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+    )?;
+    // #19：脚注/尾注部件第二趟（分隔符条目已滤；部件缺席零成本）。
+    let footnotes = parse_notes_part(
+        &footnotes_xml,
+        "footnote",
+        "word/footnotes.xml",
+        bundle.document.as_ref(),
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+    )?;
+    let endnotes = parse_notes_part(
+        &endnotes_xml,
+        "endnote",
+        "word/endnotes.xml",
+        bundle.document.as_ref(),
         &numbering_index,
         &style_index,
         strict,
@@ -1725,6 +1817,9 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         headers,
         footers,
         images,
+        comments,
+        footnotes,
+        endnotes,
         warnings,
     })
 }
@@ -2182,6 +2277,342 @@ fn parse_textbox_region(
     )
 }
 
+/// #19：正文脚注引用位扫描（`w:footnoteReference`——引擎 run 模型
+/// 不承载，CAPABILITY_NOTES §5；文档级第二趟）。
+///
+/// 返回 body 块索引 → 脚注 id 序（文档序）。body 块索引 = `w:p`/
+/// `w:tbl` 的 body 直接子层计数（与 extract_blocks/scan_vml_textbox_regions
+/// 一致，含自闭合形态）；文本框内容（`w:txbxContent`）与 mc:Fallback
+/// 复制区内引用不标注（内层块非 body 块 / Fallback 为复制区）；表内
+/// 段引用归表块（标注面为 body 段落——表块不消费，静默）。
+fn scan_note_references(xml: &str) -> HashMap<usize, Vec<i64>> {
+    use quick_xml::events::Event;
+
+    /// 条目 id 属性读取（w:id——ASCII 数位，损失解码防御）。
+    fn note_id(e: &quick_xml::events::BytesStart<'_>) -> Option<i64> {
+        for attr in e.attributes() {
+            let Ok(a) = attr else { continue };
+            let key = a.key.local_name();
+            if key.as_ref() == b"id" {
+                if let Ok(v) = std::str::from_utf8(a.value.as_ref()) {
+                    if let Ok(id) = v.trim().parse::<i64>() {
+                        return Some(id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth: usize = 0;
+    let mut body_child_depth: Option<usize> = None;
+    let mut block_idx: usize = 0;
+    let mut in_fallback: usize = 0;
+    let mut in_txbx: usize = 0;
+    let mut out: HashMap<usize, Vec<i64>> = HashMap::new();
+    // 引用位记录（自闭合/双标签同形）。
+    let record = |e: &quick_xml::events::BytesStart<'_>,
+                  block_idx: usize,
+                  in_fallback: usize,
+                  in_txbx: usize,
+                  out: &mut HashMap<usize, Vec<i64>>| {
+        if in_fallback == 0 && in_txbx == 0 {
+            if let Some(id) = note_id(e) {
+                out.entry(block_idx.saturating_sub(1)).or_default().push(id);
+            }
+        }
+    };
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "body" => body_child_depth = Some(depth + 1),
+                    "Fallback" => in_fallback += 1,
+                    "txbxContent" => in_txbx += 1,
+                    "p" | "tbl" => {
+                        if in_fallback == 0 && body_child_depth == Some(depth) {
+                            block_idx += 1;
+                        }
+                    }
+                    "footnoteReference" => {
+                        record(&e, block_idx, in_fallback, in_txbx, &mut out);
+                    }
+                    _ => {}
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "p" | "tbl" => {
+                        if in_fallback == 0 && body_child_depth == Some(depth) {
+                            block_idx += 1;
+                        }
+                    }
+                    "footnoteReference" => {
+                        record(&e, block_idx, in_fallback, in_txbx, &mut out);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "Fallback" => in_fallback = in_fallback.saturating_sub(1),
+                    "txbxContent" => in_txbx = in_txbx.saturating_sub(1),
+                    _ => {}
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => break, // 门 2+3 已过结构校验；兼容面防御终止
+        }
+    }
+    out
+}
+
+/// #19：脚注/尾注部件条目区段扫描（`<w:footnote …>…</w:footnote>` /
+/// `<w:endnote …>`——不嵌套，防御深度计数）。返回 (id, type, 区段
+/// XML) 序列（部件序）。
+fn scan_note_regions(xml: &str, element: &str) -> Vec<(i64, Option<String>, String)> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth: usize = 0;
+    // 条目捕获态 = 条目**内部**层深（Start 时 depth+1——End 事件到达时
+    // depth 回落到该值；直接记元素层会在 End 比较时差一）。
+    let mut entry_depth: Option<usize> = None;
+    let mut span_start = 0usize;
+    let mut cur_id: i64 = 0;
+    let mut cur_type: Option<String> = None;
+    let mut out: Vec<(i64, Option<String>, String)> = Vec::new();
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                if name == element && entry_depth.is_none() {
+                    let mut id: i64 = 0;
+                    let mut ty: Option<String> = None;
+                    for attr in e.attributes() {
+                        let Ok(a) = attr else { continue };
+                        let key = a.key.local_name();
+                        if key.as_ref() == b"id" {
+                            if let Ok(v) = std::str::from_utf8(a.value.as_ref()) {
+                                id = v.trim().parse::<i64>().unwrap_or(0);
+                            }
+                        } else if key.as_ref() == b"type" {
+                            ty = Some(String::from_utf8_lossy(a.value.as_ref()).into_owned());
+                        }
+                    }
+                    cur_id = id;
+                    cur_type = ty;
+                    span_start = pos_before;
+                    entry_depth = Some(depth + 1);
+                }
+                depth += 1;
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                if name == element && entry_depth == Some(depth) {
+                    let span_end = reader.buffer_position() as usize;
+                    out.push((
+                        cur_id,
+                        cur_type.take(),
+                        xml[span_start..span_end].to_string(),
+                    ));
+                    entry_depth = None;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    out
+}
+
+/// #19：脚注/尾注部件第二趟解析（word/footnotes.xml / word/endnotes.xml
+/// ——引擎读面从不读，CAPABILITY_NOTES §5）。
+///
+/// 分隔符条目（`w:type=separator`/`continuationSeparator`——呈现辅助
+/// 件）与 `id < 1` 条目不入流；区段解析复用 docx-rs 读面
+/// （Paragraph::read/Table::read——零第二解析器，#18 同款纪律）。
+#[allow(clippy::too_many_arguments)]
+fn parse_notes_part(
+    xml: &str,
+    element: &str,
+    part: &str,
+    table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<FootnoteData>, io::ReadError> {
+    // 快路径：部件缺席（空串）或无条目标签（损失解码下 contains 防御）。
+    if !xml.contains(element) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (id, note_type, region) in scan_note_regions(xml, element) {
+        if matches!(
+            note_type.as_deref(),
+            Some("separator") | Some("continuationSeparator")
+        ) || id < 1
+        {
+            continue;
+        }
+        let blocks = parse_note_region(
+            &region, element, part, table, index, styles, strict, warnings,
+        )?;
+        out.push(FootnoteData { id, blocks });
+    }
+    Ok(out)
+}
+
+/// #19：脚注/尾注条目区段 → 内层块（docx-rs 读面复用：首事件 = 条目
+/// Start，子层 w:p/w:tbl 经 Paragraph::read/Table::read——#18 文本框
+/// 区段同款纪律）。
+#[allow(clippy::too_many_arguments)]
+fn parse_note_region(
+    region: &str,
+    element: &str,
+    part: &str,
+    table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<Block>, io::ReadError> {
+    use docx_rs::{ElementReader, EventReader, XmlEvent};
+    let parse_err = |detail: &str| io::ReadError::InvalidPart {
+        part: part.to_string(),
+        detail: detail.to_string(),
+    };
+    let mut er = EventReader::new(region.as_bytes());
+    // 首事件 = 条目 Start（区段起点恒是）。
+    match er.next_event() {
+        Ok(XmlEvent::StartElement { .. }) => {}
+        _ => return Err(parse_err("note region malformed (missing entry open)")),
+    }
+    let mut blocks = Vec::new();
+    loop {
+        match er.next_event() {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                let local = name.local_name.clone();
+                if local == "p" {
+                    let p = docx_rs::Paragraph::read(&mut er, &attributes)
+                        .map_err(|_| parse_err("note paragraph parse failed"))?;
+                    blocks.push(Block::Paragraph(extract_paragraph(
+                        &p, table, index, styles, part, strict, warnings,
+                    )?));
+                } else if local == "tbl" {
+                    let t = docx_rs::Table::read(&mut er, &attributes)
+                        .map_err(|_| parse_err("note table parse failed"))?;
+                    blocks.push(Block::Table(extract_table(
+                        &t, table, index, styles, part, strict, warnings,
+                    )?));
+                }
+            }
+            Ok(XmlEvent::EndElement { name, .. }) => {
+                if name.local_name == element {
+                    return Ok(blocks);
+                }
+            }
+            Err(_) => return Err(parse_err("note region parse failed")),
+            _ => {}
+        }
+    }
+}
+
+/// #19：批注面装配（模型面 docx.comments + 锚关联最终块序）。
+///
+/// anchor_block_idx 语义：`commentRangeStart` 首现块在**最终块序**中的
+/// 数组索引（VML/DrawingML 文本框插入后——lockstep 重 walk：body 段/表
+/// 计数与 extract_blocks 一致，文本框块跳过）。孤儿批注
+/// （comments.xml 在场、正文无锚——含表内锚）→ None。表内锚的块级
+/// 承载待需要时扩展（当前双夹具均为段落锚）。
+#[allow(clippy::too_many_arguments)]
+fn extract_comments(
+    docx: &docx_rs::Docx,
+    comment_anchors: &[(usize, usize)],
+    blocks: &[Block],
+    table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<CommentData>, io::ReadError> {
+    // 模型面批注（docx-rs 仅经 document.xml.rels 读 comments.xml——
+    // 部件在场而 rels 未声明 = 空集，诚实语义）。
+    let model_comments = docx.comments.clone().into_inner();
+    if model_comments.is_empty() {
+        return Ok(Vec::new());
+    }
+    // body 块索引 → 最终数组索引（lockstep：段/表计数，文本框跳过）。
+    let mut body_to_final: HashMap<usize, usize> = HashMap::new();
+    let mut body_idx = 0usize;
+    for (i, b) in blocks.iter().enumerate() {
+        match b {
+            Block::Paragraph(_) | Block::Table(_) => {
+                body_to_final.insert(body_idx, i);
+                body_idx += 1;
+            }
+            Block::TextBox(_) => {}
+        }
+    }
+    // 锚首现映射（批注 id → body 块索引）。
+    let mut anchor_map: HashMap<usize, usize> = HashMap::new();
+    for &(body_i, id) in comment_anchors {
+        anchor_map.entry(id).or_insert(body_i);
+    }
+    let mut out = Vec::new();
+    for c in &model_comments {
+        let mut cblocks = Vec::new();
+        for child in &c.children {
+            match child {
+                docx_rs::CommentChild::Paragraph(p) => {
+                    cblocks.push(Block::Paragraph(extract_paragraph(
+                        p,
+                        table,
+                        index,
+                        styles,
+                        "word/comments.xml",
+                        strict,
+                        warnings,
+                    )?))
+                }
+                docx_rs::CommentChild::Table(t) => cblocks.push(Block::Table(extract_table(
+                    t,
+                    table,
+                    index,
+                    styles,
+                    "word/comments.xml",
+                    strict,
+                    warnings,
+                )?)),
+            }
+        }
+        let anchor_block_idx = anchor_map
+            .get(&c.id)
+            .and_then(|&b| body_to_final.get(&b))
+            .copied();
+        out.push(CommentData {
+            id: c.id,
+            author: c.author.clone(),
+            date: c.date.clone(),
+            anchor_block_idx,
+            blocks: cblocks,
+        });
+    }
+    Ok(out)
+}
+
 /// #18：VML 文本框块序插入（宿主块后——降序插入保索引稳定）。
 #[allow(clippy::too_many_arguments)]
 fn apply_vml_textboxes(
@@ -2217,6 +2648,10 @@ fn apply_vml_textboxes(
     Ok(blocks)
 }
 
+/// #19：批注锚采集面（body 块索引, 批注 id）——extract_blocks 副产
+///（首现语义在 extract_comments 消费面归并）。
+type CommentAnchors = Vec<(usize, usize)>;
+
 fn extract_blocks(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
@@ -2224,13 +2659,20 @@ fn extract_blocks(
     styles: &StyleIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
-) -> Result<Vec<Block>, io::ReadError> {
+    note_refs: &HashMap<usize, Vec<i64>>,
+) -> Result<(Vec<Block>, CommentAnchors), io::ReadError> {
     let table = bundle.document.as_ref();
     let mut blocks = Vec::new();
+    // #19：批注锚采集（body 块索引, 批注 id）+ body 块计数器
+    //（w:p/w:tbl 序——与 scan_note_references 的 XML 计数一致）。
+    let mut comment_anchors: CommentAnchors = Vec::new();
+    let mut body_idx: usize = 0;
     for child in &docx.document.children {
         match child {
             docx_rs::DocumentChild::Paragraph(p) => {
-                blocks.push(Block::Paragraph(extract_paragraph(
+                let k = body_idx;
+                body_idx += 1;
+                let mut pd = extract_paragraph(
                     p,
                     table,
                     index,
@@ -2238,7 +2680,19 @@ fn extract_blocks(
                     "word/document.xml",
                     strict,
                     warnings,
-                )?));
+                )?;
+                // #19：脚注引用位标注（文档级扫描 → 段落标记面）。
+                if let Some(refs) = note_refs.get(&k) {
+                    pd.footnote_refs = refs.clone();
+                }
+                // #19：段落级批注锚（ParagraphChild::CommentStart——
+                // 引擎读面已承载；跨块区间归首现块）。
+                for c in &p.children {
+                    if let docx_rs::ParagraphChild::CommentStart(cs) = c {
+                        comment_anchors.push((k, cs.id));
+                    }
+                }
+                blocks.push(Block::Paragraph(pd));
                 // #18：DrawingML 文本框（w:drawing → wps:txbx——引擎
                 // 读面已承载）宿主段后发射；VML 形态走文档级第二趟
                 // （apply_vml_textboxes——读面不承载，登记）。
@@ -2257,20 +2711,33 @@ fn extract_blocks(
                     }
                 }
             }
-            docx_rs::DocumentChild::Table(t) => blocks.push(Block::Table(extract_table(
-                t,
-                table,
-                index,
-                styles,
-                "word/document.xml",
-                strict,
-                warnings,
-            )?)),
-            // 书签/批注/内容控件/TOC/节——模型级切片面外，跳过（登记）。
+            docx_rs::DocumentChild::Table(t) => {
+                let k = body_idx;
+                body_idx += 1;
+                let td = extract_table(
+                    t,
+                    table,
+                    index,
+                    styles,
+                    "word/document.xml",
+                    strict,
+                    warnings,
+                )?;
+                // #19：表内脚注引用位不标注（body 段落标记面——表内
+                // 段落非 body 块；文档级面待需要时扩展）。
+                let _ = k;
+                blocks.push(Block::Table(td));
+            }
+            // #19：body 级批注锚（段间锚——归属前一块；首块前锚归
+            // 块 0 语义上不成立，saturating 归零防御）。
+            docx_rs::DocumentChild::CommentStart(cs) => {
+                comment_anchors.push((body_idx.saturating_sub(1), cs.id));
+            }
+            // 书签/批注结束锄/内容控件/TOC/节——模型级切片面外，跳过（登记）。
             _ => {}
         }
     }
-    Ok(blocks)
+    Ok((blocks, comment_anchors))
 }
 
 /// numId → 各 ilvl 级 numFmt 解析索引（r4-t3——numbering.xml 链的
@@ -2504,6 +2971,7 @@ fn extract_paragraph(
         runs,
         numbering,
         indent,
+        footnote_refs: Vec::new(),
     })
 }
 

@@ -512,6 +512,11 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
         "list_markers_normalized": list_markers_normalized,
         "images_skipped": images_skipped,
         "text_boxes": text_boxes,
+        // #19：批注/脚注/尾注读面承载量（内容不入 md 投影——结构面
+        // 经 DocxDocument 字段透出；计数 = 承载可见）。
+        "comments": doc.comments.len(),
+        "footnotes": doc.footnotes.len(),
+        "endnotes": doc.endnotes.len(),
         "fields_dropped": fields_dropped,
         "headers_skipped": doc.headers.len(),
         "footers_skipped": doc.footers.len(),
@@ -621,8 +626,10 @@ mod tests {
             runs,
             // r4-t3 模型扩面构造点机械补齐（新增两字段默认 None——
             // 语义零变化：该 helper 的既有断言全部面向 style/runs）。
+            // #19：footnote_refs 默认空（helper 断言不涉脚注位）。
             numbering: None,
             indent: None,
+            footnote_refs: Vec::new(),
         })
     }
 
@@ -665,6 +672,7 @@ mod tests {
                 format: format.map(str::to_string),
             }),
             indent: None,
+            footnote_refs: Vec::new(),
         })
     }
 
@@ -745,6 +753,10 @@ mod tests {
             headers: Vec::new(),
             footers: Vec::new(),
             images: Vec::new(),
+            // #19：扩面默认空（helper 断言不涉批注/脚注/尾注）。
+            comments: Vec::new(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -1059,6 +1071,7 @@ mod tests {
                     format: Some("decimal".to_string()),
                 }),
                 indent: None,
+                footnote_refs: Vec::new(),
             }),
             numbered_para(
                 2,
@@ -1313,6 +1326,10 @@ mod tests {
                     body_uses: 0,
                 },
             ],
+            // #19：扩面默认空（本测断言面向 headers/footers/images）。
+            comments: Vec::new(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
             warnings: vec![mdc_office_io::io::CompatibilityWarning {
                 part: "word/document.xml".into(),
                 kind: mdc_office_io::io::WarningKind::BrokenReference,
@@ -1325,6 +1342,54 @@ mod tests {
         // 孤儿媒体（body_uses=0）不计——非用户可见内容。
         assert_eq!(stats["images_skipped"], 1);
         assert_eq!(stats["warnings"][0]["kind"], "broken_reference");
+    }
+
+    /// #19：批注/脚注/尾注承载量计数透出（内容不入 md 投影——结构面
+    /// 经 DocxDocument 字段，计数 = 承载可见）。
+    #[test]
+    fn note_and_comment_counts_surface() {
+        use mdc_office_io::docx::{CommentData, FootnoteData};
+        let doc = DocxDocument {
+            blocks: vec![para(None, vec![run("body")])],
+            headers: Vec::new(),
+            footers: Vec::new(),
+            images: Vec::new(),
+            comments: vec![
+                CommentData {
+                    id: 701,
+                    author: "示例作者".into(),
+                    date: "2026-10-20T09:00:00Z".into(),
+                    anchor_block_idx: Some(0),
+                    blocks: Vec::new(),
+                },
+                CommentData {
+                    id: 702,
+                    author: "另一作者".into(),
+                    date: String::new(),
+                    anchor_block_idx: None,
+                    blocks: Vec::new(),
+                },
+            ],
+            footnotes: vec![FootnoteData {
+                id: 1,
+                blocks: Vec::new(),
+            }],
+            endnotes: vec![
+                FootnoteData {
+                    id: 1,
+                    blocks: Vec::new(),
+                },
+                FootnoteData {
+                    id: 2,
+                    blocks: Vec::new(),
+                },
+            ],
+            warnings: Vec::new(),
+        };
+        let (_, stats) = docx_to_markdown(&doc);
+        assert_eq!(stats["comments"], 2);
+        assert_eq!(stats["footnotes"], 1);
+        assert_eq!(stats["endnotes"], 2);
     }
 
     #[test]
