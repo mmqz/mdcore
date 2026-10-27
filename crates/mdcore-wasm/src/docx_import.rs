@@ -35,11 +35,14 @@
 //!
 //! ## 映射规则（DocxDocument → markdown；模型级，非保真渲染）
 //!
-//! - 段落样式 `Heading1`..`Heading9` → `#`×level 标题（**7-9 钳到 6**，
-//!   MD 上限 h6）；其余样式 ID（Title/Subtitle/自定义）→ 普通段落
-//!   （office-io 模型级不做样式语义解释，本层只认 Word 规范标题 ID）；
-//!   **标题段带 numPr → 标题赢**（Word 编号标题仍显示为标题；mdcore
-//!   标题非列表项），编号丢弃（`list_numbering_dropped` 计数，r5-t1）；
+//! - 段落标题层级 `heading_level`（#13：office-io 读面四链解析单一
+//!   真源——段落 outlineLvl 直接格式 > pStyle `Heading1`..`Heading9`
+//!   前缀 > 样式名 heading/紧凑/中文形[真 Word 中文版 styleId="1"-"9"
+//!   经此链命中] > 样式 outlineLvl）→ `#`×level 标题（**7-9 钳到 6**，
+//!   MD 上限 h6）；None（Title/Subtitle/自定义等非标题语义）→ 普通
+//!   段落；**标题段带 numPr → 标题赢**（Word 编号标题仍显示为标题；
+//!   mdcore 标题非列表项），编号丢弃（`list_numbering_dropped` 计数，
+//!   r5-t1）；
 //! - **列表段（r5-t1）**：`numbering.kind` 解析成功 → markdown 列表项
 //!   ——Bullet → `- `；Ordered → `{n}. `（n = 连续列表 run 内计数器，
 //!   起始 1 **假定**〔读模型不承载 `w:start`〕）；嵌套缩进 =
@@ -152,13 +155,12 @@ fn compat_options() -> ReadOptions {
 // 纯映射内核（原生可测——构造 DocxDocument 直测，零 zip 依赖）
 // ---------------------------------------------------------------------------
 
-/// 段落样式 ID → 标题级别（Word 规范 `Heading1`..`Heading9`；其余
-/// 含 Title/Subtitle/自定义 → None = 普通段落——模型级样式语义边界）。
-fn heading_level(style: Option<&str>) -> Option<usize> {
-    let rest = style?.strip_prefix("Heading")?;
-    let level: usize = rest.parse().ok()?;
-    (1..=9).contains(&level).then_some(level)
-}
+// #13（A1）：标题层级识别已收归 office-io 读面单一真源
+//（ParagraphData::heading_level——四链解析：段落 outlineLvl 直接格式 >
+// pStyle `Heading1`..`Heading9` 前缀 > 样式名 heading/紧凑/中文形 >
+// 样式 outlineLvl）。本层原 `heading_level(style)` 前缀函数删除（逻辑
+// 完整迁移；真 Word 中文版 styleId="1"-"9" 由样式名链命中——导入
+// headings: 0 修复）。
 
 /// 相邻同格式 run 合并（bold/italic/超链接目标三元组相等——MD 不承载
 /// run 边界，直连产出 CommonMark 歧义串）。
@@ -399,10 +401,12 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
             Block::Paragraph(p) => {
                 let (text, links) = render_runs(&p.runs);
                 hyperlinks += links;
-                if let Some(level) = heading_level(p.style.as_deref()) {
+                if let Some(level) = p.heading_level {
                     // 标题优先（r5-t1）：编号标题段（Word 多级编号标题）
                     // → 标题赢，编号丢弃（mdcore 标题非列表项；计数
                     // `list_numbering_dropped`）。标题中断列表 run。
+                    // #13：层级来源 = 读面四链解析字段（样式表语义
+                    // 单一真源），非本层 styleId 猜测。
                     if p.numbering.is_some() {
                         list_numbering_dropped += 1;
                     }
@@ -567,6 +571,13 @@ mod tests {
     fn para(style: Option<&str>, runs: Vec<RunData>) -> Block {
         Block::Paragraph(ParagraphData {
             style: style.map(str::to_string),
+            // #13：读面已解析字段——直构测试镜像 pStyle 前缀链（引擎
+            // 写面发射形；样式表链的直构等价在 office-io 侧测试）。
+            heading_level: style.and_then(|s| {
+                s.strip_prefix("Heading")
+                    .and_then(|r| r.parse::<usize>().ok())
+                    .filter(|&n| (1..=9).contains(&n))
+            }),
             runs,
             // r4-t3 模型扩面构造点机械补齐（新增两字段默认 None——
             // 语义零变化：该 helper 的既有断言全部面向 style/runs）。
@@ -603,6 +614,7 @@ mod tests {
     ) -> Block {
         Block::Paragraph(ParagraphData {
             style: None,
+            heading_level: None,
             runs,
             numbering: Some(ParagraphNumbering {
                 num_id,
@@ -995,6 +1007,7 @@ mod tests {
             ),
             Block::Paragraph(ParagraphData {
                 style: Some("Heading2".to_string()),
+                heading_level: Some(2),
                 runs: vec![run("Numbered heading")],
                 numbering: Some(ParagraphNumbering {
                     num_id: 2,
@@ -1104,6 +1117,36 @@ mod tests {
         assert_eq!(lines[5], "无");
         assert_eq!(stats["headings"], 3);
         assert_eq!(stats["paragraphs"], 3);
+    }
+
+    /// #13（A1）真 Word 夹具全链：中文版 styleId="1"-"9"（样式名
+    /// `heading N` 链命中）→ md 标题映射 + stats.headings。夹具实含
+    /// 4 标题段（1/2/3/2——COM 原始输出 [1][2][6][13]，issue 验收行的
+    /// 「3 段 1,2,3」为报告记忆性表述，超集覆盖）。#14 面（PAGE 域
+    /// 缓存结果前缀 "11.1"）不在本测试锚定范围。
+    #[test]
+    fn tr13_real_word_fixture_heading_chain() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-artifacts/TR2/fixtures/word-complex.docx");
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("fixture missing: {} ({e})", path.display()));
+        let out = import_docx_core(&bytes).expect("compat import of real-Word fixture");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("stats json");
+        let stats = &parsed["stats"];
+        let md = parsed["markdown"].as_str().expect("md");
+        // headings: 0 → 4（修复钉定）。
+        assert_eq!(stats["headings"], 4, "夹具 4 标题段全识别: {stats}");
+        // md 层级映射（TR-2D 断链修复的产品面证据）。
+        assert!(md.contains("# 项目技术方案书"), "h1: {md}");
+        assert!(md.contains("\n## "), "h2 在场（第一章/第二章）");
+        assert!(md.contains("\n### "), "h3 在场（1.1 表格）");
+        // 层级序列精确：# / ## / ### / ##（四段）。
+        let levels: Vec<usize> = md
+            .split('\n')
+            .filter(|l| l.starts_with('#'))
+            .map(|l| l.chars().take_while(|&c| c == '#').count())
+            .collect();
+        assert_eq!(levels, vec![1, 2, 3, 2], "层级序列（夹具真实结构）");
     }
 
     #[test]

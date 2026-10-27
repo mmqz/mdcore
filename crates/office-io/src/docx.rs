@@ -1463,11 +1463,23 @@ pub enum ParagraphIndentSpecial {
     Hanging(i32),
 }
 
-/// 段落：样式 ID 透传 + run 序 + 编号/缩进承载（r4-t3）。
+/// 段落：样式 ID 透传 + 标题层级解析 + run 序 + 编号/缩进承载（r4-t3）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParagraphData {
     /// 样式 ID（如 `Heading1`/`Normal`）——语义判定归消费方。
     pub style: Option<String>,
+    /// #13（A1）：样式语义解析的标题层级（1-9 域，None = 非标题段）。
+    ///
+    /// 读面单一真源解析（仿 r4-t3 [`NumberingIndex`] 先例——样式表是
+    /// docx 格式语义的一部分，语义解析归读面而非各消费方自猜 styleId）：
+    /// 解析链 = ①段落级 `w:outlineLvl` 直接格式（0-8 → +1，直接格式
+    /// 优先——Word 直接格式压样式）→ ②pStyle `Heading1`..`Heading9`
+    /// 前缀（引擎写面/生成器惯用 styleId）→ ③样式名 heading 形
+    /// （`heading N` 引擎助手 / `HeadingN` 紧凑形 / `标题 N`·`标题N`
+    /// 中文形——WPS 等生成器；真 Word 中文版 styleId="1"-"9" +
+    /// name="heading N" 双双覆盖）→ ④样式级 `w:outlineLvl`（0-8 → +1）。
+    /// 越域值（outlineLvl 9+ / 层级 10+）防御忽略；钳 1-9。
+    pub heading_level: Option<usize>,
     pub runs: Vec<RunData>,
     /// 段落编号（r4-t3 读面承载——None = 非列表段；`w:numId w:val="0"`
     /// 的 OOXML 去编号惯例同样 → None）。
@@ -1636,9 +1648,25 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     // r4-t3：numbering.xml 解析索引（numId → ilvl 级 numFmt——引擎
     // 读面 numberings 模型全链 pub，见 NumberingIndex 文档）。
     let numbering_index = NumberingIndex::build(&docx.numberings);
-    let blocks = extract_blocks(&docx, &bundle, &numbering_index, strict, &mut warnings)?;
-    let (headers, footers) =
-        extract_headers_footers(&docx, &bundle, &numbering_index, strict, &mut warnings)?;
+    // #13（A1）：styles.xml 语义索引（styleId → 标题语义——引擎读面
+    // styles 模型 pub，见 StyleIndex 文档）。
+    let style_index = StyleIndex::build(&docx.styles);
+    let blocks = extract_blocks(
+        &docx,
+        &bundle,
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+    )?;
+    let (headers, footers) = extract_headers_footers(
+        &docx,
+        &bundle,
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+    )?;
     // run 级图片引用计数（悬空 r:embed 严格拒 / 兼容警告）。
     let media_parts: HashMap<String, usize> = images
         .iter()
@@ -1725,10 +1753,105 @@ fn resolve_hyperlink(
 }
 
 /// docx-rs 模型 → 自有模型提取（读面跳过项见模块文档登记表）。
+/// #13（A1）：样式表索引（styles.xml 语义解析——styleId → 标题语义）。
+/// 仿 [`NumberingIndex`] 先例：格式语义（样式名/outlineLvl）在读面
+/// 解析为单一真源，消费方（docx_import）不再各自猜 styleId。位于
+/// [`extract_blocks`] 前定义以就近服务提取层。
+#[derive(Debug, Default)]
+struct StyleIndex {
+    /// styleId → (样式名 heading 层级 1-9, 样式级 outlineLvl 0-8)。
+    /// 仅收有标题语义的样式（两链皆无的不入表——查询 miss = 非标题，
+    /// 不误判非标题样式）。
+    by_id: HashMap<String, (Option<usize>, Option<usize>)>,
+}
+
+impl StyleIndex {
+    fn build(styles: &docx_rs::Styles) -> Self {
+        let mut by_id = HashMap::new();
+        for s in &styles.styles {
+            let name_level = heading_level_from_name(&s.name);
+            let outline = s.paragraph_property.outline_lvl.as_ref().map(|o| o.v);
+            if name_level.is_some() || outline.is_some() {
+                by_id.insert(s.style_id.clone(), (name_level, outline));
+            }
+        }
+        StyleIndex { by_id }
+    }
+}
+
+/// 样式名 → 标题层级（1-9）：引擎 [`docx_rs::Name`] 助手（大小写不
+/// 敏感 `heading` 前缀 + `get_heading_number` 空格形数字）为主，
+/// 紧凑形（`HeadingN`——无空格，`get_heading_number` 的 replace
+/// 不命中面）与中文形（`标题 N`/`标题N`——WPS 等生成器）走
+/// `starts_with` 探针（`Name` 原始串私有，公开面仅此——9 级恒定
+/// 前缀集，实际 O(1)）。
+fn heading_level_from_name(name: &docx_rs::Name) -> Option<usize> {
+    if name.is_heading() {
+        if let Some(n) = name.get_heading_number().filter(|&n| (1..=9).contains(&n)) {
+            return Some(n);
+        }
+        // 紧凑形（"Heading1"）：大小写两规范形各探一次。
+        for n in 1..=9 {
+            if name.starts_with(&format!("Heading{n}")) || name.starts_with(&format!("heading{n}"))
+            {
+                return Some(n);
+            }
+        }
+        return None; // `heading` 前缀但无数字（如 "Heading"）→ 非层级标题
+    }
+    // 中文形：标题 N / 标题N。
+    for n in 1..=9 {
+        if name.starts_with(&format!("标题 {n}")) || name.starts_with(&format!("标题{n}")) {
+            return Some(n);
+        }
+    }
+    None
+}
+
+/// pStyle 值 → 标题层级（`Heading1`..`Heading9` 前缀——引擎写面发射
+/// 形；1-9 域外 None）。原 docx_import 面的同名逻辑收归读面单一真源。
+fn heading_level_from_style_id(style_id: &str) -> Option<usize> {
+    let rest = style_id.strip_prefix("Heading")?;
+    let n: usize = rest.parse().ok()?;
+    (1..=9).contains(&n).then_some(n)
+}
+
+/// 段落标题层级全链解析（见 [`ParagraphData::heading_level`] 文档——
+/// 直接 outlineLvl > pStyle 前缀 > 样式名 > 样式 outlineLvl）。
+/// outlineLvl 0-8 域（+1 → 1-9）；9+ 越域防御忽略。
+fn resolve_heading_level(
+    direct_outline: Option<usize>,
+    style_id: Option<&str>,
+    styles: &StyleIndex,
+) -> Option<usize> {
+    if let Some(o) = direct_outline {
+        if o <= 8 {
+            return Some((o + 1).min(9));
+        }
+    }
+    if let Some(level) = style_id.and_then(heading_level_from_style_id) {
+        return Some(level);
+    }
+    if let Some(id) = style_id {
+        if let Some((name_level, outline)) = styles.by_id.get(id) {
+            if let Some(n) = name_level {
+                return Some(*n);
+            }
+            if let Some(o) = outline {
+                if *o <= 8 {
+                    return Some((*o + 1).min(9));
+                }
+            }
+        }
+    }
+    None
+}
+
 fn extract_blocks(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
     index: &NumberingIndex,
+    styles: &StyleIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<Vec<Block>, io::ReadError> {
@@ -1736,13 +1859,22 @@ fn extract_blocks(
     let mut blocks = Vec::new();
     for child in &docx.document.children {
         match child {
-            docx_rs::DocumentChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                extract_paragraph(p, table, index, "word/document.xml", strict, warnings)?,
-            )),
+            docx_rs::DocumentChild::Paragraph(p) => {
+                blocks.push(Block::Paragraph(extract_paragraph(
+                    p,
+                    table,
+                    index,
+                    styles,
+                    "word/document.xml",
+                    strict,
+                    warnings,
+                )?))
+            }
             docx_rs::DocumentChild::Table(t) => blocks.push(Block::Table(extract_table(
                 t,
                 table,
                 index,
+                styles,
                 "word/document.xml",
                 strict,
                 warnings,
@@ -1890,11 +2022,20 @@ fn extract_paragraph(
     p: &docx_rs::Paragraph,
     table: Option<&RelationshipTable>,
     index: &NumberingIndex,
+    styles: &StyleIndex,
     part: &str,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<ParagraphData, io::ReadError> {
     let style = p.property.style.as_ref().map(|s| s.val.clone());
+    // #13（A1）：标题层级全链解析（读面单一真源——四链见
+    // ParagraphData::heading_level 文档；真 Word 中文版 styleId="1"-"9"
+    // 经样式名链命中）。
+    let heading_level = resolve_heading_level(
+        p.property.outline_lvl.as_ref().map(|o| o.v),
+        style.as_deref(),
+        styles,
+    );
     let numbering = match &p.property.numbering_property {
         Some(np) => carry_numbering(np, index, part, strict, warnings)?,
         None => None,
@@ -1921,6 +2062,7 @@ fn extract_paragraph(
     }
     Ok(ParagraphData {
         style,
+        heading_level,
         runs,
         numbering,
         indent,
@@ -1958,6 +2100,7 @@ fn extract_table(
     t: &docx_rs::Table,
     table: Option<&RelationshipTable>,
     index: &NumberingIndex,
+    styles: &StyleIndex,
     part: &str,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
@@ -1974,7 +2117,7 @@ fn extract_table(
             let mut parts = Vec::new();
             for content in &c.children {
                 if let docx_rs::TableCellContent::Paragraph(p) = content {
-                    let pd = extract_paragraph(p, table, index, part, strict, warnings)?;
+                    let pd = extract_paragraph(p, table, index, styles, part, strict, warnings)?;
                     parts.push(pd.text());
                 }
             }
@@ -2057,6 +2200,7 @@ fn extract_headers_footers(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
     index: &NumberingIndex,
+    styles: &StyleIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<(Vec<HeaderFooterData>, Vec<HeaderFooterData>), io::ReadError> {
@@ -2098,10 +2242,10 @@ fn extract_headers_footers(
         for child in &header.children {
             match child {
                 docx_rs::HeaderChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                    extract_paragraph(p, table, index, part_name, strict, warnings)?,
+                    extract_paragraph(p, table, index, styles, part_name, strict, warnings)?,
                 )),
                 docx_rs::HeaderChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t, table, index, part_name, strict, warnings,
+                    t, table, index, styles, part_name, strict, warnings,
                 )?)),
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}
@@ -2141,10 +2285,10 @@ fn extract_headers_footers(
         for child in &footer.children {
             match child {
                 docx_rs::FooterChild::Paragraph(p) => blocks.push(Block::Paragraph(
-                    extract_paragraph(p, table, index, part_name, strict, warnings)?,
+                    extract_paragraph(p, table, index, styles, part_name, strict, warnings)?,
                 )),
                 docx_rs::FooterChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t, table, index, part_name, strict, warnings,
+                    t, table, index, styles, part_name, strict, warnings,
                 )?)),
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}
@@ -3638,6 +3782,75 @@ mod tests {
         assert!(w.heading(9, "ok").is_ok());
         assert!(w.heading(0, "bad").is_err());
         assert!(w.heading(10, "bad").is_err());
+    }
+
+    /// #13（A1）：样式标题语义解析矩阵（StyleIndex + 四链优先序）。
+    /// 夹具面（真 Word 中文版 styleId="1"-"9"）见
+    /// tests/tr13_heading_styles.rs；本测试钉定合成全谱。
+    #[test]
+    fn style_index_resolution_matrix() {
+        use docx_rs::{Name, ParagraphProperty, Style, Styles};
+        let styled = |id: &str, name: &str, outline: Option<usize>| Style {
+            style_id: id.to_string(),
+            name: Name::new(name),
+            paragraph_property: match outline {
+                Some(o) => ParagraphProperty::new().outline_lvl(o),
+                None => ParagraphProperty::new(),
+            },
+            ..Default::default()
+        };
+        let styles = Styles::new()
+            .add_style(styled("1", "heading 1", None)) // 真 Word 中文版形
+            .add_style(styled("H3", "heading 3", None)) // 引擎空格形
+            .add_style(styled("c4", "Heading4", None)) // 紧凑形
+            .add_style(styled("w1", "标题 5", None)) // 中文空格形
+            .add_style(styled("w2", "标题6", None)) // 中文紧凑形
+            .add_style(styled("o5", "自定义大纲", Some(4))) // 样式 outlineLvl 链
+            .add_style(styled("n", "Normal", None)) // 非标题（不入表）
+            .add_style(styled("hn", "Heading", None)) // heading 前缀无数字
+            .add_style(styled("h10", "heading 10", None)) // 越域数字
+            .add_style(styled("o9", "越域大纲", Some(9))); // outlineLvl 9+
+        let idx = StyleIndex::build(&styles);
+        // 样式名三形 + 真中文版 styleId 形。
+        assert_eq!(
+            resolve_heading_level(None, Some("1"), &idx),
+            Some(1),
+            "真 Word 中文版 styleId=1 → 样式名链命中"
+        );
+        assert_eq!(resolve_heading_level(None, Some("H3"), &idx), Some(3));
+        assert_eq!(resolve_heading_level(None, Some("c4"), &idx), Some(4));
+        assert_eq!(resolve_heading_level(None, Some("w1"), &idx), Some(5));
+        assert_eq!(resolve_heading_level(None, Some("w2"), &idx), Some(6));
+        // 样式 outlineLvl 链（0-8 → +1）。
+        assert_eq!(resolve_heading_level(None, Some("o5"), &idx), Some(5));
+        // 非标题 / 无数字 / 越域 → None（不误判）。
+        assert_eq!(resolve_heading_level(None, Some("n"), &idx), None);
+        assert_eq!(resolve_heading_level(None, Some("hn"), &idx), None);
+        assert_eq!(resolve_heading_level(None, Some("h10"), &idx), None);
+        assert_eq!(resolve_heading_level(None, Some("o9"), &idx), None);
+        assert_eq!(resolve_heading_level(None, Some("absent"), &idx), None);
+        assert_eq!(resolve_heading_level(None, None, &idx), None);
+        // pStyle 前缀链（无样式表条目也命中——引擎写面发射形）。
+        assert_eq!(resolve_heading_level(None, Some("Heading7"), &idx), Some(7));
+        assert_eq!(resolve_heading_level(None, Some("Heading0"), &idx), None);
+        assert_eq!(resolve_heading_level(None, Some("Heading10"), &idx), None);
+        // 段落级 outlineLvl 直接格式最优先（压样式链）。
+        assert_eq!(
+            resolve_heading_level(Some(0), Some("1"), &idx),
+            Some(1),
+            "直接格式 0 → 1"
+        );
+        assert_eq!(
+            resolve_heading_level(Some(2), Some("H3"), &idx),
+            Some(3),
+            "直接格式压样式名（同值形）"
+        );
+        assert_eq!(resolve_heading_level(Some(8), None, &idx), Some(9), "钳 9");
+        assert_eq!(
+            resolve_heading_level(Some(9), None, &idx),
+            None,
+            "outlineLvl 9 越域防御忽略"
+        );
     }
 
     #[test]

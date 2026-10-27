@@ -224,6 +224,28 @@ def main() -> int:
                   json.dumps({"final": {k: final[k] for k in ("ready", "contract", "inject")},
                               "pageErrors": page_errors[:3]}))
 
+            # ---- TR-13（issue #13 A1）：真 Word 夹具标题识别全链
+            #      （中文版 styleId="1"-"9" → 样式名链 → headings: 0 → 4；
+            #      夹具 = test-artifacts/TR2/fixtures/word-complex.docx，
+            #      真 Word COM 生成——TR-2D batch2 P1-2 复现件）。放契约
+            #      检之后（本节替换编辑器内容，不影响 EXPECTED_MD 末检）。----
+            real_fixture = WEB.parent / "test-artifacts" / "TR2" / "fixtures" / "word-complex.docx"
+            real_bytes = real_fixture.read_bytes()
+            real_b64 = base64.b64encode(real_bytes).decode()
+            tr13 = page.evaluate(IMPORT_JS, real_b64)
+            tr13_stats = page.evaluate("window.__lastDocxImport.stats")
+            tr13_md = page.evaluate("window.__md()")
+            tr13_levels = [len(l) - len(l.lstrip('#'))
+                           for l in tr13_md.split("\n") if l.startswith("#")]
+            check("tr13_real_word_heading_chain",
+                  tr13.get("ok") is True
+                  and tr13_stats.get("headings") == 4
+                  and "# 项目技术方案书" in tr13_md
+                  and tr13_levels == [1, 2, 3, 2]
+                  and len(page_errors) == 0,
+                  json.dumps({"ok": tr13.get("ok"), "stats": tr13_stats,
+                              "levels": tr13_levels, "bytes": len(real_bytes)}))
+
             browser.close()
         srv.shutdown()
 
