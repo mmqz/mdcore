@@ -14,6 +14,7 @@
 //! = Core 不含任何 View 概念。
 
 pub mod anchor;
+pub mod chunk;
 pub mod debug;
 pub mod document;
 pub mod external;
