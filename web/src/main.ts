@@ -2451,11 +2451,14 @@ function setupStatusBar(): void {
       | { state: { selection: { main: { head: number } }; doc: { lineAt(pos: number): { number: number; from: number }; length: number; toString(): string } } }
       | undefined;
     if (!core || !view) return; // 启动竞态防御
-    const md = core.to_markdown();
-    // 字符数（CJK 逐字计）+ 词数（CJK 字符逐个 + 西文空白切分词）
-    const cjk = (md.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []).length;
-    const latinWords = (md.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, ' ').match(/[A-Za-z0-9_'\-]+/g) ?? []).length;
-    if (countsEl) countsEl.textContent = `${md.length} 字符 · ${cjk + latinWords} 词`;
+    // N-3（issue #29）：字符数/词数 = 引擎口径单一真源（word_count_json
+    // 七字段——标书评审口径）——JS 侧不再自行数数（口径漂移源头；
+    // 旧正则把 `_`/`'`/`-` 并入西文词、把 markdown 语法字符计入字符数）。
+    const wc = JSON.parse(core.word_count_json()) as {
+      cjk_chars: number; western_words: number; total_words: number; total_chars: number;
+      paragraphs: number; headings: number; tables: number;
+    };
+    if (countsEl) countsEl.textContent = `${wc.total_chars} 字符 · ${wc.total_words} 词`;
     if (blocksEl) blocksEl.textContent = `${core.blocks_count()} 块`;
     const sel = view.state.selection.main.head;
     const line = view.state.doc.lineAt(sel);

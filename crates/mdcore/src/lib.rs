@@ -28,6 +28,11 @@ pub mod op;
 pub mod revision;
 pub mod snapshot;
 pub mod tree;
+pub mod word_count;
+
+/// N-3（issue #29）：字数统计结果类型根再导出——`core.word_count()`
+/// 返回值的名位面（口径表见 [`word_count`] 模块文档）。
+pub use word_count::WordCount;
 
 /// R24-c 版本单源：workspace.package（根 Cargo.toml）→ CARGO_PKG_VERSION
 /// → 本常量。发布产物（打包脚本 / 宿主 --version / 关于页）一律取此值，
@@ -222,6 +227,17 @@ impl Core {
     /// R24-b：保存落盘成功后由宿主调用（核不碰 fs，写盘成败宿主域）。
     pub fn mark_saved(&mut self) {
         self.dirty = false;
+    }
+
+    /// 文档字数统计（中文按字计，不含空白/标记）——N-3（issue #29）
+    /// 标书评审口径的引擎级单一真源。
+    ///
+    /// 返回七字段（汉字数 / 西文词数 / 总字数=两者之和 / 总字符数 /
+    /// 段落数 / 标题数 / 表格数）；口径表与计数语义裁决（代码块计入、
+    /// 表格按单元格、列表项单独类、行内标记剥除、未闭合按字面量）
+    /// 见 [`word_count`] 模块文档——纯检视、确定性、不碰任何状态。
+    pub fn word_count(&self) -> WordCount {
+        word_count::count(&self.tree)
     }
 
     pub fn now_ms(&self) -> u64 {

@@ -133,6 +133,19 @@ impl WasmCore {
         mdcore::debug::blocks_count(&self.inner.tree)
     }
 
+    /// N-3（issue #29）：文档字数统计 JSON——标书评审口径的单一真源
+    /// （宿主/JS 侧禁止自行数数，防口径漂移）。
+    ///
+    /// 字段：`cjk_chars`（汉字数，URO+扩展A）/ `western_words`（西文词数）
+    /// / `total_words`（总字数=两者之和，标书评审口径）/ `total_chars`
+    /// （非空白字符数）/ `paragraphs` / `headings` / `tables`（结构分计）。
+    /// 口径表与计数语义裁决见 `mdcore::word_count` 模块文档
+    /// （代码块计入、表格按单元格、列表项单独类、行内标记剥除、
+    /// 未闭合定界符按字面量）。
+    pub fn word_count_json(&self) -> String {
+        serde_json::to_string(&self.inner.word_count()).unwrap_or_else(|_| "{}".into())
+    }
+
     /// R20 内存审计：组件级活数据 JSON（宿主内存面板数据源）。
     /// tree（per-block Rope/slots/id_index）/log（op 流克隆）/history（undo 双份）
     /// /events_pending，逐项字节估计——配合 JS 侧 __wasmMemory.buffer.byteLength
