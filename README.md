@@ -3,6 +3,16 @@
 模块化 Markdown 编辑核心 + web 桥（CodeMirror 6）+ 原生宿主壳（tao+wry+GTK3）。
 **私有产品仓。**
 
+## 平台支持矩阵（D-1 · 第一屏在档）
+
+| 平台 | 引擎核心（Rust crates） | wasm（mdcore-wasm + web） | 桌面壳（shell-native） |
+|---|---|---|---|
+| **Linux** | ✅ 全量测试基线（开发主环境，`cargo test --workspace` 850+ 用例） | ✅ 构建 + 19 web e2e 套件全绿 | ✅ 构建可运行（GTK3 + webkit2gtk-4.1） |
+| **Windows** | ✅ CI `cargo check` 全绿（`.github/workflows/windows-check.yml`，`#[cfg(not(unix))]` 分支编译覆盖） | ✅ wasm32 target 同 CI 在检 | ⚠️ CI check 级编译过（webview2 面在锁内），**零实机运行验证**——安装包/冒烟 = #29 打包项（A5） |
+| **macOS** | ❓ 无 CI 无实机构建（纯 Rust 预期可编，未验证） | ❓ 同左（wasm 产物平台无关，构建链未验） | ❓ tao+wry 名义支持，**从未构建/运行** |
+
+> 状态口径：✅ = 本仓流程内实证；⚠️ = 部分实证（编译级）；❓ = 未验证（非「不可用」——是「没做过」）。矩阵随验证轮更新（打包轮 A5 后 Windows/macOS 面预期翻转）。
+
 ## 架构（R10/R22 蓝图，ADR-H1 定谳）
 
 ```text
