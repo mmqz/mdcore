@@ -372,6 +372,9 @@ fn four_kinds(s: &mut PdfSession) {
                 ],
                 vec![Point { x: 90.0, y: 12.5 }],
             ],
+            // #45：红 4pt（issue 验收口径——/C=[1,0,0]、/BS/W=4）。
+            color: Rgb { r: 255, g: 0, b: 0 },
+            width: 4.0,
         },
         "inker",
         Origin::Ai,
@@ -467,11 +470,18 @@ fn four_kinds_roundtrip_field_exact() {
     );
     assert_eq!(f32_array(&ink_list[1]), vec![90.0, 12.5], "笔划 2 逐位往返");
     let bs = ink.get(b"BS").unwrap().as_dict().unwrap();
-    assert_eq!(bs.get(b"W").unwrap().as_i64().unwrap(), 1, "/BS /W 1pt");
+    // #45：W 从写死 1pt 改为载荷宽（Real 面——4pt 逐位）。
+    assert_eq!(f32_of(bs.get(b"W").unwrap()), 4.0, "/BS /W 载荷宽 4pt");
     assert_eq!(
         bs.get(b"S").unwrap().as_name().unwrap(),
         b"S",
         "/BS /S 实线"
+    );
+    // #45：/C 颜色（红 255,0,0 → 0-1 归一 [1,0,0]）。
+    assert_eq!(
+        f32_array(ink.get(b"C").unwrap()),
+        vec![1.0, 0.0, 0.0],
+        "/C 0-1 归一（255,0,0）"
     );
 }
 
@@ -901,6 +911,12 @@ fn highlight_quad_and_ink_stroke_envelopes() {
                     },
                 ],
             ],
+            color: Rgb {
+                r: 0x1a,
+                g: 0x73,
+                b: 0xe8,
+            },
+            width: 2.0,
         },
         author: "env".into(),
         origin: Origin::Human,
@@ -1107,6 +1123,12 @@ fn bulk_100_annotations_smoke() {
                         y: 40.0 + i as f32,
                     },
                 ]],
+                color: Rgb {
+                    r: 0x1a,
+                    g: 0x73,
+                    b: 0xe8,
+                },
+                width: 2.0,
             },
         };
         add(

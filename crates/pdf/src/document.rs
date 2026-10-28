@@ -39,7 +39,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::annotation::{AnnotId, Annotation, AnnotationDraft, AnnotationPatch};
+use crate::annotation::{
+    clamp_ink_width, AnnotId, Annotation, AnnotationDraft, AnnotationKind, AnnotationPatch,
+};
 use crate::command::{
     AnnotationFilter, Command, CommandError, Outcome, SearchHit, SearchOptions, TextTarget,
 };
@@ -475,10 +477,25 @@ impl PdfSession {
         }
         let id = AnnotId(self.next_annot_id);
         self.next_annot_id += 1;
+        // #45：Ink 线宽入列归一化（NaN → 2.0；域外 → 0.5..=12.0 边界）
+        // ——存量面与落盘面同值（往返诚实）；笔划/颜色域在类型层或
+        // 落盘校验，不在此重复。
+        let kind = match draft.kind {
+            AnnotationKind::Ink {
+                strokes,
+                color,
+                width,
+            } => AnnotationKind::Ink {
+                strokes,
+                color,
+                width: clamp_ink_width(width),
+            },
+            other => other,
+        };
         let annot = Annotation {
             id,
             page: draft.page,
-            kind: draft.kind,
+            kind,
             author: draft.author,
             origin: draft.origin,
             created_ms: self.now_ms,

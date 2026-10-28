@@ -134,7 +134,46 @@ pub enum AnnotationKind {
     /// 自由文本（`/FreeText`）：锚定矩形 + 文本。
     FreeText { rect: Rect, text: String },
     /// 手写墨迹（`/Ink`）：笔划列表（每划 = 采样点序列）。
-    Ink { strokes: Vec<Vec<Point>> },
+    ///
+    /// #45：`color`/`width` 两可变面（PDF 标准 `/C` + `/BS /W`——
+    /// Highlight 同款语义）。serde 缺省 = 旧 JSON（v0 无字段）仍可
+    /// 反序列化（wire 面向后兼容——方案 A）；缺省值 = 既有前端硬编码
+    /// 蓝 #1a73e8 / 2pt（存量视觉零漂移）。
+    Ink {
+        strokes: Vec<Vec<Point>>,
+        #[serde(default = "default_ink_color")]
+        color: Rgb,
+        #[serde(default = "default_ink_width")]
+        width: f32,
+    },
+}
+
+/// #45：Ink.color serde 缺省（旧 JSON 无字段 → 既有前端硬编码蓝）。
+fn default_ink_color() -> Rgb {
+    Rgb {
+        r: 0x1a,
+        g: 0x73,
+        b: 0xe8,
+    }
+}
+
+/// #45：Ink.width serde 缺省（旧 JSON 无字段 → 既有前端硬编码 2pt）。
+/// 值域钳制面 = [`clamp_ink_width`]（会话入列单点）。
+fn default_ink_width() -> f32 {
+    2.0
+}
+
+/// #45：墨迹线宽值域（磅）——写入 PDF 前的钳制域（UI 三档 1/2/4 均在内；
+/// 域外输入归一化到边界而非拒收——标注语义宽容面）。
+pub const INK_WIDTH_RANGE: (f32, f32) = (0.5, 12.0);
+
+/// #45：线宽钳制（NaN → 缺省 2.0；域外 → 边界值）。会话入列单点
+/// （annotate_add）归一化——存量面与落盘面同值（往返诚实）。
+pub fn clamp_ink_width(w: f32) -> f32 {
+    if w.is_nan() {
+        return default_ink_width();
+    }
+    w.clamp(INK_WIDTH_RANGE.0, INK_WIDTH_RANGE.1)
 }
 
 /// 种类判别（无载荷判据——过滤与 patch 适用面的判定用；与

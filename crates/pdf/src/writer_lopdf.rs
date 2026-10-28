@@ -335,7 +335,11 @@ fn annot_object(annot: &Annotation) -> Result<Dictionary, CommandError> {
             dict.set("Contents", text_string(text));
             dict.set("DA", Object::string_literal(FREETEXT_DEFAULT_DA));
         }
-        AnnotationKind::Ink { strokes } => {
+        AnnotationKind::Ink {
+            strokes,
+            color,
+            width,
+        } => {
             if strokes.is_empty() {
                 return Err(CommandError::engine("Ink 载荷不健全：空笔划列表"));
             }
@@ -353,12 +357,16 @@ fn annot_object(annot: &Annotation) -> Result<Dictionary, CommandError> {
                 list.push(Object::Array(pts));
             }
             dict.set("InkList", Object::Array(list));
-            // /BS：实线 1pt（标准边框样式字典）。
+            // #45：/C 标注颜色（Highlight 同款 0-1 归一 RGB——阅读器
+            // 互通面；缺省 = 旧视觉蓝）。
+            dict.set("C", color_array(color));
+            // /BS：实线可变宽（#45：W 从写死 1pt 改为载荷宽——入列已
+            // 钦制 0.5..=12.0，写前不再二次防御）。
             dict.set(
                 "BS",
                 dictionary! {
                     "Type" => Object::Name(b"Border".to_vec()),
-                    "W" => Object::Integer(1),
+                    "W" => Object::Real(*width),
                     "S" => Object::Name(b"S".to_vec()),
                 },
             );

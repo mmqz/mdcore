@@ -389,6 +389,38 @@ def main() -> int:
                   "SKIP 登记项：加密夹具需标准安全处理器（RC4）——无三方依赖不可造；"
                   "S5 写拒由 Rust 侧语义锁背书", skip=True)
 
+            # ---- 10c. #45 墨迹颜色/线宽（UI 选择器 → 载荷 → 存储往返 →
+            #      overlay 视觉态——红 4pt 全链；/C /BS 落盘面由引擎
+            #      pdfd_writer 测试背书）。----
+            if not has_wasm:
+                pending_wasm("pdf_ink_color_width_ui_to_payload")
+            else:
+                page.select_option("#pdf-ink-color", "#ff0000")
+                page.select_option("#pdf-ink-width", "4")
+                ink_r = page.evaluate(
+                    """() => window.__pdfAddInk(1, [
+                        [{x: 80, y: 600}, {x: 200, y: 620}, {x: 300, y: 590}],
+                    ])""")
+                ink_stored = page.evaluate(
+                    """() => {
+                        const anns = window.__pdfAnnots();
+                        const ink = (anns || []).find((a) => a.kind && a.kind.Ink);
+                        const poly = document.querySelector('#pdf-viewport svg.pdf-annot-ink polyline');
+                        return {
+                            kind: ink ? ink.kind.Ink : null,
+                            stroke: poly ? poly.getAttribute('stroke') : null,
+                            width: poly ? poly.getAttribute('stroke-width') : null,
+                        };
+                    }""")
+                check("pdf_ink_color_width_ui_to_payload",
+                      ink_r.get("ok") is True
+                      and ink_stored["kind"] is not None
+                      and ink_stored["kind"]["color"] == {"r": 255, "g": 0, "b": 0}
+                      and ink_stored["kind"]["width"] == 4
+                      and ink_stored["stroke"] == "rgb(255, 0, 0)"
+                      and ink_stored["width"] == "4",
+                      json.dumps({"add": ink_r, "stored": ink_stored}, ensure_ascii=False))
+
             # ---- 12. pdf_scan_warnings（垃圾字节 → 扫描面 typed 拒）----
             if not has_wasm:
                 pending_wasm("pdf_scan_warnings")

@@ -369,6 +369,12 @@ fn annotation_serde_roundtrip_with_ai_origin() {
         page: PageIndex(1),
         kind: AnnotationKind::Ink {
             strokes: vec![vec![Point { x: 0.0, y: 0.0 }, Point { x: 5.5, y: 5.5 }]],
+            color: Rgb {
+                r: 0x1a,
+                g: 0x73,
+                b: 0xe8,
+            },
+            width: 2.0,
         },
         author: "assistant".into(),
         origin: Origin::Ai,
@@ -390,6 +396,87 @@ fn annotation_serde_roundtrip_with_ai_origin() {
         a,
         "标注整实体往返恒等"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 9b. #45：Ink color/width 两可变面（/C + /BS /W）
+// ---------------------------------------------------------------------------
+
+/// #45 方案 A：旧 JSON（无 color/width 字段）仍可反序列化——wire 面
+/// 向后兼容（缺省 = 既有视觉蓝 #1a73e8 / 2pt）。
+#[test]
+fn ink_serde_defaults_for_legacy_json() {
+    let legacy = r#"{"Ink":{"strokes":[[{"x":0.0,"y":0.0},{"x":5.0,"y":5.0}]]}}"#;
+    let kind = serde_json::from_str::<AnnotationKind>(legacy).expect("旧 JSON 反序列化");
+    match kind {
+        AnnotationKind::Ink {
+            strokes,
+            color,
+            width,
+        } => {
+            assert_eq!(strokes.len(), 1, "笔划面不变");
+            assert_eq!(
+                color,
+                Rgb {
+                    r: 0x1a,
+                    g: 0x73,
+                    b: 0xe8
+                },
+                "缺省色 = 旧视觉蓝"
+            );
+            assert_eq!(width, 2.0, "缺省宽 = 旧视觉 2pt");
+        }
+        other => panic!("期望 Ink，得到 {other:?}"),
+    }
+}
+
+/// #45：新 JSON（显式 color/width）往返恒等 + 序列化词面含两字段。
+#[test]
+fn ink_serde_roundtrip_with_color_width() {
+    let kind = AnnotationKind::Ink {
+        strokes: vec![vec![Point { x: 1.0, y: 2.0 }]],
+        color: Rgb { r: 255, g: 0, b: 0 },
+        width: 4.0,
+    };
+    let json = serde_json::to_string(&kind).expect("序列化");
+    assert!(json.contains("\"color\":{\"r\":255"), "color 字段词面在档");
+    assert!(json.contains("\"width\":4.0"), "width 字段词面在档");
+    assert_eq!(
+        serde_json::from_str::<AnnotationKind>(&json).unwrap(),
+        kind,
+        "显式载荷往返恒等"
+    );
+}
+
+/// #45：线宽入列钳制（0.5..=12.0 域外归一边界；NaN → 缺省 2.0）——
+/// 存量面与落盘面同值（往返诚实）。
+#[test]
+fn ink_width_clamped_on_add() {
+    let mut s = session(2);
+    s.set_clock_ms(1_000);
+    for (input, expected, label) in [
+        (99.0_f32, 12.0_f32, "上界外 → 12.0"),
+        (0.1, 0.5, "下界外 → 0.5"),
+        (f32::NAN, 2.0, "NaN → 缺省 2.0"),
+        (4.0, 4.0, "域内直通"),
+    ] {
+        let out = add_annotation(
+            &mut s,
+            PageIndex(0),
+            AnnotationKind::Ink {
+                strokes: vec![vec![Point { x: 0.0, y: 0.0 }, Point { x: 9.0, y: 9.0 }]],
+                color: Rgb::default(),
+                width: input,
+            },
+            Origin::Human,
+        );
+        match out.kind {
+            AnnotationKind::Ink { width, .. } => {
+                assert_eq!(width, expected, "{label}（入列归一化）");
+            }
+            other => panic!("期望 Ink，得到 {other:?}"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -685,7 +772,11 @@ fn annotate_list_filters_kind_page_origin() {
     add_annotation(
         &mut s,
         PageIndex(0),
-        AnnotationKind::Ink { strokes: vec![] },
+        AnnotationKind::Ink {
+            strokes: vec![],
+            color: Rgb::default(),
+            width: 2.0,
+        },
         Origin::Ai,
     );
 

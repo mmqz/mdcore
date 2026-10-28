@@ -96,12 +96,13 @@ type RgbJson = { r: number; g: number; b: number };
 /** 轴对齐矩形（x0<=x1 且 y0<=y1 由会话构造校验）。 */
 type RectJson = { x0: number; y0: number; x1: number; y1: number };
 
-/** AnnotationKind serde（externally-tagged 载荷）。 */
+/** AnnotationKind serde（externally-tagged 载荷；#45：Ink 增 color/width
+ * ——wasm 面旧 JSON 无两字段时引擎侧 serde 缺省）。 */
 type AnnotKindJson =
   | { Highlight: { quads: QuadJson[]; color: RgbJson } }
   | { Note: { rect: RectJson } }
   | { FreeText: { rect: RectJson; text: string } }
-  | { Ink: { strokes: PdfPoint[][] } };
+  | { Ink: { strokes: PdfPoint[][]; color: RgbJson; width: number } };
 
 /** Annotation serde（document.rs / annotation.rs）。 */
 type AnnotationJson = {
@@ -389,6 +390,11 @@ declare global {
       page: number,
       rect: { x: number; y: number; w: number; h: number },
     ) => PdfOk<{ id: number; annotation: AnnotationJson }> | PdfFail;
+    /** #45：程序化加墨迹（测试面；载荷 = UI 选择器状态同源构造）。 */
+    __pdfAddInk: (
+      page: number,
+      strokes: PdfPoint[][],
+    ) => PdfOk<{ id: number; annotation: AnnotationJson }> | PdfFail;
     /** flush 透传（不下载）+ 产物字节。 */
     __pdfFlush: () =>
       | { ok: true; bytes_appended: number; prefix_bytes: number; bytes: string; len: number }
@@ -468,6 +474,12 @@ export class PdfViewUI {
   private inkStroke: PdfPoint[] = [];
   private inkPreview: SVGSVGElement | null = null;
   private inkPage = -1;
+  /** #45：墨迹视觉态（UI 选择器 → 预览 + 载荷同源；缺省 = 旧硬编码
+   * 蓝 #1a73e8 / 2pt——引擎 serde 缺省同值，旧会话往返视觉零漂移）。 */
+  private inkColor = '#1a73e8';
+  private inkWidth = 2;
+  private inkColorSelect: HTMLSelectElement | null = null;
+  private inkWidthSelect: HTMLSelectElement | null = null;
   private freetextInput: HTMLInputElement | null = null;
 
   // 证据区域叠加（钩子面——后续阶段接真数据）
@@ -573,6 +585,47 @@ export class PdfViewUI {
       modeSelect.appendChild(opt);
     }
 
+    // #45：墨迹颜色/粗细选择器（六色预设 + 三档粗细——预设与 UI 状态
+    // 同源驱动预览与载荷；id 面 = pdf-ink-color / pdf-ink-width）。
+    const inkColor = document.createElement('select');
+    inkColor.id = 'pdf-ink-color';
+    inkColor.title = t('pdf.inkColorTitle');
+    for (const [value, key] of [
+      ['#ff0000', 'pdf.colorRed'],
+      ['#ffd400', 'pdf.colorYellow'],
+      ['#30a46c', 'pdf.colorGreen'],
+      ['#1a73e8', 'pdf.colorBlue'],
+      ['#8e4ec6', 'pdf.colorPurple'],
+      ['#111111', 'pdf.colorBlack'],
+    ] as const) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = t(key);
+      if (value === this.inkColor) o.selected = true;
+      inkColor.appendChild(o);
+    }
+    inkColor.addEventListener('change', () => {
+      this.inkColor = inkColor.value;
+    });
+
+    const inkWidth = document.createElement('select');
+    inkWidth.id = 'pdf-ink-width';
+    inkWidth.title = t('pdf.inkWidthTitle');
+    for (const [value, key] of [
+      ['1', 'pdf.inkThin'],
+      ['2', 'pdf.inkMedium'],
+      ['4', 'pdf.inkThick'],
+    ] as const) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = t(key);
+      if (Number(value) === this.inkWidth) o.selected = true;
+      inkWidth.appendChild(o);
+    }
+    inkWidth.addEventListener('change', () => {
+      this.inkWidth = Number(inkWidth.value);
+    });
+
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'pdf-btn';
@@ -583,7 +636,7 @@ export class PdfViewUI {
       openBtn, fileInput, pageLabel,
       zoomOut, zoomLabel, zoomIn, zoomFit,
       searchInput, searchPrev, searchNext, searchCount,
-      modeSelect, saveBtn,
+      modeSelect, inkColor, inkWidth, saveBtn,
     );
 
     const viewport = document.createElement('div');
@@ -620,6 +673,8 @@ export class PdfViewUI {
     this.statusEl = status;
     this.fileInput = fileInput;
     this.annotModeSelect = modeSelect;
+    this.inkColorSelect = inkColor;
+    this.inkWidthSelect = inkWidth;
     this.saveBtn = saveBtn;
     this.syncButtons();
   }
@@ -1684,7 +1739,7 @@ export class PdfViewUI {
       `0 0 ${st.viewport.width} ${st.viewport.height}`,
     );
     this.inkPreview.innerHTML =
-      `<polyline points="${pts.join(' ')}" fill="none" stroke="#1a73e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+      `<polyline points="${pts.join(' ')}" fill="none" stroke="${this.inkColor}" stroke-width="${this.inkWidth}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
 
   private finishInkStroke(): void {
@@ -1695,8 +1750,18 @@ export class PdfViewUI {
     this.inkStroke = [];
     this.inkPage = -1;
     if (page < 0 || stroke.length < 2) return; // 单点不成划
-    const r = this.addAnnotation(page, { Ink: { strokes: [stroke] } });
+    const r = this.addAnnotation(page, this.inkPayload([stroke]));
     if (r.ok) this.showStatus(t('pdf.inkAdded', { id: r.value.id }));
+  }
+
+  /** #45：墨迹载荷构造（UI 视觉态 → color/width 字段；预览/真实笔划
+   * /探针三面同源——选择器改状态后下一笔即生效）。 */
+  private inkPayload(strokes: PdfPoint[][]): { Ink: { strokes: PdfPoint[][]; color: RgbJson; width: number } } {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(this.inkColor);
+    const color: RgbJson = m
+      ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) }
+      : { r: 0x1a, g: 0x73, b: 0xe8 }; // 非法 hex 兑底 = 缺省蓝
+    return { Ink: { strokes, color, width: this.inkWidth } };
   }
 
   // ---- overlay 渲染（AnnotateList 数据源——本地图谱仅镜像显示）----
@@ -1756,8 +1821,12 @@ export class PdfViewUI {
             const [vx, vy] = st.viewport.convertToViewportPoint(p.x, p.y);
             return `${vx.toFixed(1)},${vy.toFixed(1)}`;
           });
+          // #45：视觉态从存储标注读（颜色 rgb() 面 + 载荷宽——会话往返
+          // 后与落盘 /C /BS 一致；旧会话缺字段 = 引擎 serde 缺省蓝/2pt）。
+          const ink = annot.kind.Ink;
+          const strokeCss = `rgb(${ink.color.r}, ${ink.color.g}, ${ink.color.b})`;
           svg.innerHTML =
-            `<polyline points="${pts.join(' ')}" fill="none" stroke="#1a73e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+            `<polyline points="${pts.join(' ')}" fill="none" stroke="${strokeCss}" stroke-width="${ink.width}" stroke-linecap="round" stroke-linejoin="round"/>`;
           st.annotLayer.appendChild(svg);
         }
       }
@@ -1976,6 +2045,11 @@ export class PdfViewUI {
       return this.listAnnotations(filter);
     };
     window.__pdfAddHighlight = (page, rect) => this.addHighlightRect(page, rect);
+    // #45：墨迹探针（与 finishInkStroke 同一载荷构造点 inkPayload——
+    // UI 选择器状态即探针载荷，真实笔划/预览/探针三面同源）。
+    window.__pdfAddInk = (page: number, strokes: PdfPoint[][]):
+      PdfOk<{ id: number; annotation: AnnotationJson }> | PdfFail =>
+      this.addAnnotation(page, this.inkPayload(strokes));
     window.__pdfFlush = () => this.flush();
     window.__pdfOpenBytes = (b64: string) => this.openBytes(base64ToBytes(b64), 'sample.pdf');
     window.__pdfScale = () => this.scale;
