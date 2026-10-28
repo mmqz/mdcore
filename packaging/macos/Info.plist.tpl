@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- macOS .app bundle 元数据模板（R24-c；实体验证留 R24-d）
-     注入：{{APP_NAME}} {{VERSION}} {{BUNDLE_ICON}}
+     注入：mang {{VERSION}} {{BUNDLE_ICON}}
      说明：可执行名 = mdcore（自研命名域，TRADEMARK_RULES §1）；
-           {{APP_NAME}}（显示名/Bundle display name）待定名后注入
+           mang（显示名/Bundle display name）待定名后注入
            （checklist A4）；Bundle ID 三件套随定名复核（packaging/README）。 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>{{APP_NAME}}</string>
+    <string>mang</string>
     <key>CFBundleDisplayName</key>
-    <string>{{APP_NAME}}</string>
+    <string>mang</string>
     <key>CFBundleExecutable</key>
     <string>mdcore</string>
     <key>CFBundleIdentifier</key>

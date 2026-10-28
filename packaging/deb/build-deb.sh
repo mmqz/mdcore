@@ -32,7 +32,7 @@ fi
 mkdir -p "$STAGE/usr/share/mdcore"
 cp -a "$DIST_SRC" "$STAGE/usr/share/mdcore/dist"
 
-sed -e 's/{{APP_NAME}}/mdcore/g' \
+sed -e 's/mang/mdcore/g' \
     -e 's/{{APP_EXEC}}/mdcore/g' \
     -e 's/{{BUNDLE_ICON}}/mdcore/g' \
     "$ROOT/packaging/shared/app.desktop.tpl" \

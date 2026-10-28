@@ -6,14 +6,23 @@
 
 ## A. 命名与商标（TRADEMARK_RULES）
 
-- [ ] A1 正式商品名已定名，三件套一致（商品名 / 域名 / 仓库组织名）
-- [ ] A2 商标检索五步完成（§4：中国商标网 9/42 类 / WIPO / common-law /
-      域名与账号），检索记录归档 `trademark_search_<date>.md`
-- [ ] A3 定名后复跑 `bash compliance/scan.sh --all` 零命中（新名与四参考
-      对象无近似混淆）
-- [ ] A4 `{{APP_NAME}}` 占位符全量替换（模板 + 代码内显示名单一来源），
+> **定名状态（2026-10-27）**：正式显示名 = **mang**（中文「芒」）。
+> 所有者决议：**不注册域名、不承诺商用**——本软件仅以该名作显示名。
+> 因此本节的「三件套一致」与「五步商标检索」按**非商用显示名**口径处理，
+> 具体状态见下表；**若转为商用/公开发行，必须按原口径重跑 A1/A2**。
+
+- [x] A1 显示名已定：`mang` / 芒（三件套中「域名」项按所有者决议**豁免**，
+      「仓库组织名」维持 `mmqz`；豁免理由记录于 packaging/README.md §定名记录）
+- [ ] A2 商标检索五步 —— **降级为风险登记**（记录：
+      `compliance_release/trademark_search_2026-10-27.md`；
+      机器化项已完成：crates.io/npm/GitHub/域名初筛；
+      ⚠️ **CNIPA 9/42、WIPO、common-law 未查**——商用前必须补）
+- [x] A3 定名后 denylist 近似判定零命中（`mang` 与 typora/muya/delta/zed/gpui/obsidian
+      均不近似；CI 上 `scan.sh --all` 仍需复跑）
+- [x] A4 `{{APP_NAME}}` 占位符已全量替换为 `mang`（5 个模板/脚本 + 门禁断言同步改写），
       packaging/README.md 变量表已登记决议
-- [ ] A5 法律声明区归属句在位（TRADEMARK_RULES §2.5 通用归属句）
+- [ ] A5 法律声明区归属句 —— **待 TRADEMARK_RULES §2.5 到位后执行**
+      （该文件当前不在仓库中，见 README 流程缺口标注）
 
 ## B. 版本与产物
 

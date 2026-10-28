@@ -27,7 +27,7 @@ install -m 0755 "$BIN" "$APPDIR/usr/bin/mdcore"
 
 # 桌面入口 + 图标（{{}} 占位符在此注入；APP_NAME 待定名后启用，
 # 当前以 mdcore 工作名出 CI 内测包——checklist A4 未勾选不出正式包）
-sed -e 's/{{APP_NAME}}/mdcore/g' \
+sed -e 's/mang/mdcore/g' \
     -e 's/{{APP_EXEC}}/mdcore/g' \
     -e 's/{{BUNDLE_ICON}}/mdcore/g' \
     "$ROOT/packaging/shared/app.desktop.tpl" \
