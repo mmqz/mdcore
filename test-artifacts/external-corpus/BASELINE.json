@@ -1,0 +1,25 @@
+{
+  "l1": {
+    "markdown_it": {
+      "cases": 652,
+      "idempotent": 652,
+      "mean_retention": 0.9922410667042569
+    },
+    "spec": {
+      "cases": 655,
+      "idempotent": 655,
+      "mean_retention": 0.9922766038033214
+    }
+  },
+  "l2": {
+    "cases": 4,
+    "failed": [],
+    "passed": 4
+  },
+  "l3": {
+    "cases": 6,
+    "failed": [],
+    "imported": 6
+  },
+  "schema": 1
+}
