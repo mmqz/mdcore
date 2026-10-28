@@ -41,7 +41,7 @@
 //! | `Heading`（attrs.level，缺省/不可解析 → 1；钳 1-9） | [`DocxWriter::heading`]（Heading1-9 样式 + outline 级） | 模型 level 可为任意 usize（op 面），>9 钳 9；**标题 marks 丢弃**（[`DocxWriter::heading`] 纯文本面）——#15：行内定界符仍剥除（`# **报价**` → 净文本“报价”，格式不承载），未闭合定界符按字面量保留 |
 //! | `Paragraph`（text + marks） | [`DocxWriter::paragraph`] / 引用上下文 [`DocxWriter::quote_paragraph`] run 序 | mark kind 自由字符串：`strong`/`bold` → 加粗、`em`/`italic` → 斜体、`code` → 等宽（Consolas rFonts）、`del` → 删除线、`u` → 下画线（t20 消解）；**link kind → 纯文本**——模型 [`MarkSpan`] 无 URL 载荷，目标不可表达（html.rs 亦无 `<a>` 处理面——模型级无链接表示）；未知 kind → 纯文本。**#15（A3/P0）：行内 marks 消费**——模型文本是 markdown 源文本层，发射前经 [`mdcore::inline::parse_inline_marks`] 派生（`**粗**`/`*斜*`/`_斜_`/`` `码` ``/`~~删~~`/`<u>下</u>` → 净文本 + marks；未闭合 → 字面量）；node.marks 非空时 op 层覆盖赢（不二次解析——混合语义唯一化） |
 //! | `CodeBlock`（attrs.lang + text） | 每行 [`DocxWriter::code_line`] 双通道等宽（段落级+run 级 Courier New） | **等宽面已表达（t20 消解）；lang、fence 结构仍丢弃**（docx-rs 无语法高亮/元数据面——库层不可达，登记维持）；文本逐字保留 |
-//! | `Table`（text = 规范管道行） | [`DocxWriter::table`] | 第 2 行分隔行剔除（GFM 语义位）；`\|` 反转义 → `\|`；单元格内 `\n`/`\r` → 空格（GFM 单元格单行面，t17 同向）；孤立 `\` 原样透传（模型无内联转义层——t16 同边界登记）；单元格内 marks 本就不可承载（Table = 扁平文本面，html.rs 同边界）；0 行表跳过（空 `w:tbl` 非 OOXML 合法形——防御，markdown 解析不产空表） |
+//! | `Table`（text = 规范管道行） | [`DocxWriter::table_header_repeat`]（N-4：首行 tblHeader 跨页重复） | 第 2 行分隔行剔除（GFM 语义位）；`\|` 反转义 → `\|`；单元格内 `\n`/`\r` → 空格（GFM 单元格单行面，t17 同向）；孤立 `\` 原样透传（模型无内联转义层——t16 同边界登记）；单元格内 marks 本就不可承载（Table = 扁平文本面，html.rs 同边界）；0 行表跳过（空 `w:tbl` 非 OOXML 合法形——防御，markdown 解析不产空表）；首行 = GFM 表头 → `tblHeader` 跨页重复（读面不回读——docx-rs 反序列化丢 trPr 扩展，登记） |
 //! | `Blockquote` | 引用面 [`DocxWriter::quote_paragraph`]（ind 720×depth 钳 8 + 左边框，嵌套步进）；子块递归（段落/嵌套引用承载引用面——markdown 解析器产出的唯一形态） | 空引用（无子且 text 非空）按 text 发射（markdown.rs 序列化语义镜像）；**引用上下文中的 heading/table/code/list/hr 子块不挂 ind/pBdr**（markdown 解析器不产此形态——attach 恒挂 root；op 面可构造，防御递归保持 t18 平铺行为，登记） |
 //! | `ListItem`（attrs.marker/depth） | 单行：[`DocxWriter::list_item`]：marker 判序（数字型 → Ordered，`-`/`*`/`+`/缺失 → Bullet）+ depth→ilvl（钳 0-8；ilvl 越界防御：>8 钳 8——映射层全函数）；多行（t22 消解）：[`DocxWriter::list_item_lines`]——单段落 + 行间 `w:br` + 段落级 hanging `w:ind`（left = 720×(ilvl+1)、hanging 360，与编号抽象层级同值）→ 续行与首行文字列对齐 | **列表结构已表达（t20 消解）；多行续行缩进已表达（t22 消解——行内 marks 经 rich_lines 逐行平移保持）**；子块递归保持 |
 //! | `ThematicBreak` | [`DocxWriter::horizontal_rule`]（空段下边框） | 无降级（t20 消解；OOXML 无原生 hr——下边框为惯用表达） |
@@ -476,7 +476,9 @@ fn emit_block(
         BlockKind::Table => {
             let rows = table_rows(&text);
             if !rows.is_empty() {
-                w.table(&rows);
+                // N-4：首行 tblHeader（GFM 首行即表头同构——跨页表头
+                // 重复；≥2 行才打标，见 DocxWriter::table_header_repeat）。
+                w.table_header_repeat(&rows);
             }
         }
         BlockKind::Blockquote => {
@@ -2336,5 +2338,27 @@ mod tests {
         assert_eq!(err.code, "docx_options");
         let err2 = estimate_pages_core(&tree, r#"{"unknown_key": 1}"#).expect_err("unknown key");
         assert_eq!(err2.code, "docx_options");
+    }
+
+    /// N-4（#29）：GFM 表首行即表头 → 导出面首行 `tblHeader`（跨页
+    /// 表头重复）；读面不回读（docx-rs 反序列化丢 trPr 扩展——映射表
+    /// 登记的 round-trip 缺口，此处钉定结构完整性不受注入影响）。
+    #[test]
+    fn gfm_table_first_row_gets_tblheader() {
+        let tree = markdown_to_tree("| 甲 | 乙 |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |");
+        let bytes = export_docx_core(&tree).expect("export");
+        let xml = String::from_utf8(
+            mdc_office_io::docx::docx_part_bytes(&bytes, "word/document.xml").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            xml.matches("<w:trPr><w:tblHeader /></w:trPr>").count(),
+            1,
+            "恰首行打标"
+        );
+        // 分隔行已剔除（GFM 语义）→ 3 数据行（表头 + 2 数据）中仅表头打标。
+        assert_eq!(xml.matches("<w:trPr />").count(), 2, "其余行保持原形");
+        // 注入产物结构完整：引擎读面可解析。
+        assert!(read_docx_from_bytes(&bytes).is_ok(), "注入产物可读回");
     }
 }

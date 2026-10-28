@@ -1,0 +1,11 @@
+{
+  "marked": {
+    "pages": 2,
+    "header_in_page2": true
+  },
+  "plain": {
+    "pages": 2,
+    "header_in_page2": false
+  },
+  "verdict": "PASS"
+}

@@ -4024,6 +4024,14 @@ pub struct DocxWriter {
     /// 部 id——§8：仅单次导出会话内稳定，**不作为身份**；公开身份
     /// = 书签名）。
     bookmark_next_id: usize,
+    /// N-4（#29）：已发射表格计数（文档序 0 基——与 document.xml
+    /// `<w:tbl>` 出现序对齐；save 后随基态重置）。
+    tables_emitted: usize,
+    /// N-4：需首行打 `tblHeader`（跨页表头重复）的表序号集合——
+    /// [`Self::table_header_repeat`] 记账，save 漏斗内 zip 后处理
+    /// 注入（docx-rs 0.4.22 `TableRowProperty` 无 tblHeader 面——
+    /// 版本钉死不可升，见 `mark_table_header_rows` 文档）。
+    header_tables: std::collections::HashSet<usize>,
 }
 
 impl DocxWriter {
@@ -4054,6 +4062,8 @@ impl DocxWriter {
             validation_error: None,
             bookmark_names: std::collections::HashSet::new(),
             bookmark_next_id: 0,
+            tables_emitted: 0,
+            header_tables: std::collections::HashSet::new(),
         }
     }
 
@@ -4278,6 +4288,28 @@ impl DocxWriter {
         let cells: u64 = rows.iter().map(|r| r.len() as u64).sum();
         self.paragraphs += cells;
         self.runs += cells;
+        // N-4：文档序表计数（与 document.xml <w:tbl> 出现序对齐——
+        // table_header_repeat 的记账坐标系）。
+        self.tables_emitted += 1;
+    }
+
+    /// N-4（#29）：表格 + 首行跨页表头重复（`w:trPr/w:tblHeader`）。
+    ///
+    /// 语义：首行 = 表头行（GFM 首行即表头同构）；跨页时 Word/LO
+    /// 在后续页顶重复该行。仅 ≥ 2 行的表打标（单行表无跨页面，
+    /// 防御性不打——Word 对孤立 tblHeader 行的渲染语义未定义）。
+    /// 字节面：`[`Self::table`]` 全同 + 首行 `<w:trPr />` →
+    /// `<w:trPr><w:tblHeader /></w:trPr>`（save 漏斗内 zip 后处理
+    /// 注入——docx-rs 0.4.22 `TableRowProperty` 无 tblHeader 面，
+    /// 版本钉死[P2-2 serde 通道锁 0.4.22]不可升；见
+    /// [`mark_table_header_rows`]）。**读面不回读**（docx-rs 反序列
+    /// 化丢 trPr 扩展——round-trip 不保 tblHeader，模块文档登记）。
+    pub fn table_header_repeat(&mut self, rows: &[Vec<String>]) {
+        let idx = self.tables_emitted;
+        self.table(rows);
+        if rows.len() >= 2 {
+            self.header_tables.insert(idx);
+        }
     }
 
     /// 保存到文件路径。
@@ -4398,11 +4430,20 @@ impl DocxWriter {
         built
             .pack(&mut cursor)
             .map_err(|e| DocxError::Io(format!("pack: {e}")))?;
+        // N-4：首行 tblHeader 注入（仅 table_header_repeat 记账的表——
+        // 纯 table() 消费方字节级零变化）。
+        let bytes = cursor.into_inner();
+        let out = if self.header_tables.is_empty() {
+            bytes
+        } else {
+            let tables = std::mem::take(&mut self.header_tables);
+            mark_table_header_rows(&bytes, &tables)?
+        };
         // build() 消费 self.docx —— 重建基态（写器可续写：幂等语义，
         // 已写内容已在 built 内落盘，续写 = 新档；numbering 惰性位
         // 随之重置——新档首个 list_item 重新注册）。
         *self = Self::new();
-        Ok(cursor.into_inner())
+        Ok(out)
     }
 
     /// 列表段（t20 列表面）：`kind` 选 ordered/bullet 抽象，`ilvl` 选
@@ -5072,6 +5113,174 @@ pub fn anonymize_docx_props(bytes: &[u8]) -> Result<Vec<u8>, DocxError> {
         .finish()
         .map_err(|e| DocxError::Io(format!("zip finish: {e}")))?;
     Ok(out.into_inner())
+}
+
+/// N-4（#29）：docx 字节 → 指定文档序表集的首行注入 `w:tblHeader`
+/// （跨页表头重复）。
+///
+/// 为什么 zip 后处理而非 docx-rs 面发射：docx-rs 0.4.22
+/// `TableRowProperty` 无 tblHeader 字段（仅 gridAfter/Before/行高/
+/// cantSplit 族）；版本钉死不可升（P2-2 gridSpan/vMerge 读取通道 =
+/// serde derive 锁 0.4.22）。注入锚点 = 引擎写面发射形态实证钉定
+/// （`<w:tbl>`/`<w:tr>` 恒无属性、首子元素恒 `<w:trPr />` 自闭合），
+/// 三形态防御（自闭合两拼写 / 开形含子 / 无 trPr 兜底插入）；
+/// `<w:trPr>` 内 `<w:tblHeader />` 恒居尾（ECMA CT_TrPr 序——
+/// cantSplit/trHeight 之后合法位）。非目标部件 raw_copy 原样保留
+/// （匿名化后处理同构）。`word/document.xml` 不在场 = fail-closed 拒。
+pub fn mark_table_header_rows(
+    bytes: &[u8],
+    tables: &std::collections::HashSet<usize>,
+) -> Result<Vec<u8>, DocxError> {
+    use std::io::Write as _;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| DocxError::Io(format!("open zip: {e}")))?;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let mut has_document = false;
+    for i in 0..archive.len() {
+        let name = {
+            let entry = archive
+                .by_index_raw(i)
+                .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
+            entry.name().to_string()
+        };
+        if name == "word/document.xml" {
+            has_document = true;
+            let mut xml = String::new();
+            archive
+                .by_name(&name)
+                .map_err(|e| DocxError::Io(format!("document open: {e}")))?
+                .read_to_string(&mut xml)
+                .map_err(|e| DocxError::Io(format!("document read: {e}")))?;
+            let marked = inject_tbl_header(&xml, tables)?;
+            writer
+                .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
+            writer
+                .write_all(marked.as_bytes())
+                .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+        } else {
+            let entry = archive
+                .by_index_raw(i)
+                .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
+            writer
+                .raw_copy_file(entry)
+                .map_err(|e| DocxError::Io(format!("zip copy: {e}")))?;
+        }
+    }
+    if !has_document {
+        return Err(DocxError::Io(
+            "tblHeader 注入：word/document.xml 不在场（非 docx 伪产物——fail-closed 拒绝）".into(),
+        ));
+    }
+    let out = writer
+        .finish()
+        .map_err(|e| DocxError::Io(format!("zip finish: {e}")))?;
+    Ok(out.into_inner())
+}
+
+/// document.xml 锚定注入：第 `tables` 集合内序号的 `<w:tbl>` 的首个
+/// `<w:tr>` 打 `tblHeader`。表序 = `<w:tbl` 出现序（含嵌套表——内层
+/// 表首行在自身 `<w:tbl>` 之后，外层首行恒先于内层出现，文档序计数
+/// 对两种结构均正确）。
+fn inject_tbl_header(
+    xml: &str,
+    tables: &std::collections::HashSet<usize>,
+) -> Result<String, DocxError> {
+    let mut out = String::with_capacity(xml.len() + tables.len() * 32);
+    let mut rest = xml;
+    let mut table_idx = 0usize;
+    while let Some(pos) = rest.find("<w:tbl") {
+        let after_tag = pos + "<w:tbl".len();
+        // `<w:tbl>` 或 `<w:tbl 属性…>`（引擎发射恒无属性——属性形
+        // 防御面）；排除 `<w:tblPr`/`<w:tblGrid` 前缀误配（后随字符
+        // 必须为 `>` 或空白）。
+        let tag_close = match rest[after_tag..].find('>') {
+            Some(off) => after_tag + off,
+            None => {
+                return Err(DocxError::Io(
+                    "tblHeader 注入：<w:tbl 开标签无闭合（畸形 XML——fail-closed 拒绝）".into(),
+                ))
+            }
+        };
+        let next = rest.as_bytes().get(after_tag).copied();
+        if next != Some(b'>') && next != Some(b' ') {
+            // <w:tblPr / <w:tblGrid 等前缀——原样透传继续扫描。
+            out.push_str(&rest[..tag_close + 1]);
+            rest = &rest[tag_close + 1..];
+            continue;
+        }
+        // 本表打标 → 找首个 <w:tr 行开标签（`<w:tr>`/`<w:tr …>`——
+        // `<w:trPr`/`<w:trHeight` 前缀由后随字符区分）。
+        let mark = tables.contains(&table_idx);
+        if !mark {
+            out.push_str(&rest[..tag_close + 1]);
+            rest = &rest[tag_close + 1..];
+            table_idx += 1;
+            continue;
+        }
+        let row_open = match rest[tag_close + 1..].find("<w:tr") {
+            Some(off) => tag_close + 1 + off,
+            None => {
+                return Err(DocxError::Io(
+                    "tblHeader 注入：表内无 <w:tr 行（畸形——fail-closed 拒绝）".into(),
+                ))
+            }
+        };
+        let after_row = row_open + "<w:tr".len();
+        let next = rest.as_bytes().get(after_row).copied();
+        if next != Some(b'>') && next != Some(b' ') {
+            return Err(DocxError::Io(
+                "tblHeader 注入：<w:tr 后随既非 > 也非空白（非行开标签——畸形拒）".into(),
+            ));
+        }
+        let row_close = match rest[after_row..].find('>') {
+            Some(off) => after_row + off,
+            None => {
+                return Err(DocxError::Io(
+                    "tblHeader 注入：<w:tr 开标签无闭合（畸形——fail-closed 拒绝）".into(),
+                ))
+            }
+        };
+        out.push_str(&rest[..row_close + 1]);
+        rest = &rest[row_close + 1..];
+        // 三形态：自闭合 `<w:trPr />` / `<w:trPr/>`；开形
+        // `<w:trPr>…</w:trPr>`；无 trPr（兜底直插行首）。
+        if let Some(stripped) = rest.strip_prefix("<w:trPr />") {
+            out.push_str("<w:trPr><w:tblHeader /></w:trPr>");
+            rest = stripped;
+        } else if let Some(stripped) = rest.strip_prefix("<w:trPr/>") {
+            out.push_str("<w:trPr><w:tblHeader /></w:trPr>");
+            rest = stripped;
+        } else if let Some(stripped) = rest.strip_prefix("<w:trPr></w:trPr>") {
+            // 空开闭形（非引擎发射——防御面；替换而非追加，杜绝双
+            // trPr 产出[CT_TrPr maxOccurs=1]）。
+            out.push_str("<w:trPr><w:tblHeader /></w:trPr>");
+            rest = stripped;
+        } else if let Some(stripped) = rest.strip_prefix("<w:trPr>") {
+            // 开形：找闭合 </w:trPr>，tblHeader 插其前（CT_TrPr 序
+            // 尾位——cantSplit/trHeight 之后合法）。
+            match stripped.find("</w:trPr>") {
+                Some(off) => {
+                    out.push_str("<w:trPr>");
+                    out.push_str(&stripped[..off]);
+                    out.push_str("<w:tblHeader /></w:trPr>");
+                    rest = &stripped[off + "</w:trPr>".len()..];
+                }
+                None => {
+                    return Err(DocxError::Io(
+                        "tblHeader 注入：<w:trPr> 无闭合（畸形——fail-closed 拒绝）".into(),
+                    ))
+                }
+            }
+        } else {
+            // 无 trPr：行开标签后直插（首个子元素位——schema 合法）。
+            out.push_str("<w:trPr><w:tblHeader /></w:trPr>");
+        }
+        table_idx += 1;
+    }
+    out.push_str(rest);
+    Ok(out)
 }
 
 /// 读 docx 指定部件原始字节（匿名化配套验证面——workbench 导出验证
