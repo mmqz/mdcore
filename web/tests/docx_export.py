@@ -144,7 +144,7 @@ def main() -> int:
             })""")
             check("export_ui_present",
                   ui["btn"] and ui["btnLabel"] == "export .docx" and ui["status"]
-                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.2,
+                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.3,
                   json.dumps(ui))
 
             # ---- 快乐路径：真实按钮点击（UI 路径）+ 程序化钩子取字节 ----
@@ -510,10 +510,135 @@ def main() -> int:
             page.evaluate("window.__setDocxExportOptions('default')")
             page.evaluate("localStorage.removeItem('mdc-docx-export')")
 
+            # ---- W-1/W-2（issue #29 阶段 A0）：目录域 + 匿名化两开关
+            #      （设置面板 deo-toc/deo-anonymize + __setSetting 两键
+            #      → 导出 options → docx 字节 XML/部件面验收）。----
+            # 1) 面板开关在场 + 默认关（options JSON 不携带两键 =
+            #    既有导出字节级一致——纯加性）。
+            w2_ui = page.evaluate("""() => ({
+                tocChk: !!document.getElementById('deo-toc'),
+                anonChk: !!document.getElementById('deo-anonymize'),
+                tocOn: (document.getElementById('deo-toc') || {checked: null}).checked,
+                anonOn: (document.getElementById('deo-anonymize') || {checked: null}).checked,
+                cur: window.__getDocxExportOptions(),
+            })""")
+            check("w2_toc_anonymize_panel_toggles_present",
+                  w2_ui["tocChk"] and w2_ui["anonChk"]
+                  and w2_ui["tocOn"] is False and w2_ui["anonOn"] is False
+                  and w2_ui["cur"]["preset"] == "default"
+                  and "toc" not in w2_ui["cur"]["json"]
+                  and "anonymize" not in w2_ui["cur"]["json"],
+                  json.dumps(w2_ui))
+
+            # 2) W-1 主链：重注入 EXPORT_MD（reload 后文档归 boot 默认
+            #    ——断言锚定需确定性内容）→ __setSetting 开目录 → 导出
+            #    按钮 → document.xml 首段 = TOC 域五连（begin dirty +
+            #    instrText `TOC \o "1-3"` + separate + 提示文本 + end）
+            #    且居首内容块之前。
+            page.evaluate("(s) => window.__inject(s)", EXPORT_MD)
+            page.wait_for_function("window.__blockCount() === 3", timeout=15000)
+            page.evaluate("window.__setSetting('docx_export.toc', true)")
+            r_toc = page.evaluate("window.__exportDocx()")
+            doc_toc = ""
+            try:
+                doc_toc = zip_part(zipfile.ZipFile(io.BytesIO(as_bytes(r_toc["bytes"]))),
+                                   "word/document.xml")
+            except Exception:  # noqa: BLE001
+                pass
+            check("w2_toc_field_emission_and_position",
+                  r_toc.get("ok") is True
+                  and '<w:fldChar w:fldCharType="begin" w:dirty="true" />' in doc_toc
+                  and '<w:instrText>TOC \\o &quot;1-3&quot;</w:instrText>' in doc_toc
+                  and 'w:fldCharType="separate"' in doc_toc
+                  and "（目录域——打开后全选再按 F9 更新生成）" in doc_toc
+                  and 'w:fldCharType="end"' in doc_toc
+                  and doc_toc.find("TOC \\o") < doc_toc.find("Export Test"),
+                  "TOC 五连 + 居首内容块（Export Test）之前")
+
+            # 3) W-2 主链：__setSetting 开匿名（toc 仍开——组合态）→ 导出
+            #    → core.xml 逐字节 = 匿名常量 + app.xml 空骨架 +
+            #    settings.xml 无作者/公司残留 + 正文部件零触碰（与
+            #    同 options 未匿名导出逐部件一致）。r_plain_keep 为默认
+            #    options 基线（无 toc 首段）不适用——对照收 r_toc。
+            page.evaluate("window.__setSetting('docx_export.anonymize', true)")
+            r_anon = page.evaluate("window.__exportDocx()")
+            ANON_CORE = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                         '<cp:coreProperties'
+                         ' xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
+                         ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
+                         ' xmlns:dcterms="http://purl.org/dc/terms/"'
+                         ' xmlns:dcmitype="http://purl.org/dc/dcmitype/"'
+                         ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+                         '<dcterms:created xsi:type="dcterms:W3CDTF">1970-01-01T00:00:00Z</dcterms:created>'
+                         '<dc:creator>unknown</dc:creator>'
+                         '<cp:lastModifiedBy>unknown</cp:lastModifiedBy>'
+                         '<dcterms:modified xsi:type="dcterms:W3CDTF">1970-01-01T00:00:00Z</dcterms:modified>'
+                         '<cp:revision>1</cp:revision>'
+                         '</cp:coreProperties>')
+            ANON_APP = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"'
+                        ' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"/>')
+            core_a = app_a = settings_a = ""
+            doc_a_eq = False
+            try:
+                zf_a = zipfile.ZipFile(io.BytesIO(as_bytes(r_anon["bytes"])))
+                core_a = zip_part(zf_a, "docProps/core.xml")
+                app_a = zip_part(zf_a, "docProps/app.xml")
+                settings_a = zip_part(zf_a, "word/settings.xml")
+                doc_a_eq = (zip_part(zf_a, "word/document.xml")
+                            == zip_part(zipfile.ZipFile(io.BytesIO(as_bytes(r_toc["bytes"]))),
+                                        "word/document.xml"))
+            except Exception:  # noqa: BLE001
+                pass
+            check("w2_anonymize_props_scrub",
+                  r_anon.get("ok") is True
+                  and core_a == ANON_CORE
+                  and app_a == ANON_APP
+                  and all(t not in settings_a for t in
+                          ("Company", "Author", "Manager", "Sender", "creator", "Machine"))
+                  and doc_a_eq,
+                  json.dumps({"coreEq": core_a == ANON_CORE, "appEq": app_a == ANON_APP,
+                              "docEq": doc_a_eq, "core": core_a[:120]}))
+
+            # 4) __exportDocxStyled 显式 options：自定义层级 2-4 + 匿名 +
+            #    typed 拒面（层级 0/10/倒序 → docx_options）。
+            r_styled = page.evaluate(
+                'window.__exportDocxStyled(\'{"toc":{"enabled":true,"level_from":2,"level_to":4},"anonymize":true}\')')
+            styled_ok = styled_toc = styled_core = False
+            try:
+                zf_s = zipfile.ZipFile(io.BytesIO(as_bytes(r_styled["bytes"])))
+                doc_s = zip_part(zf_s, "word/document.xml")
+                styled_ok = r_styled.get("ok") is True
+                styled_toc = '<w:instrText>TOC \\o &quot;2-4&quot;</w:instrText>' in doc_s
+                styled_core = zip_part(zf_s, "docProps/core.xml") == ANON_CORE
+            except Exception:  # noqa: BLE001
+                pass
+            bad_level = page.evaluate(
+                'window.__exportDocxStyled(\'{"toc":{"enabled":true,"level_from":0,"level_to":3}}\')')
+            bad_range = page.evaluate(
+                'window.__exportDocxStyled(\'{"toc":{"enabled":true,"level_from":5,"level_to":2}}\')')
+            bad_hi = page.evaluate(
+                'window.__exportDocxStyled(\'{"toc":{"enabled":true,"level_to":10}}\')')
+            check("w2_styled_bridge_toc_anonymize_and_rejects",
+                  styled_ok and styled_toc and styled_core
+                  and bad_level.get("ok") is False and bad_level.get("code") == "docx_options"
+                  and bad_range.get("ok") is False and bad_range.get("code") == "docx_options"
+                  and bad_hi.get("ok") is False and bad_hi.get("code") == "docx_options",
+                  json.dumps({"styled": {k: r_styled.get(k) for k in ("ok", "code")},
+                              "badLevel": bad_level, "badRange": bad_range, "badHi": bad_hi}))
+
+            # 5) 复位两开关（零污染：options JSON 回到不含两键的基态）。
+            page.evaluate("window.__setSetting('docx_export.toc', false)")
+            page.evaluate("window.__setSetting('docx_export.anonymize', false)")
+            w2_reset = page.evaluate("window.__getDocxExportOptions()")
+            check("w2_toggles_reset_zero_pollution",
+                  "toc" not in w2_reset["json"] and "anonymize" not in w2_reset["json"],
+                  json.dumps(w2_reset))
+
             # ---- 契约面 + 零页错（启动/导出/导入全程无 JS 异常逃逸）----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
-                contract: window.__contractVersion === 1.2,
+                contract: window.__contractVersion === 1.3,
                 inject: typeof window.__inject === 'function',
                 exportFn: typeof window.__exportDocx === 'function',
                 importFn: typeof window.__importDocx === 'function',

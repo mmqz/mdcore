@@ -67,7 +67,37 @@
 //!   样式 ID 透传）——全环断言见本模块测试；
 //! - 不暴露面（DocxWriter 能力中本切片未接线）：页眉/页脚槽位、PNG
 //!   图片（模型无图片块型——BlockKind 无 image 变体，非降级而是
-//!   无源可映射）、脚注、域。
+//!   无源可映射）、脚注、域——**例外**：W-1 目录域（TOC）经 options
+//!   开关接线（见下）；页码域（PAGE/NUMPAGES）仍不暴露（无页面装置
+//!   语义面）。
+//!
+//! ## W-1/W-2 增量（2026-10-28，issue #29 阶段 A0）：options 两新键
+//!
+//! [`export_docx_styled`] 的 options JSON 在既有 `typography`/
+//! `page_geometry` 两键外新增两可选键（缺省 = 与既有导出字节级一致
+//! ——纯加性，既有测试零改动锁背书）：
+//!
+//! - `"toc"`: `{ "enabled": bool, "level_from": 1..=9?, "level_to": 1..=9? }`
+//!   ——目录域开关（W-1 / issue #6 G1 消费）。`enabled` 必填；
+//!   层级缺省 1/3。enabled=true 时在**文档内容块发射之前**发射
+//!   TOC 域段（Word 惯例——目录居文档开头）：fldChar begin
+//!   [dirty=true——打开提示更新域] + instrText `TOC \o "lo-hi"` +
+//!   separate + 占位提示文本 + end 五连（office-io
+//!   [`RunSpec::field_toc_heading_range`]）。层级域校验 1-9 且
+//!   from ≤ to：本层前置 typed 拒（`docx_options`——与既有形状错误
+//!   同码），引擎 V8 save 漏斗兜底（本层拒后不可达——完备性登记）。
+//!   `"enabled": false` ≡ 缺省（零发射，字节稳定）。
+//! - `"anonymize"`: bool——暗标元数据匿名化开关（W-2 / G3 / R-11
+//!   BLOCKER）。true 时 `save_to_vec()` 产物过
+//!   [`anonymize_docx_props`] 后处理（docProps/core.xml → 匿名常量
+//!   [unknown 作者 + epoch 零时 + revision=1]、app.xml/custom.xml →
+//!   空骨架、people.xml 清空、comments.xml 作者面匿名化；正文部件
+//!   原压缩流原样拷贝——零触碰）。缺省 false = 直接返回引擎产物
+//!   （引擎新建面 docx-rs 默认 core.xml 本身已与匿名常量同构——
+//!   office-io g3_t1 单一真源钉定；本开关 = 显式防御性再洗[幂等] +
+//!   产品语义面[暗标红线开关]，引擎/库默认漂移时仍保有保证）。
+//!   错误映射：后处理失败（非 docx 伪产物/zip 面）经 [`map_error`]
+//!   归 `docx_build` 既有通道。
 //!
 //! 纯内核（[`export_docx_core`]）不触碰 JsValue → 原生 cargo test
 //! 直测（写→`read_docx_from_bytes`→模型断言 + XML 面 zip 本地头遍历
@@ -78,8 +108,8 @@ use crate::WasmCore;
 #[cfg(test)]
 use mdc_office_io::docx::read_docx_from_bytes;
 use mdc_office_io::docx::{
-    DefaultTypography, DocxError, DocxWriter, LineRuleSpec, LineSpacingSpec, ListKind,
-    PageGeometry, RunSpec,
+    anonymize_docx_props, DefaultTypography, DocxError, DocxWriter, LineRuleSpec, LineSpacingSpec,
+    ListKind, PageGeometry, RunSpec,
 };
 use mdcore::tree::{Attrs, BlockKind, BlockTree, MarkSpan, NodeId};
 use wasm_bindgen::prelude::*;
@@ -600,11 +630,65 @@ fn opt_int(
     }
 }
 
+/// 必填布尔字段提取（W-1 `toc.enabled`——路径化错误与 [`req_str`] 同构）。
+fn req_bool(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    field: &str,
+) -> Result<bool, ExportError> {
+    match obj.get(field) {
+        Some(serde_json::Value::Bool(b)) => Ok(*b),
+        Some(other) => Err(options_err(
+            path,
+            format!("`{field}` must be a boolean, got {other}"),
+        )),
+        None => Err(options_err(
+            path,
+            format!("missing required field `{field}`"),
+        )),
+    }
+}
+
+/// 可选 TOC 标题层级字段（W-1：语义域 1-9——与引擎 V8 同域；本层
+/// 前置 typed 拒 [`options_err`]，引擎 save 漏斗兜底不可达——完备性）。
+fn opt_toc_level(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<u8>, ExportError> {
+    match obj.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(v) => {
+            let n = v.as_i64().ok_or_else(|| {
+                options_err("toc", format!("`{field}` must be an integer, got {v}"))
+            })?;
+            if !(1..=9).contains(&n) {
+                return Err(options_err(
+                    "toc",
+                    format!("`{field}` = {n} outside 1..=9 (TOC heading levels)"),
+                ));
+            }
+            Ok(Some(n as u8))
+        }
+    }
+}
+
+/// W-1：TOC 目录域选项（已启用形态——level_from ≤ level_to 已校验）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TocOptions {
+    pub level_from: u8,
+    pub level_to: u8,
+}
+
 /// 解析后的导出格式选项（已构造为 office-io 公开类型——值域校验
 /// 延迟到 save 漏斗 V9）。
 pub struct StyleOptions {
     pub typography: Option<DefaultTypography>,
     pub page_geometry: Option<PageGeometry>,
+    /// W-1：`Some` = 发射 TOC 域段（文档内容块之前）；`None` = 缺省/
+    /// enabled=false（零发射，字节稳定）。
+    pub toc: Option<TocOptions>,
+    /// W-2：true = 产物过 [`anonymize_docx_props`]（暗标 G3/R-11）。
+    pub anonymize: bool,
 }
 
 /// options JSON → [`StyleOptions`]（形状校验层；JsValue-free 原生可测）。
@@ -615,10 +699,15 @@ pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
         .as_object()
         .ok_or_else(|| options_err("$", "must be an object".into()))?;
     for key in obj.keys() {
-        if key != "typography" && key != "page_geometry" {
+        if !matches!(
+            key.as_str(),
+            "typography" | "page_geometry" | "toc" | "anonymize"
+        ) {
             return Err(options_err(
                 "$",
-                format!("unknown field `{key}` (allowed: typography, page_geometry)"),
+                format!(
+                    "unknown field `{key}` (allowed: typography, page_geometry, toc, anonymize)"
+                ),
             ));
         }
     }
@@ -712,15 +801,59 @@ pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
         }
     };
 
+    // W-1：TOC 目录域开关（enabled 必填；层级缺省 1/3——层级域 1-9
+    // + from ≤ to 本层前置 typed 拒，引擎 V8 兑底不可达）。
+    let toc = match obj.get("toc") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(t) => {
+            let t = t
+                .as_object()
+                .ok_or_else(|| options_err("toc", "must be an object".into()))?;
+            if !req_bool(t, "toc", "enabled")? {
+                None
+            } else {
+                let level_from = opt_toc_level(t, "level_from")?.unwrap_or(1);
+                let level_to = opt_toc_level(t, "level_to")?.unwrap_or(3);
+                if level_from > level_to {
+                    return Err(options_err(
+                        "toc",
+                        format!(
+                            "`level_from` ({level_from}) > `level_to` ({level_to}) \
+                             (TOC heading levels must satisfy from ≤ to)"
+                        ),
+                    ));
+                }
+                Some(TocOptions {
+                    level_from,
+                    level_to,
+                })
+            }
+        }
+    };
+
+    // W-2：匿名化开关（缺省 false = 引擎产物直通——字节稳定）。
+    let anonymize = match obj.get("anonymize") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(v) => v.as_bool().ok_or_else(|| {
+            options_err(
+                "anonymize",
+                format!("`anonymize` must be a boolean, got {v}"),
+            )
+        })?,
+    };
+
     Ok(StyleOptions {
         typography,
         page_geometry,
+        toc,
+        anonymize,
     })
 }
 
 /// 编辑器核心块树 + 格式选项 → DOCX 字节。选项消费 = 写器两设置面
-/// （几何/排版）；值域违规经 save 漏斗 V9 拒（错误码
-/// `docx_invalid_input`）——形状违规 [`parse_style_options`] 已拦。
+/// （几何/排版）+ W-1 TOC 域段（内容块之前）+ W-2 匿名化后处理；
+/// 值域违规经 save 漏斗 V9 拒（错误码 `docx_invalid_input`）——形状
+/// 违规 [`parse_style_options`] 已拦。
 pub fn export_docx_styled_core(
     tree: &BlockTree,
     options_json: &str,
@@ -733,10 +866,25 @@ pub fn export_docx_styled_core(
     if let Some(t) = opts.typography {
         w.default_typography(t);
     }
+    // W-1：TOC 域段居文档开头（内容块发射之前——Word 惯例：目录在
+    // 正文前；Word/LO 打开后提示更新域生成真实目录）。
+    if let Some(toc) = opts.toc {
+        w.paragraph(&[RunSpec::field_toc_heading_range(
+            toc.level_from,
+            toc.level_to,
+        )]);
+    }
     for &child in tree.top_level() {
         emit_block(tree, child, &mut w, 0)?;
     }
-    w.save_to_vec().map_err(|e| map_error(&e))
+    let bytes = w.save_to_vec().map_err(|e| map_error(&e))?;
+    // W-2：匿名化后处理（暗标 G3/R-11——docProps 元数据清零，正文
+    // 部件原样拷贝；引擎新建面已匿名[单一真源]，本面 = 显式再洗
+    // [幂等] + 产品开关语义）。
+    if opts.anonymize {
+        return anonymize_docx_props(&bytes).map_err(|e| map_error(&e));
+    }
+    Ok(bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -759,11 +907,14 @@ impl WasmCore {
     }
 
     /// 当前文档 + 格式选项 JSON → DOCX 字节（issue #10 / TR-4：G2 格式
-    /// 面消费——排版[字体三槽/半磅字号/行距]与页面几何[twips 全八字段]）。
+    /// 面消费——排版[字体三槽/半磅字号/行距]与页面几何[twips 全八字段]；
+    /// W-1/W-2 增量：`toc` 目录域开关 + `anonymize` 匿名化开关）。
     /// 失败 = 抛 JSON 串
     /// `"code": "docx_options"|"docx_invalid_input"|"docx_limit"|"docx_build"`。
-    /// 选项字段镜像 office-io 公开 API（snake_case 1:1）；两者皆可选、
-    /// 子字段必填（显式全量状态语义）。空对象 `{}` ≡ [`Self::export_docx`]。
+    /// 选项字段镜像 office-io 公开 API（snake_case 1:1）；`typography`/
+    /// `page_geometry` 子字段必填（显式全量状态语义）；`toc`/
+    /// `anonymize` 可选（缺省 ≡ 零发射/零后处理）。空对象 `{}` ≡
+    /// [`Self::export_docx`]（字节级）。
     #[wasm_bindgen]
     pub fn export_docx_styled(&self, options_json: &str) -> Result<Vec<u8>, JsValue> {
         export_docx_styled_core(&self.inner.tree, options_json).map_err(|e| {
@@ -1751,6 +1902,271 @@ mod tests {
         assert!(
             doc.contains(r#"w:left="1440""#) && doc.contains(r#"w:right="1440""#),
             "仅几何面：pgMar 生效"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // W-1/W-2（issue #29 阶段 A0）：`toc` 目录域 + `anonymize` 匿名化
+    // 两 options 键（office-io API 在场、wasm 导出链此前未接——本批
+    // 接线；缺省行为与既有导出字节级一致 = 纯加性）。
+    // -----------------------------------------------------------------
+
+    /// 匿名 core.xml 期望字节（office-io `ANON_CORE_XML` 同文——引擎
+    /// 单一真源常量的 wasm 侧镜像；office-io 测试 g3_t1 双向钉定，
+    /// 漂移即本断言红）。unknown 作者 + epoch 零时 + revision=1。
+    const W2_ANON_CORE_XML: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<cp:coreProperties"#,
+        r#" xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties""#,
+        r#" xmlns:dc="http://purl.org/dc/elements/1.1/""#,
+        r#" xmlns:dcterms="http://purl.org/dc/terms/""#,
+        r#" xmlns:dcmitype="http://purl.org/dc/dcmitype/""#,
+        r#" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">"#,
+        r#"<dcterms:created xsi:type="dcterms:W3CDTF">1970-01-01T00:00:00Z</dcterms:created>"#,
+        r#"<dc:creator>unknown</dc:creator>"#,
+        r#"<cp:lastModifiedBy>unknown</cp:lastModifiedBy>"#,
+        r#"<dcterms:modified xsi:type="dcterms:W3CDTF">1970-01-01T00:00:00Z</dcterms:modified>"#,
+        r#"<cp:revision>1</cp:revision>"#,
+        r#"</cp:coreProperties>"#,
+    );
+
+    /// 匿名 app.xml 期望字节（空骨架——office-io `ANON_APP_XML` 同文）。
+    const W2_ANON_APP_XML: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties""#,
+        r#" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"/>"#,
+    );
+
+    /// W-1 验收主用例：`toc` enabled → document.xml **首段** = TOC 域
+    /// 五连（fldChar begin dirty=true + instrText `TOC \o "lo-hi"` +
+    /// separate + 提示文本 + end——缺省层级 1/3），且居全部内容块
+    /// 之前（Word 惯例——目录在正文前）；正文内容零损（加性首段）。
+    #[test]
+    fn w1_toc_field_five_part_emission_and_position() {
+        let tree = markdown_to_tree("# 章一\n\n正文段。\n");
+        let bytes = export_docx_styled_core(&tree, r#"{"toc":{"enabled":true}}"#)
+            .expect("toc enabled, default levels");
+        let doc = zip_stored_part(&bytes, "word/document.xml");
+        // 五连结构（instrText 引号在 XML 面 = &quot; 转义——字符串面
+        // 直断言与既有 XML 面测试同纪律）。
+        assert!(
+            doc.contains(r#"<w:fldChar w:fldCharType="begin" w:dirty="true" />"#),
+            "fldChar begin dirty=true 在场（打开提示更新域）"
+        );
+        assert_eq!(
+            doc.matches(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#)
+                .count(),
+            1,
+            "instrText TOC \\o \"1-3\"（层级缺省 1/3）恰一次"
+        );
+        assert!(
+            doc.contains(r#"<w:fldChar w:fldCharType="separate""#),
+            "separate 域结果分界在场"
+        );
+        assert!(
+            doc.contains("（目录域——打开后全选再按 F9 更新生成）"),
+            "占位提示文本在场"
+        );
+        assert!(
+            doc.contains(r#"<w:fldChar w:fldCharType="end""#),
+            "fldChar end 在场"
+        );
+        // 位置：TOC 域居文档开头（首内容块之前）。
+        let toc_pos = doc.find("TOC \\o").expect("TOC instr 在场");
+        let first_heading = doc.find("章一").expect("首标题在场");
+        assert!(
+            toc_pos < first_heading,
+            "TOC 域段居首内容块之前（Word 惯例：目录在正文前）"
+        );
+        // 文本面：读回 = 加性首段（提示文本）+ 原内容零损。
+        let back = read_docx_from_bytes(&bytes).expect("read back");
+        let ps = paras(&back.blocks);
+        let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "（目录域——打开后全选再按 F9 更新生成）".to_string(),
+                "章一".to_string(),
+                "正文段。".to_string(),
+            ],
+            "TOC 段 = 加性首段；正文内容零损"
+        );
+
+        // 自定义层级 2-4 → `TOC \o "2-4"`。
+        let bytes_24 = export_docx_styled_core(
+            &tree,
+            r#"{"toc":{"enabled":true,"level_from":2,"level_to":4}}"#,
+        )
+        .expect("toc 2-4");
+        let doc_24 = zip_stored_part(&bytes_24, "word/document.xml");
+        assert!(
+            doc_24.contains(r#"<w:instrText>TOC \o &quot;2-4&quot;</w:instrText>"#),
+            "自定义层级 2-4 进 \\o 开关"
+        );
+        // 合法边界 1-9 全域恰过（引擎 V8 边界镜像）。
+        let bytes_lo = export_docx_styled_core(
+            &tree,
+            r#"{"toc":{"enabled":true,"level_from":1,"level_to":9}}"#,
+        )
+        .expect("toc 1-9");
+        let doc_lo = zip_stored_part(&bytes_lo, "word/document.xml");
+        assert!(
+            doc_lo.contains(r#"<w:instrText>TOC \o &quot;1-9&quot;</w:instrText>"#),
+            "合法边界 1-9 全域恰过"
+        );
+
+        // 与 typography 组合互不干扰（G2 面仍生效）。
+        let bytes_combo = export_docx_styled_core(
+            &tree,
+            r#"{"toc":{"enabled":true},"typography":{"ascii_font":"Fira Code","east_asia_font":"楷体","complex_script_font":"Fira Code","size_half_points":21}}"#,
+        )
+        .expect("toc + typography");
+        let st = zip_stored_part(&bytes_combo, "word/styles.xml");
+        assert!(
+            st.contains("Fira Code") && st.contains("楷体"),
+            "排版面不受 toc 影响"
+        );
+        let doc_combo = zip_stored_part(&bytes_combo, "word/document.xml");
+        assert!(
+            doc_combo.contains(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#),
+            "toc 面不受 typography 影响"
+        );
+    }
+
+    /// W-1/W-2 回归锚：两键缺省/null/enabled:false/anonymize:false →
+    /// 与既有导出**逐字节一致**（纯加性 options——既有契约保护，
+    /// tr4_e2 空对象面的两键扩展）。
+    #[test]
+    fn w1_w2_absent_options_byte_equivalence() {
+        let tree = markdown_to_tree("para one\n\npara two\n");
+        let plain = export_docx_core(&tree).expect("plain export");
+        for json in [
+            "{}",
+            r#"{"toc":null,"anonymize":null}"#,
+            r#"{"toc":{"enabled":false}}"#,
+            // enabled=false 时层级字段不消费（禁用态零发射，字节稳定）。
+            r#"{"toc":{"enabled":false,"level_from":2,"level_to":5}}"#,
+            r#"{"anonymize":false}"#,
+        ] {
+            let out = export_docx_styled_core(&tree, json).expect("equivalent options");
+            assert_eq!(plain, out, "options {json} 必须与无选项导出逐字节相等");
+        }
+    }
+
+    /// W-1 层级域 + W-2 形状 typed 拒（`docx_options`——与既有形状错误
+    /// 同码；层级域 0/10/倒序本层前置拒，引擎 V8 兜底不可达——完备性）。
+    #[test]
+    fn w1_toc_level_domain_and_shape_reject() {
+        let tree = markdown_to_tree("x\n");
+        let cases: Vec<(&str, &str)> = vec![
+            (
+                "level_from 0",
+                r#"{"toc":{"enabled":true,"level_from":0,"level_to":3}}"#,
+            ),
+            (
+                "level_to 10",
+                r#"{"toc":{"enabled":true,"level_from":1,"level_to":10}}"#,
+            ),
+            (
+                "from > to",
+                r#"{"toc":{"enabled":true,"level_from":5,"level_to":2}}"#,
+            ),
+            (
+                "both 0",
+                r#"{"toc":{"enabled":true,"level_from":0,"level_to":0}}"#,
+            ),
+            (
+                "level float",
+                r#"{"toc":{"enabled":true,"level_from":1.5}}"#,
+            ),
+            ("level string", r#"{"toc":{"enabled":true,"level_to":"3"}}"#),
+            ("enabled missing", r#"{"toc":{}}"#),
+            ("enabled wrong type", r#"{"toc":{"enabled":"yes"}}"#),
+            ("toc not object", r#"{"toc":true}"#),
+            ("anonymize wrong type", r#"{"anonymize":"yes"}"#),
+            ("anonymize not bool num", r#"{"anonymize":1}"#),
+        ];
+        for (name, json) in cases {
+            let e = export_docx_styled_core(&tree, json).expect_err("must reject");
+            assert_eq!(e.code, "docx_options", "{name}: {e:?}");
+        }
+    }
+
+    /// W-2 验收主用例：`anonymize:true` → docProps/core.xml 逐字节 =
+    /// 匿名常量 + app.xml 空骨架 + settings.xml 无作者/公司/机器名
+    /// 残留 + 正文部件原压缩流零触碰 + 匿名产物可解析（Word 可开的
+    /// 最小代理）。引擎新建面已匿名（docx-rs 默认 = 匿名常量，
+    /// office-io g3_t1 单一真源）——本面 = 幂等再洗钉定 + 显式开关。
+    #[test]
+    fn w2_anonymize_props_scrub() {
+        let tree = markdown_to_tree("# 章一\n\n正文段。\n");
+        let plain = export_docx_core(&tree).expect("plain export");
+        // 前置登记：引擎新建面已匿名（docx-rs 0.4.22 默认 core.xml =
+        // 匿名常量——office-io ANON_CORE_XML 逐字节同构）。
+        let core_plain = String::from_utf8(
+            mdc_office_io::docx::docx_part_bytes(&plain, "docProps/core.xml").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            core_plain, W2_ANON_CORE_XML,
+            "引擎新建面 core.xml 已匿名（单一真源）"
+        );
+
+        let anon =
+            export_docx_styled_core(&tree, r#"{"anonymize":true}"#).expect("anonymize export");
+        // ① core.xml 逐字节 = 匿名常量（dc:creator=unknown /
+        //    cp:lastModifiedBy=unknown / epoch 零时 / revision=1）。
+        let core = String::from_utf8(
+            mdc_office_io::docx::docx_part_bytes(&anon, "docProps/core.xml").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            core, W2_ANON_CORE_XML,
+            "匿名导出 core.xml 逐字节 = 匿名常量"
+        );
+        // ② app.xml = 空骨架（Company/Manager/Sender 面零残留）。
+        let app = String::from_utf8(
+            mdc_office_io::docx::docx_part_bytes(&anon, "docProps/app.xml").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(app, W2_ANON_APP_XML, "app.xml = 空骨架");
+        // ③ settings.xml 无作者/公司/机器名残留。
+        let settings = String::from_utf8(
+            mdc_office_io::docx::docx_part_bytes(&anon, "word/settings.xml").unwrap(),
+        )
+        .unwrap();
+        for token in [
+            "Company", "Author", "Manager", "Sender", "creator", "Machine", "UserName",
+        ] {
+            assert!(
+                !settings.contains(token),
+                "settings.xml 不得含 {token} 残留: {settings}"
+            );
+        }
+        // ④ 正文部件原压缩流零触碰（anonymize 不变量）。
+        assert_eq!(
+            mdc_office_io::docx::docx_part_bytes(&anon, "word/document.xml"),
+            mdc_office_io::docx::docx_part_bytes(&plain, "word/document.xml"),
+            "正文部件字节不变"
+        );
+        // ⑤ 匿名产物可解析。
+        assert!(read_docx_from_bytes(&anon).is_ok(), "匿名产物可解析");
+
+        // toc + anonymize 组合（两开关独立）。
+        let both = export_docx_styled_core(&tree, r#"{"toc":{"enabled":true},"anonymize":true}"#)
+            .expect("toc + anonymize");
+        assert_eq!(
+            mdc_office_io::docx::docx_part_bytes(&both, "docProps/core.xml"),
+            mdc_office_io::docx::docx_part_bytes(&anon, "docProps/core.xml"),
+            "组合面 core.xml 与单独 anonymize 一致"
+        );
+        let doc_both = String::from_utf8(
+            mdc_office_io::docx::docx_part_bytes(&both, "word/document.xml").unwrap(),
+        )
+        .unwrap();
+        assert!(
+            doc_both.contains(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#),
+            "组合面 TOC 域在场"
         );
     }
 }

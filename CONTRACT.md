@@ -1,4 +1,4 @@
-# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1.4）
+# CONTRACT.md — 宿主 ↔ 桥 ↔ 核 契约（冻结 v1.5）
 
 > R23-d 冻结 v1（2026-10-10）；R24-a minor 升版 v1.1（2026-10-10，纯增量：
 > window 面增设置读写项，v1 面零破坏）；PDF-b minor 升版 v1.2（2026-10-10，
@@ -9,7 +9,10 @@
 > 零变化，`__contractVersion` 保持 1.1）；#16/A4 minor 升版 v1.4
 >（2026-10-27，纯增量：§4 设置快照增第五层 `docx_export` + window 面
 > 测试桥 `__exportDocxStyled`，`__contractVersion` 1.1 → 1.2，v1.3 面零
-> 破坏）。目的：消除原型母本与产品仓（mdcore/）的契约漂移——两侧
+> 破坏）；W-1/W-2 minor 升版 v1.5（2026-10-28，纯增量：§4 `docx_export`
+> 层增 `toc`/`anonymize` 两布尔键（wasm 导出 options 两新可选键的
+> 设置面消费），`__contractVersion` 1.2 → 1.3，v1.4 面零破坏）。目的：
+> 消除原型母本与产品仓（mdcore/）的契约漂移——两侧
 > 对同一契约面的实现必须逐签名一致；破坏性变更必须升
 > `__contractVersion` 并更新本文 + 双侧契约锁测试（`web/tests/contract_gate.py` /
 > `crates/shell/tests/contract_freeze.rs`）。命名域：`mdcore` / `mdshell` / `mdc-*`
@@ -61,7 +64,7 @@ fn save_document(session: &DocumentSession) -> (String, String);   // (markdown,
 `__ready: boolean`；`__core`（WasmCore）；`__view`（CM6 EditorView）；`__bridge`；
 `__blocks(): BlockInfo[]`；`__blockCount(): number`；`__md(): string`；
 `__memStats(): Record`；`__mdcoreEvents: CoreEvent[]`（新核事件流起点，重建清零）；
-`__perf`（loadMs/typeMs/fallbackSyncMs/undoMs/progressive）；`__contractVersion: 1.1`。
+`__perf`（loadMs/typeMs/fallbackSyncMs/undoMs/progressive）；`__contractVersion: 1.3`。
 
 **渐进路径专属**（仅 `?chunks=K>1` 渐进启动安装；一次性启动与 `__inject`
 重建不安装——T3 复用地基轮勘误对齐，此前误记为恒在）：
@@ -98,9 +101,9 @@ window.__inject_chunk(chunk: string, first: boolean): void
 Ctrl+S（宿主存盘）、Ctrl+Z / Ctrl+Shift+Z（`__bridge.undo/redo`）——宿主
 快捷键表变更须升契约版本。
 
-## §4 设置面（v1.4 增补，#16/A4；window 面版本 `__contractVersion` 1.2）
+## §4 设置面（v1.5 增补，W-1/W-2；v1.4 增补 #16/A4；window 面版本 `__contractVersion` 1.3）
 
-### window 面（冻结：`__contractVersion` = 1.2）
+### window 面（冻结：`__contractVersion` = 1.3）
 
 ```ts
 window.__settings(): SettingsSnapshot
@@ -113,7 +116,7 @@ window.__setSetting(path: string, value: number | boolean | string): boolean
 // 未知路径 / 类型不符 / 越界 → false，不派事件（快照零触碰）。
 // 'schema_version' 为保留键，不可经此面写入（迁移框架独占）。
 
-window.__contractVersion = 1.2
+window.__contractVersion = 1.3
 ```
 
 ### 默认值表（双侧一致；Rust 权威 = `mdshell::settings`，web 快照锁样例）
@@ -134,12 +137,23 @@ window.__contractVersion = 1.2
 | docx_export.size_half_points | 28 | 21 \| 24 \| 28 \| 32（UI 三选离散域） |
 | docx_export.line_spacing | 360 | 240 \| 360 \| 480 |
 | docx_export.margin_twips | 1800 | 1134 \| 1440 \| 1800 |
+| docx_export.toc | false | bool（W-1：目录域开关） |
+| docx_export.anonymize | false | bool（W-2：暗标匿名导出开关） |
 
 > #16（A4）：`docx_export` 层由 ⚙ 导出面板与 `__setSetting` 双源写入
 >（设置快照 = 权威态 + `mdc-docx-export` localStorage 镜像作 web 侧
 > 重载种子）；导出按钮经 `export_docx_styled(options JSON)` 消费
 >（wasm 面——issue #10）。默认 `default` = 空 options ≡ 旧
 > `export_docx` 字节级等价（零破坏）。测试桥：`__exportDocxStyled`。
+>
+> W-1/W-2（issue #29 阶段 A0）：`toc`/`anonymize` 两布尔键同层注册
+>（同一双源写入/镜像/消费链）——`toc=true` → 导出 options 增
+> `"toc": {"enabled": true, "level_from": 1, "level_to": 3}`（层级
+> 用默认 1-3，不 UI 化）；`anonymize=true` → 增 `"anonymize": true`
+>（docProps 元数据清零后处理——暗标 G3/R-11）。两键默认 false =
+> options 不携带对应键 ≡ 既有导出字节级等价（纯加性）。wasm 面
+> options 键语义单一真源 = `crates/mdcore-wasm/src/docx_export.rs`
+> 模块文档。
 
 ### Rust 侧（mdshell::settings，headless 可验证；非 window 面）
 
@@ -167,10 +181,19 @@ window.__contractVersion = 1.2
 - `__contractVersion`: 1.1 → 1.2。既有 v1.1 键位/面全部零变化（纯增量
   ——§4 v1.1 九键 + §1/§2/§3/§5/§6 全部零触碰）。
 
+### v1.4 → v1.5 变更记录（2026-10-28，W-1/W-2；`__contractVersion` 1.2 → 1.3）
+
+- 设置快照 `docx_export` 层增两布尔键：`toc`（目录域开关——导出
+  options `toc` 键消费）/ `anonymize`（暗标匿名导出开关——导出
+  options `anonymize` 键消费）。默认均 false（缺省 = 既有导出字节级
+  等价——纯加性；wasm options 键为可选键，缺省行为不变）。
+- `__contractVersion`: 1.2 → 1.3。v1.4 全部键位/面零变化（含
+  `__exportDocxStyled` 桥签名——options JSON 增可选键不属桥面变化）。
+
 ## §5 会话面（v1.1 增补，R24-b）——纯宿主面（Rust↔Rust）
 
 > R24-b 多窗口核侧。**window 面零新增（`__contractVersion` 变更历史见
-> 头部——当前 1.2，随 §4 v1.4）**
+> 头部——当前 1.3，随 §4 v1.5）**
 > （版本常量守卫的是 web window 面；本节全部为 mdshell 宿主面，
 > 消费方 = 原生壳（Rust），不经 web 桥）。破坏性变更同样走本文
 > + 双侧锁（`crates/shell/tests/r24_session.rs` + `contract_freeze.rs`

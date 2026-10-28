@@ -806,7 +806,7 @@ def main() -> int:
                 collabReady: window.__collabReady === true,
             })""")
             check("zero_pageerror_throughout",
-                  final["ready"] and final["contract"] == 1.2
+                  final["ready"] and final["contract"] == 1.3
                   and final["md"] == "function" and final["gridReady"]
                   and final["evReady"] and final["pdfReady"]
                   and final["canvasReady"] and final["collabReady"]

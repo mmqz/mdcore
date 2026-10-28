@@ -131,7 +131,7 @@ def main() -> int:
             check("grid_ready",
                   boot["ready"] and boot["viewport"] and boot["sheetSelect"] and boot["exportBtn"]
                   and boot["fileInput"] and boot["tabs"] and boot["importFn"] == "function"
-                  and boot["contract"] == 1.2,
+                  and boot["contract"] == 1.3,
                   json.dumps(boot))
 
             # ---- 1b. 视图 tab 切换（文档 ↔ 表格面板互斥显隐）----
@@ -473,7 +473,7 @@ def main() -> int:
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
                 gridReady: window.__gridReady === true,
-                contract: window.__contractVersion === 1.2,
+                contract: window.__contractVersion === 1.3,
                 md: typeof window.__md === 'function',
                 exportXlsx: typeof window.__exportXlsx === 'function',
             })""")

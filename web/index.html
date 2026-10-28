@@ -198,6 +198,7 @@
   }
   #docx-export-options .deo-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
   #docx-export-options .deo-row > label { min-width: 3.5em; color: var(--fg-muted); font-size: 12px; }
+  #docx-export-options .deo-row > label.deo-toggle { min-width: 0; margin-left: 10px; }
   #docx-export-options select {
     flex: 1; padding: 4px 8px; font-size: 12px;
     background: var(--bg); color: var(--fg);
@@ -515,6 +516,12 @@
           <option value="1440">1 英寸（标准）</option>
           <option value="1800">90pt（公文）</option>
         </select>
+      </div>
+      <div class="deo-row">
+        <label for="deo-toc">目录</label>
+        <input type="checkbox" id="deo-toc" title="导出时在文档开头插入目录域（Word/LO 打开后按 F9 更新生成；收录标题层级 1-3）" />
+        <label for="deo-anonymize" class="deo-toggle">匿名导出</label>
+        <input type="checkbox" id="deo-anonymize" title="导出时清零文档元数据（作者/公司/机器名——暗标 G3/R-11）" />
       </div>
       <div class="deo-row deo-note"><span id="deo-hint">预设 = 排版 + 页面几何全量应用；自定义可单选字号/行距/边距（其余引擎默认）。</span></div>
     </div>

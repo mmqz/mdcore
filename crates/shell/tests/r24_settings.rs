@@ -572,3 +572,81 @@ fn load_accepts_handwritten_inline_section() {
     // 未涉及的层照常默认
     assert_eq!(s.appearance, Settings::default().appearance);
 }
+
+// ---------------------------------------------------------------------------
+// W-1/W-2（issue #29 阶段 A0）：docx_export 层 toc/anonymize 两布尔键
+//（CONTRACT §4 v1.5 增补——设置键注册模式同 tr16 四键）。
+// ---------------------------------------------------------------------------
+
+/// W-1/W-2 主链：两键 set（typed 校验）→ 快照 → 落盘重载读回 +
+/// 类型 typed 拒 + 零触碰 + 文件面类型降级（bool 无值域面）。
+#[test]
+fn w2a_docx_toc_anonymize_keys_set_reload_and_domain() {
+    let mut store = SettingsStore::new_default();
+    // 默认态：两键 false（缺省 = 既有导出行为——纯加性契约）。
+    assert!(!store.settings().docx_export.toc);
+    assert!(!store.settings().docx_export.anonymize);
+
+    // set 双键 → 快照生效 → 落盘重载存活。
+    store
+        .set("docx_export.toc", SettingValue::Bool(true))
+        .expect("toc set");
+    store
+        .set("docx_export.anonymize", SettingValue::Bool(true))
+        .expect("anonymize set");
+    assert!(store.settings().docx_export.toc);
+    assert!(store.settings().docx_export.anonymize);
+    let dir = tmp_dir("w2a");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("settings.toml");
+    store.save(&path).expect("save");
+    let reloaded = SettingsStore::load(&path);
+    let s = reloaded.settings();
+    assert!(s.docx_export.toc, "toc 重载存活");
+    assert!(s.docx_export.anonymize, "anonymize 重载存活");
+    // 既有四键不受影响（默认态）。
+    assert_eq!(s.docx_export.preset, "default");
+    assert_eq!(s.docx_export.size_half_points, 28);
+    std::fs::remove_dir_all(&dir).ok();
+
+    // 类型 typed 拒（Str/Uint → WrongType；bool 无值域面故无 OutOfRange 路）。
+    let mut store2 = SettingsStore::new_default();
+    for (path, bad) in [
+        ("docx_export.toc", SettingValue::Str("yes".into())),
+        ("docx_export.toc", SettingValue::Uint(1)),
+        ("docx_export.anonymize", SettingValue::Str("true".into())),
+        ("docx_export.anonymize", SettingValue::Uint(0)),
+    ] {
+        assert!(
+            matches!(
+                store2.set(path, bad.clone()),
+                Err(SettingError::WrongType { .. })
+            ),
+            "{path}={bad:?} 必须类型拒"
+        );
+    }
+    assert_eq!(
+        store2.to_toml().unwrap(),
+        default_document().to_string(),
+        "全部拒绝=零触碰"
+    );
+
+    // 文件面类型降级：非 bool 值落盘后重载 → 该键回默认 false + KeyDegraded。
+    let dir2 = tmp_dir("w2ab");
+    std::fs::create_dir_all(&dir2).unwrap();
+    let path2 = dir2.join("settings.toml");
+    std::fs::write(
+        &path2,
+        "schema_version = 1\n\n[docx_export]\ntoc = \"yes\"\nanonymize = 1\n",
+    )
+    .unwrap();
+    let degraded = SettingsStore::load(&path2);
+    let s2 = degraded.settings();
+    assert!(!s2.docx_export.toc, "非 bool 回默认 false");
+    assert!(!s2.docx_export.anonymize, "非 bool 回默认 false");
+    assert!(matches!(
+        degraded.status(),
+        mdshell::settings::LoadStatus::KeyDegraded { .. }
+    ));
+    std::fs::remove_dir_all(&dir2).ok();
+}

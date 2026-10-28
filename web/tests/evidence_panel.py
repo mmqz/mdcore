@@ -417,7 +417,7 @@ def main() -> int:
                   and grid_vis["evidence"] != "none"
                   and doc_vis["editor"] != "none" and doc_vis["panel"] == "none"
                   and doc_vis["gridReady"] and doc_vis["evReady"]
-                  and doc_vis["contract"] == 1.2 and doc_vis["md"] == "function"
+                  and doc_vis["contract"] == 1.3 and doc_vis["md"] == "function"
                   and len(page_errors) == 0,
                   json.dumps({"grid": grid_vis, "doc": doc_vis,
                               "pageErrors": page_errors[:3]}, ensure_ascii=False))

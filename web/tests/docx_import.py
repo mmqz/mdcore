@@ -126,7 +126,7 @@ def main() -> int:
                 contract: window.__contractVersion,
             })""")
             check("import_ui_present",
-                  ui["file"] and ui["status"] and ui["importFn"] == "function" and ui["contract"] == 1.2,
+                  ui["file"] and ui["status"] and ui["importFn"] == "function" and ui["contract"] == 1.3,
                   json.dumps(ui))
 
             # ---- 快乐路径：真实 file input（Playwright set_input_files
@@ -232,7 +232,7 @@ def main() -> int:
             # ---- 契约面 + 零页错（启动/导入全程无 JS 异常逃逸）----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
-                contract: window.__contractVersion === 1.2,
+                contract: window.__contractVersion === 1.3,
                 inject: typeof window.__inject === 'function',
                 md: window.__md(),
             })""")
