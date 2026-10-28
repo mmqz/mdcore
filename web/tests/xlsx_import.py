@@ -129,7 +129,12 @@ def main() -> int:
                   and (stats.get("hyperlinks") or [{}])[0].get("target") == "https://example.com/docs"
                   and status_text.startswith("imported:")
                   and "2 tables" in status_text and "1 formula kept" in status_text
-                  and "1 link kept" in status_text and "1 merge" in status_text,
+                  and "1 link kept" in status_text and "1 merge" in status_text
+                  # P2-4（#22）：merged_ranges 结构登记 → info 档可见警告。
+                  and "1 warning" in status_text
+                  and any(w.get("kind") == "merged_ranges" and w.get("severity") == "info"
+                          and w.get("count") == 1 and w.get("part") == "xlsx"
+                          for w in (stats.get("warnings") or [])),
                   json.dumps({"stats": stats, "status": status_text}))
 
             # ---- 导入文档是活编辑器文档（全桥：op/sync/事件管道）----

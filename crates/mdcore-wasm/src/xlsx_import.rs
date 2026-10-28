@@ -103,7 +103,8 @@
 //!                    "target": "https://example.com/docs", "location": null, "tooltip": null}],
 //!   "formulas_flattened": 0, "merged_ranges": 1, "hyperlinks_dropped": 0,
 //!   "sheets_dropped": 0, "rows_dropped": 0, "cols_dropped": 0,
-//!   "warnings": [{ "part": "...", "kind": "...", "detail": "..." }] }
+//!   "warnings": [{ "kind": "merged_ranges", "part": "xlsx", "count": 1, "severity": "info" },
+//!                 { "part": "xl/..", "kind": "...", "detail": "...", "count": 1, "severity": "warn" }] }
 //! ```
 //!
 //! - `sheets`/`tables`/`empty_sheets`：渲染表数 / GFM 表数 / 空表节数
@@ -117,8 +118,14 @@
 //!   `formulas_flattened`/`hyperlinks_dropped` 语义收窄为**渲染窗外**
 //!   丢弃（行/列越限或锚格越位——正常表恒 0；P2-3 前为全量丢弃
 //!   计数）；
-//! - `warnings`：兼容模式结构化警告（office-io [`Book::warnings`] 透传，
-//!   kind 取 snake_case 字符串——t16 同形）。
+//! - `warnings`（#22 P2-4 可见警告面）：引擎兼容模式结构化警告
+//!   （office-io [`Book::warnings`] 透传，kind 取 snake_case 字符串，
+//!   每条 +`count: 1` +`severity`）**叠加**导入链有损项聚合条目
+//!   （`{kind, part: "xlsx", count, severity}`——非 0 计数才进，count =
+//!   stats 同键镜像）；severity 三档：`error` = 截断（sheets/rows/
+//!   cols_dropped——内容整体不可见，需关注）/ `warn` = 越限丢弃
+//!   （formulas_flattened/hyperlinks_dropped）与引擎部件降级 /
+//!   `info` = 可接受（merged_ranges 结构登记等）。
 //!
 //! ## 已知边界（登记，非缺陷）
 //!
@@ -248,6 +255,49 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // ——完备性映射）。
         mdc_office_io::io::WarningKind::RevisionDelete => "revision_delete",
     }
+}
+
+/// 引擎警告 kind → 严重度（#22 P2-4：docx 导入 `warning_severity` 同形
+/// ——两模块各自内聚，不建跨模块耦合；xlsx 面 `error` 档在此启用：
+/// sheets/rows/cols_dropped = **内容整体不可见**[渲染窗外截断]——
+/// R-1 实测 101MB 档 rows_dropped=3200，量级面非段落级丢弃）。
+fn warning_severity(kind: &mdc_office_io::io::WarningKind) -> &'static str {
+    match kind {
+        mdc_office_io::io::WarningKind::MalformedXml
+        | mdc_office_io::io::WarningKind::BrokenReference => "warn",
+        mdc_office_io::io::WarningKind::ControlChars
+        | mdc_office_io::io::WarningKind::RevisionDelete => "info",
+    }
+}
+
+/// 导入链有损项 → warnings 条目（#22 P2-4，docx 面 `import_lossy_warnings`
+/// 同族）：非 0 才进；`count` = stats 同键镜像（单一真源在 stats 键）；
+/// `part` = `"xlsx"`（格式面标识）；severity 三档裁决：截断
+///（sheets/rows/cols——内容整体不可见）= `error`，越限丢弃
+///（formulas/hyperlinks——渲染窗外双通道丢失）= `warn`，结构登记
+///（merged_ranges——GFM 降级显式化非损失）= `info`。
+fn import_lossy_warnings(
+    sheets_dropped: usize,
+    rows_dropped: usize,
+    cols_dropped: usize,
+    formulas_flattened: usize,
+    hyperlinks_dropped: usize,
+    merged_ranges: usize,
+) -> Vec<serde_json::Value> {
+    [
+        ("sheets_dropped", sheets_dropped, "error"),
+        ("rows_dropped", rows_dropped, "error"),
+        ("cols_dropped", cols_dropped, "error"),
+        ("formulas_flattened", formulas_flattened, "warn"),
+        ("hyperlinks_dropped", hyperlinks_dropped, "warn"),
+        ("merged_ranges", merged_ranges, "info"),
+    ]
+    .into_iter()
+    .filter(|&(_, count, _)| count > 0)
+    .map(|(kind, count, severity)| {
+        serde_json::json!({ "kind": kind, "part": "xlsx", "count": count, "severity": severity })
+    })
+    .collect()
 }
 
 /// 单表渲染产物（book_to_markdown 的聚合单元——纯数据）。
@@ -569,6 +619,30 @@ fn book_to_markdown(book: &Book) -> (String, serde_json::Value) {
 
     let merged_ranges: usize = book.sheets[..rendered].iter().map(|s| s.merges.len()).sum();
 
+    // #22 P2-4：可见警告面——引擎警告（count=1 逐条 + severity）+
+    // 导入链有损项聚合（非 0 才进；count = stats 同键镜像单一真源）。
+    let mut warnings: Vec<serde_json::Value> = book
+        .warnings
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "part": w.part,
+                "kind": warning_kind(&w.kind),
+                "detail": w.detail,
+                "count": 1,
+                "severity": warning_severity(&w.kind),
+            })
+        })
+        .collect();
+    warnings.extend(import_lossy_warnings(
+        book.sheets.len() - rendered,
+        rows_dropped,
+        cols_dropped,
+        formulas_dropped,
+        hyperlinks_dropped,
+        merged_ranges,
+    ));
+
     let stats = serde_json::json!({
         "sheets": rendered,
         "tables": tables,
@@ -588,11 +662,7 @@ fn book_to_markdown(book: &Book) -> (String, serde_json::Value) {
         "sheets_dropped": book.sheets.len() - rendered,
         "rows_dropped": rows_dropped,
         "cols_dropped": cols_dropped,
-        "warnings": book.warnings.iter().map(|w| serde_json::json!({
-            "part": w.part,
-            "kind": warning_kind(&w.kind),
-            "detail": w.detail,
-        })).collect::<Vec<_>>(),
+        "warnings": warnings,
     });
     (sections.join("\n\n"), stats)
 }
@@ -765,7 +835,12 @@ mod tests {
         assert_eq!(stats["sheets_dropped"], 0);
         assert_eq!(stats["rows_dropped"], 0);
         assert_eq!(stats["cols_dropped"], 0);
-        assert_eq!(stats["warnings"].as_array().map(Vec::len), Some(0));
+        // #22 P2-4：merged_ranges（结构登记非损失）→ info 档可见警告；
+        // 截断/越限项全 0 → 不进（无事不噪声）；零损样例恰一条。
+        assert_eq!(
+            stats["warnings"],
+            serde_json::json!([{ "kind": "merged_ranges", "part": "xlsx", "count": 1, "severity": "info" }])
+        );
     }
 
     /// P2-3：公式双通道——单元格 = 反引号公式原文；缓存值进 stats
@@ -875,6 +950,9 @@ mod tests {
             "合并行应为左上值+空: {md}"
         );
         assert_eq!(payload["stats"]["merged_ranges"], 1);
+        // #22 P2-4：同上——merged_ranges info 档可见警告。
+        assert_eq!(payload["stats"]["warnings"][0]["kind"], "merged_ranges");
+        assert_eq!(payload["stats"]["warnings"][0]["severity"], "info");
     }
 
     /// 规模上限：表数/行/列前缀截断 + 丢弃计数显式化。
@@ -900,6 +978,21 @@ mod tests {
         assert_eq!(stats["sheets_dropped"], 3);
         assert_eq!(stats["rows_dropped"], 15); // 3 表 × 5 行
         assert_eq!(stats["cols_dropped"], 9); // 3 表 × 3 列
+                                              // #22 P2-4：截断面（内容整体不可见）→ error 档可见警告三连
+                                              //（count = stats 同键镜像）。
+        let warns = stats["warnings"].as_array().expect("warnings array");
+        for (kind, count) in [
+            ("sheets_dropped", 3),
+            ("rows_dropped", 15),
+            ("cols_dropped", 9),
+        ] {
+            let hit = warns
+                .iter()
+                .find(|w| w["kind"] == kind && w["severity"] == "error")
+                .unwrap_or_else(|| panic!("{kind} error 条目缺席: {warns:?}"));
+            assert_eq!(hit["count"], count, "{kind} 计数镜像");
+            assert_eq!(hit["part"], "xlsx");
+        }
         assert_eq!(stats["rows"], 3 * MAX_ROWS + 13 * 2);
         let md = payload["markdown"].as_str().expect("markdown");
         // 每表 50 数据行 + 表头 + 分隔行 = 52 行；表节 16 个。
