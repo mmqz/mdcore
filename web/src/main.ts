@@ -75,6 +75,7 @@ import { setupCollabChannel } from './collab_channel.js';
 import { setupEvidencePanel } from './evidence_panel.js';
 import { setupPdfView } from './pdf_view.js';
 import { setupXlsxGrid, gridOpenBytesWhenReady } from './xlsx_grid.js';
+import { t, tCount, initI18n, applyStaticI18n } from './i18n/index.js';
 
 // ---------------------------------------------------------------------------
 // 核侧数据形状（blocks_json / take_events 的最小面）
@@ -1420,7 +1421,7 @@ interface SettingsSnapshot {
     autosave_interval_ms: number;
     session_restore: boolean;
   };
-  appearance: { theme: string; font_size_px: number };
+  appearance: { theme: string; font_size_px: number; language: string };
   /** #16（A4）：docx 导出格式层（CONTRACT §4 v1.2 增补——纯增量）；
    *  W-1/W-2（issue #29）：toc/anonymize 两布尔键 v1.5 增补。 */
   docx_export: {
@@ -1444,7 +1445,7 @@ const DEFAULT_SETTINGS: SettingsSnapshot = {
     autosave_interval_ms: 30_000,
     session_restore: true,
   },
-  appearance: { theme: 'system', font_size_px: 15 },
+  appearance: { theme: 'system', font_size_px: 15, language: 'auto' },
   docx_export: { preset: 'default', size_half_points: 28, line_spacing: 360, margin_twips: 1800, toc: false, anonymize: false },
 };
 
@@ -1462,6 +1463,9 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   'storage.session_restore': isBool,
   'appearance.theme': (v) => v === 'light' || v === 'dark' || v === 'system',
   'appearance.font_size_px': isUintInRange(8, 48),
+  // #43（CONTRACT §4 v1.6）：界面语言（'auto' = 跟随 navigator.language；
+  // 显式 en / zh-CN 覆盖——消费面 = i18n initI18n 单一真源）。
+  'appearance.language': (v) => v === 'auto' || v === 'en' || v === 'zh-CN',
   // #16（A4）：docx 导出格式层四键（离散值域——与 Rust bounds 同表）。
   'docx_export.preset':
     (v) => typeof v === 'string'
@@ -1495,8 +1499,34 @@ function applySettingToSnapshot(path: string, value: number | boolean | string):
   target[key] = value;
 }
 
+/** #43：语言键 localStorage 镜像（与 DOCX_EXPORT_LS_KEY 同模式——
+ * web 独立态重载种子；宿主 R24-d 注入权威快照后让位）。 */
+const LANG_LS_KEY = 'mdc-language';
+
+function seedLanguageSetting(): void {
+  try {
+    const raw = localStorage.getItem(LANG_LS_KEY);
+    if (raw === 'auto' || raw === 'en' || raw === 'zh-CN') {
+      settingsSnapshot.appearance.language = raw;
+    }
+  } catch { /* 私密模式 */ }
+}
+
 async function main(): Promise<void> {
   const t0 = performance.now();
+  // #43：语言解析在一切模块文本创建之前（设置键优先，'auto' →
+  // navigator.language）；静态文本面一次性覆写（data-i18n 三属性）。
+  seedLanguageSetting();
+  initI18n(settingsSnapshot.appearance.language, navigator.language);
+  applyStaticI18n();
+  // 语言切换 = 全页重建（动态创建的模块文本一次性重生成——避免逐
+  // 组件重渲染的状态漂移；设置变更低频，刷新 = 诚实简单）。
+  window.addEventListener('mdc-settings-changed', (ev) => {
+    const d = (ev as CustomEvent<{ path: string; value: string }>).detail;
+    if (d.path !== 'appearance.language') return;
+    try { localStorage.setItem(LANG_LS_KEY, String(d.value)); } catch { /* 私密模式 */ }
+    location.reload();
+  });
   const initP = wasmBoot(wasmMod); // R16：wasm 实例化与大文档生成并行（TTI）——单飞门（__wbg_init 并发不安全，见 wasm_boot.ts）
   const params = new URLSearchParams(location.search);
   const big = params.get('doc') === 'big';
@@ -1655,7 +1685,7 @@ async function main(): Promise<void> {
     window.dispatchEvent(new CustomEvent('mdc-settings-changed', { detail: { path, value } }));
     return true;
   };
-  window.__contractVersion = 1.3;
+  window.__contractVersion = 1.4;
 
   // ---- Phase 5 §8.3: grid UI productization (xlsx_grid wiring) ----
   // WasmBook's lifecycle is independent of WasmCore (the installNewCore
@@ -1708,8 +1738,13 @@ async function main(): Promise<void> {
   if (bootEl) {
     const p = window.__perf;
     bootEl.textContent = p.progressive
-      ? `ready · blocks=${window.__blockCount()} · progressive tti=${p.progressive.ttiMs.toFixed(0)}ms ingest=${p.progressive.ingestMs.toFixed(0)}ms chunks=${p.progressive.chunks}`
-      : `ready · blocks=${window.__blockCount()} · load=${p.loadMs.toFixed(0)}ms`;
+      ? t('debug.readyProgressive', {
+          blocks: window.__blockCount(),
+          tti: p.progressive.ttiMs.toFixed(0),
+          ingest: p.progressive.ingestMs.toFixed(0),
+          chunks: p.progressive.chunks,
+        })
+      : t('debug.ready', { blocks: window.__blockCount(), ms: p.loadMs.toFixed(0) });
   }
 }
 
@@ -1735,12 +1770,13 @@ type ImportWarning = {
 };
 
 /** 警告数摘要（#22 P2-4）：总数 + error 档显式提示（需关注面不
- * 淹没在总数里）；0 条 = 空串（状态行零噪声）。 */
+ * 淹没在总数里）；0 条 = 空串（状态行零噪声）。#43：t()/tCount()
+ * 双语面（en 输出与既有字面逐字节一致——测试锚）。 */
 function warningsSummary(warnings: ImportWarning[]): string {
   if (warnings.length === 0) return '';
   const errors = warnings.filter((w) => w.severity === 'error').length;
-  const base = `${warnings.length} warning${warnings.length === 1 ? '' : 's'}`;
-  return errors > 0 ? `${base} (${errors} error${errors === 1 ? '' : 's'})` : base;
+  const base = tCount('warn.count', warnings.length);
+  return errors > 0 ? base + tCount('warn.errorSuffix', errors, { e: errors }) : base;
 }
 
 /** 警告明细面板渲染（#22 P2-4）：状态行下方挂面板（首次创建、后续
@@ -1827,22 +1863,22 @@ function docxImport(bytes: Uint8Array):
  * 既有口径零变化）。 */
 function docxStatusLine(stats: DocxImportStats): string {
   const parts = [
-    `${stats.headings} heading${stats.headings === 1 ? '' : 's'}`,
-    `${stats.paragraphs} paragraph${stats.paragraphs === 1 ? '' : 's'}`,
-    `${stats.tables} table${stats.tables === 1 ? '' : 's'}`,
-    `${stats.hyperlinks} link${stats.hyperlinks === 1 ? '' : 's'}`,
+    tCount('docx.heading', stats.headings),
+    tCount('docx.paragraph', stats.paragraphs),
+    tCount('docx.table', stats.tables),
+    tCount('docx.link', stats.hyperlinks),
   ];
-  if (stats.list_items > 0) parts.push(`${stats.list_items} list item${stats.list_items === 1 ? '' : 's'}`);
-  if (stats.images_skipped > 0) parts.push(`${stats.images_skipped} image${stats.images_skipped === 1 ? '' : 's'} skipped`);
+  if (stats.list_items > 0) parts.push(tCount('docx.listItem', stats.list_items));
+  if (stats.images_skipped > 0) parts.push(tCount('docx.imagesSkipped', stats.images_skipped));
   // P2-1（#22）：页眉/页脚接入计数（markdown 前导/尾接可见；
   // headers/footers_skipped 恒 0 后不再作为展示源——兼容旧 stats 形
   // 防御 ?? 0）。
   const importedParts = (stats.headers_imported ?? 0) + (stats.footers_imported ?? 0);
-  if (importedParts > 0) parts.push(`${importedParts} header/footer part${importedParts === 1 ? '' : 's'} imported`);
+  if (importedParts > 0) parts.push(tCount('docx.headerFooterImported', importedParts));
   // #22 P2-4：可见警告数（error 档显式提示）；明细面板点击展开。
   const warnSum = warningsSummary(stats.warnings);
   if (warnSum) parts.push(warnSum);
-  return `imported: ${parts.join(' · ')}`;
+  return t('status.imported', { parts: parts.join(' · ') });
 }
 
 function setupDocxImport(): void {
@@ -1856,10 +1892,21 @@ function setupDocxImport(): void {
     const panel = document.getElementById('docx-warning-panel');
     if (panel) panel.hidden = true;
   };
+  // #43 问题 6：成功态绿显 + 3s 变淡（文本保留——可测面不变；定时器
+  // 逐次重置防跨状态早燃，text 守卫防旧定时器污染新状态）。
+  let okDimTimer = 0;
   const showStatus = (text: string, isError: boolean): void => {
     if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.classList.toggle('docx-error', isError);
+    statusEl.classList.toggle('status-ok', !isError);
+    statusEl.classList.remove('status-dim');
+    window.clearTimeout(okDimTimer);
+    if (!isError) {
+      okDimTimer = window.setTimeout(() => {
+        if (statusEl.textContent === text) statusEl.classList.add('status-dim');
+      }, 3000);
+    }
     if (isError) clearWarnings();
   };
   window.__importDocx = (bytes: Uint8Array):
@@ -1868,14 +1915,14 @@ function setupDocxImport(): void {
     const result = docxImport(bytes);
     if (!result.ok) {
       window.__lastDocxImport = { ok: false, code: result.code, message: result.message };
-      showStatus(`import failed (${result.code}): ${result.message}`, true);
+      showStatus(t('status.importFailed', { code: result.code, message: result.message }), true);
       return { ok: false, code: result.code, message: result.message };
     }
     if (typeof window.__inject !== 'function') {
       // 启动竞态兜底（__inject 在 main() 完成安装；正常路径不可达）。
       const code = 'not_ready';
       window.__lastDocxImport = { ok: false, code, message: 'editor boot incomplete' };
-      showStatus('import failed (not_ready): editor boot incomplete', true);
+      showStatus(t('status.importFailed', { code: 'not_ready', message: t('status.bootIncomplete') }), true);
       return { ok: false, code, message: 'editor boot incomplete' };
     }
     window.__inject(result.markdown); // 既有宿主注入契约：整体重建核
@@ -1954,27 +2001,29 @@ function xlsxImport(bytes: Uint8Array):
 /** stats → 状态行（导入摘要；丢弃面计数显式化——诚实边界）。 */
 function xlsxStatusLine(stats: XlsxImportStats): string {
   const parts = [
-    `${stats.sheets} sheet${stats.sheets === 1 ? '' : 's'}`,
-    `${stats.tables} table${stats.tables === 1 ? '' : 's'}`,
-    `${stats.rows} row${stats.rows === 1 ? '' : 's'}`,
+    tCount('xlsx.sheet', stats.sheets),
+    tCount('xlsx.table', stats.tables),
+    tCount('xlsx.row', stats.rows),
   ];
-  if (stats.empty_sheets > 0) parts.push(`${stats.empty_sheets} empty`);
+  if (stats.empty_sheets > 0) parts.push(tCount('xlsx.emptySheet', stats.empty_sheets));
   // P2-3（#22）：双通道接入计数优先展示（公式原文反引号形 + 链接
   // GFM 形已进表体）；越限丢弃键语义收窄后仍保留（仅越限非 0）。
   const formulasKept = stats.formulas_imported ?? 0;
-  if (formulasKept > 0) parts.push(`${formulasKept} formula${formulasKept === 1 ? '' : 's'} kept`);
-  if (stats.formulas_flattened > 0) parts.push(`${stats.formulas_flattened} formula${stats.formulas_flattened === 1 ? '' : 's'} flattened`);
-  if (stats.merged_ranges > 0) parts.push(`${stats.merged_ranges} merge${stats.merged_ranges === 1 ? '' : 's'}`);
+  if (formulasKept > 0) parts.push(tCount('xlsx.formulaKept', formulasKept));
+  if (stats.formulas_flattened > 0) parts.push(tCount('xlsx.formulaFlattened', stats.formulas_flattened));
+  if (stats.merged_ranges > 0) parts.push(tCount('xlsx.merge', stats.merged_ranges));
   const linksKept = stats.hyperlinks_imported ?? 0;
-  if (linksKept > 0) parts.push(`${linksKept} link${linksKept === 1 ? '' : 's'} kept`);
-  if (stats.hyperlinks_dropped > 0) parts.push(`${stats.hyperlinks_dropped} link${stats.hyperlinks_dropped === 1 ? '' : 's'} dropped`);
-  if (stats.sheets_dropped > 0) parts.push(`${stats.sheets_dropped} sheet${stats.sheets_dropped === 1 ? '' : 's'} truncated`);
-  if (stats.rows_dropped > 0 || stats.cols_dropped > 0) parts.push(`${stats.rows_dropped} rows/${stats.cols_dropped} cols truncated`);
+  if (linksKept > 0) parts.push(tCount('xlsx.linkKept', linksKept));
+  if (stats.hyperlinks_dropped > 0) parts.push(tCount('xlsx.linkDropped', stats.hyperlinks_dropped));
+  if (stats.sheets_dropped > 0) parts.push(tCount('xlsx.sheetTruncated', stats.sheets_dropped));
+  if (stats.rows_dropped > 0 || stats.cols_dropped > 0) {
+    parts.push(t('xlsx.rowsColsTruncated', { r: stats.rows_dropped, c: stats.cols_dropped }));
+  }
   // #22 P2-4：可见警告数（error 档显式提示——截断面需关注）；
   // 明细面板点击展开（severity 三档行级着色）。
   const warnSum = warningsSummary(stats.warnings);
   if (warnSum) parts.push(warnSum);
-  return `imported: ${parts.join(' · ')}`;
+  return t('status.imported', { parts: parts.join(' · ') });
 }
 
 function setupXlsxImport(): void {
@@ -1988,10 +2037,22 @@ function setupXlsxImport(): void {
     const panel = document.getElementById('xlsx-warning-panel');
     if (panel) panel.hidden = true;
   };
+  // #43 问题 6：成功态绿显 + 3s 变淡（docx 面同构——定时器逐次重置 +
+  // text 守卫）。#42 后缀追加发生在异步尾拍——追加后重置计时。此处仅
+  // 管主状态发射面。
+  let okDimTimer = 0;
   const showStatus = (text: string, isError: boolean): void => {
     if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.classList.toggle('xlsx-error', isError);
+    statusEl.classList.toggle('status-ok', !isError);
+    statusEl.classList.remove('status-dim');
+    window.clearTimeout(okDimTimer);
+    if (!isError) {
+      okDimTimer = window.setTimeout(() => {
+        if (statusEl.textContent === text) statusEl.classList.add('status-dim');
+      }, 3000);
+    }
     if (isError) clearWarnings();
   };
   window.__importXlsx = (bytes: Uint8Array):
@@ -2000,14 +2061,14 @@ function setupXlsxImport(): void {
     const result = xlsxImport(bytes);
     if (!result.ok) {
       window.__lastXlsxImport = { ok: false, code: result.code, message: result.message };
-      showStatus(`import failed (${result.code}): ${result.message}`, true);
+      showStatus(t('status.importFailed', { code: result.code, message: result.message }), true);
       return { ok: false, code: result.code, message: result.message };
     }
     if (typeof window.__inject !== 'function') {
       // 启动竞态兜底（__inject 在 main() 完成安装；正常路径不可达）。
       const code = 'not_ready';
       window.__lastXlsxImport = { ok: false, code, message: 'editor boot incomplete' };
-      showStatus('import failed (not_ready): editor boot incomplete', true);
+      showStatus(t('status.importFailed', { code: 'not_ready', message: t('status.bootIncomplete') }), true);
       return { ok: false, code, message: 'editor boot incomplete' };
     }
     window.__inject(result.markdown); // 既有宿主注入契约：整体重建核
@@ -2034,7 +2095,7 @@ function setupXlsxImport(): void {
       curImport.grid = g;
       if (g.ok && statusEl) {
         const n = g.sheets.length;
-        statusEl.textContent += ` · workbook in grid (${n} sheet${n === 1 ? '' : 's'})`;
+        statusEl.textContent += t('status.gridSuffix', { n, plural: n === 1 ? '' : 's' });
       }
     })();
     return { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
@@ -2244,10 +2305,20 @@ function downloadDocx(bytes: Uint8Array): void {
 function setupDocxExport(): void {
   const btn = document.getElementById('docx-export-btn') as HTMLButtonElement | null;
   const statusEl = document.getElementById('docx-export-status') as HTMLElement | null;
+  // #43 问题 6：导出成功同享绿显 + 3s 变淡（导入面同构）。
+  let okDimTimer = 0;
   const showStatus = (text: string, isError: boolean): void => {
     if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.classList.toggle('docx-export-error', isError);
+    statusEl.classList.toggle('status-ok', !isError);
+    statusEl.classList.remove('status-dim');
+    window.clearTimeout(okDimTimer);
+    if (!isError) {
+      okDimTimer = window.setTimeout(() => {
+        if (statusEl.textContent === text) statusEl.classList.add('status-dim');
+      }, 3000);
+    }
   };
   window.__exportDocx = ():
     | { ok: true; bytes: Uint8Array; sizeBytes: number }
@@ -2257,7 +2328,7 @@ function setupDocxExport(): void {
       // 启动竞态兑底（__core 在 main() 完成安装；正常路径不可达）。
       const code = 'not_ready';
       window.__lastDocxExport = { ok: false, code, message: 'editor boot incomplete' };
-      showStatus('export failed (not_ready): editor boot incomplete', true);
+      showStatus(t('status.exportFailed', { code: 'not_ready', message: t('status.bootIncomplete') }), true);
       return { ok: false, code, message: 'editor boot incomplete' };
     }
     try {
@@ -2276,9 +2347,9 @@ function setupDocxExport(): void {
       const kb = bytes.length >= 1024 ? `${(bytes.length / 1024).toFixed(1)} KB` : `${bytes.length} B`;
       const blocks = core.blocks_count();
       const degraded = degradedBlockCount();
-      const parts = [`exported: ${kb}`, `${blocks} block${blocks === 1 ? '' : 's'}`];
-      if (degraded > 0) parts.push(`${degraded} simplified`);
-      showStatus(parts.join(' · '), false);
+      const parts = [kb, tCount('export.block', blocks)];
+      if (degraded > 0) parts.push(t('export.simplified', { n: degraded }));
+      showStatus(t('status.exported', { parts: parts.join(' · ') }), false);
       window.__lastDocxExport = { ok: true, sizeBytes: bytes.length };
       return { ok: true, bytes, sizeBytes: bytes.length };
     } catch (e: unknown) {
@@ -2295,7 +2366,7 @@ function setupDocxExport(): void {
         // 保留 unknown 兜底
       }
       window.__lastDocxExport = { ok: false, code, message };
-      showStatus(`export failed (${code}): ${message}`, true);
+      showStatus(t('status.exportFailed', { code, message }), true);
       return { ok: false, code, message };
     }
   };
@@ -2536,13 +2607,13 @@ function setupStatusBar(): void {
       cjk_chars: number; western_words: number; total_words: number; total_chars: number;
       paragraphs: number; headings: number; tables: number;
     };
-    if (countsEl) countsEl.textContent = `${wc.total_chars} 字符 · ${wc.total_words} 词`;
-    if (blocksEl) blocksEl.textContent = `${core.blocks_count()} 块`;
+    if (countsEl) countsEl.textContent = t('sb.counts', { chars: wc.total_chars, words: wc.total_words });
+    if (blocksEl) blocksEl.textContent = t('sb.blocks', { n: core.blocks_count() });
     const sel = view.state.selection.main.head;
     const line = view.state.doc.lineAt(sel);
-    if (cursorEl) cursorEl.textContent = `Ln ${line.number}, Col ${sel - line.from + 1}`;
+    if (cursorEl) cursorEl.textContent = t('sb.cursor', { line: line.number, col: sel - line.from + 1 });
     const rev = Number(core.revision());
-    if (revEl) revEl.textContent = `rev ${rev}`;
+    if (revEl) revEl.textContent = t('sb.rev', { n: rev });
     const now = Date.now();
     if (lastSeenRev >= 0 && rev !== lastSeenRev) {
       if (!dirty) dirtySince = now;
@@ -2554,10 +2625,10 @@ function setupStatusBar(): void {
       // autosave；web 独立态 = 提示文本升级）。不自动写核——保存动作
       // 恒经宿主桥/用户（CONTRACT 路径不越权）。
       saveEl?.classList.add('sb-dirty');
-      if (saveEl) saveEl.textContent = '未保存 · Ctrl+S（建议保存）';
+      if (saveEl) saveEl.textContent = t('sb.unsavedHint');
       window.dispatchEvent(new CustomEvent('mdc-autosave-hint', { detail: { revision: rev } }));
     } else if (saveEl) {
-      saveEl.textContent = dirty ? '未保存 · Ctrl+S' : '已保存';
+      saveEl.textContent = dirty ? t('sb.unsaved') : t('sb.saved');
       saveEl.classList.toggle('sb-dirty', dirty);
     }
   };
@@ -2571,7 +2642,7 @@ function setupStatusBar(): void {
     if (!core) return false;
     dirty = false;
     if (saveEl) {
-      saveEl.textContent = `已保存 · rev ${Number(core.revision())}`;
+      saveEl.textContent = t('sb.savedRev', { n: Number(core.revision()) });
       saveEl.classList.remove('sb-dirty');
     }
     window.dispatchEvent(new CustomEvent('mdc-save', { detail: { revision: Number(core.revision()) } }));
@@ -2928,10 +2999,20 @@ function downloadXlsx(bytes: Uint8Array): void {
 function setupXlsxExport(): void {
   const btn = document.getElementById('xlsx-export-btn') as HTMLButtonElement | null;
   const statusEl = document.getElementById('xlsx-export-status') as HTMLElement | null;
+  // #43 问题 6：导出成功同享绿显 + 3s 变淡（导入面同构）。
+  let okDimTimer = 0;
   const showStatus = (text: string, isError: boolean): void => {
     if (!statusEl) return;
     statusEl.textContent = text;
     statusEl.classList.toggle('xlsx-export-error', isError);
+    statusEl.classList.toggle('status-ok', !isError);
+    statusEl.classList.remove('status-dim');
+    window.clearTimeout(okDimTimer);
+    if (!isError) {
+      okDimTimer = window.setTimeout(() => {
+        if (statusEl.textContent === text) statusEl.classList.add('status-dim');
+      }, 3000);
+    }
   };
   window.__exportXlsx = ():
     | { ok: true; bytes: Uint8Array; sizeBytes: number }
@@ -2941,7 +3022,7 @@ function setupXlsxExport(): void {
       // 启动竞态兑底（__core 在 main() 完成安装；正常路径不可达）。
       const code = 'not_ready';
       window.__lastXlsxExport = { ok: false, code, message: 'editor boot incomplete' };
-      showStatus('export failed (not_ready): editor boot incomplete', true);
+      showStatus(t('status.exportFailed', { code: 'not_ready', message: t('status.bootIncomplete') }), true);
       return { ok: false, code, message: 'editor boot incomplete' };
     }
     try {
@@ -2949,7 +3030,7 @@ function setupXlsxExport(): void {
       downloadXlsx(bytes);
       const kb = bytes.length >= 1024 ? `${(bytes.length / 1024).toFixed(1)} KB` : `${bytes.length} B`;
       const sheets = sheetCount();
-      showStatus(`exported: ${kb} · ${sheets} sheet${sheets === 1 ? '' : 's'}`, false);
+      showStatus(t('status.exported', { parts: `${kb} · ${tCount('xlsx.sheet', sheets)}` }), false);
       window.__lastXlsxExport = { ok: true, sizeBytes: bytes.length };
       return { ok: true, bytes, sizeBytes: bytes.length };
     } catch (e: unknown) {
@@ -2966,7 +3047,7 @@ function setupXlsxExport(): void {
         // 保留 unknown 兑底
       }
       window.__lastXlsxExport = { ok: false, code, message };
-      showStatus(`export failed (${code}): ${message}`, true);
+      showStatus(t('status.exportFailed', { code, message }), true);
       return { ok: false, code, message };
     }
   };
@@ -3010,7 +3091,11 @@ function setupThemeControl(): void {
     const snap = window.__settings?.();
     const cur = snap?.appearance?.theme ?? 'system';
     applyThemeToDom(cur);
-    label.textContent = `theme: ${cur}`;
+    label.textContent = t(
+      cur === 'light' ? 'theme.light'
+        : cur === 'dark' ? 'theme.dark'
+          : matchMedia('(prefers-color-scheme: dark)').matches ? 'theme.systemDark' : 'theme.systemLight',
+    );
     try { localStorage.setItem('mdc-theme', cur); } catch { /* 私密模式 */ }
   };
   btn.addEventListener('click', () => {
@@ -3186,7 +3271,9 @@ function openSettingsPanel(): void {
   document.addEventListener('keydown', esc);
 }
 
-/** 证据面板折叠（width-0 形态——display 保持 block，测试面零接触）。 */
+/** 证据面板折叠（width-0 形态——display 保持 block，测试面零接触）。
+ * #43 问题 2：默认折叠（常驻整栏「no session」= 导入失败误判源；
+ * 需要溯源时展开）。标题/aria 双语（t()）。 */
 function setupEvidenceCollapse(): void {
   const mainRow = document.getElementById('main-row');
   const panel = document.getElementById('evidence-panel');
@@ -3194,8 +3281,8 @@ function setupEvidenceCollapse(): void {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'evidence-collapse-btn';
-  btn.title = '折叠/展开证据面板';
-  btn.setAttribute('aria-label', '折叠/展开证据面板');
+  btn.title = t('ev.collapseTitle');
+  btn.setAttribute('aria-label', t('ev.collapseTitle'));
   const setCollapsed = (collapsed: boolean): void => {
     mainRow.classList.toggle('ev-collapsed', collapsed);
     btn.textContent = collapsed ? '»' : '«';
@@ -3205,4 +3292,5 @@ function setupEvidenceCollapse(): void {
     setCollapsed(!mainRow.classList.contains('ev-collapsed'));
   });
   mainRow.prepend(btn);
+  setCollapsed(true); // #43：默认折叠
 }

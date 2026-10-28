@@ -650,3 +650,79 @@ fn w2a_docx_toc_anonymize_keys_set_reload_and_domain() {
     ));
     std::fs::remove_dir_all(&dir2).ok();
 }
+
+/// #43（CONTRACT §4 v1.6）：`appearance.language` 键——set 全值域 +
+/// 非 str 类型拒 + 越域拒 + 落盘重载存活 + load 旧 TOML 缺键回默认。
+#[test]
+fn i18n_language_key_set_reload_and_domain() {
+    let mut store = SettingsStore::new_default();
+    // 默认态：auto（跟随 navigator/宿主语言——纯加性契约）。
+    assert_eq!(store.settings().appearance.language, "auto");
+
+    // set 全值域（auto 已默认；en / zh-CN 显式覆盖）。
+    store
+        .set("appearance.language", SettingValue::Str("zh-CN".into()))
+        .expect("zh-CN set");
+    assert_eq!(store.settings().appearance.language, "zh-CN");
+    store
+        .set("appearance.language", SettingValue::Str("en".into()))
+        .expect("en set");
+    assert_eq!(store.settings().appearance.language, "en");
+
+    // 非 str 类型拒（WrongType）+ 越域值拒（OutOfRange）——快照零触碰。
+    assert!(store
+        .set("appearance.language", SettingValue::Uint(1))
+        .is_err());
+    assert!(store
+        .set("appearance.language", SettingValue::Str("zh_TW".into()))
+        .is_err());
+    assert!(store
+        .set("appearance.language", SettingValue::Str("english".into()))
+        .is_err());
+    assert_eq!(store.settings().appearance.language, "en", "拒后快照不变");
+
+    // 落盘重载存活 + TOML 面字段在档。
+    store
+        .set("appearance.language", SettingValue::Str("zh-CN".into()))
+        .expect("zh-CN re-set");
+    let dir = tmp_dir("i18n_lang");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("settings.toml");
+    store.save(&path).expect("save");
+    let toml_text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        toml_text.contains("language = \"zh-CN\""),
+        "TOML 面必须在档"
+    );
+    let reloaded = SettingsStore::load(&path);
+    assert_eq!(reloaded.settings().appearance.language, "zh-CN", "重载存活");
+
+    // 旧 TOML（无 language 键）→ serde/parse 缺省 auto（前向兼容）。
+    let old = dir.join("old.toml");
+    std::fs::write(
+        &old,
+        "schema_version = 1\n\n[appearance]\ntheme = \"dark\"\n",
+    )
+    .unwrap();
+    let reloaded_old = SettingsStore::load(&old);
+    assert_eq!(reloaded_old.settings().appearance.language, "auto");
+    assert_eq!(reloaded_old.settings().appearance.theme, "dark");
+
+    // 越域值 load → KeyDegraded 回默认 auto（load 与 set 同表）。
+    let bad = dir.join("bad.toml");
+    std::fs::write(
+        &bad,
+        "schema_version = 1\n\n[appearance]\nlanguage = \"fr\"\n",
+    )
+    .unwrap();
+    let reloaded_bad = SettingsStore::load(&bad);
+    assert_eq!(
+        reloaded_bad.settings().appearance.language,
+        "auto",
+        "越域回默认"
+    );
+    assert!(matches!(
+        reloaded_bad.status(),
+        LoadStatus::KeyDegraded { ref path, .. } if path == "appearance.language"
+    ));
+}

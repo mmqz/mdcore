@@ -51,6 +51,9 @@ pub mod bounds {
     pub const FONT_SIZE_PX: (u64, u64) = (8, 48);
     /// 外观主题枚举。
     pub const THEMES: [&str; 3] = ["light", "dark", "system"];
+
+    /// #43（CONTRACT §4 v1.6）：界面语言值域（auto = 跟随系统/浏览器）。
+    pub const LANGUAGES: [&str; 3] = ["auto", "en", "zh-CN"];
     /// #16（A4）：docx 导出格式预设枚举（与 web DOCX_EXPORT_PRESETS
     /// 表同源——web 面键值锁背书：contract_gate + docx_export e2e）。
     pub const DOCX_EXPORT_PRESETS: [&str; 5] =
@@ -121,6 +124,16 @@ pub struct AppearanceSettings {
     /// `light` | `dark` | `system`。
     pub theme: String,
     pub font_size_px: u16,
+    /// #43（CONTRACT §4 v1.6）：界面语言——`auto`（跟随 navigator.language
+    /// / 宿主系统语言）| `en` | `zh-CN`。web 消费面 = i18n `initI18n`
+    /// 单一真源；旧快照缺键 = serde 默认 `auto`（前向兼容）。
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+/// #43：language 键 serde 缺省（旧 JSON/TOML 快照无键 → auto）。
+fn default_language() -> String {
+    "auto".into()
 }
 
 /// #16（A4）：docx 导出格式层（v1.2 增补；W-1/W-2 两布尔键 v1.5 增补）。
@@ -170,6 +183,7 @@ impl Default for Settings {
             appearance: AppearanceSettings {
                 theme: "system".into(),
                 font_size_px: 15,
+                language: "auto".into(),
             },
             docx_export: DocxExportSettings {
                 preset: "default".into(),
@@ -410,6 +424,14 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
             None => degrade(&mut degraded, "appearance.theme", "expected string"),
         }
     }
+    // #43（CONTRACT §4 v1.6）：界面语言键（缺省 auto——旧 TOML 无键
+    // 不降级，与 theme 同语义）。
+    if let Some(item) = item_of(&doc, "appearance", "language") {
+        match as_str(item) {
+            Some(v) => s.appearance.language = v,
+            None => degrade(&mut degraded, "appearance.language", "expected string"),
+        }
+    }
     if let Some(item) = item_of(&doc, "appearance", "font_size_px") {
         match as_u64(item).and_then(|v| u16::try_from(v).ok()) {
             Some(v) => s.appearance.font_size_px = v,
@@ -508,6 +530,11 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
             "appearance.theme",
             "not in light|dark|system",
         );
+    }
+    // #43：语言值域（load 与 set 同表）。
+    if !bounds::LANGUAGES.contains(&s.appearance.language.as_str()) {
+        s.appearance.language = Settings::default().appearance.language;
+        degrade(&mut degraded, "appearance.language", "not in auto|en|zh-CN");
     }
     if !in_range(s.appearance.font_size_px as u64, bounds::FONT_SIZE_PX) {
         s.appearance.font_size_px = Settings::default().appearance.font_size_px;
@@ -776,6 +803,25 @@ impl SettingsStore {
                 }
                 ensure_section(&mut self.doc, section)[key] = toml_edit::value(v.as_str());
                 self.settings.appearance.theme = v;
+            }
+            ("appearance", "language") => {
+                let v = match &value {
+                    SettingValue::Str(v) => v.clone(),
+                    _ => {
+                        return Err(SettingError::WrongType {
+                            path: path.to_string(),
+                            expected: "string",
+                        })
+                    }
+                };
+                if !bounds::LANGUAGES.contains(&v.as_str()) {
+                    return Err(SettingError::OutOfRange {
+                        path: path.to_string(),
+                        detail: "language must be auto | en | zh-CN".into(),
+                    });
+                }
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v.as_str());
+                self.settings.appearance.language = v;
             }
             ("appearance", "font_size_px") => {
                 let v = as_uint(path, &value)?;

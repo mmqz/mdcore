@@ -110,6 +110,9 @@ def main() -> int:
             page.goto("http://127.0.0.1:8937/index.html")
             page.wait_for_function("window.__ready === true", timeout=30000)
             page.wait_for_function("window.__evReady === true", timeout=30000)
+            # #43 问题 2：证据面板默认折叠——本套件含面板内真实 UI 点击
+            #（.ev-claim），就绪后先展开（探针面不受折叠影响，纯展开态）。
+            page.click("#evidence-collapse-btn")
 
             # ---- 1. ev_ready（面板就绪 + 未激活态按钮禁用——不依赖 wasm 面）----
             boot = page.evaluate("""() => ({
@@ -417,7 +420,7 @@ def main() -> int:
                   and grid_vis["evidence"] != "none"
                   and doc_vis["editor"] != "none" and doc_vis["panel"] == "none"
                   and doc_vis["gridReady"] and doc_vis["evReady"]
-                  and doc_vis["contract"] == 1.3 and doc_vis["md"] == "function"
+                  and doc_vis["contract"] == 1.4 and doc_vis["md"] == "function"
                   and len(page_errors) == 0,
                   json.dumps({"grid": grid_vis, "doc": doc_vis,
                               "pageErrors": page_errors[:3]}, ensure_ascii=False))

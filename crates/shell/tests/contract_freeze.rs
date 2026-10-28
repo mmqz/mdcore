@@ -115,7 +115,7 @@ fn contract_doc_v1_1_session_face_present() {
     // window 面版本 1.3（防误升版/漏升版漂移——两向钉定）。
     assert!(
         doc.contains("`__contractVersion` 1.2 → 1.3"),
-        "§4 v1.5 升版记录必须在档（当前 window 面版本 1.3）"
+        "§4 v1.5 升版记录必须在档（历史记录——v1.6 后仍保留）"
     );
     assert!(
         doc.contains("| docx_export.toc | false |"),
@@ -124,6 +124,20 @@ fn contract_doc_v1_1_session_face_present() {
     assert!(
         doc.contains("| docx_export.anonymize | false |"),
         "W-2 anonymize 键默认值表必须在档"
+    );
+    // #43（CONTRACT v1.6）：§4 appearance.language 键 + 当前 window
+    // 面版本 1.4（防误升版/漏升版漂移——两向钉定）。
+    assert!(
+        doc.contains("`__contractVersion` 1.3 → 1.4"),
+        "§4 v1.6 升版记录必须在档（当前 window 面版本 1.4）"
+    );
+    assert!(
+        doc.contains("| appearance.language | \"auto\" |"),
+        "#43 language 键默认值表必须在档"
+    );
+    assert!(
+        doc.contains("auto \\| en \\| zh-CN"),
+        "#43 language 值域三值必须在档"
     );
     // Rust 侧权威实现锚（编译期常量锁）。
     const _: () = assert!(mdshell::session::DEFAULT_MAX_SESSIONS == 16);

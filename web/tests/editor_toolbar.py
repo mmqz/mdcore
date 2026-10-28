@@ -8,7 +8,7 @@ toggle + ¶ 清除 + 快捷键 + __format 测试桥）。
 - __md() 投影 = 字面标记形（源码轨——模型 marks 不写入 MD 的 v0
   规则），与用户手打等价；
 - undo（核日志）正常工作；
-- 契约面零触碰（contract 1.3 恒定——§4 v1.5 后当前值）+ 全程零页错。
+- 契约面零触碰（contract"] == 1.4 恒定——§4 v1.5 后当前值）+ 全程零页错。
 Evidence -> results/results_editor_toolbar.json
 """
 
@@ -65,7 +65,7 @@ def main() -> int:
             })""")
             check("toolbar_present_contract_intact",
                   ui["bar"] and ui["buttons"] == 11 and ui["formatFn"] == "function"
-                  and ui["contract"] == 1.3,
+                  and ui["contract"] == 1.4,
                   json.dumps(ui))
 
             # ---- 行内包裹（选区）----
@@ -201,7 +201,7 @@ def main() -> int:
             page.wait_for_timeout(700)
             dirty_txt = page.evaluate("(document.getElementById('sb-save') || {}).textContent")
             check("status_bar_dirty_after_edit",
-                  dirty_txt is not None and "未保存" in (dirty_txt or ""),
+                  dirty_txt is not None and "Unsaved" in (dirty_txt or ""),  # #43 i18n：en locale 口径（旧字面「未保存」→ sb.unsaved）
                   json.dumps({"save": dirty_txt}))
             # Ctrl+S 真实键盘：dirty 清位 + __lastSave 落账
             page.evaluate("window.__view.focus()")
@@ -213,7 +213,7 @@ def main() -> int:
             check("ctrl_s_saves",
                   saved["last"] and saved["last"]["ok"] is True
                   and saved["last"]["revision"] >= 1 and saved["last"]["bytes"] > 0
-                  and "已保存" in (saved["save"] or ""),
+                  and "Saved" in (saved["save"] or ""),  # #43 i18n：en locale 口径（旧字面「已保存」→ sb.saved/savedRev）
                   json.dumps(saved))
 
             # ---- TR-UI 批 B：TOC 大纲 ----
@@ -333,7 +333,7 @@ def main() -> int:
             # ---- 契约 + 零页错终验 ----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
-                contract: window.__contractVersion === 1.3,
+                contract: window.__contractVersion === 1.4,
                 blockCount: window.__blockCount(),
             })""")
             check("final_contract_no_pageerror",

@@ -32,6 +32,7 @@
 
 import { wasmBoot } from './wasm_boot.js';
 import { mount_surface_guide } from './empty_state.js';
+import { t } from './i18n/index.js';
 import type {
   PageViewport,
   PDFDocumentProxy,
@@ -511,9 +512,12 @@ export class PdfViewUI {
     toolbar.id = 'pdf-toolbar';
 
     const openBtn = document.createElement('label');
-    openBtn.className = 'pdf-btn';
-    openBtn.textContent = 'open .pdf';
+    // #43 问题 4：打开入口强化（pdf-open-btn = accent 边框 + 加重字重；
+    // label-for 关联不动——DOM 契约）。
+    openBtn.className = 'pdf-btn pdf-open-btn';
+    openBtn.textContent = t('pdf.open');
     openBtn.htmlFor = 'pdf-file';
+    openBtn.title = t('pdf.openTitle');
 
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
@@ -523,7 +527,7 @@ export class PdfViewUI {
 
     const pageLabel = document.createElement('span');
     pageLabel.id = 'pdf-page-label';
-    pageLabel.textContent = '– / –';
+    pageLabel.textContent = t('pdf.noPages');
 
     const mkBtn = (id: string, label: string, title = ''): HTMLButtonElement => {
       const b = document.createElement('button');
@@ -534,11 +538,11 @@ export class PdfViewUI {
       if (title) b.title = title;
       return b;
     };
-    const zoomOut = mkBtn('pdf-zoom-out', '−', 'zoom out');
-    const zoomIn = mkBtn('pdf-zoom-in', '+', 'zoom in');
-    const zoomFit = mkBtn('pdf-zoom-fit', 'fit width');
-    const searchPrev = mkBtn('pdf-search-prev', '↑', 'previous hit');
-    const searchNext = mkBtn('pdf-search-next', '↓', 'next hit');
+    const zoomOut = mkBtn('pdf-zoom-out', '−', t('pdf.zoomOutTitle'));
+    const zoomIn = mkBtn('pdf-zoom-in', '+', t('pdf.zoomInTitle'));
+    const zoomFit = mkBtn('pdf-zoom-fit', t('pdf.fitWidth'));
+    const searchPrev = mkBtn('pdf-search-prev', '↑', t('pdf.prevHitTitle'));
+    const searchNext = mkBtn('pdf-search-next', '↓', t('pdf.nextHitTitle'));
 
     const zoomLabel = document.createElement('span');
     zoomLabel.id = 'pdf-zoom-label';
@@ -547,7 +551,7 @@ export class PdfViewUI {
     const searchInput = document.createElement('input');
     searchInput.type = 'search';
     searchInput.id = 'pdf-search';
-    searchInput.placeholder = 'search…';
+    searchInput.placeholder = t('pdf.searchPlaceholder');
     searchInput.autocomplete = 'off';
 
     const searchCount = document.createElement('span');
@@ -557,11 +561,11 @@ export class PdfViewUI {
     const modeSelect = document.createElement('select');
     modeSelect.id = 'pdf-annot-mode';
     for (const [value, label] of [
-      ['', 'annotate: off'],
-      ['highlight', 'highlight'],
-      ['note', 'note'],
-      ['freetext', 'free text'],
-      ['ink', 'ink'],
+      ['', t('pdf.modeOff')],
+      ['highlight', t('pdf.modeHighlight')],
+      ['note', t('pdf.modeNote')],
+      ['freetext', t('pdf.modeFreetext')],
+      ['ink', t('pdf.modeInk')],
     ] as const) {
       const opt = document.createElement('option');
       opt.value = value;
@@ -573,7 +577,7 @@ export class PdfViewUI {
     saveBtn.type = 'button';
     saveBtn.className = 'pdf-btn';
     saveBtn.id = 'pdf-save-btn';
-    saveBtn.textContent = 'save annotated.pdf';
+    saveBtn.textContent = t('pdf.saveAnnotated');
 
     toolbar.append(
       openBtn, fileInput, pageLabel,
@@ -603,10 +607,10 @@ export class PdfViewUI {
     // #3 UI 批 E：空态引导卡片（文档打开成功前——纯色块改引导）。
     this.guideEl = mount_surface_guide(viewport, 'pdf-guide', {
       icon: 'M7 2.5h7.5L19.5 7v14.5h-13V2.5z M14 2.5V7h5 M9.5 12.5h5 M9.5 16h5',
-      title: 'No PDF open',
+      title: t('pdf.guideTitle'),
       hints: [
-        'Drop a .pdf on this panel to open',
-        'display: pdf.js · model: mdc-pdf wasm session',
+        t('pdf.guideHint1'),
+        t('pdf.guideHint2'),
       ],
     });
     this.pageLabel = pageLabel;
@@ -785,7 +789,7 @@ export class PdfViewUI {
         assessment = JSON.parse(this.scanFn(bytes)) as AssessmentJson;
       } catch (e) {
         const fail = withShapeHint(wasmFail(e));
-        this.showStatus(`open rejected by security scan (${fail.code}): ${fail.message}`, 'error');
+        this.showStatus(t('pdf.openRejected', { code: fail.code, message: fail.message }), 'error');
         return fail;
       }
     }
@@ -803,7 +807,7 @@ export class PdfViewUI {
         code: err?.name === 'PasswordException' ? 'pdf_password' : 'pdf_open_failed',
         message: err?.message ?? String(e),
       };
-      this.showStatus(`open failed (${fail.code}): ${fail.message}`, 'error');
+      this.showStatus(t('pdf.openFailed', { code: fail.code, message: fail.message }), 'error');
       return fail;
     }
 
@@ -852,15 +856,12 @@ export class PdfViewUI {
         this.session = null;
         this.sessionInitFail = fail;
         this.showStatus(
-          `display-only mode — session init failed (${fail.code}): ${fail.message}`,
+          t('pdf.displayOnlyFailed', { code: fail.code, message: fail.message }),
           'error',
         );
       }
     } else {
-      this.showStatus(
-        'display-only mode (pkg_pdf wasm pending — annotate/search/save inactive)',
-        'warn',
-      );
+      this.showStatus(t('pdf.displayOnlyPending'), 'warn');
     }
 
     // ⑤ 页 DOM + 首屏（fit 宽度起步；面板隐藏时预渲染前两页）
@@ -969,7 +970,7 @@ export class PdfViewUI {
       return { ok: true, value: out };
     } catch (e) {
       const fail = withShapeHint(wasmFail(e));
-      this.showStatus(`session command failed (${fail.code}): ${fail.message}`, 'error');
+      this.showStatus(t('pdf.sessionCmdFailed', { code: fail.code, message: fail.message }), 'error');
       return fail;
     }
   }
@@ -1065,10 +1066,14 @@ export class PdfViewUI {
     await this.renderSearchOverlay();
     this.searchCount.textContent =
       hits.length === 0
-        ? '0 hits'
+        ? t('pdf.zeroHits')
         : `${this.searchIndex + 1} / ${hits.length}${truncated ? '+' : ''}`;
     this.showStatus(
-      `search "${q}": ${hits.length} hit(s)${truncated ? ' (truncated)' : ''}`,
+      t('pdf.searchStatus', {
+        q,
+        n: hits.length,
+        trunc: truncated ? t('pdf.searchTrunc') : '',
+      }),
     );
     if (this.searchIndex >= 0) this.focusHit(this.searchIndex);
     return { ok: true, value: { hits, truncated } };
@@ -1440,7 +1445,7 @@ export class PdfViewUI {
 
   private updatePageLabel(): void {
     if (this.pages.length === 0) {
-      this.pageLabel.textContent = '– / –';
+      this.pageLabel.textContent = t('pdf.noPages');
       return;
     }
     const center = this.viewportEl.scrollTop + this.viewportEl.clientHeight / 2;
@@ -1515,8 +1520,10 @@ export class PdfViewUI {
     this.viewportEl.classList.toggle('pdf-mode-ink', mode === 'ink');
     this.showStatus(
       mode === ''
-        ? 'annotate: off'
-        : `annotate: ${mode}${mode === 'highlight' ? ' — select text to highlight' : ' — click/drag on page'}`,
+        ? t('pdf.annotateOff')
+        : mode === 'highlight'
+          ? t('pdf.annotateHighlight')
+          : t('pdf.annotateDraw', { mode: modeLabel(mode) }),
     );
   }
 
@@ -1578,10 +1585,10 @@ export class PdfViewUI {
     }
     if (added > 0) {
       sel.removeAllRanges(); // 提交后清选区（视觉反馈）
-      this.showStatus(`highlight added on ${added} page(s)`);
+      this.showStatus(t('pdf.highlightAdded', { n: added }));
     } else if (firstFail) {
       this.showStatus(
-        `highlight failed (${firstFail.code}): ${firstFail.message}`,
+        t('pdf.highlightFailed', { code: firstFail.code, message: firstFail.message }),
         'error',
       );
     }
@@ -1602,7 +1609,7 @@ export class PdfViewUI {
     if (r.ok) {
       this.noteText.set(r.value.id, text);
       this.renderAnnotOverlay(page);
-      this.showStatus(`note added (id ${r.value.id})`);
+      this.showStatus(t('pdf.noteAdded', { id: r.value.id }));
     }
   }
 
@@ -1642,7 +1649,7 @@ export class PdfViewUI {
           text: value,
         },
       });
-      if (r.ok) this.showStatus(`free text added (id ${r.value.id})`);
+      if (r.ok) this.showStatus(t('pdf.freeTextAdded', { id: r.value.id }));
     };
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -1689,7 +1696,7 @@ export class PdfViewUI {
     this.inkPage = -1;
     if (page < 0 || stroke.length < 2) return; // 单点不成划
     const r = this.addAnnotation(page, { Ink: { strokes: [stroke] } });
-    if (r.ok) this.showStatus(`ink added (id ${r.value.id})`);
+    if (r.ok) this.showStatus(t('pdf.inkAdded', { id: r.value.id }));
   }
 
   // ---- overlay 渲染（AnnotateList 数据源——本地图谱仅镜像显示）----
@@ -1889,7 +1896,7 @@ export class PdfViewUI {
     if (this.assessment.encrypted) {
       const span = document.createElement('span');
       span.className = 'pdf-warn-line';
-      span.textContent = 'read-only mode (encrypted document — S5 denies writes)';
+      span.textContent = t('pdf.readOnlyEncrypted');
       this.statusEl.appendChild(span);
     }
     for (const w of this.assessment.warnings) {
@@ -2032,4 +2039,15 @@ export function setupPdfView(): void {
       if (panel) panel.textContent = `pdf panel boot failed: ${String(e)}`;
     }
   })();
+}
+
+/** #43：批注模式名 → 词典文本（status 行与下拉同源——en 恒为裸模式名）。
+ * 模块级纯函数（无 this 依赖；类体内引用前置声明提升可用）。 */
+function modeLabel(mode: string): string {
+  switch (mode) {
+    case 'note': return t('pdf.modeNote');
+    case 'freetext': return t('pdf.modeFreetext');
+    case 'ink': return t('pdf.modeInk');
+    default: return mode;
+  }
 }

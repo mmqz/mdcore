@@ -36,6 +36,7 @@
 import type { WasmBook } from '../pkg/mdcore_wasm.js';
 import { wasmBoot } from './wasm_boot.js';
 import { mount_surface_guide } from './empty_state.js';
+import { t, tCount } from './i18n/index.js';
 
 type WasmModule = typeof import('../pkg/mdcore_wasm.js');
 
@@ -296,7 +297,7 @@ export class XlsxGridUI {
     const select = document.createElement('select');
     select.id = 'grid-sheet-select';
     const placeholder = document.createElement('option');
-    placeholder.textContent = 'no workbook';
+    placeholder.textContent = t('grid.noWorkbook');
     placeholder.value = '';
     select.appendChild(placeholder);
 
@@ -304,11 +305,11 @@ export class XlsxGridUI {
     exportBtn.id = 'grid-export-btn';
     exportBtn.type = 'button';
     exportBtn.className = 'grid-btn';
-    exportBtn.textContent = 'export edited workbook';
+    exportBtn.textContent = t('grid.exportEdited');
 
     this.statusEl = document.createElement('span');
     this.statusEl.id = 'grid-status';
-    this.statusEl.textContent = 'open a .xlsx workbook to start';
+    this.statusEl.textContent = t('grid.openToStart');
 
     toolbar.append(select, exportBtn, this.statusEl);
 
@@ -349,10 +350,10 @@ export class XlsxGridUI {
     // #3 UI 批 E：空态引导卡片（工作簿打开前——虚拟滚动空白改引导）。
     this.guideEl = mount_surface_guide(viewport, 'grid-guide', {
       icon: 'M3.5 3.5h17v17h-17V3.5z M3.5 9.5h17 M3.5 15.5h17 M9.5 3.5v17 M15.5 3.5v17',
-      title: 'No workbook open',
+      title: t('grid.guideTitle'),
       hints: [
-        'Drop a .xlsx on this panel to open',
-        'or use the top-bar “open .xlsx grid” button',
+        t('grid.guideHint1'),
+        t('grid.guideHint2'),
       ],
     });
     panel.append(toolbar, viewport);
@@ -572,7 +573,7 @@ export class XlsxGridUI {
       return JSON.parse(this.book.slice_json(this.sheet, r0, c0, rows, cols)) as SliceJson;
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`slice failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('grid.sliceFailed', { code: f.code, message: f.message }), true);
       return null;
     }
   }
@@ -808,13 +809,15 @@ export class XlsxGridUI {
     // Write-domain clamp (S4): out-of-domain edits would break export.
     if (r > MAX_GRID_ROW || c > MAX_GRID_COL) {
       this.showStatus(
-        `edit at r${r}c${c} skipped — beyond write domain (${MAX_GRID_ROW + 1} rows x ${MAX_GRID_COL + 1} cols)`,
+        t('grid.editSkippedDomain', {
+          r, c, rows: MAX_GRID_ROW + 1, cols: MAX_GRID_COL + 1,
+        }),
         true,
       );
       return false;
     }
     if (this.editLog.length >= MAX_EDIT_LOG) {
-      this.showStatus(`edit rejected — ledger at ${MAX_EDIT_LOG}-entry cap (export limit)`, true);
+      this.showStatus(t('grid.editRejectedCap', { n: MAX_EDIT_LOG }), true);
       return false;
     }
     const rec: EditRecord = { id: crypto.randomUUID(), sheet, r, c, k, ts: Date.now() };
@@ -942,7 +945,7 @@ export class XlsxGridUI {
     if (rows < this.sel.rows || cols < this.sel.cols) {
       // S5: silent truncation would hide data loss — notice on copy too.
       this.showStatus(
-        `copied ${rows}x${cols} — selection truncated at ${MAX_COPY_ROWS}x${MAX_COPY_COLS} cap`,
+        t('grid.copyTruncated', { rows, cols, rmax: MAX_COPY_ROWS, cmax: MAX_COPY_COLS }),
         true,
       );
     }
@@ -985,9 +988,9 @@ export class XlsxGridUI {
       }
     }
     if (truncated) {
-      this.showStatus(`pasted ${applied} cells — truncated at ${MAX_PASTE_CELLS}-cell limit`, true);
+      this.showStatus(t('grid.pastedTruncated', { n: applied, cap: MAX_PASTE_CELLS }), true);
     } else {
-      this.showStatus(`pasted ${applied} cell${applied === 1 ? '' : 's'}`, false);
+      this.showStatus(tCount('grid.pasted', applied), false);
     }
   }
 
@@ -1052,13 +1055,20 @@ export class XlsxGridUI {
       this.clearPools();
       this.syncSheetSelect();
       const summary = this.sheets.map((s) => `${s.name} ${s.rows}×${s.cols}`).join(', ');
-      this.showStatus(`opened: ${this.sheets.length} sheet${this.sheets.length === 1 ? '' : 's'} (${summary})`, false);
+      this.showStatus(
+        t('grid.opened', {
+          n: this.sheets.length,
+          plural: this.sheets.length === 1 ? '' : 's',
+          summary,
+        }),
+        false,
+      );
       this.render();
       this.syncGuide();
       return { ok: true, sheets: this.sheets };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`open failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('grid.openFailed', { code: f.code, message: f.message }), true);
       this.syncGuide();
       return f;
     }
@@ -1079,7 +1089,7 @@ export class XlsxGridUI {
     this.sel = { r: 0, c: 0, rows: 1, cols: 1 };
     this.clearPools();
     this.syncSheetSelect();
-    this.showStatus(`sheet: ${this.sheets[idx]?.name ?? idx}`, false);
+    this.showStatus(t('grid.sheet', { name: this.sheets[idx]?.name ?? String(idx) }), false);
     this.render();
   }
 
@@ -1120,7 +1130,7 @@ export class XlsxGridUI {
   private runExport(): void {
     const result = this.exportEdits();
     if (!result.ok) {
-      this.showStatus(`export failed (${result.code}): ${result.message}`, true);
+      this.showStatus(t('grid.exportFailed', { code: result.code, message: result.message }), true);
       return;
     }
     // download (headless test env: click is a no-op return)
@@ -1138,12 +1148,12 @@ export class XlsxGridUI {
       ? `${(result.bytes.length / 1024).toFixed(1)} KB`
       : `${result.bytes.length} B`;
     const s = result.stats;
-    const parts = [`exported: ${kb}`];
-    if (typeof s.sheets === 'number') parts.push(`${s.sheets} sheet${s.sheets === 1 ? '' : 's'}`);
-    if (typeof s.cells_written === 'number') parts.push(`${s.cells_written} cells`);
-    if (typeof s.edits_applied === 'number') parts.push(`${s.edits_applied} edits`);
+    const parts = [t('status.exported', { parts: kb })];
+    if (typeof s.sheets === 'number') parts.push(tCount('xlsx.sheet', s.sheets));
+    if (typeof s.cells_written === 'number') parts.push(t('export.cells', { n: s.cells_written }));
+    if (typeof s.edits_applied === 'number') parts.push(t('export.edits', { n: s.edits_applied }));
     const skipped = Array.isArray(s.skipped) ? (s.skipped as unknown[]).length : 0;
-    if (skipped > 0) parts.push(`warning: ${skipped} part${skipped === 1 ? '' : 's'} not preserved (read-modify-rebuild boundary)`);
+    if (skipped > 0) parts.push(tCount('grid.partsNotPreserved', skipped));
     this.showStatus(parts.join(' · '), skipped > 0);
   }
 

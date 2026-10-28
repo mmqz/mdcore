@@ -96,7 +96,8 @@ def main() -> int:
             counts2 = page.evaluate("(document.getElementById('sb-counts') || {}).textContent")
             check("huge_doc_toolbar_perf",
                   b["blocks"] == BIG_HEADINGS * 2 and (t1 - t0) < 3000
-                  and counts2 and "字符" in counts2 and len(page_errors) == 0,
+                  and counts2 and "chars" in counts2 and "words" in counts2  # #43 i18n：en locale 口径（旧字面「字符 · 词」→ sb.counts）
+                  and len(page_errors) == 0,
                   json.dumps({"blocks": b["blocks"], "ms": t1 - t0, "counts": counts2}))
 
             # ---- 组 C：特殊字符（emoji/CJK/BIDI 混排 + UTF-16 边界）----

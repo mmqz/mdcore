@@ -37,6 +37,7 @@
 
 type WasmModule = typeof import('../pkg/mdcore_wasm.js');
 import { wasmBoot } from './wasm_boot.js';
+import { t } from './i18n/index.js';
 
 // ---------------------------------------------------------------------------
 // wasm face bridge (local types — pkg export lands with the wasm rebuild)
@@ -215,11 +216,11 @@ function decimalText(v: unknown): string {
 /** calc face -> badge class suffix + label. */
 function calcBadge(calc: CalcFace): { cls: string; text: string } {
   if (typeof calc === 'string') {
-    if (calc === 'passed') return { cls: 'calc-passed', text: 'calc: pass' };
-    if (calc === 'not_applicable') return { cls: 'calc-na', text: 'calc: n/a' };
-    return { cls: 'calc-na', text: `calc: ${calc}` };
+    if (calc === 'passed') return { cls: 'calc-passed', text: t('ev.calcPassed') };
+    if (calc === 'not_applicable') return { cls: 'calc-na', text: t('ev.calcNa') };
+    return { cls: 'calc-na', text: t('ev.calcState', { state: calc }) };
   }
-  return { cls: 'calc-failed', text: `calc: fail (${calc.failed})` };
+  return { cls: 'calc-failed', text: t('ev.calcFailed', { detail: calc.failed }) };
 }
 
 /** Human-readable source locator (card meta line). */
@@ -338,7 +339,7 @@ export class EvidencePanelUI {
 
     const counts = document.createElement('span');
     counts.id = 'ev-counts';
-    counts.textContent = 'no session';
+    counts.textContent = t('ev.noSession');
 
     const mkBtn = (id: string, label: string): HTMLButtonElement => {
       const b = document.createElement('button');
@@ -348,11 +349,11 @@ export class EvidencePanelUI {
       b.textContent = label;
       return b;
     };
-    const loadBody = mkBtn('ev-load-body', 'import body .docx');
-    const addSource = mkBtn('ev-add-source', 'add source .xlsx');
-    const exportClean = mkBtn('ev-export-clean', 'export clean body');
-    const exportSidecar = mkBtn('ev-export-sidecar', 'export sidecar');
-    const importSidecar = mkBtn('ev-import-sidecar', 'restore sidecar');
+    const loadBody = mkBtn('ev-load-body', t('ev.importBody'));
+    const addSource = mkBtn('ev-add-source', t('ev.addSource'));
+    const exportClean = mkBtn('ev-export-clean', t('ev.exportClean'));
+    const exportSidecar = mkBtn('ev-export-sidecar', t('ev.exportSidecar'));
+    const importSidecar = mkBtn('ev-import-sidecar', t('ev.restoreSidecar'));
 
     const mkFile = (id: string, accept: string): HTMLInputElement => {
       const i = document.createElement('input');
@@ -383,14 +384,14 @@ export class EvidencePanelUI {
     const report = document.createElement('details');
     report.id = 'ev-report';
     const summary = document.createElement('summary');
-    summary.textContent = 'workbench report';
+    summary.textContent = t('ev.reportSummary');
     const pre = document.createElement('pre');
-    pre.textContent = 'no session';
+    pre.textContent = t('ev.noSession');
     report.append(summary, pre);
 
     const status = document.createElement('div');
     status.id = 'ev-status';
-    status.textContent = 'import a body .docx to start the evidence session';
+    status.textContent = t('ev.emptyStatus');
 
     panel.append(toolbar, list, report, status);
 
@@ -477,7 +478,7 @@ export class EvidencePanelUI {
   /** ① Start (or restart) a session from body bytes. */
   startBody(bytes: Uint8Array): EvOk | EvFail {
     if (!this.ctor) {
-      this.showStatus(`body load failed: ${BRIDGE_ABSENT.message}`, true);
+      this.showStatus(t('ev.bodyLoadFailed', { code: BRIDGE_ABSENT.code, message: BRIDGE_ABSENT.message }), true);
       return BRIDGE_ABSENT;
     }
     try {
@@ -491,12 +492,12 @@ export class EvidencePanelUI {
       this.evidence = [];
       this.refresh();
       this.showStatus(
-        `body loaded (${bytes.length} bytes, doc "${BODY_DOC_ID}") — add a source .xlsx next`,
+        t('ev.bodyLoaded', { n: bytes.length, id: BODY_DOC_ID }),
       );
       return { ok: true };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`body load failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.bodyLoadFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -506,7 +507,7 @@ export class EvidencePanelUI {
     if (!this.ctor) return BRIDGE_ABSENT;
     if (!this.wb) {
       const f: EvFail = { ok: false, code: 'no_session', message: 'import the body .docx first' };
-      this.showStatus(f.message, true);
+      this.showStatus(t('ev.importBodyFirst'), true);
       return f;
     }
     const docId = `src-${this.sourceSeq + 1}`;
@@ -515,12 +516,12 @@ export class EvidencePanelUI {
       this.sourceSeq += 1;
       this.sources.set(ref.doc_id, bytes);
       this.showStatus(
-        `source registered: ${ref.doc_id} (engine ${ref.engine}, v${ref.version}, ${ref.fingerprint})`,
+        t('ev.sourceRegistered', { doc: ref.doc_id, engine: ref.engine, v: ref.version, fp: ref.fingerprint }),
       );
       return { ok: true, doc_id: ref.doc_id };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`source ingest failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.sourceIngestFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -531,11 +532,11 @@ export class EvidencePanelUI {
     try {
       const evidenceId = this.wb.propose_binding(proposalJson, BigInt(this.nextAt()), AI_OP);
       this.refresh();
-      this.showStatus(`binding proposed: ${evidenceId} (pending review)`);
+      this.showStatus(t('ev.bindingProposed', { id: evidenceId }));
       return { ok: true, evidence_id: evidenceId };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`binding rejected (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.bindingRejected', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -549,7 +550,7 @@ export class EvidencePanelUI {
       return { ok: true, value };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`calculation rejected (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.calcRejected', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -566,11 +567,11 @@ export class EvidencePanelUI {
         outcome = outcomeJson;
       }
       this.refresh();
-      this.showStatus(`recalculated: ${calcId}`);
+      this.showStatus(t('ev.recalculated', { id: calcId }));
       return { ok: true, outcome };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`recalc failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.recalcFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -581,11 +582,11 @@ export class EvidencePanelUI {
     try {
       this.wb.review(id, decision, BigInt(this.nextAt()), HUMAN_OP);
       this.refresh();
-      this.showStatus(`review: ${id} → ${decision}`);
+      this.showStatus(t('ev.review', { id, decision }));
       return { ok: true };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`review failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.reviewFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -600,7 +601,7 @@ export class EvidencePanelUI {
     const ev = this.evidence.find((e) => e.evidence_id === id);
     if (!ev) {
       const f: EvFail = { ok: false, code: 'not_found', message: `no evidence ${id}` };
-      this.showStatus(f.message, true);
+      this.showStatus(t('ev.notFound', { id }), true);
       return f;
     }
     try {
@@ -639,11 +640,11 @@ export class EvidencePanelUI {
         );
       }
       this.refresh();
-      this.showStatus(`reverified: ${id} (linkage restored)`);
+      this.showStatus(t('ev.reverified', { id }));
       return { ok: true };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`reverify failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.reverifyFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -657,14 +658,14 @@ export class EvidencePanelUI {
       this.refresh();
       this.showStatus(
         degraded > 0
-          ? `body refreshed — ${degraded} evidence degraded to stale (reverify to restore)`
-          : 'body refreshed — no evidence degraded',
+          ? t('ev.bodyRefreshedDegraded', { n: degraded })
+          : t('ev.bodyRefreshedClean'),
         degraded > 0,
       );
       return { ok: true, degraded };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`body refresh failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.bodyRefreshFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -675,11 +676,11 @@ export class EvidencePanelUI {
     try {
       const bytes = this.wb.export_clean(BigInt(this.nextAt()), HUMAN_OP);
       downloadBlob(bytes, DOCX_MIME, 'body-clean.docx');
-      this.showStatus(`clean body exported (${bytes.length} bytes)`);
+      this.showStatus(t('ev.cleanExported', { n: bytes.length }));
       return { ok: true, bytes: bytesToBase64(bytes), len: bytes.length };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`clean export failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.cleanExportFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
@@ -690,10 +691,10 @@ export class EvidencePanelUI {
     try {
       const json = this.wb.sidecar_json();
       downloadBlob(new TextEncoder().encode(json), 'application/json', 'workbench-sidecar.json');
-      this.showStatus(`sidecar exported (${json.length} chars)`);
+      this.showStatus(t('ev.sidecarExported', { n: json.length }));
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`sidecar export failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.sidecarExportFailed', { code: f.code, message: f.message }), true);
     }
   }
 
@@ -710,7 +711,7 @@ export class EvidencePanelUI {
         code: 'no_body',
         message: 'import the body .docx first — restore needs the body bytes',
       };
-      this.showStatus(f.message, true);
+      this.showStatus(t('ev.restoreNeedsBody'), true);
       return f;
     }
     try {
@@ -739,19 +740,19 @@ export class EvidencePanelUI {
       }
       this.refresh();
       this.showStatus(
-        `session restored: ${this.evidence.length} evidence, ${this.sources.size} source(s)`,
+        t('ev.sessionRestored', { ev: this.evidence.length, src: this.sources.size }),
       );
       return { ok: true };
     } catch (e) {
       const f = wasmFail(e);
-      this.showStatus(`restore failed (${f.code}): ${f.message}`, true);
+      this.showStatus(t('ev.restoreFailed', { code: f.code, message: f.message }), true);
       return f;
     }
   }
 
   private noSession(): EvFail {
     const f: EvFail = { ok: false, code: 'no_session', message: 'no active session' };
-    this.showStatus(f.message, true);
+    this.showStatus(t('ev.noSessionActive'), true);
     return f;
   }
 
@@ -862,13 +863,13 @@ export class EvidencePanelUI {
 
   private renderReport(): void {
     if (!this.wb) {
-      this.reportPre.textContent = 'no session';
+      this.reportPre.textContent = t('ev.noSession');
       return;
     }
     try {
       this.reportPre.textContent = this.wb.report();
     } catch {
-      this.reportPre.textContent = 'report unavailable';
+      this.reportPre.textContent = t('ev.reportUnavailable');
     }
   }
 
@@ -897,7 +898,7 @@ export class EvidencePanelUI {
     document.dispatchEvent(
       new CustomEvent('evidence-jump', { detail: { paragraph_index: para.paragraph_index } }),
     );
-    this.showStatus(`jump to claim paragraph ${para.paragraph_index} (evidence ${id})`);
+    this.showStatus(t('ev.jumpToClaim', { p: para.paragraph_index, id }));
   }
 
   // -----------------------------------------------------------------------

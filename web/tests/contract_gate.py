@@ -55,7 +55,7 @@ def main() -> int:
 
             # ---- §3.1 启动面 ----
             check("ready", page.evaluate("window.__ready === true"))
-            check("contract_version", page.evaluate("window.__contractVersion === 1.3"))
+            check("contract_version", page.evaluate("window.__contractVersion === 1.4"))
             surf = page.evaluate("""() => ({
                 inject: typeof window.__inject,
                 injectChunk: typeof window.__inject_chunk,
@@ -114,7 +114,7 @@ def main() -> int:
             page.evaluate("window.__bridge.pushRender(undefined, { force: true })")
             check("inject_events_drain_on_render", page.evaluate("window.__mdcoreEvents.length > 0"))
             check("inject_keeps_surface",
-                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1.3"))
+                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1.4"))
 
             # ---- §3.2 渐进通道 ----
             page.evaluate("window.__inject_chunk('first chunk\\n\\n', true)")
@@ -143,6 +143,8 @@ def main() -> int:
                   and all(k in st for k in ("editor", "ai", "storage", "appearance", "docx_export"))
                   and st["editor"]["undo_coalesce_ms"] == 1000
                   and st["appearance"]["theme"] == "system"
+                  # #43（CONTRACT v1.6）：语言键缺省 auto（跟随 navigator）。
+                  and st["appearance"]["language"] == "auto"
                   and st["docx_export"]["preset"] == "default"
                   and st["docx_export"]["size_half_points"] == 28, json.dumps(st))
 
@@ -173,6 +175,9 @@ def main() -> int:
                 docxTocType: window.__setSetting('docx_export.toc', 'yes'),
                 docxTocNum: window.__setSetting('docx_export.toc', 1),
                 docxAnonymizeType: window.__setSetting('docx_export.anonymize', 'true'),
+                langType: window.__setSetting('appearance.language', 1),
+                langDomain: window.__setSetting('appearance.language', 'fr'),
+                langLocaleVariant: window.__setSetting('appearance.language', 'zh-TW'),
             })""")
             spy2 = page.evaluate("window.__settingsSpy")
             st3 = page.evaluate("window.__settings()")

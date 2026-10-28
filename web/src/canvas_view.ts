@@ -53,6 +53,7 @@
 type WasmModule = typeof import('../pkg/mdcore_wasm.js');
 import { wasmBoot } from './wasm_boot.js';
 import { mount_surface_guide } from './empty_state.js';
+import { t } from './i18n/index.js';
 
 /** WasmCanvas 方法面（wasm-bindgen web-target，方法名 snake_case）。 */
 interface WasmCanvasFace {
@@ -390,16 +391,16 @@ export class CanvasViewUI {
       if (title) b.title = title;
       return b;
     };
-    const addNodeBtn = mkBtn('canvas-add-node-btn', 'add node', 'add a node at the default spot');
-    const edgeModeBtn = mkBtn('canvas-edge-mode-btn', 'edge mode', 'click two nodes to connect');
-    const groupBtn = mkBtn('canvas-group-btn', 'group', 'group the selected objects (2+)');
-    const ungroupBtn = mkBtn('canvas-ungroup-btn', 'ungroup', 'dissolve the selected group');
-    const undoBtn = mkBtn('canvas-undo-btn', 'undo');
-    const redoBtn = mkBtn('canvas-redo-btn', 'redo');
-    const aiAddBtn = mkBtn('canvas-ai-add-btn', 'AI add node', 'the AI peer adds a node (dual-instance sync)');
-    const saveBtn = mkBtn('canvas-save-btn', 'save snapshot', 'authoritative snapshot (in-memory)');
-    const restoreBtn = mkBtn('canvas-restore-btn', 'restore', 'rebuild the session from the saved snapshot');
-    const clearBtn = mkBtn('canvas-clear-btn', 'clear', 'remove every object');
+    const addNodeBtn = mkBtn('canvas-add-node-btn', t('cv.addNode'), t('cv.addNodeTitle'));
+    const edgeModeBtn = mkBtn('canvas-edge-mode-btn', t('cv.edgeMode'), t('cv.edgeModeTitle'));
+    const groupBtn = mkBtn('canvas-group-btn', t('cv.group'), t('cv.groupTitle'));
+    const ungroupBtn = mkBtn('canvas-ungroup-btn', t('cv.ungroup'), t('cv.ungroupTitle'));
+    const undoBtn = mkBtn('canvas-undo-btn', t('cv.undo'));
+    const redoBtn = mkBtn('canvas-redo-btn', t('cv.redo'));
+    const aiAddBtn = mkBtn('canvas-ai-add-btn', t('cv.aiAddNode'), t('cv.aiAddNodeTitle'));
+    const saveBtn = mkBtn('canvas-save-btn', t('cv.saveSnapshot'), t('cv.saveSnapshotTitle'));
+    const restoreBtn = mkBtn('canvas-restore-btn', t('cv.restore'), t('cv.restoreTitle'));
+    const clearBtn = mkBtn('canvas-clear-btn', t('cv.clear'), t('cv.clearTitle'));
 
     const status = document.createElement('span');
     status.id = 'canvas-status';
@@ -432,10 +433,10 @@ export class CanvasViewUI {
     // #3 UI 批 E：空态引导卡片（对象计数零 = 显示——svg 底盘仍在）。
     this.guideEl = mount_surface_guide(scroll, 'canvas-guide', {
       icon: 'M7.5 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z M13.5 13.5h7v7h-7z M4 21l7.5-7.5',
-      title: 'Canvas is empty',
+      title: t('cv.guideTitle'),
       hints: [
-        'Add a node from the canvas toolbar to start',
-        'the AI peer mirrors your objects live',
+        t('cv.guideHint1'),
+        t('cv.guideHint2'),
       ],
     });
 
@@ -444,8 +445,8 @@ export class CanvasViewUI {
     const aiHead = document.createElement('div');
     aiHead.id = 'canvas-ai-head';
     const aiTitle = document.createElement('span');
-    aiTitle.textContent = 'AI peer — read-only mirror (dual-instance sync)';
-    const aiAddBtn2 = mkBtn('canvas-ai-add-btn2', 'AI add node', 'the AI peer adds a node on its own session');
+    aiTitle.textContent = t('cv.aiTitle');
+    const aiAddBtn2 = mkBtn('canvas-ai-add-btn2', t('cv.aiAddNode'), t('cv.aiAddNodeTitle2'));
     aiHead.append(aiTitle, aiAddBtn2);
     const aiWrap = document.createElement('div');
     aiWrap.id = 'canvas-ai-svg-wrap';
@@ -1490,7 +1491,7 @@ export class CanvasViewUI {
   private syncStatus(): void {
     if (!this.statusEl) return;
     if (!this.main) {
-      this.statusEl.textContent = 'canvas model pending: WasmCanvas not in pkg (bridge_absent) — display-only';
+      this.statusEl.textContent = t('cv.modelPending');
       this.statusEl.classList.add('cv-error');
       return;
     }
