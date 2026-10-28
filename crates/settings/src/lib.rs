@@ -123,7 +123,7 @@ pub struct AppearanceSettings {
     pub font_size_px: u16,
 }
 
-/// #16（A4）：docx 导出格式层（v1.2 增补）。
+/// #16（A4）：docx 导出格式层（v1.2 增补；W-1/W-2 两布尔键 v1.5 增补）。
 ///
 /// 消费链：⚙ 面板/`__setSetting` 写 → 快照 + localStorage 镜像 →
 /// 导出按钮 `export_docx_styled(options JSON)`（wasm 面——issue #10
@@ -140,6 +140,14 @@ pub struct DocxExportSettings {
     pub line_spacing: u16,
     /// 自定义四边边距（twips）。
     pub margin_twips: u16,
+    /// W-1（issue #29）：目录域开关——true = 导出 options 携带
+    /// `toc:{enabled:true, level_from:1, level_to:3}`（层级用默认
+    /// 1-3，不 UI 化——web 面板仅开关）。默认 false（零发射，字节稳定）。
+    pub toc: bool,
+    /// W-2（issue #29 / G3 / R-11）：暗标匿名导出开关——true = 导出
+    /// options 携带 `anonymize:true`（docProps 元数据清零后处理）。
+    /// 默认 false。
+    pub anonymize: bool,
 }
 
 impl Default for Settings {
@@ -168,6 +176,8 @@ impl Default for Settings {
                 size_half_points: 28,
                 line_spacing: 360,
                 margin_twips: 1800,
+                toc: false,
+                anonymize: false,
             },
         }
     }
@@ -445,6 +455,20 @@ fn parse_document(text: &str) -> (DocumentMut, Settings, LoadStatus) {
                 "docx_export.margin_twips",
                 "expected integer in u16 range",
             ),
+        }
+    }
+    // W-1/W-2（issue #29）：目录域/匿名化两布尔键（bool 无值域面——
+    // 仅类型降级）。
+    if let Some(item) = item_of(&doc, "docx_export", "toc") {
+        match as_bool(item) {
+            Some(v) => s.docx_export.toc = v,
+            None => degrade(&mut degraded, "docx_export.toc", "expected boolean"),
+        }
+    }
+    if let Some(item) = item_of(&doc, "docx_export", "anonymize") {
+        match as_bool(item) {
+            Some(v) => s.docx_export.anonymize = v,
+            None => degrade(&mut degraded, "docx_export.anonymize", "expected boolean"),
         }
     }
 
@@ -814,6 +838,18 @@ impl SettingsStore {
                 }
                 ensure_section(&mut self.doc, section)[key] = toml_edit::value(v as i64);
                 self.settings.docx_export.margin_twips = v as u16;
+            }
+            // W-1/W-2（issue #29）：目录域/匿名化两布尔键（bool 无值域
+            // 面——仅类型 typed 拒）。
+            ("docx_export", "toc") => {
+                let v = as_bool_val(path, &value)?;
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v);
+                self.settings.docx_export.toc = v;
+            }
+            ("docx_export", "anonymize") => {
+                let v = as_bool_val(path, &value)?;
+                ensure_section(&mut self.doc, section)[key] = toml_edit::value(v);
+                self.settings.docx_export.anonymize = v;
             }
             // schema_version 为保留键：不可经 set 面（迁移框架独占）。
             _ => return Err(SettingError::UnknownPath(path.to_string())),

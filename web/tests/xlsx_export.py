@@ -139,7 +139,7 @@ def main() -> int:
             })""")
             check("export_ui_present",
                   ui["btn"] and ui["btnLabel"] == "export .xlsx" and ui["status"]
-                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.2,
+                  and ui["exportFn"] == "function" and ui["last"] is None and ui["contract"] == 1.3,
                   json.dumps(ui))
 
             # ---- 快乐路径：真实按钮点击（UI 路径）+ 程序化钩子取字节 ----
@@ -247,7 +247,7 @@ def main() -> int:
             # ---- 契约面 + 零页错（启动/导出/导入全程无 JS 异常逃逸）----
             final = page.evaluate("""() => ({
                 ready: window.__ready === true,
-                contract: window.__contractVersion === 1.2,
+                contract: window.__contractVersion === 1.3,
                 inject: typeof window.__inject === 'function',
                 exportXlsx: typeof window.__exportXlsx === 'function',
                 exportDocx: typeof window.__exportDocx === 'function',

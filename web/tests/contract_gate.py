@@ -55,7 +55,7 @@ def main() -> int:
 
             # ---- §3.1 启动面 ----
             check("ready", page.evaluate("window.__ready === true"))
-            check("contract_version", page.evaluate("window.__contractVersion === 1.2"))
+            check("contract_version", page.evaluate("window.__contractVersion === 1.3"))
             surf = page.evaluate("""() => ({
                 inject: typeof window.__inject,
                 injectChunk: typeof window.__inject_chunk,
@@ -114,7 +114,7 @@ def main() -> int:
             page.evaluate("window.__bridge.pushRender(undefined, { force: true })")
             check("inject_events_drain_on_render", page.evaluate("window.__mdcoreEvents.length > 0"))
             check("inject_keeps_surface",
-                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1.2"))
+                  page.evaluate("typeof window.__memStats === 'function' && window.__contractVersion === 1.3"))
 
             # ---- §3.2 渐进通道 ----
             page.evaluate("window.__inject_chunk('first chunk\\n\\n', true)")
@@ -170,6 +170,9 @@ def main() -> int:
                 docxSizeDomain: window.__setSetting('docx_export.size_half_points', 22),
                 docxSpacingDomain: window.__setSetting('docx_export.line_spacing', 300),
                 docxMarginDomain: window.__setSetting('docx_export.margin_twips', 2000),
+                docxTocType: window.__setSetting('docx_export.toc', 'yes'),
+                docxTocNum: window.__setSetting('docx_export.toc', 1),
+                docxAnonymizeType: window.__setSetting('docx_export.anonymize', 'true'),
             })""")
             spy2 = page.evaluate("window.__settingsSpy")
             st3 = page.evaluate("window.__settings()")
@@ -191,6 +194,27 @@ def main() -> int:
                   and st4["docx_export"]["preset"] == "official-a4"
                   and docx_opts["preset"] == "official-a4"
                   and docx_opts["json"].find('宋体') != -1, json.dumps(docx_opts))
+
+            # W-1/W-2（issue #29，§4 v1.5）：toc/anonymize 两布尔键写入
+            # → 快照 + 面板状态 + options JSON 组装（导出链消费面）。
+            ok_w2a_toc = page.evaluate("window.__setSetting('docx_export.toc', true)")
+            ok_w2a_anon = page.evaluate("window.__setSetting('docx_export.anonymize', true)")
+            w2a = page.evaluate("""() => ({
+                snap: window.__settings().docx_export,
+                panel: window.__getDocxExportOptions(),
+                tocChk: (document.getElementById('deo-toc') || {}).checked,
+                anonChk: (document.getElementById('deo-anonymize') || {}).checked,
+            })""")
+            check("w2a_toc_anonymize_settings_sync_panel",
+                  ok_w2a_toc is True and ok_w2a_anon is True
+                  and w2a["snap"]["toc"] is True and w2a["snap"]["anonymize"] is True
+                  and w2a["panel"]["json"].find('"toc":{"enabled":true,"level_from":1,"level_to":3}') != -1
+                  and w2a["panel"]["json"].find('"anonymize":true') != -1
+                  and w2a["tocChk"] is True and w2a["anonChk"] is True,
+                  json.dumps(w2a))
+            # 复位（零污染后续检查/下次运行）。
+            page.evaluate("window.__setSetting('docx_export.toc', false)")
+            page.evaluate("window.__setSetting('docx_export.anonymize', false)")
 
             # ---- §3.1 F-1 对侧现状锁：渐进路径专属成员在场 ----
             # 默认启动缺席已由 boot_progressive_only_members_absent_by_default
