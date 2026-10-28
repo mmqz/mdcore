@@ -25,6 +25,7 @@ pub mod id;
 pub mod inline;
 pub mod markdown;
 pub mod op;
+pub mod pagination;
 pub mod revision;
 pub mod snapshot;
 pub mod tree;
@@ -238,6 +239,17 @@ impl Core {
     /// 见 [`word_count`] 模块文档——纯检视、确定性、不碰任何状态。
     pub fn word_count(&self) -> WordCount {
         word_count::count(&self.tree)
+    }
+
+    /// 分页预估（issue #29 N-5）：排版参数（twips/倍数平面结构）
+    /// → 页数/每行字数/每页行数/分块行消耗/误差带。预测目标 =
+    /// 本引擎导出链的落纸页数（模型与校准口径见 [`pagination`]
+    /// 模块文档）——纯检视、确定性、不碰任何状态。
+    pub fn estimate_pages(
+        &self,
+        params: &pagination::PaginationParams,
+    ) -> pagination::PageEstimate {
+        pagination::estimate(&self.tree, params)
     }
 
     pub fn now_ms(&self) -> u64 {

@@ -1,0 +1,77 @@
+{
+  "fixture": "/home/z/my-project/mdcore/test-artifacts/word-count/fixture_400k.md",
+  "profiles": {
+    "default": {
+      "docx": "/tmp/n1n5/f400k-default.docx",
+      "docx_bytes": 4212971,
+      "export_ms": 160,
+      "fixture": "/home/z/my-project/mdcore/test-artifacts/word-count/fixture_400k.md",
+      "mode": "export",
+      "parse_ms": 12,
+      "profile": "default",
+      "stats": {
+        "cjk_chars": 385890,
+        "headings": 941,
+        "paragraphs": 3406,
+        "tables": 313,
+        "total_chars": 472763,
+        "total_words": 400302,
+        "western_words": 14412
+      },
+      "wall_ms": 240.7,
+      "peak_rss_mb": 94.0,
+      "lo_pages": 330,
+      "python_docx_open": "ok",
+      "python_docx_paragraphs": 9307,
+      "python_docx_tables": 313,
+      "estimate_pages": 332,
+      "estimate_dev_pct": 0.61,
+      "estimate_detail": {
+        "chars_per_line": 42,
+        "code_lines": 1095,
+        "error_margin_pct": 5.0,
+        "heading_lines": 941,
+        "lines_per_page": 44,
+        "pages": 332,
+        "paragraph_lines": 11261,
+        "table_lines": 1672
+      }
+    },
+    "tender": {
+      "docx": "/tmp/n1n5/f400k-tender.docx",
+      "docx_bytes": 4213144,
+      "export_ms": 155,
+      "fixture": "/home/z/my-project/mdcore/test-artifacts/word-count/fixture_400k.md",
+      "mode": "export",
+      "parse_ms": 11,
+      "profile": "tender",
+      "stats": {
+        "cjk_chars": 385890,
+        "headings": 941,
+        "paragraphs": 3406,
+        "tables": 313,
+        "total_chars": 472763,
+        "total_words": 400302,
+        "western_words": 14412
+      },
+      "wall_ms": 228.4,
+      "peak_rss_mb": 94.0,
+      "lo_pages": 935,
+      "python_docx_open": "ok",
+      "python_docx_paragraphs": 9307,
+      "python_docx_tables": 313,
+      "estimate_pages": 912,
+      "estimate_dev_pct": -2.46,
+      "estimate_detail": {
+        "chars_per_line": 29,
+        "code_lines": 1095,
+        "error_margin_pct": 5.0,
+        "heading_lines": 941,
+        "lines_per_page": 24,
+        "pages": 912,
+        "paragraph_lines": 18673,
+        "table_lines": 1672
+      }
+    }
+  }
+}

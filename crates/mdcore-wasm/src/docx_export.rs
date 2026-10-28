@@ -888,6 +888,91 @@ pub fn export_docx_styled_core(
 }
 
 // ---------------------------------------------------------------------------
+// N-5（issue #29）：分页预估——与导出同形 options 的预估面。
+//
+// 设计（与 [`export_docx_styled_core`] 同一 options 语法 = 单一形状
+// 真源）：`typography`/`page_geometry` 映射 [`mdcore::pagination`]
+// 平面参数（twips/倍数）；`toc`/`anonymize` 键合法但不参与估算
+// （目录域 = 渲染期生成面[打开者 F9]，页数贡献不可预估——文档登记；
+// 匿名化 = 元数据面零页数影响）。缺省 options ≡ 引擎默认档
+// （A4 + 边距 1985/1701 + 10pt 单倍——与不传选项导出基线一致）。
+// ---------------------------------------------------------------------------
+
+/// office-io 排版/几何类型 → [`PaginationParams`]（twips/倍数平面——
+/// 三域纪律：核心零 office-io 依赖，映射在桥）。
+fn pagination_params_from_style(
+    typography: Option<&DefaultTypography>,
+    geometry: Option<&PageGeometry>,
+) -> mdcore::pagination::PaginationParams {
+    // 缺省 ≡ 引擎导出基线（不传选项的产物几何/排版）。
+    let g = geometry.cloned().unwrap_or_else(PageGeometry::a4_default);
+    let text_width = g
+        .width
+        .saturating_sub(g.margin_left.max(0) as u32)
+        .saturating_sub(g.margin_right.max(0) as u32)
+        .saturating_sub(g.gutter.max(0) as u32);
+    let text_height = g
+        .height
+        .saturating_sub(g.margin_top.max(0) as u32)
+        .saturating_sub(g.margin_bottom.max(0) as u32);
+    let (body_size_twips, line_multiple, spacing_before, spacing_after) = match typography {
+        None => (200, 1.0, 0, 0),
+        Some(t) => {
+            let size = t.size_half_points as u32 * 10;
+            let (multiple, before, after) = match &t.line_spacing {
+                None => (1.0, 0, 0),
+                Some(spec) => {
+                    let before = spec.before.unwrap_or(0);
+                    let after = spec.after.unwrap_or(0);
+                    let multiple = match (spec.line, spec.line_rule) {
+                        // auto：line = 倍数 × 240。
+                        (Some(line), Some(LineRuleSpec::Auto)) | (Some(line), None) => {
+                            line as f64 / 240.0
+                        }
+                        // atLeast/exact：line = twips——折算为等效倍数
+                        //（行高 = 字号 × (A + B×倍数) = line，单倍基
+                        // = A + B）。
+                        (Some(line), Some(rule)) => {
+                            let single_base =
+                                mdcore::pagination::BODY_LINE_A + mdcore::pagination::BODY_LINE_B;
+                            let equiv = line as f64 / (size as f64 * single_base);
+                            let _ = rule;
+                            equiv
+                        }
+                        (None, _) => 1.0,
+                    };
+                    (multiple, before, after)
+                }
+            };
+            (size, multiple, before, after)
+        }
+    };
+    mdcore::pagination::PaginationParams {
+        text_width,
+        text_height,
+        body_size_twips,
+        line_multiple,
+        spacing_before,
+        spacing_after,
+    }
+}
+
+/// 编辑器核心块树 + 格式选项 JSON → 分页预估 JSON（N-5 预估面——
+/// options 语法与 [`export_docx_styled_core`] 同一：调用方以「将要
+/// 导出的同一 options」预估，口径天然对齐）。失败 = options 形状
+/// 错（复用 [`parse_style_options`]——单一形状真源）。
+pub fn estimate_pages_core(tree: &BlockTree, options_json: &str) -> Result<String, ExportError> {
+    let opts = parse_style_options(options_json)?;
+    let params =
+        pagination_params_from_style(opts.typography.as_ref(), opts.page_geometry.as_ref());
+    let est = mdcore::pagination::estimate(tree, &params);
+    serde_json::to_string(&est).map_err(|e| ExportError {
+        code: "docx_build",
+        message: format!("estimate serialize: {e}"),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // wasm 壳（WasmCore 增量方法——既有类面零变化，t16/t17 自由函数模式的
 // 差异 = 导出读 self 状态，故为方法；本 crate 内 impl 分文件合法）
 // ---------------------------------------------------------------------------
@@ -918,6 +1003,21 @@ impl WasmCore {
     #[wasm_bindgen]
     pub fn export_docx_styled(&self, options_json: &str) -> Result<Vec<u8>, JsValue> {
         export_docx_styled_core(&self.inner.tree, options_json).map_err(|e| {
+            JsValue::from_str(
+                &serde_json::json!({ "code": e.code, "message": e.message }).to_string(),
+            )
+        })
+    }
+
+    /// 当前文档 + 格式选项 JSON → 分页预估 JSON（N-5：导出前超页
+    /// 判断——「技术标不超过 N 页」硬限制的事前检查）。options 语法
+    /// 与 [`Self::export_docx_styled`] 同一（以将要导出的同一 options
+    /// 预估，口径天然对齐）。返回字段：`pages`/`chars_per_line`/
+    /// `lines_per_page`/分块行消耗/`error_margin_pct`（模型自报
+    /// 误差带）。失败 = 抛 JSON 串（code = `docx_options`）。
+    #[wasm_bindgen]
+    pub fn estimate_pages_json(&self, options_json: &str) -> Result<String, JsValue> {
+        estimate_pages_core(&self.inner.tree, options_json).map_err(|e| {
             JsValue::from_str(
                 &serde_json::json!({ "code": e.code, "message": e.message }).to_string(),
             )
@@ -2168,5 +2268,73 @@ mod tests {
             doc_both.contains(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#),
             "组合面 TOC 域在场"
         );
+    }
+
+    // -------------------------------------------------------------------
+    // N-5：estimate_pages_core——options 同形语法 + 参数映射 + 错误面。
+    // 校准证据 = test-artifacts/pagination/CALIBRATION.md（40 万字双档
+    // +0.61%/-2.46%）；此处钉定桥层映射的确定性。
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn estimate_default_options_match_engine_baseline() {
+        let tree = markdown_to_tree(&format!("{}\n", "汉".repeat(40)).repeat(200));
+        // 空 options ≡ 引擎缺省档（与不传选项导出基线一致）。
+        let est = serde_json::from_str::<serde_json::Value>(
+            &estimate_pages_core(&tree, "{}").expect("estimate"),
+        )
+        .expect("json");
+        assert_eq!(est["pages"].as_u64().unwrap() > 0, true);
+        assert_eq!(est["chars_per_line"], 42, "8504/200 = 42");
+        assert_eq!(est["error_margin_pct"], 5.0, "纯段落 5% 档");
+    }
+
+    #[test]
+    fn estimate_tender_options_mapping() {
+        let tree = markdown_to_tree(&format!("{}\n", "汉".repeat(40)).repeat(200));
+        // tender 档（四号 1.5 倍 / Word 中文边距 1440/1800）：
+        // 版心 8306×13958、cpl = 29、每页行数 = floor(13958/570.22) = 24。
+        let opts = r#"{
+            "typography": {
+                "ascii_font": "Times New Roman",
+                "east_asia_font": "FangSong",
+                "complex_script_font": "Times New Roman",
+                "size_half_points": 28,
+                "line_spacing": { "line": 360, "line_rule": "auto" }
+            },
+            "page_geometry": {
+                "width": 11906, "height": 16838,
+                "margin_top": 1440, "margin_right": 1800,
+                "margin_bottom": 1440, "margin_left": 1800,
+                "margin_header": 851, "margin_footer": 992, "gutter": 0
+            }
+        }"#;
+        let est = serde_json::from_str::<serde_json::Value>(
+            &estimate_pages_core(&tree, opts).expect("estimate"),
+        )
+        .expect("json");
+        assert_eq!(est["chars_per_line"], 29, "8306/280 = 29.66 → 29");
+        assert_eq!(est["lines_per_page"], 24, "floor(13958/570.22) = 24");
+        // 页数 > 同文档缺省档（1.5 倍行距 + 大字号放大）。
+        let base = serde_json::from_str::<serde_json::Value>(
+            &estimate_pages_core(&tree, "{}").expect("estimate"),
+        )
+        .expect("json");
+        assert!(
+            est["pages"].as_u64().unwrap() > base["pages"].as_u64().unwrap(),
+            "tender 档页数 > 缺省档"
+        );
+    }
+
+    #[test]
+    fn estimate_tolerates_toc_anonymize_and_rejects_bad_options() {
+        let tree = markdown_to_tree("单段");
+        // toc/anonymize 键合法（不参与估算——目录 = 渲染期生成面）。
+        assert!(estimate_pages_core(&tree, r#"{"toc":{"enabled":true},"anonymize":true}"#).is_ok());
+        // 形状错误 = docx_options（复用导出 options 单一形状真源）。
+        let err = estimate_pages_core(&tree, "not json").expect_err("bad json");
+        assert_eq!(err.code, "docx_options");
+        let err2 = estimate_pages_core(&tree, r#"{"unknown_key": 1}"#).expect_err("unknown key");
+        assert_eq!(err2.code, "docx_options");
     }
 }

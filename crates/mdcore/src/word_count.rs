@@ -147,7 +147,7 @@ fn net_text<'a>(text: &'a str, marks: &[MarkSpan]) -> Cow<'a, str> {
 /// 单管道行 → 单元格序列：剥前导/尾随 `|`；未转义 `|` 分隔；`\|` 反转义
 /// 为 `|`；单元格 trim；孤立 `\` 原样透传。（与 wasm 导出面
 /// `docx_export::split_pipe_row` 同规——核心内独立实现。）
-fn split_pipe_row(line: &str) -> Vec<String> {
+pub fn split_pipe_row_pub(line: &str) -> Vec<String> {
     let s = line.strip_prefix('|').unwrap_or(line);
     let s = s.strip_suffix('|').unwrap_or(s);
     let mut cells: Vec<String> = Vec::new();
@@ -179,7 +179,7 @@ fn split_pipe_row(line: &str) -> Vec<String> {
 }
 
 /// GFM 分隔行判定（每个 trim 后单元格 `:?-+:?` 形）。
-fn is_separator_row(cells: &[String]) -> bool {
+pub fn is_separator_row_pub(cells: &[String]) -> bool {
     !cells.is_empty()
         && cells.iter().all(|c| {
             let t = c.trim();
@@ -198,8 +198,8 @@ fn count_table(text: &str, t: &mut TextCount) {
         if line.trim().is_empty() {
             continue;
         }
-        let cells = split_pipe_row(line);
-        if rows_emitted == 1 && is_separator_row(&cells) {
+        let cells = split_pipe_row_pub(line);
+        if rows_emitted == 1 && is_separator_row_pub(&cells) {
             continue;
         }
         rows_emitted += 1;
