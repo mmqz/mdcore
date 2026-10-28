@@ -60,6 +60,10 @@ pub mod worker;
 pub mod writer;
 #[cfg(feature = "engine-lopdf")]
 pub mod writer_lopdf;
+// Q3-1 R1（#29 方案 (a)）：文本 → PDF 生成器（Type0/CID 自建面——
+// lopdf font_embedding 仅单字节简单字体，CJK 必须手工构建）。
+#[cfg(feature = "engine-lopdf")]
+pub mod generate;
 
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
