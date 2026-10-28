@@ -8,3 +8,6 @@ description = "Headless Core v0 (R8): Document/BlockTree + StableID + Rope + Com
 ropey = "1.6"
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
+# R-1（#29 2.1）：chunk_id 内容寻址（sha256 规范化序列化）。锁内既有
+# 包块（calamine 同版本依赖），纯 Rust、wasm32 兼容，零新锁条目。
+sha2 = "0.11"
