@@ -193,6 +193,9 @@
 //! - 域指令文本（instrText 引擎入模型字符串，提取面外——登记；
 //!   写面简单域 PAGE/NUMPAGES 已暴露，域结果文本不入读回文本——
 //!   域值是渲染期计算面；域**缓存结果文本以普通文本呈现**）；
+//!   **退化域（无 separate 指令域，含 WPS `""` 前缀形态）指令恒不
+//!   入正文**——四实现面共识（LO 渲染/LO 导入/pandoc/python-docx）
+//!   裁决 = docs/field-code-semantics.md（#40）；
 //!
 //! 写侧**不支持**（引擎能力在[docx-rs 写面远大于本切片]，未实测
 //! 不暴露）：图片自动转码（`Pic::new` 需 `image` 特性 = +23 crate
@@ -2033,6 +2036,13 @@ fn heading_level_from_style_id(style_id: &str) -> Option<usize> {
 /// 嵌套域（域中域——OOXML 允许，罕见）：Begin 重置活动域状态
 ///（外层域的 separate/end 由内层 End 后的首个匹配态收束——v0
 /// 近似，登记）。
+///
+/// 退化域（begin → instrText → end，无 separate 无缓存结果——WPS
+/// 12.1 常见发射形，指令可为 `""` 前缀的任意不可解析串）：指令文本
+/// 恒不入正文且**不计 dropped**（指令从未可见，非损失面）——四实现
+/// 面共识裁决与证据链 = docs/field-code-semantics.md（#40）；钉定
+/// 测试 = tests/tr31_degenerate_field.rs。字面 `w:t` 文本永不因引号/
+/// 内容形态剥离（剥离按域结果区**位置**判定）。
 #[derive(Default)]
 struct FieldMachine {
     /// 活动域指令累积（begin 后收集，separate 时定格判定）。
