@@ -41,10 +41,14 @@ fn tender_options() -> String {
 }
 
 fn options_for(profile: &str) -> String {
+    // `{` 开头 = 原始 options JSON 直传（N-2 TOC 验收等需要非预设组合）。
+    if profile.starts_with('{') {
+        return profile.to_string();
+    }
     match profile {
         "default" => "{}".to_string(),
         "tender" => tender_options(),
-        other => panic!("unknown profile: {other} (default | tender)"),
+        other => panic!("unknown profile: {other} (default | tender | {{raw json}})"),
     }
 }
 

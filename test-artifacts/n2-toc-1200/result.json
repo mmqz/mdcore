@@ -1,0 +1,30 @@
+{
+  "pages": 112,
+  "toc_entries": 1200,
+  "h1": 400,
+  "h2": 400,
+  "h3": 400,
+  "level_seq_head": [
+    1,
+    2,
+    3,
+    1,
+    2,
+    3,
+    1,
+    2,
+    3,
+    1,
+    2,
+    3
+  ],
+  "page_ref_sample_hits": 20,
+  "page_ref_sample_total": 20,
+  "range_control": {
+    "level": "2-3",
+    "xml_assert": "TOC \\o \"2-3\"",
+    "ok": true,
+    "lo_import_limitation": "LO ContentIndex 不保 \\o 范围——update 恒全层级（登记，Word 实机待验证）"
+  },
+  "verdict": "PASS"
+}
