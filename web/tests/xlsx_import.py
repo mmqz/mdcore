@@ -152,8 +152,57 @@ def main() -> int:
             check("undo_works_after_import", undo_ret is True and "typed tail" not in md_undo,
                   json.dumps({"ret": undo_ret, "tail": md_undo[-60:]}))
 
+            # ---- #42 方案 A：顶部导入联动 Grid 会话（同份 bytes 两面呈现）----
+            page.wait_for_function(
+                "window.__lastXlsxImport && window.__lastXlsxImport.grid"
+                " && window.__lastXlsxImport.grid.ok === true", timeout=15000)
+            grid_link = page.evaluate("""() => ({
+                ready: window.__gridReady === true,
+                sheets: (window.__gridSheets() || []).map((s) => s.name),
+                status: document.getElementById('xlsx-status').textContent,
+            })""")
+            check("top_import_links_grid_session",
+                  grid_link["ready"] and grid_link["sheets"] == ["Data", "Notes", "Empty"]
+                  and "workbook in grid (3 sheets)" in grid_link["status"],
+                  json.dumps(grid_link))
+
+            # ---- #42 验收：切到 Grid 面板能看到该工作簿（真实 UI 点击路径）----
+            page.click("#tab-grid")
+            grid_view = page.evaluate("""() => ({
+                panelVisible: document.getElementById('grid-panel').style.display === 'block',
+                editorHidden: document.getElementById('editor').style.display === 'none',
+                guideHidden: document.getElementById('grid-guide').hidden === true,
+                status: document.getElementById('grid-status').textContent,
+                sheetOptions: Array.from(document.querySelectorAll('#grid-sheet-select option'))
+                    .map((o) => o.textContent),
+            })""")
+            check("grid_panel_shows_workbook_after_top_import",
+                  grid_view["panelVisible"] and grid_view["editorHidden"]
+                  and grid_view["guideHidden"]
+                  and "opened: 3 sheets" in grid_view["status"]
+                  and grid_view["sheetOptions"] == ["Data", "Notes", "Empty"],
+                  json.dumps(grid_view))
+            page.click("#tab-doc")
+
+            # ---- #42 验收：两条路径导入同一文件 → 内容一致（sheets + 首表切片全等）----
+            path_a = page.evaluate("""() => ({
+                sheets: window.__gridSheets(),
+                slice: window.__gridSliceRaw(0, 0, 0, 4, 3),
+            })""")
+            path_b_open = page.evaluate("(b64) => window.__gridOpenBytes(b64)", fixture_b64)
+            path_b = page.evaluate("""() => ({
+                sheets: window.__gridSheets(),
+                slice: window.__gridSliceRaw(0, 0, 0, 4, 3),
+            })""")
+            check("both_paths_same_workbook_content",
+                  path_b_open.get("ok") is True
+                  and path_a["sheets"] == path_b["sheets"]
+                  and path_a["slice"] == path_b["slice"],
+                  json.dumps({"a": path_a["sheets"], "b": path_b["sheets"]})[:300])
+
             # ---- 敌意面：垃圾字节 → typed 错误码 + 编辑器现状零触碰 ----
             md_before_hostile = page.evaluate("window.__md()")
+            grid_before_hostile = page.evaluate("window.__gridSheets()")
             garbage = base64.b64encode(bytes([0x00, 0x01, 0x02, 0x63, 0xFF])).decode()
             hostile = page.evaluate(IMPORT_JS, garbage)
             hostile_status = page.evaluate("document.getElementById('xlsx-status').textContent")
@@ -161,7 +210,9 @@ def main() -> int:
                   hostile.get("ok") is False and hostile.get("code") == "container_corrupt"
                   and bool(hostile.get("message"))
                   and "container_corrupt" in hostile_status
-                  and page.evaluate("window.__md()") == md_before_hostile,
+                  and page.evaluate("window.__md()") == md_before_hostile
+                  # #42：失败导入不联动（grid 会话原样保留——联动仅成功路径）
+                  and page.evaluate("window.__gridSheets()") == grid_before_hostile,
                   json.dumps({"r": hostile, "status": hostile_status}))
 
             # ---- 敌意面：截断档案（EOCD 缺失）→ 同 typed 面 ----

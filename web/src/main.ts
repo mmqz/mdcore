@@ -74,7 +74,7 @@ import { setupCanvasView } from './canvas_view.js';
 import { setupCollabChannel } from './collab_channel.js';
 import { setupEvidencePanel } from './evidence_panel.js';
 import { setupPdfView } from './pdf_view.js';
-import { setupXlsxGrid } from './xlsx_grid.js';
+import { setupXlsxGrid, gridOpenBytesWhenReady } from './xlsx_grid.js';
 
 // ---------------------------------------------------------------------------
 // 核侧数据形状（blocks_json / take_events 的最小面）
@@ -1357,7 +1357,14 @@ declare global {
     /** t17：XLSX 字节导入（表→GFM 表映射 + 规模上限 stats；成功后经 __inject 重建核）。 */
     __importXlsx: (bytes: Uint8Array) => { ok: true; markdown: string; stats: Record<string, unknown> } | { ok: false; code: string; message: string };
     /** t17：最近一次 XLSX 导入结果（成功 = {ok, markdown, stats}；失败 = {ok:false, code, message}）。 */
-    __lastXlsxImport: { ok: boolean; markdown?: string; stats?: Record<string, unknown>; code?: string; message?: string } | null;
+    __lastXlsxImport: {
+      ok: boolean; markdown?: string; stats?: Record<string, unknown>;
+      code?: string; message?: string;
+      /** #42 方案 A：Grid 联动结果（异步回填——成功导入后一拍内到位；
+       * 缺失 = 联动仍在途）。 */
+      grid?: { ok: true; sheets: { name: string; rows: number; cols: number }[] }
+        | { ok: false; code: string; message: string };
+    } | null;
     /** t18：当前编辑器文档 → DOCX 字节导出（块模型→DocxWriter 映射 + 降级面；wasm 面/错误码 = docx_export.rs 模块文档单一真源）。 */
     __exportDocx: () => { ok: true; bytes: Uint8Array; sizeBytes: number } | { ok: false; code: string; message: string };
     /** #16（A4）：styled 导出测试桥——直通 wasm export_docx_styled（options 缺省 = 面板/设置态；零副作用）。 */
@@ -2004,10 +2011,32 @@ function setupXlsxImport(): void {
       return { ok: false, code, message: 'editor boot incomplete' };
     }
     window.__inject(result.markdown); // 既有宿主注入契约：整体重建核
-    window.__lastXlsxImport = { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
+    const curImport: {
+      ok: true; markdown: string; stats: Record<string, unknown>;
+      grid?: { ok: true; sheets: { name: string; rows: number; cols: number }[] }
+        | { ok: false; code: string; message: string };
+    } = {
+      ok: true,
+      markdown: result.markdown,
+      stats: result.stats as unknown as Record<string, unknown>,
+    };
+    window.__lastXlsxImport = curImport;
     showStatus(xlsxStatusLine(result.stats), false);
     // #22 P2-4：可见警告面（面板渲染收起态 + 状态行可展开）。
     if (statusEl) renderImportWarnings(statusEl, 'xlsx-warning-panel', result.stats.warnings);
+    // #42 方案 A：同一份 bytes 同灌 Grid 会话（编辑器 markdown 面 +
+    // Grid workbook 面）。fire-and-forget——联动失败不回滚主编入（增强面
+    // 非前置条件）；结果回填 __lastXlsxImport.grid + 状态行后缀（仅当
+    // 同一导入仍是最新时——被后续导入覆盖则静默让位）。
+    void (async (): Promise<void> => {
+      const g = await gridOpenBytesWhenReady(bytes);
+      if (window.__lastXlsxImport !== curImport) return;
+      curImport.grid = g;
+      if (g.ok && statusEl) {
+        const n = g.sheets.length;
+        statusEl.textContent += ` · workbook in grid (${n} sheet${n === 1 ? '' : 's'})`;
+      }
+    })();
     return { ok: true, markdown: result.markdown, stats: result.stats as unknown as Record<string, unknown> };
   };
   fileInput?.addEventListener('change', () => {

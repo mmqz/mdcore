@@ -74,7 +74,7 @@ type SliceJson = {
   cols: number;
   cells: SliceCell[][];
 };
-type SheetMeta = {
+export type SheetMeta = {
   name: string;
   rows: number;
   cols: number;
@@ -104,6 +104,9 @@ type WasmBookEdits = {
 };
 
 type WasmFail = { ok: false; code: string; message: string };
+
+/** openBytes 返回面（#42 联动导出——供 main.ts 类型桥）。 */
+export type GridOpenResult = { ok: true; sheets: SheetMeta[] } | WasmFail;
 
 /** Thrown wasm JSON string -> typed failure (never throws). */
 function wasmFail(e: unknown): WasmFail {
@@ -1214,6 +1217,31 @@ export class XlsxGridUI {
 // wiring (called from main.ts once the wasm module is initialized)
 // ---------------------------------------------------------------------------
 
+/** #42 方案 A：模块级 UI 引用（setupXlsxGrid 装配后非空；此前 not_ready）。 */
+let gridUiRef: XlsxGridUI | null = null;
+
+/**
+ * #42 方案 A：顶部 import .xlsx 成功后的 Grid 会话联动开簿（有界等待
+ * 启动——正常路径 grid 在 main() 装配后微任务级就绪，首拍即中；等待期
+ * 线性重试 25ms 一拍，超时回 typed not_ready 而非悬挂）。
+ *
+ * 语义与 #grid-file 开簿一致（openBytes 单点）：替换既有会话（含编辑
+ * 台账重置——与面板自有 open 路径同语义）；失败返回 typed 面、不抛出。
+ */
+export async function gridOpenBytesWhenReady(
+  bytes: Uint8Array,
+  timeoutMs = 5000,
+): Promise<GridOpenResult> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (gridUiRef) return gridUiRef.openBytes(bytes);
+    if (Date.now() >= deadline) {
+      return { ok: false, code: 'not_ready', message: 'grid panel boot incomplete' };
+    }
+    await new Promise((res) => setTimeout(res, 25));
+  }
+}
+
 /**
  * Boot the grid UI. `initWasm` lazily resolves the wasm-bindgen module — the
  * same module instance main.ts already initialized (calling init again is
@@ -1227,6 +1255,7 @@ export function setupXlsxGrid(initWasm: () => Promise<WasmModule>): void {
         await wasmBoot(mod); // 单飞门（idempotent no-op when main() already inited）
       }
       const ui = new XlsxGridUI(mod);
+      gridUiRef = ui; // #42 联动面（在探针装配前后无观感差异——同一同步段）
       window.__gridReady = true;
       // `ui` is retained by the window probe closures — no GC concern.
       void ui;
