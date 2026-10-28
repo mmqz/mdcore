@@ -180,7 +180,10 @@ fn naming_gate_documented_before_placeholder_replacement() {
     );
 
     let checklist = read("packaging/checklist.md");
-    for gate in ["商标检索五步完成", "占位符全量替换", "版本单源"] {
+    // A4 定名批（2026-10-27 mang）改写 checklist 为 A1-A5 条目结构——
+    // 门字符串随新措辞对齐（旧字面量「商标检索五步完成」等已不存在，
+    // 本循环语义不变：三门必须仍在核对单在档）。
+    for gate in ["A2 商标检索五步", "占位符已全量替换", "B1 版本单源"] {
         assert!(checklist.contains(gate), "核对单必须含门：{gate}");
     }
     // 已定名（2026-10-27：mang / 芒）——A4 门已执行，断言随定名改写（三处一体：
