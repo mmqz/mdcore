@@ -26,7 +26,7 @@
 //!
 //! | mdcore 块 | XLSX 落面 | 降级（不可表达面，显式登记） |
 //! |---|---|---|
-//! | `Table` | **每表一独立 sheet**（文档序）：首行 = 表头行原样、体行按序；每格 [`CellValue::Text`] | 分隔行剔除 + `\|` 反转义 + 单元格 `\n`/`\r` → 空格（t18 `table_rows` 同一 GFM 语义真源共享）；**全部格 = Text——数值/布尔类型不推断**（前导零 `007`/日期式字符串会因推断失真；Text 面保证 t17 读回 Display 逐字等值 = 全环断言基础）；不整齐行原样落栅格（无补齐——栅格天然容纳 ragged）；空文本格不落格（栅格等价，行索引照常）；0 行表跳过（防御——markdown 解析不产空表）；行 > [`MAX_ROW`]/列 > [`MAX_COL`] 防御截断（病理文档 2^20 行/2^14 列外不可达——映射恒全函数） |
+//! | `Table` | **每表一独立 sheet**（文档序）：首行 = 表头行原样、体行按序；每格 [`CellValue::Text`]，**反引号公式格例外 → [`CellValue::Formula`]**（#22 Q3-2：整体反引号包裹 + 内层以 `=` 开头——P2-3 导入面的对称标记，非类型推断） | 分隔行剔除 + `\|` 反转义 + 单元格 `\n`/`\r` → 空格（t18 `table_rows` 同一 GFM 语义真源共享）；**非公式格恒 Text——数值/布尔类型不推断**（前导零 `007`/日期式字符串会因推断失真；Text 面保证 t17 读回 Display 逐字等值 = 全环断言基础）；公式格缓存值不伪造（无计算引擎——读回 values 面 = 0.0，FIDELITY §1 在档；公式原文经公式通道往返）；不整齐行原样落栅格（无补齐——栅格天然容纳 ragged）；空文本格不落格（栅格等价，行索引照常）；0 行表跳过（防御——markdown 解析不产空表）；行 > [`MAX_ROW`]/列 > [`MAX_COL`] 防御截断（病理文档 2^20 行/2^14 列外不可达——映射恒全函数） |
 //! | `Heading` | Document sheet 行：A 列单格 + 加粗（[`CellStyle::bold`]，style_probe 验证面） | **level 丢失**（h1-h6 同为加粗单格——无分级样式面）；**marks 丢弃**（单元格无富文本承载） |
 //! | `Paragraph` | Document sheet 行：A 列单格纯文本 | **marks 全降级纯文本**（bold/em/code/del/u/link——单元格无富文本承载；文本逐字保留） |
 //! | `CodeBlock` | Document sheet 行：每行单格逐字 | lang/fence/等宽面丢失（无单元格字体面） |
@@ -239,6 +239,34 @@ fn collect_text_rows(tree: &BlockTree, id: NodeId, rows: &mut Vec<TextRow>) {
     }
 }
 
+/// 反引号公式格检测（#22 Q3-2）：单元格整体为反引号包裹的公式
+/// 原文（`` `=SUM(B2:B4)` `` 形——P2-3 导入产出的对称标记）→
+/// [`CellValue::Formula`]（真公式格——openpyxl 独立读出公式文本
+/// 而非字面反引号串）。裁决链：
+/// - 内层 trim 后以 `=` 开头且长于 1（退化 `=` 单独不算）→ Formula
+///   （写面规范化 = 前缀——io.rs FIDELITY §1 往返一致）；
+/// - 非公式反引号串（内联代码 `` `code` `` 等）保持 Text——
+///   **非类型推断**：反引号 = 导入面显式标记，非猜测（"007"/
+///   日期串恒 Text 的既有裁决不变）；
+/// - 单层不双解（`` ``=x`` `` 内层不以 `=` 开头 → Text）；
+/// - 缓存值不伪造：`cached: None`（无计算引擎；读回 values 面 =
+///   0.0 在档——公式原文经公式通道往返，缓存通道降级登记）。
+fn cell_value(text: &str) -> CellValue {
+    let inner = text
+        .strip_prefix('`')
+        .and_then(|s| s.strip_suffix('`'))
+        .map(str::trim);
+    if let Some(formula) = inner {
+        if formula.starts_with('=') && formula.len() > 1 {
+            return CellValue::Formula {
+                text: formula.to_string(),
+                cached: None,
+            };
+        }
+    }
+    CellValue::Text(text.to_string())
+}
+
 /// 表块收集（先序文档序——嵌套于 quote/list 的表同样收；`Table`
 /// 自身 children 不下钻，t18 同款防御）。
 fn collect_tables(tree: &BlockTree, id: NodeId, out: &mut Vec<NodeId>) {
@@ -270,7 +298,7 @@ fn write_document_sheet(w: &mut WorkbookWriter, rows: &[TextRow]) -> Result<(), 
                 continue; // 空行不落格
             }
             let style = if row.bold { Some(&bold) } else { None };
-            s.write(r as u32, 0, CellValue::Text(row.text.clone()), style)
+            s.write(r as u32, 0, cell_value(&row.text), style)
                 .map_err(map_xlsx)?;
         }
     }
@@ -298,7 +326,7 @@ fn write_table_sheet(
                 if cell.is_empty() {
                     continue; // 空格不落格
                 }
-                s.write(r as u32, c as u16, CellValue::Text(cell.clone()), None)
+                s.write(r as u32, c as u16, cell_value(cell), None)
                     .map_err(map_xlsx)?;
             }
         }
@@ -436,6 +464,50 @@ mod tests {
         assert_eq!(cell(s, 0, 1), "beta");
         assert_eq!(cell(s, 1, 0), "1");
         assert_eq!(cell(s, 1, 1), "2", "分隔行剔除（GFM 语义位）");
+    }
+
+    /// #22 Q3-2：反引号公式格 → 真公式格（P2-3 导入标记的对称写面
+    /// ——公式通道往返；读回不带 `=` 前缀 = calamine 行为 FIDELITY §1）。
+    #[test]
+    fn backtick_formula_maps_to_formula_channel() {
+        let tree = markdown_to_tree("| a | b |\n| --- | --- |\n| `=SUM(B2:B4)` | `=1+1` |");
+        let book = roundtrip(&tree);
+        let s = &book.sheets[0];
+        assert_eq!(s.formula_at(1, 0), Some("SUM(B2:B4)"), "公式原文经公式通道");
+        assert_eq!(s.formula_at(1, 1), Some("1+1"));
+        // 值面：cached None → Float(0.0)（不伪造缓存——写面在档行为）。
+        assert_eq!(cell_debug(s, 1, 0), "Some(Float(0.0))");
+        // 表头恒 Text（反引号才触发，非位置性推断）。
+        assert_eq!(cell(s, 0, 0), "a");
+        assert!(s.formula_at(0, 0).is_none());
+    }
+
+    /// #22 Q3-2：检测矩阵——非公式反引号（内联代码）/单层不双解/
+    /// 退化 `=`/空内层/裸 `=` 串/前导零 全部恒 Text（非类型推断裁决）。
+    #[test]
+    fn backtick_formula_detection_matrix() {
+        use mdc_office_io::write::CellValue;
+        // 公式形（含内层空白 trim）。
+        for text in ["`=SUM(B2:B4)`", "` =SUM(B2:B4) `", "`=1+1`"] {
+            assert!(
+                matches!(cell_value(text), CellValue::Formula { .. }),
+                "{text} 应为公式格"
+            );
+        }
+        match cell_value("`=SUM(B2:B4)`") {
+            CellValue::Formula { text, cached } => {
+                assert_eq!(text, "=SUM(B2:B4)");
+                assert!(cached.is_none(), "缓存值不伪造（无计算引擎）");
+            }
+            _ => panic!("公式形"),
+        }
+        // Text 恒等面。
+        for text in ["plain", "`code`", "``=x``", "`=`", "``", "=SUM(x)", "007"] {
+            assert!(
+                matches!(cell_value(text), CellValue::Text(t) if t == text),
+                "{text} 应保持 Text 逐字"
+            );
+        }
     }
 
     #[test]
