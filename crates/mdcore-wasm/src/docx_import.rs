@@ -70,6 +70,11 @@
 //!   mdcore `BlockKind::Table` 规范文本同构，html.rs
 //!   `canonical_table_text` 同形）；单元格清洗：`|` → `\|` 转义、
 //!   `\n`/`\r` → 空格（GFM 单元格不承载换行）、短行补空格对齐表头宽；
+//!   **合并单元格**（#22 P2-2）：office-io 读面栅格展开形（gridSpan
+//!   覆盖列/vMerge 续格置空，内容只居原点格——Word 显示语义）与
+//!   `merges` 矩形清单；GFM 无合并面 → 降级为栅格对齐表（覆盖格空），
+//!   计数进 `merged_ranges`（结构丢失显式化——与 xlsx 导入同键）；
+//!   短行补齐在引擎栅格面已天然对齐（render 补齐 = 防御位）；
 //! - 空段落跳过（mdcore 空行不建块）；段落内软换行（w:br → `\n`）
 //!   原样输出——mdcore 行级解析按行建块（一段拆多块，登记）。
 //!
@@ -419,6 +424,8 @@ struct BlockMapper {
     list_numbering_dropped: usize,
     list_depth_clamped: usize,
     list_markers_normalized: usize,
+    // #22 P2-2：表格合并区域计数（GFM 无合并面的降级显式化）。
+    merged_ranges: usize,
     // #18：文本框计数（承载可见）。
     text_boxes: usize,
     counters: ListCounters,
@@ -507,6 +514,9 @@ impl BlockMapper {
                 Block::Table(t) => {
                     // 表块中断列表 run（markdown 表非列表成员）。
                     self.counters.reset();
+                    // P2-2：合并区域计数（表未渲染[空表]时 merges 恒空
+                    // ——栅格展开形下两者同源，无口径差）。
+                    self.merged_ranges += t.merges.len();
                     if let Some(md) = render_table(t) {
                         lines.push(md);
                         self.tables += 1;
@@ -527,6 +537,7 @@ impl BlockMapper {
         self.hyperlinks += other.hyperlinks;
         self.list_items += other.list_items;
         self.list_items_degraded += other.list_items_degraded;
+        self.merged_ranges += other.merged_ranges;
         self.list_numbering_dropped += other.list_numbering_dropped;
         self.list_depth_clamped += other.list_depth_clamped;
         self.list_markers_normalized += other.list_markers_normalized;
@@ -640,6 +651,9 @@ fn docx_to_markdown(doc: &DocxDocument) -> (String, serde_json::Value) {
         "list_numbering_dropped": total.list_numbering_dropped,
         "list_depth_clamped": total.list_depth_clamped,
         "list_markers_normalized": total.list_markers_normalized,
+        // P2-2：表格合并区域数（GFM 降级显式化——与 xlsx 导入同键；
+        // 正文 + 页眉/页脚部件表同计）。
+        "merged_ranges": total.merged_ranges,
         "images_skipped": images_skipped,
         "text_boxes": total.text_boxes,
         // #19：批注/脚注/尾注读面承载量（内容不入 md 投影——结构面
@@ -747,7 +761,9 @@ pub fn build_sample_docx() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mdc_office_io::docx::{BlockSource, HeaderFooterData, HeaderFooterVariant, ParagraphData};
+    use mdc_office_io::docx::{
+        BlockSource, HeaderFooterData, HeaderFooterVariant, MergeRange, ParagraphData,
+    };
 
     fn para(style: Option<&str>, runs: Vec<RunData>) -> Block {
         Block::Paragraph(ParagraphData {
@@ -1452,6 +1468,7 @@ mod tests {
                 vec!["a|b".to_string(), "x".to_string()],
                 vec!["two\nlines".to_string()],
             ],
+            merges: vec![],
             source: BlockSource::Body,
         })]);
         let (md, stats) = docx_to_markdown(&doc);
@@ -1460,10 +1477,71 @@ mod tests {
         // 空表跳过。
         let (md2, stats2) = docx_to_markdown(&doc_of(vec![Block::Table(TableData {
             rows: vec![],
+            merges: vec![],
             source: BlockSource::Body,
         })]));
         assert_eq!(md2, "");
         assert_eq!(stats2["tables"], 0);
+    }
+
+    /// #22 P2-2 单元级：merges 清单 → stats `merged_ranges` 计数 +
+    /// GFM 栅格对齐降级（覆盖格空——引擎读面已栅格展开，render 补齐
+    /// = 防御位）。
+    #[test]
+    fn merged_ranges_stat_and_gfm_grid() {
+        let doc = doc_of(vec![Block::Table(TableData {
+            rows: vec![
+                vec!["合并A".to_string(), String::new(), "C".to_string()],
+                vec![String::new(), String::new(), String::new()],
+            ],
+            merges: vec![
+                MergeRange {
+                    start_row: 0,
+                    start_col: 0,
+                    end_row: 1,
+                    end_col: 1,
+                },
+                MergeRange {
+                    start_row: 0,
+                    start_col: 2,
+                    end_row: 0,
+                    end_col: 2,
+                },
+            ],
+            source: BlockSource::Body,
+        })]);
+        let (md, stats) = docx_to_markdown(&doc);
+        assert_eq!(stats["merged_ranges"], 2, "两处合并计数: {stats}");
+        assert_eq!(stats["tables"], 1);
+        // GFM 降级：栅格对齐（覆盖格空）——无合并语法可表达，登记即可。
+        assert_eq!(md, "| 合并A |  | C |\n| --- | --- | --- |\n|  |  |  |");
+    }
+
+    /// #22 P2-2 真夹具全链：word-merged.docx → `merged_ranges: 2` +
+    /// 内容不重复（每标记恰一次）+ 栅格对齐行形状。
+    #[test]
+    fn p2_2_word_merged_fixture_two_merges() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-artifacts/TR2/fixtures/word-merged.docx");
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("fixture missing: {} ({e})", path.display()));
+        let out = import_docx_core(&bytes).expect("compat import of merged fixture");
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("stats json");
+        let stats = &parsed["stats"];
+        let md = parsed["markdown"].as_str().expect("md");
+        // 验收：2 处合并（表 1 纵 1 + 横 1；表 0 无合并）。
+        assert_eq!(stats["merged_ranges"], 2, "验收 2 处合并: {stats}");
+        assert_eq!(stats["tables"], 2, "夹具两表均入投影: {stats}");
+        // 栅格对齐行形状：内容居原点格（多段 \n → 空格清洗），覆盖/续格空。
+        assert!(
+            md.contains("| R1C1 R2C1 | R1C2 R1C3 |  |"),
+            "表 1 首行栅格形: {md}"
+        );
+        assert!(md.contains("|  | R2C2 | R2C3 |"), "续格置空行: {md}");
+        // 内容不重复：每标记在 md 中恰一次。
+        for marker in ["R1C1", "R2C1", "R1C2", "R1C3", "R2C2", "R2C3", "R4C3"] {
+            assert_eq!(md.matches(marker).count(), 1, "标记 {marker} 恰一次: {md}");
+        }
     }
 
     #[test]
@@ -1590,6 +1668,7 @@ mod tests {
                     header_para,
                     Block::Table(TableData {
                         rows: vec![vec!["a".to_string(), "b".to_string()]],
+                        merges: vec![],
                         source: BlockSource::Header,
                     }),
                 ],

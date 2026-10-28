@@ -1707,6 +1707,7 @@ dependencies = [
  "flate2",
  "quick-xml",
  "rust_xlsxwriter",
+ "serde_json",
  "zip",
 ]
 
