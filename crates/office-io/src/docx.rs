@@ -18,6 +18,11 @@
 //!   「目标丢弃」数据损失登记**闭项**（表格单元格内目标仍丢——
 //!   TableData 扁平文本面，登记见下）；
 //! - **超链接（写）**：[`RunSpec::link`] 外部 URL run + 写读全环；
+//! - **嵌套表格（读）**：`w:tbl` 嵌于外层表 `w:tc`（depth≥2）——内层
+//!   表沿文档序以 `Block::Table` 独立发射（`TableData::nested = true`
+//!   标记；外层在前、内层行主序随后——表数守恒；深度上限 16 防敌意
+//!   栈溢出，超限整块跳过 + `SkippedElement` warning——#39 闭项，
+//!   此前静默丢弃 = 标书侧费率表整块缺失）；
 //! - **页眉/页脚（读）**：六槽位（default/first/even × 页眉/页脚，
 //!   变体透传——first/even 激活需 titlePg/evenAndOddHeaders 节设置，
 //!   语义解释面外）× 块序提取（与文档体同构）；
@@ -1600,6 +1605,11 @@ pub struct TableData {
     /// 块来源（#22 P2-1）：表所在文档位置——正文 `Body` / 页眉
     /// `Header` / 页脚 `Footer`（表内段落继承表来源）。
     pub source: BlockSource,
+    /// #39：内嵌表标记（`w:tbl` 嵌于外层表 `w:tc`，depth≥2 时本层
+    /// 读回的内层表）。false = 文档直系表（既有全部表）；true = 内层
+    /// 表——消费方可分流（标书侧费率表等实质性条款区识别面）。
+    /// 缺省语义不可依赖 serde（本类型无 serde 面——构造点显式赋值）。
+    pub nested: bool,
 }
 
 /// 表格合并区域（#22 P2-2）：`start`/`end` 为栅格矩形对角（0 基、
@@ -2178,9 +2188,13 @@ fn text_box_blocks(
             docx_rs::TextBoxContentChild::Paragraph(p) => out.push(Block::Paragraph(
                 extract_paragraph(p, table, index, styles, part, source, strict, warnings)?,
             )),
-            docx_rs::TextBoxContentChild::Table(t) => out.push(Block::Table(extract_table(
-                t, table, index, styles, part, source, strict, warnings,
-            )?)),
+            docx_rs::TextBoxContentChild::Table(t) => {
+                // #39：嵌套表沿文档序独立成块（extract_table 返回
+                // [本表, 内层表…]）。
+                for td in extract_table(t, table, index, styles, part, source, strict, warnings)? {
+                    out.push(Block::Table(td));
+                }
+            }
         }
     }
     Ok(out)
@@ -2572,7 +2586,9 @@ fn parse_note_region(
                 } else if local == "tbl" {
                     let t = docx_rs::Table::read(&mut er, &attributes)
                         .map_err(|_| parse_err("note table parse failed"))?;
-                    blocks.push(Block::Table(extract_table(
+                    // #39：嵌套表沿文档序独立成块（外层在前、内层
+                    // 行主序随后——表数守恒）。
+                    for td in extract_table(
                         &t,
                         table,
                         index,
@@ -2581,7 +2597,9 @@ fn parse_note_region(
                         BlockSource::Body,
                         strict,
                         warnings,
-                    )?));
+                    )? {
+                        blocks.push(Block::Table(td));
+                    }
                 }
             }
             Ok(XmlEvent::EndElement { name, .. }) => {
@@ -2655,16 +2673,21 @@ fn extract_comments(
                         warnings,
                     )?))
                 }
-                docx_rs::CommentChild::Table(t) => cblocks.push(Block::Table(extract_table(
-                    t,
-                    table,
-                    index,
-                    styles,
-                    "word/comments.xml",
-                    BlockSource::Body,
-                    strict,
-                    warnings,
-                )?)),
+                docx_rs::CommentChild::Table(t) => {
+                    // #39：嵌套表同构独立成块。
+                    for td in extract_table(
+                        t,
+                        table,
+                        index,
+                        styles,
+                        "word/comments.xml",
+                        BlockSource::Body,
+                        strict,
+                        warnings,
+                    )? {
+                        cblocks.push(Block::Table(td));
+                    }
+                }
             }
         }
         let anchor_block_idx = anchor_map
@@ -2794,7 +2817,8 @@ fn extract_blocks(
             docx_rs::DocumentChild::Table(t) => {
                 let k = body_idx;
                 body_idx += 1;
-                let td = extract_table(
+                // #39：嵌套表同构独立成块。
+                for td in extract_table(
                     t,
                     table,
                     index,
@@ -2803,11 +2827,12 @@ fn extract_blocks(
                     BlockSource::Body,
                     strict,
                     warnings,
-                )?;
-                // #19：表内脚注引用位不标注（body 段落标记面——表内
-                // 段落非 body 块；文档级面待需要时扩展）。
-                let _ = k;
-                blocks.push(Block::Table(td));
+                )? {
+                    // #19：表内脚注引用位不标注（body 段落标记面——表内
+                    // 段落非 body 块；文档级面待需要时扩展）。
+                    let _ = k;
+                    blocks.push(Block::Table(td));
+                }
             }
             // #19：body 级批注锚（段间锚——归属前一块；首块前锚归
             // 块 0 语义上不成立，saturating 归零防御）。
@@ -3139,7 +3164,27 @@ fn extract_table(
     source: BlockSource,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
-) -> Result<TableData, io::ReadError> {
+) -> Result<Vec<TableData>, io::ReadError> {
+    extract_table_inner(t, table, index, styles, part, source, strict, warnings, 0)
+}
+
+/// #39：嵌套表深度上限（敌意深嵌 XML 防栈溢出——起域内递归；超限
+/// 表整块跳过 + warning 登记，诚实降级而非崩溃）。Word 实务嵌套
+/// 深度普遍 ≤ 3（layout 表套数据表）；16 = 宽裕域。
+const MAX_NESTED_TABLE_DEPTH: usize = 16;
+
+#[allow(clippy::too_many_arguments)] // 9 参 = 既有 extract_table 8 参 + depth（同豁免模式）
+fn extract_table_inner(
+    t: &docx_rs::Table,
+    table: Option<&RelationshipTable>,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    part: &str,
+    source: BlockSource,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+    depth: usize,
+) -> Result<Vec<TableData>, io::ReadError> {
     // 注：docx-rs 0.4.22 模型中 TableChild/TableRowChild 均为单变体
     //（TableRow/TableCell）——直接解构；模型升级增变体时此函数
     // 编译期报非穷尽，而面外项处理策略不变（跳过+登记）。
@@ -3197,6 +3242,10 @@ fn extract_table(
     let mut grid_rows: Vec<Vec<String>> = Vec::new();
     let mut merges: Vec<MergeRange> = Vec::new();
     let mut open_v: Vec<OpenVmerge> = Vec::new();
+    // #39：内嵌表块流（沿文档序——行主序单元序、递归深度优先；
+    // 返回序 = [外层表, 内层表…]）。内层表不进单元格文本（独立块
+    // 发射——方案 A：表数守恒 + 消费方 nested 标记分流）。
+    let mut nested_tables: Vec<TableData> = Vec::new();
     // 栅格宽度：tblGrid 权威列数（空则 0），行和兜底（畸形表——无 tblGrid
     // 而 gridSpan 撑宽；防御 max）。
     let mut grid_width = t.grid.len();
@@ -3209,11 +3258,50 @@ fn extract_table(
             let (span, vmerge) = cell_props(c);
             let mut parts = Vec::new();
             for content in &c.children {
-                if let docx_rs::TableCellContent::Paragraph(p) = content {
-                    // 表内段落继承表来源（P2-1——单元格段与表同位置）。
-                    let pd =
-                        extract_paragraph(p, table, index, styles, part, source, strict, warnings)?;
-                    parts.push(pd.text());
+                match content {
+                    docx_rs::TableCellContent::Paragraph(p) => {
+                        // 表内段落继承表来源（P2-1——单元格段与表同位置）。
+                        let pd = extract_paragraph(
+                            p, table, index, styles, part, source, strict, warnings,
+                        )?;
+                        parts.push(pd.text());
+                    }
+                    // #39：内嵌表递归提取（w:tbl@w:tc depth≥2——此前
+                    // 静默丢弃 = 标书侧费率表整块缺失）；深度上限防
+                    // 敌意栈溢出（超限跳过 + warning，诚实降级）。
+                    docx_rs::TableCellContent::Table(nt) => {
+                        if depth >= MAX_NESTED_TABLE_DEPTH {
+                            warnings.push(CompatibilityWarning {
+                                part: part.to_string(),
+                                kind: WarningKind::SkippedElement,
+                                detail: format!(
+                                    "nested table at depth {} (max {}) skipped — \
+                                     hostile/degenerate nesting",
+                                    depth + 1,
+                                    MAX_NESTED_TABLE_DEPTH
+                                ),
+                            });
+                        } else {
+                            for mut td in extract_table_inner(
+                                nt,
+                                table,
+                                index,
+                                styles,
+                                part,
+                                source,
+                                strict,
+                                warnings,
+                                depth + 1,
+                            )? {
+                                td.nested = true;
+                                nested_tables.push(td);
+                            }
+                        }
+                    }
+                    // StructuredDataTag / TableOfContents：面外项（既有
+                    // 策略不变——跳过；单元格文本面无承载，登记于模块
+                    // 文档「丢弃面」）。
+                    _ => {}
                 }
             }
             let text = parts.join("\n");
@@ -3290,11 +3378,15 @@ fn extract_table(
     for row in &mut grid_rows {
         row.resize(grid_width, String::new());
     }
-    Ok(TableData {
+    Ok(vec![TableData {
         rows: grid_rows,
         merges,
         source,
-    })
+        nested: false,
+    }]
+    .into_iter()
+    .chain(nested_tables)
+    .collect())
 }
 
 /// 页眉/页脚槽位引用校验：r:id 在文档关系表 + 目标部件在包内 +
@@ -3422,16 +3514,21 @@ fn extract_headers_footers(
                         warnings,
                     )?))
                 }
-                docx_rs::HeaderChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t,
-                    table,
-                    index,
-                    styles,
-                    part_name,
-                    BlockSource::Header,
-                    strict,
-                    warnings,
-                )?)),
+                docx_rs::HeaderChild::Table(t) => {
+                    // #39：嵌套表同构独立成块。
+                    for td in extract_table(
+                        t,
+                        table,
+                        index,
+                        styles,
+                        part_name,
+                        BlockSource::Header,
+                        strict,
+                        warnings,
+                    )? {
+                        blocks.push(Block::Table(td));
+                    }
+                }
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}
             }
@@ -3481,16 +3578,21 @@ fn extract_headers_footers(
                         warnings,
                     )?))
                 }
-                docx_rs::FooterChild::Table(t) => blocks.push(Block::Table(extract_table(
-                    t,
-                    table,
-                    index,
-                    styles,
-                    part_name,
-                    BlockSource::Footer,
-                    strict,
-                    warnings,
-                )?)),
+                docx_rs::FooterChild::Table(t) => {
+                    // #39：嵌套表同构独立成块。
+                    for td in extract_table(
+                        t,
+                        table,
+                        index,
+                        styles,
+                        part_name,
+                        BlockSource::Footer,
+                        strict,
+                        warnings,
+                    )? {
+                        blocks.push(Block::Table(td));
+                    }
+                }
                 // StructuredDataTag——面外跳过（登记）。
                 _ => {}
             }

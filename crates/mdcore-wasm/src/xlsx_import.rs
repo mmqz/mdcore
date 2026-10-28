@@ -254,6 +254,9 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // #17：修订删除文本登记（docx 面专用；xlsx 面无此类别使用面
         // ——完备性映射）。
         mdc_office_io::io::WarningKind::RevisionDelete => "revision_delete",
+        // #39：面外元素跳过（docx 嵌套表深度防御——xlsx 面无触发面，
+        // 完备性映射）。
+        mdc_office_io::io::WarningKind::SkippedElement => "skipped_element",
     }
 }
 
@@ -267,6 +270,8 @@ fn warning_severity(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         | mdc_office_io::io::WarningKind::BrokenReference => "warn",
         mdc_office_io::io::WarningKind::ControlChars
         | mdc_office_io::io::WarningKind::RevisionDelete => "info",
+        // #39：嵌套表深度超限跳过（xlsx 面无触发面——完备性）。
+        mdc_office_io::io::WarningKind::SkippedElement => "warn",
     }
 }
 

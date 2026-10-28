@@ -315,6 +315,8 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // #17：修订删除文本登记（docx 面专用；xlsx 面无此类别使用面
         // ——完备性映射）。
         mdc_office_io::io::WarningKind::RevisionDelete => "revision_delete",
+        // #39：面外元素跳过（嵌套表深度超限——敌意防御降级）。
+        mdc_office_io::io::WarningKind::SkippedElement => "skipped_element",
     }
 }
 
@@ -334,6 +336,9 @@ fn warning_severity(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         | mdc_office_io::io::WarningKind::BrokenReference => "warn",
         mdc_office_io::io::WarningKind::ControlChars
         | mdc_office_io::io::WarningKind::RevisionDelete => "info",
+        // #39：嵌套表深度超限跳过（敌意/退化嵌套防御——诚实降级
+        // 登记；正常文档不触发）→ warn（内容缺席面）。
+        mdc_office_io::io::WarningKind::SkippedElement => "warn",
     }
 }
 
@@ -1542,6 +1547,7 @@ mod tests {
             ],
             merges: vec![],
             source: BlockSource::Body,
+            nested: false,
         })]);
         let (md, stats) = docx_to_markdown(&doc);
         assert_eq!(md, "| a\\|b | x |\n| --- | --- |\n| two lines |  |");
@@ -1551,6 +1557,7 @@ mod tests {
             rows: vec![],
             merges: vec![],
             source: BlockSource::Body,
+            nested: false,
         })]));
         assert_eq!(md2, "");
         assert_eq!(stats2["tables"], 0);
@@ -1581,12 +1588,51 @@ mod tests {
                 },
             ],
             source: BlockSource::Body,
+            nested: false,
         })]);
         let (md, stats) = docx_to_markdown(&doc);
         assert_eq!(stats["merged_ranges"], 2, "两处合并计数: {stats}");
         assert_eq!(stats["tables"], 1);
         // GFM 降级：栅格对齐（覆盖格空）——无合并语法可表达，登记即可。
         assert_eq!(md, "| 合并A |  | C |\n| --- | --- | --- |\n|  |  |  |");
+    }
+
+    /// #39：嵌套表 wasm 面——外层 + nested=true 内层两块 → GFM 双表
+    /// 沿文档序 + stats.tables = 2（表数守恒）；nested 标记不改渲染
+    ///（分流面归消费方）。
+    #[test]
+    fn nested_tables_flow_to_markdown_and_stats() {
+        let doc = doc_of(vec![
+            Block::Table(TableData {
+                rows: vec![vec!["外层A".to_string(), "详见下表".to_string()]],
+                merges: vec![],
+                source: BlockSource::Body,
+                nested: false,
+            }),
+            Block::Table(TableData {
+                rows: vec![
+                    vec![
+                        "费率".to_string(),
+                        "中标金额".to_string(),
+                        "服务招标".to_string(),
+                    ],
+                    vec![
+                        "100万元以下".to_string(),
+                        "1.5%".to_string(),
+                        "1.0%".to_string(),
+                    ],
+                ],
+                merges: vec![],
+                source: BlockSource::Body,
+                nested: true,
+            }),
+        ]);
+        let (md, stats) = docx_to_markdown(&doc);
+        assert_eq!(stats["tables"], 2, "表数守恒: {stats}");
+        let outer_pos = md.find("| 外层A | 详见下表 |").expect("外层 GFM");
+        let inner_pos = md.find("| 费率 | 中标金额 | 服务招标 |").expect("内层 GFM");
+        assert!(outer_pos < inner_pos, "文档序（外层在前）: {md}");
+        assert!(md.contains("| 100万元以下 | 1.5% | 1.0% |"), "内层行: {md}");
     }
 
     /// #22 P2-2 真夹具全链：word-merged.docx → `merged_ranges: 2` +
@@ -1751,6 +1797,7 @@ mod tests {
                         rows: vec![vec!["a".to_string(), "b".to_string()]],
                         merges: vec![],
                         source: BlockSource::Header,
+                        nested: false,
                     }),
                 ],
             }],
