@@ -171,18 +171,23 @@ def main() -> int:
                   json.dumps(f))
 
             # ---- TR-UI 批 D：行号槽 + 自动保存提醒 ----
+            # M-2 校准：__inject 重基线（mdc-core-reinstalled——导入语义
+            # 不继承陈旧 dirty）后，dirtySince 从本次 '!' 键入的首个轮询
+            # 起算——提示最坏 5s 窗 + 2×500ms 轮询相位（dirtySince 检出
+            # 相位 + 阈值后触发 tick）= 6s；旧 5.6s 等待靠陈旧 dirtySince
+            # 即时触发恒过（潜在时序缺陷被重基线修复暴露）。断言语义不变。
             d2 = page.evaluate("""() => new Promise((resolve) => {
                 window.__inject('行号测试\\n行二\\n');
                 let hint = null;
                 window.addEventListener('mdc-autosave-hint', (e) => { hint = e.detail; }, { once: true });
-                // 触发 dirty 后等 5.6s（提醒窗 5s + 轮询 0.5s）
+                // 触发 dirty 后等 6.5s（5s 窗 + 2×0.5s 轮询相位 + 余量）
                 const doc = window.__view.state.doc;
                 window.__view.dispatch({ changes: { from: doc.length, insert: '!' } });
                 setTimeout(() => resolve({
                     hint,
                     gutter: !!document.querySelector('.cm-gutters .cm-lineNumbers'),
                     gutterLines: document.querySelectorAll('.cm-gutterElement').length,
-                }), 5600);
+                }), 6500);
             })""")
             check("line_gutter_and_autosave_hint",
                   d2["gutter"] and d2["gutterLines"] >= 2 and d2["hint"] and d2["hint"]["revision"] >= 1,
