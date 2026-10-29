@@ -674,7 +674,10 @@ fn book_to_markdown(book: &Book) -> (String, serde_json::Value) {
 
 /// 导入内核（字节入口；纯函数——无 JsValue，原生 cargo test 直测）。
 /// 成功返回与 wasm 面同形的 JSON 串 `{"markdown": ..., "stats": ...}`。
-pub(crate) fn import_xlsx_core(bytes: &[u8]) -> Result<String, ImportError> {
+///
+/// 可见性：pub（阶段 B 六维体检 runner 消费——集成测试面可见性加宽；
+/// 纯函数语义零变化，xlsx_grid `*_core` 先例同构）。
+pub fn import_xlsx_core(bytes: &[u8]) -> Result<String, ImportError> {
     let book =
         read_book_from_bytes_with_options(bytes, &compat_options()).map_err(|e| map_error(&e))?;
     let (markdown, stats) = book_to_markdown(&book);
