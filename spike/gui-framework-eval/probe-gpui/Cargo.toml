@@ -1,0 +1,10 @@
+[package]
+name = "probe-gpui"
+version = "0.1.0"
+edition = "2021"
+
+# 独立 workspace：不参与主仓 cargo workspace（避免污染）
+[workspace]
+
+[dependencies]
+gpui = "0.2.2"
