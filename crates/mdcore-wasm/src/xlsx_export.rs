@@ -37,8 +37,17 @@
 //! ## Sheet 命名策略（write.rs 表名规则 = 非空/≤31 chars/禁 `[]:*?/\`/
 //! 禁首尾单引号/禁保留名 History/禁重复——映射层清洗保证恒过 typed 验证）
 //!
+//! - **批 5 表名通道（#29 三大发现 #4/#5 修复）**：表块的**紧邻前驱
+//!   Heading**（同一兄弟序列，未被他表认领，清洗后非空非 History）
+//!   → 标题文本成为该表 sheet 名（去重），标题**不再落 Document 表**
+//!   （单落）——导入面 `## {表名}` 节标题的对称回取：`## Sheet1` + 表
+//!   → sheet `Sheet1` → 再导入 `## Sheet1` + 表（**表身份保真 + 往返
+//!   收敛**——原 A1 派生形 `Sheet1`→`45306` 漂移与 Document 表逐轮
+//!   注入膨胀[31→87 行 8 轮]根治）。不可认领（无前驱标题/空/保留名/
+//!   已认领）→ 回退 A1 派生（下行）。
 //! - **文本块存在 → 首表固定 `Document`**（文档线性内容的栅格落位，
-//!   先建先占位）；纯表文档无 Document 表。
+//!   先建先占位；认领标题已剔除——仅未认领文本块）；纯表文档无
+//!   Document 表。
 //! - **表块名 = 表头 A1 格**清洗：`\n`/`\r`/`\t` → 空格；剥非法
 //!   `[]:*?/\`；trim 空白与单引号；截 31 chars；重 trim（截断可留尾
 //!   空白/引号）。清洗后空 / `History`（忽略大小写）→ 回退
@@ -80,8 +89,11 @@
 
 use crate::docx_export::{table_rows, text_lines};
 use crate::WasmCore;
-use mdc_office_io::write::{CellStyle, CellValue, WorkbookWriter, WriteError, MAX_COL, MAX_ROW};
+use mdc_office_io::write::{
+    CellStyle, CellValue, FormulaCache, WorkbookWriter, WriteError, MAX_COL, MAX_ROW,
+};
 use mdcore::tree::{BlockKind, BlockTree, NodeId};
+use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 
 /// Document 表名（文本块的栅格落位——固定名，模块文档命名策略）。
@@ -174,15 +186,25 @@ struct TextRow {
 }
 
 /// 非表块 → Document 表行（先序递归；`Table` 不入——独立表通道；
-/// `Table` children 同样不下钻，t18 emit_block 同款防御）。
-fn collect_text_rows(tree: &BlockTree, id: NodeId, rows: &mut Vec<TextRow>) {
+/// `Table` children 同样不下钻，t18 emit_block 同款防御；**认领标题
+/// 跳过**——批 5 表名通道：紧邻表的标题已进 sheet 名，再落 Document
+/// 行 = 双落，正是往返膨胀根因[#29 三大发现 #4]）。
+fn collect_text_rows(
+    tree: &BlockTree,
+    id: NodeId,
+    rows: &mut Vec<TextRow>,
+    skip: &HashSet<NodeId>,
+) {
+    if skip.contains(&id) {
+        return; // 已被表认领为表名（不双落）
+    }
     let node = tree.node(id);
     let text = node.text.to_string();
     match node.kind {
         BlockKind::Document => {
             // 虚根透明递归（top_level 已绕过；op 面禁止 Document 子块——防御）
             for &c in &node.children {
-                collect_text_rows(tree, c, rows);
+                collect_text_rows(tree, c, rows, skip);
             }
         }
         // 独立表通道（collect_tables），不混入 Document 表
@@ -214,7 +236,7 @@ fn collect_text_rows(tree: &BlockTree, id: NodeId, rows: &mut Vec<TextRow>) {
                 }
             }
             for &c in &node.children {
-                collect_text_rows(tree, c, rows);
+                collect_text_rows(tree, c, rows, skip);
             }
         }
         BlockKind::ListItem => {
@@ -226,7 +248,7 @@ fn collect_text_rows(tree: &BlockTree, id: NodeId, rows: &mut Vec<TextRow>) {
                 });
             }
             for &c in &node.children {
-                collect_text_rows(tree, c, rows);
+                collect_text_rows(tree, c, rows, skip);
             }
         }
         BlockKind::ThematicBreak => {
@@ -239,44 +261,128 @@ fn collect_text_rows(tree: &BlockTree, id: NodeId, rows: &mut Vec<TextRow>) {
     }
 }
 
-/// 反引号公式格检测（#22 Q3-2）：单元格整体为反引号包裹的公式
-/// 原文（`` `=SUM(B2:B4)` `` 形——P2-3 导入产出的对称标记）→
+/// 反引号公式格检测（#22 Q3-2 + 批 5 双载）：单元格为反引号包裹
+/// 的公式原文（`` `=SUM(B2:B4)` `` 单载形——P2-3 导入无缓存面）或
+/// **双载形**（`` `=SUM(B2:B4)`=9 ``——批 5 导入缓存值面追加）→
 /// [`CellValue::Formula`]（真公式格——openpyxl 独立读出公式文本
 /// 而非字面反引号串）。裁决链：
+/// - 首/末反引号括号语义（`rfind`——内层可含反引号，嵌套不双解）；
 /// - 内层 trim 后以 `=` 开头且长于 1（退化 `=` 单独不算）→ Formula
 ///   （写面规范化 = 前缀——io.rs FIDELITY §1 往返一致）；
+/// - 双载后缀（末反引号后）：`=值` 形 → **缓存重建**（
+///   [`parse_cache`] 显示面恒等重建——导入面追加的缓存值面写回
+///   xlsx 缓存通道，非伪造）；后缀空 → 单载（cached None）；后缀
+///   非 `=` 开头 → 整体字面 Text（防御）；
 /// - 非公式反引号串（内联代码 `` `code` `` 等）保持 Text——
 ///   **非类型推断**：反引号 = 导入面显式标记，非猜测（"007"/
 ///   日期串恒 Text 的既有裁决不变）；
-/// - 单层不双解（`` ``=x`` `` 内层不以 `=` 开头 → Text）；
-/// - 缓存值不伪造：`cached: None`（无计算引擎；读回 values 面 =
-///   0.0 在档——公式原文经公式通道往返，缓存通道降级登记）。
+/// - 单层不双解（`` ``=x`` `` 内层不以 `=` 开头 → Text）。
 fn cell_value(text: &str) -> CellValue {
-    let inner = text
-        .strip_prefix('`')
-        .and_then(|s| s.strip_suffix('`'))
-        .map(str::trim);
-    if let Some(formula) = inner {
-        if formula.starts_with('=') && formula.len() > 1 {
-            return CellValue::Formula {
-                text: formula.to_string(),
-                cached: None,
-            };
+    let Some(rest) = text.strip_prefix('`') else {
+        return CellValue::Text(text.to_string());
+    };
+    // 末反引号 = 闭合界（单载形末字符；双载形值面前分隔界）。
+    let Some(close) = rest.rfind('`') else {
+        return CellValue::Text(text.to_string());
+    };
+    let inner = rest[..close].trim();
+    if !(inner.starts_with('=') && inner.len() > 1) {
+        return CellValue::Text(text.to_string());
+    }
+    let suffix = &rest[close + 1..];
+    let cached = if suffix.is_empty() {
+        None // 单载：无缓存面（不伪造——读回 values 面 = 0.0 在档）
+    } else if let Some(v) = suffix.strip_prefix('=') {
+        if v.is_empty() {
+            // 裸 `=` 空值后缀 → 整体字面（防御——导入面不产此形）
+            return CellValue::Text(text.to_string());
+        }
+        parse_cache(v) // 双载：缓存值面重建（显示面恒等）
+    } else {
+        // 非法后缀（非 `=` 开头非空）→ 整体字面（防御——导入面不产此形）
+        return CellValue::Text(text.to_string());
+    };
+    CellValue::Formula {
+        text: inner.to_string(),
+        cached,
+    }
+}
+
+/// 双载缓存值重建（批 5）：[`FormulaCache`] 重建链——导入面后缀 =
+/// `CellData::display()` 显示面，重建经写面引擎序列化后读回的显示
+/// 面必须逐字相同（往返精确的基础）：
+/// - `true`/`false` → Boolean（引擎 t="b" 写 1/0，读回 Bool 显示
+///   "true"/"false" 恒等）；
+/// - f64 可解析（有限）→ Number——**引擎序列化裁决**：
+///   `write_formula_cell` 对可解析数值串恒写数值面（无 t 属性），
+///   规范形（`45306`/`4.5`/`-3`）读回显示逐字恒等；**非规范形**
+///   （前导零 `007`/科学形 `1e5`）读回规范化（`7`/`100000`）——
+///   引擎面降级登记（md 后缀 `=007` 往返后 `=7`），测试钉定；
+/// - 错误码（`#DIV/0!` 等）→ Text——引擎 t="e" 写出，读回
+///   `Data::Error` → 显示面逐字保留（错误缓存面完整往返，非降级）；
+/// - 其余 → Text（t="str" 读回 String 逐字）；
+/// - 空串 → None（防御——导入面不产空后缀）。
+fn parse_cache(v: &str) -> Option<FormulaCache> {
+    if v.is_empty() {
+        return None;
+    }
+    if v == "true" {
+        return Some(FormulaCache::Boolean(true));
+    }
+    if v == "false" {
+        return Some(FormulaCache::Boolean(false));
+    }
+    if let Ok(n) = v.parse::<f64>() {
+        if n.is_finite() {
+            return Some(FormulaCache::Number(n));
         }
     }
-    CellValue::Text(text.to_string())
+    Some(FormulaCache::Text(v.to_string()))
+}
+
+/// 紧邻前驱 Heading 认领判定（批 5，#29 三大发现 #4/#5）：标题文本
+/// 清洗后非空且非保留名 History → 可认领表名（导入面 `## {表名}` 节
+/// 标题的对称回取——**表身份往返保真**：`## Sheet1` 节导出表名
+/// `Sheet1`，再导入回 `## Sheet1`，不再漂移 `Sheet1`→`45306`）。
+/// 空/保留名 → None（标题保持 Document 行，表名回退 A1 派生——
+/// 保留名面 [`table_sheet_name`] 同款裁决）。
+fn heading_claim_name(tree: &BlockTree, heading: NodeId) -> Option<String> {
+    let text = tree.node(heading).text.to_string();
+    let base = sanitize_sheet_name(&text);
+    if base.is_empty() || base.eq_ignore_ascii_case("history") {
+        return None;
+    }
+    Some(base)
 }
 
 /// 表块收集（先序文档序——嵌套于 quote/list 的表同样收；`Table`
-/// 自身 children 不下钻，t18 同款防御）。
-fn collect_tables(tree: &BlockTree, id: NodeId, out: &mut Vec<NodeId>) {
-    let node = tree.node(id);
-    if node.kind == BlockKind::Table {
-        out.push(id);
-        return;
-    }
-    for &c in &node.children {
-        collect_tables(tree, c, out);
+/// 自身 children 不下钻，t18 同款防御）+ **紧邻前驱 Heading 认领**
+/// （批 5 表名通道）：同一兄弟序列内 Table 的前一块为 Heading 且
+/// 未被他表认领 → 标题文本成为该表 sheet 名（标题从 Document 行
+/// 收集中剔除——单落）。输出 (表 NodeId, 认领名) 对 + 被认领标题集。
+fn collect_tables_claiming(
+    tree: &BlockTree,
+    children: &[NodeId],
+    out: &mut Vec<(NodeId, Option<String>)>,
+    claimed: &mut Vec<NodeId>,
+) {
+    for (i, &c) in children.iter().enumerate() {
+        let node = tree.node(c);
+        if node.kind == BlockKind::Table {
+            let prev = if i > 0 { Some(children[i - 1]) } else { None };
+            let claim = prev
+                .filter(|&p| tree.node(p).kind == BlockKind::Heading && !claimed.contains(&p))
+                .and_then(|p| heading_claim_name(tree, p).map(|n| (p, n)));
+            match claim {
+                Some((heading, name)) => {
+                    claimed.push(heading);
+                    out.push((c, Some(name)));
+                }
+                None => out.push((c, None)),
+            }
+            continue;
+        }
+        collect_tables_claiming(tree, &node.children, out, claimed);
     }
 }
 
@@ -340,35 +446,44 @@ pub fn export_xlsx_core(tree: &BlockTree) -> Result<Vec<u8>, ExportError> {
     let mut w = WorkbookWriter::new();
     let mut existing: Vec<String> = Vec::new();
 
-    // 1) 非表块 → 前置 Document 表（存在才建，先建先占名）。
+    // 1) 表块收集（文档序）+ 紧邻前驱 Heading 认领（批 5 表名通道
+    //    ——表身份保真 + Document 膨胀根因剔除）。
+    let mut tables: Vec<(NodeId, Option<String>)> = Vec::new();
+    let mut claimed: Vec<NodeId> = Vec::new();
+    collect_tables_claiming(tree, tree.top_level(), &mut tables, &mut claimed);
+    let claimed_set: HashSet<NodeId> = claimed.into_iter().collect();
+
+    // 2) 非表块（认领标题除外）→ 前置 Document 表（存在才建，先建先占名）。
     let mut text_rows: Vec<TextRow> = Vec::new();
     for &child in tree.top_level() {
-        collect_text_rows(tree, child, &mut text_rows);
+        collect_text_rows(tree, child, &mut text_rows, &claimed_set);
     }
     if !text_rows.is_empty() {
         write_document_sheet(&mut w, &text_rows)?;
         existing.push(DOC_SHEET.to_string());
     }
 
-    // 2) 表块 → 独立表（文档序）；0 行表跳过（防御，登记）。
-    let mut tables: Vec<NodeId> = Vec::new();
-    for &child in tree.top_level() {
-        collect_tables(tree, child, &mut tables);
-    }
-    for (i, &id) in tables.iter().enumerate() {
-        let text = tree.node(id).text.to_string();
+    // 3) 表块 → 独立表（文档序）；认领名（去重）优先，回退表头 A1
+    //    派生；0 行表跳过（防御，登记）。
+    for (i, (id, claim)) in tables.iter().enumerate() {
+        let text = tree.node(*id).text.to_string();
         let rows = table_rows(&text);
         if rows.is_empty() {
             continue;
         }
         let ordinal = i + 1;
-        let header = rows[0].first().map(String::as_str).unwrap_or("");
-        let name = table_sheet_name(header, ordinal, &existing);
+        let name = match claim {
+            Some(base) => unique_sheet_name(base, &existing),
+            None => {
+                let header = rows[0].first().map(String::as_str).unwrap_or("");
+                table_sheet_name(header, ordinal, &existing)
+            }
+        };
         existing.push(name.clone());
         write_table_sheet(&mut w, &name, &rows)?;
     }
 
-    // 3) 全零 → 最小合法工作簿（单空表 Sheet1——Excel 工作簿至少一表）。
+    // 4) 全零 → 最小合法工作簿（单空表 Sheet1——Excel 工作簿至少一表）。
     if existing.is_empty() {
         let _ = w.add_sheet("Sheet1").map_err(map_xlsx)?;
     }
@@ -508,6 +623,226 @@ mod tests {
                 "{text} 应保持 Text 逐字"
             );
         }
+    }
+
+    /// 批 5 双载检测矩阵：`` `=公式`=缓存 `` 形 → Formula + 缓存重建
+    /// （显示面恒等——[#parse_cache] 裁决链）；非法后缀整体字面（防御）。
+    #[test]
+    fn dual_load_formula_detection_matrix() {
+        use mdc_office_io::write::{CellValue, FormulaCache};
+        // 数值重建（整数/小数/负数——重格式化逐字相同）。
+        for (text, want) in [
+            ("`=SUM(B2:B4)`=9", 9.0),
+            ("`=SUM(B2:B4)`=45306.5", 45306.5),
+            ("`=A1-B1`=-3", -3.0),
+        ] {
+            match cell_value(text) {
+                CellValue::Formula {
+                    text: f,
+                    cached: Some(FormulaCache::Number(n)),
+                } => {
+                    assert_eq!(f, text.split('`').nth(1).unwrap(), "{text} 公式原文");
+                    assert_eq!(n, want, "{text} 缓存数值");
+                }
+                other => panic!("{text} 应为双载 Formula(Number): {other:?}"),
+            }
+        }
+        // 布尔重建。
+        for (text, want) in [("`=A1>B1`=true", true), ("`=A1>B1`=false", false)] {
+            match cell_value(text) {
+                CellValue::Formula {
+                    cached: Some(FormulaCache::Boolean(b)),
+                    ..
+                } => assert_eq!(b, want, "{text}"),
+                other => panic!("{text} 应为双载 Formula(Boolean): {other:?}"),
+            }
+        }
+        // 前导零 → Number 缓存（引擎序列化裁决：数值可解析串恒写数值
+        // 面——Text 形也会被引擎写为数值，Number 为诚实模型；非规范形
+        // 读回规范化 `=7` 为已登记引擎面降级，见 [#parse_cache]）。
+        match cell_value("`=LEN(A1)`=007") {
+            CellValue::Formula {
+                cached: Some(FormulaCache::Number(n)),
+                ..
+            } => assert_eq!(n, 7.0, "前导零 → Number（引擎面恒数值化）"),
+            other => panic!("`=LEN(A1)`=007 应为 Number 缓存: {other:?}"),
+        }
+        // 错误码 → Text 缓存（FormulaCache 无 Error 变体——显示面逐字
+        // 保留，类型面降级登记）。
+        match cell_value("`=5/0`=#DIV/0!") {
+            CellValue::Formula {
+                cached: Some(FormulaCache::Text(s)),
+                ..
+            } => assert_eq!(s, "#DIV/0!", "错误码逐字 Text 缓存"),
+            other => panic!("错误码双载应为 Text 缓存: {other:?}"),
+        }
+        // 文本缓存（任意非数值布尔串）。
+        match cell_value("`=A1&B1`=hello") {
+            CellValue::Formula {
+                cached: Some(FormulaCache::Text(s)),
+                ..
+            } => assert_eq!(s, "hello"),
+            other => panic!("文本缓存: {other:?}"),
+        }
+        // 非法后缀（非 `=` 开头非空 / 裸 `=` 空值）→ 整体字面 Text。
+        for text in ["`=SUM(x)`abc", "`=SUM(x)`=", "`code`=5"] {
+            assert!(
+                matches!(cell_value(text), CellValue::Text(t) if t == text),
+                "{text} 非法后缀应整体 Text 逐字"
+            );
+        }
+        // 内层含反引号的公式：首/末反引号括号语义（rfind）不双解。
+        match cell_value("`=CONCAT(\"`\",1)`=a") {
+            CellValue::Formula { text, cached } => {
+                assert_eq!(text, "=CONCAT(\"`\",1)");
+                assert!(matches!(cached, Some(FormulaCache::Text(_))));
+            }
+            other => panic!("嵌套反引号双载: {other:?}"),
+        }
+    }
+
+    /// 批 5 双载写读全环：公式格 + 缓存值 → xlsx 缓存通道 → t17 读回
+    /// 双载形逐字还原（缓存面不伪造也不丢失——原 `cached None →
+    /// Float(0.0)` 降级面由双载通道根治）。非规范数值串（`007`）经
+    /// 引擎序列化规范化（`=7`——引擎面降级登记，[#parse_cache]）。
+    #[test]
+    fn dual_load_formula_roundtrip_via_t17() {
+        let md =
+            "| a | b | c |\n| --- | --- | --- |\n| `=SUM(B2:B4)`=9 | `=X`=hello | `=5/0`=#DIV/0! |";
+        let tree = markdown_to_tree(md);
+        let bytes = export_xlsx_core(&tree).expect("export");
+        let payload = import_xlsx_core(&bytes).expect("t17 reimport");
+        let json: serde_json::Value = serde_json::from_str(&payload).expect("payload json");
+        assert_eq!(
+            json["markdown"].as_str().unwrap(),
+            "## a\n\n| a | b | c |\n| --- | --- | --- |\n| `=SUM(B2:B4)`=9 | `=X`=hello | `=5/0`=#DIV/0! |",
+            "双载形全环逐字（数值/文本/错误码三缓存面：Number+Text+t=e 错误链完整往返）"
+        );
+
+        // 引擎面降级钉定：前导零数值串读回规范化（007 → 7）。
+        let md = "| a |\n| --- |\n| `=LEN(A1)`=007 |";
+        let tree = markdown_to_tree(md);
+        let bytes = export_xlsx_core(&tree).expect("export");
+        let payload = import_xlsx_core(&bytes).expect("t17 reimport");
+        let json: serde_json::Value = serde_json::from_str(&payload).expect("payload json");
+        assert_eq!(
+            json["markdown"].as_str().unwrap(),
+            "## a\n\n| a |\n| --- |\n| `=LEN(A1)`=7 |",
+            "非规范数值串引擎面降级（登记非缺陷——write_formula_cell 数值化）"
+        );
+    }
+
+    /// 批 5 表名通道（#29 三大发现 #4/#5）：紧邻前驱 Heading 认领为
+    /// sheet 名 + 标题不双落 Document；认领排除面（隔块/保留名/已被
+    /// 认领）回退 A1 派生。
+    #[test]
+    fn heading_claims_adjacent_table_sheet_name() {
+        // 紧邻标题+表 → 表名 = 标题文本，无 Document 表（单落）。
+        let book = roundtrip(&markdown_to_tree(
+            "## 报价明细\n\n| 序号 | 金额 |\n| --- | --- |\n| 1 | 2 |",
+        ));
+        assert_eq!(
+            book.sheet_names(),
+            vec!["报价明细"],
+            "紧邻标题认领表名（非 A1 派生），无 Document 表"
+        );
+        assert_eq!(cell(&book.sheets[0], 0, 0), "序号", "表内容不受认领影响");
+
+        // 标题+段落+表（隔块）→ 不认领：Document 表 + A1 派生。
+        let book = roundtrip(&markdown_to_tree(
+            "## Title\n\nparagraph between\n\n| Data | b |\n| --- | --- |",
+        ));
+        assert_eq!(
+            book.sheet_names(),
+            vec!["Document", "Data"],
+            "隔块不认领——Document + A1"
+        );
+
+        // 保留名 History → 不可认领（标题落 Document，表名回退 A1）。
+        let book = roundtrip(&markdown_to_tree(
+            "## History\n\n| Data | b |\n| --- | --- |",
+        ));
+        assert_eq!(
+            book.sheet_names(),
+            vec!["Document", "Data"],
+            "History 保留名不认领"
+        );
+
+        // 一标题两表：首表认领，次表 A1（前驱兄弟是 Table 非 Heading）。
+        let book = roundtrip(&markdown_to_tree(
+            "## Solo\n\n| a | b |\n| --- | --- |\n\n| c | d |\n| --- | --- |",
+        ));
+        assert_eq!(
+            book.sheet_names(),
+            vec!["Solo", "c"],
+            "认领一次性（不共享）"
+        );
+
+        // 同名两标题两表 → 去重后缀。
+        let book = roundtrip(&markdown_to_tree(
+            "## Data\n\n| a | b |\n| --- | --- |\n\n## Data\n\n| c | d |\n| --- | --- |",
+        ));
+        assert_eq!(book.sheet_names(), vec!["Data", "Data 2"], "认领名去重");
+    }
+
+    /// 批 5 往返收敛（#29 三大发现 #4：8 轮 31→87 行膨胀根治）：
+    /// 纯表文档首轮即精确；混排文档二轮定点；多轮行数单调不增。
+    #[test]
+    fn roundtrip_converges_with_heading_named_tables() {
+        // 情形 A：标题 + 表（导入面产出的标准形）→ 首轮精确。
+        let md1 = "## Data\n\n| a | b |\n| --- | --- |\n| 1 | 2 |";
+        let mut md = md1.to_string();
+        for round in 1..=8 {
+            let tree = markdown_to_tree(&md);
+            let bytes = export_xlsx_core(&tree).expect("export");
+            let payload = import_xlsx_core(&bytes).expect("reimport");
+            let next: String = serde_json::from_str::<serde_json::Value>(&payload).unwrap()
+                ["markdown"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            if round == 1 {
+                assert_eq!(next, md1, "标题+表 首轮精确（表名通道对称）");
+            }
+            assert_eq!(next, md, "第 {round} 轮定点");
+            md = next;
+        }
+
+        // 情形 B：段落 + 标题 + 表（混排）→ 首轮 Document 前置重排
+        //（有界增长——表头/分隔行入表代价），二轮起定点，后续轮行数
+        // 恒等（无界膨胀[31→87 行 8 轮]根治）。
+        let md1 = "intro para\n\n## Data\n\n| a | b |\n| --- | --- |\n| 1 | 2 |";
+        let mut md = md1.to_string();
+        let mut lines = md.lines().count();
+        let mut peak = lines;
+        for round in 1..=8 {
+            let tree = markdown_to_tree(&md);
+            let bytes = export_xlsx_core(&tree).expect("export");
+            let payload = import_xlsx_core(&bytes).expect("reimport");
+            let next: String = serde_json::from_str::<serde_json::Value>(&payload).unwrap()
+                ["markdown"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let next_lines = next.lines().count();
+            if round >= 2 {
+                assert_eq!(
+                    next_lines, lines,
+                    "第 {round} 轮行数漂移（不收敛）: {lines} → {next_lines}"
+                );
+                assert_eq!(next, md, "第 {round} 轮定点（二轮收敛）");
+            }
+            peak = peak.max(next_lines);
+            lines = next_lines;
+            md = next;
+        }
+        assert_ne!(md, md1, "混排首轮重排（Document 前置——已知结构差异）");
+        assert_eq!(
+            md.lines().count(),
+            10,
+            "定点行数 = Document 节(标题+空+表头+分隔) + 节间空行 + Data 节(标题+空+表头+分隔+数据)"
+        );
+        assert_eq!(peak, 10, "峰值有界（首轮重排即峰值，后续恒等）");
     }
 
     #[test]

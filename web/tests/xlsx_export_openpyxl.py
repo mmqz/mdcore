@@ -32,11 +32,12 @@ WEB = Path(__file__).resolve().parent.parent
 OUT = WEB / "tests" / "results" / "results_xlsx_export_openpyxl.json"
 FIXTURE = WEB.parent / "test-artifacts" / "TR2" / "fixtures" / "excel-complex.xlsx"
 
-# 公式写回面：反引号公式格 + 普通文本格 + 数值串（不推断）。
+# 公式写回面：反引号公式格（单载/双载）+ 普通文本格 + 数值串（不推断）。
+# 批 5 双载：`=SUM(3,4)`=7 → 公式 + 缓存值 7（openpyxl data_only 可读）。
 FORMULA_MD = (
-    "| a | b |\n"
-    "| --- | --- |\n"
-    "| `=SUM(1,2)` | 10 |"
+    "| a | b | c |\n"
+    "| --- | --- | --- |\n"
+    "| `=SUM(1,2)` | 10 | `=SUM(3,4)`=7 |"
 )
 
 IMPORT_JS = """(b64) => {
@@ -113,11 +114,19 @@ def main() -> int:
             ws = wb["a"]
             a2 = ws["A2"].value
             b2 = ws["B2"].value
+            c2 = ws["C2"].value
             check("openpyxl_formula_cells",
                   a2 == "=SUM(1,2)" and b2 == "10" and isinstance(b2, str)
+                  and c2 == "=SUM(3,4)"
                   and list(ws.merged_cells.ranges) == [],
-                  json.dumps({"A2": repr(a2), "B2": repr(b2),
+                  json.dumps({"A2": repr(a2), "B2": repr(b2), "C2": repr(c2),
                               "sheets": wb.sheetnames}))
+            # 批 5 双载缓存写回：data_only 读出缓存值 7（非 0——缓存通道
+            # 真实落盘，原 cached None → 0 降级面根治）。
+            wb_v = load_workbook(BytesIO(export_bytes(page)), data_only=True)
+            check("openpyxl_dualload_cached_value",
+                  wb_v["a"]["C2"].value == 7,
+                  json.dumps({"C2": repr(wb_v["a"]["C2"].value)}))
 
             # ---- 2. 验收：excel-complex 导入 → 再导出 → openpyxl 结构一致 ----
             imp = page.evaluate(IMPORT_JS, fixture_b64)
@@ -127,18 +136,20 @@ def main() -> int:
             exported = export_bytes(page)
             wb2 = load_workbook(BytesIO(exported))
 
-            # sheet 名：H2 标题 → Document 表（加粗行）+ 每表一 sheet
-            #（表名 = 表头 A1：报价明细表 → "序号"、评分表 → "项目"）。
-            names_ok = wb2.sheetnames == ["Document", "序号", "项目"]
-            wsd, wsx, wsp = wb2["Document"], wb2["序号"], wb2["项目"]
-            # Document 表：两标题行加粗（openpyxl 字体面）。
-            bold_ok = (wsd["A1"].value == "报价明细" and wsd["A1"].font.bold is True
-                       and wsd["A2"].value == "评分表" and wsd["A2"].font.bold is True)
-            # 序号 表：文本扁平（原数值 1 → str "1"——不推断在案）。
+            # sheet 名（批 5 表名通道）：H2 标题紧邻表 → 标题认领为表名
+            #（报价明细/评分表——导入面 `## {表名}` 节标题的对称回取），
+            # 无 Document 表（标题不双落）。
+            names_ok = wb2.sheetnames == ["报价明细", "评分表"]
+            wsx, wsp = wb2["报价明细"], wb2["评分表"]
+            # 报价明细 表：文本扁平（原数值 1 → str "1"——不推断在案）。
             seq_ok = wsx["A1"].value == "序号" and wsx["A2"].value == "1" and isinstance(wsx["A2"].value, str)
-            # 项目 表：公式格真公式（openpyxl 读出 = 形文本）+ 数据格逐字。
+            # 评分表 表：公式格真公式（openpyxl 读出 = 形文本）+ 数据格逐字
+            #（批 5：公式格带缓存写回——data_only 读出 100/1）。
             pf_ok = (wsp["B5"].value == "=SUM(B2:B4)" and wsp["C5"].value == "=SUM(C2:C4)"
                      and wsp["A2"].value == "技术" and wsp["B2"].value == "40")
+            wb2_v = load_workbook(BytesIO(exported), data_only=True)
+            cached_ok = (wb2_v["评分表"]["B5"].value == 100
+                         and wb2_v["评分表"]["C5"].value == 1)
             # 合并面：md 单流无可重构合并 → 导出恒 0（降级显式断言；
             # 本夹具原文件合并也为 0——无损失）。
             merges_ok = all(list(ws.merged_cells.ranges) == [] for ws in wb2.worksheets)
@@ -147,10 +158,10 @@ def main() -> int:
                                 for r in (6, 7) for c in (1, 2, 3))
             link_ok = "招标公告" in link_row and "https://example.com/tender" in link_row
             check("excel_complex_openpyxl_consistency",
-                  names_ok and bold_ok and seq_ok and pf_ok and merges_ok and link_ok
+                  names_ok and seq_ok and pf_ok and cached_ok and merges_ok and link_ok
                   and len(page_errors) == 0,
                   json.dumps({"sheets": wb2.sheetnames, "names_ok": names_ok,
-                              "bold": bold_ok, "seq": seq_ok, "pf": pf_ok,
+                              "seq": seq_ok, "pf": pf_ok, "cached": cached_ok,
                               "merges": merges_ok, "link": link_ok,
                               "link_row": link_row[:120]}, ensure_ascii=False))
 
@@ -161,25 +172,20 @@ def main() -> int:
             md2 = page.evaluate("window.__md()")
             stats2 = page.evaluate("window.__lastXlsxImport.stats")
 
-            # 表格内容逐格等价：首环导入的 2 表 vs 再导入的 3 表中去掉
-            # Document 表流（标题行进单列表 = 已登记结构差异，内容
-            # 等价判据 = 数据表块；Document 恒首——sheet 序在案）。
+            # 表格内容逐格等价（批 5 表名通道）：首环 2 表 vs 再导入 2 表
+            # ——**精确对称**（表名从节标题回取，无 Document 表注入）。
             t1, t2 = md_tables(md1), md_tables(md2)
-            tables_eq = (len(t1) == 2 and len(t2) == 3
-                         and all(r1 == r2
-                                 for tb1, tb2 in zip(t1, t2[1:])
-                                 for r1, r2 in zip(tb1, tb2)))
-            # 公式通道保持（反引号形往返）+ 缓存降级：无计算引擎 → 写面
-            # cached None → 读回 values 面 Float(0.0) → 再导入 cached="0"
-            #（vs 原夹具 "100"/"1"——降级在案非伪造）。
+            tables_eq = (len(t1) == 2 and len(t2) == 2 and t1 == t2)
+            # 公式通道保持（反引号双载形往返）+ 缓存保真（批 5：原夹具
+            # 缓存值 100/1 经双载通道写回读回——不再降级为 0）。
             f2 = stats2.get("formulas") or []
             formulas_ok = (stats2.get("formulas_imported") == 2
                            and {x.get("text") for x in f2} == {"=SUM(B2:B4)", "=SUM(C2:C4)"}
-                           and all(x.get("cached") == "0" for x in f2))
+                           and {x.get("cached") for x in f2} == {"100", "1"})
             # 降级面：merged_ranges 0（md 往返无合并面）。
             check("import_export_import_symmetry",
                   tables_eq and formulas_ok and stats2.get("merged_ranges") == 0
-                  and stats2.get("sheets") == 3
+                  and stats2.get("sheets") == 2
                   and len(page_errors) == 0,
                   json.dumps({"tables_eq": tables_eq, "t1": len(t1), "t2": len(t2),
                               "formulas": f2, "sheets": stats2.get("sheets")},

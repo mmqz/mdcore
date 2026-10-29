@@ -728,11 +728,11 @@
       "workbook_properties_missing.xlsx": "ok"
     },
     "files": 75,
-    "fixed_point": 0,
-    "mean_recall": 0.8633,
+    "fixed_point": 72,
+    "mean_recall": 0.9998,
     "ok": 72,
-    "roundtrip_exact": 0,
-    "structure_ok": 67
+    "roundtrip_exact": 59,
+    "structure_ok": 72
   },
   "schema": 1
 }

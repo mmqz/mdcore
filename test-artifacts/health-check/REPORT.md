@@ -215,3 +215,57 @@ catch_unwind 在 runner 内捕获（测试不炸），**生产 wasm 面 = trap**
 2. deep-table-cell 深嵌套（批 3 #D2）
 3. vml_textbox 门交互复查（#E3）
 4. 26+94 件非精确往返的两类良性模式（标题内联强调 + 页眉脚不对称——低优先）
+
+---
+
+# 批 5 报告（xlsx 三大发现修复——Lead 01:51 指定优先级）
+
+> 修复日期：2026-10-29 · 修复面：`crates/mdcore-wasm/src/xlsx_import.rs` + `xlsx_export.rs`
+> 依据：本报告批 2 Top 发现 #1/#2/#3/#4/#5 + Lead 裁决「修复优先级应全部投向 xlsx 面的三大发现」
+> 验证（r38 重跑实证）：G1 989/0（批 4 基线 984 + 本批新增 5 测试）· fmt 0 · clippy 双面恰存量 6 零新增（6 条定位均在非本批文件——canvas/collab/lib×2/workbench/docx_export）· scan 存量红恒（5 命中零新增）· xlsx web 套件全绿零回归（xlsx_import 12/12 + xlsx_export 9/9 + openpyxl 4/4 + xlsx_grid 20/20 + oversized 18/18；连带 web_smoke 38/38 + empty_state/evidence_panel/i18n_ui/integration_journey/sidecar_faults 共 11 套件 159 checks 全绿）
+
+## 修复总览（六维前后对照）
+
+| 维 | 修复前（批 2） | 修复后 | 变化 | 根治的发现 |
+|---|---|---|---|---|
+| 崩溃率 | 0/75 | 0/75 | 恒 | — |
+| 解析成功率 | ok 72 / err 3 | ok 72 / err 3 | 恒（3 err 恒为正确拒绝/版本偏差） | — |
+| 内容召回（均值） | **0.8633** | **0.9998** | **+0.1365** | #1 窗口截断 + #2 公式值面 + #3 错误格 |
+| 结构保真 | 67/72 | **72/72** | **+5** | #1 窗口截断（5 件窗口案全解） |
+| 往返精确 | **0/72** | **59/72** | **+59** | #4 Document 膨胀 + #5 表名漂移 |
+| 幂等（二轮定点） | **0/72** | **72/72** | **+72** | #4 膨胀不收敛根治 |
+
+召回最低件从 0.0（公式主导簿）升至 0.9831（hyperlinks_escaped——转义 URL 文本面，登记）；74/75 件 ≥0.99。13 件非精确往返**全部二轮定点**（空表/错误格/富文本/链接格族——首轮降级施加后收敛，与 docx 面同构语义）。
+
+## 修复一：渲染窗提级（#1——74.5% 内容损失案）
+
+- **常量**：`MAX_SHEETS` 16→64 / `MAX_ROWS` 50→5,000 / `MAX_COLS` 32→128（xlsx_import.rs）
+- **依据**：体检实测 minimal_package 196 行丢 146 行（召回 0.242）+ 36 列簿丢 4 列 + 5 件窗口案；R-1 系 50MB 件 ~3,250 行亦全覆盖
+- **安全层不变**：读面上限（1,000 表/4M 格）+ 容器预扫门（门 1/2）仍是大档防线；渲染窗仅消费子集截断，越限计数 + P2-4 error 档警告恒在
+- **测试**：`window_raise_covers_real_scale_sheets`（196×36 全量导入零丢弃零警告）+ `caps_truncate_with_drop_stats` 稀疏比例化重写（夹具不随窗口提级线性变重）
+
+## 修复二：公式格值面双载（#2 + #3——公式簿召回 0.0 案）
+
+- **导入面**：缓存值非空 → 单元格 `` `=SUM(E:F)`=45306 `` 双载形（公式原文 + `=` + 缓存值显示面）；错误格缓存 = 错误码文本（`#DIV/0!` 即 Excel 显示语义——显示面忠实原则）；缓存空（calamine Empty）保持单载
+- **导出面**：`cell_value` 双载解析（首/末反引号括号语义——内层可含反引号不双解）+ `parse_cache` 缓存重建（Boolean/Number/Text 三型）→ 写回 xlsx 缓存通道（`set_formula_result`）——**缓存值面完整往返**（原 `cached None → Float(0.0)` 降级根治）
+- **错误码链**：引擎 `write_formula_cell` 对错误码写 `t="e"` → 读回 `Data::Error` → 显示面逐字保留——**错误缓存面完整往返**（非降级）
+- **登记降级（引擎面，非缺陷）**：`write_formula_cell` 对可解析数值串**恒写数值面**（无 t 属性）——非规范形（前导零 `007`/科学形 `1e5`）读回规范化（`=7`）——测试钉定
+- **测试**：`dual_load_formula_detection_matrix`（12 分支）+ `dual_load_formula_roundtrip_via_t17`（数值/文本/错误码三缓存面全环逐字 + 降级钉定）
+
+## 修复三：表名通道 + 往返收敛（#4 + #5——31→87 行膨胀案）
+
+- **导出面**：表块的**紧邻前驱 Heading**（同一兄弟序列、未被他表认领、清洗后非空非 History）→ 标题文本成为 sheet 名（去重），标题**不再落 Document 表**（单落）——导入面 `## {表名}` 节标题的对称回取；不可认领回退 A1 派生（原行为）
+- **实效链**：`## Sheet1` + 表 → sheet `Sheet1` → 再导入 `## Sheet1` + 表（表身份保真，不再 `Sheet1`→`45306` 漂移）；Document 表逐轮注入膨胀（每轮净增一节）根治——纯表文档**首轮精确**，混排文档**二轮定点**（Document 前置重排为已知结构差异，峰值有界）
+- **测试**：`heading_claims_adjacent_table_sheet_name`（紧邻认领/隔块不认领/History 排除/一标题两表/同名去重）+ `roundtrip_converges_with_heading_named_tables`（情形 A 首轮精确 + 情形 B 二轮定点 + 峰值有界）
+
+## 修复四（连带）：Q3-2 对称性升级
+
+- excel-complex 验收（openpyxl 独立读）：sheet 名 `["Document","序号","项目"]` → `["报价明细","评分表"]`（标题认领，无 Document 注入）；公式缓存 `{0,0}` → `{100,1}`（双载通道保真——openpyxl `data_only` 可读）；对称判据从「去 Document 流的表块等价」升级为**精确对称**（2 表 == 2 表逐格全等）
+- `tables_eq`/`formulas_ok` 断言重写 + `openpyxl_dualload_cached_value` 新检查项（4/4 checks）
+
+## 剩余登记（非本批范围）
+
+1. `hyperlinks_escaped.xlsx` 召回 0.9831——转义 URL 文本面（GFM 链接形清洗），最低件但 ≥0.98
+2. `_x000D_` 实体面（批 2 #6）——随双载已可见化（cached 值面含实体文本），实体语义边界维持登记
+3. 13 件非精确往返的二轮定点点位（空表/richtext/链接族）——已收敛，模式登记不阻塞
+4. `renamed_workbook_part` 版本偏差（批 2 #7）——calamine 升级评估时以该件为验收锚点

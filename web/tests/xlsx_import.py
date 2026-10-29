@@ -31,7 +31,7 @@ EXPECTED_MD = (
     "| Item | Qty | Note |\n"
     "| --- | --- | --- |\n"
     "| Widget | 4.5 | has \\| pipe |\n"
-    "| Gadget | `=SUM(B2:B2)*2` | [docs](https://example.com/docs) |\n"
+    "| Gadget | `=SUM(B2:B2)*2`=9 | [docs](https://example.com/docs) |\n"
     "| merged top |  |  |\n"
     "## Notes\n"
     "| Key | Value |\n"

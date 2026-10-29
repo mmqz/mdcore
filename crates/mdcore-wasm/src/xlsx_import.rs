@@ -55,12 +55,15 @@
 //!   语义；**kind 不改显示面**：前导零文本 `00123` 逐字、日期格 =
 //!   序列数）；清洗：`|` → `\|` 转义、`\n`/`\r` → 空格（GFM 单元格
 //!   不承载换行）、首尾空白去；
-//! - **公式格（P2-3 双通道接入）**：单元格 = 反引号包裹公式原文
-//!   （`` `=SUM(B2:B4)` ``——calamine 读侧无 `=` 前缀[office-io
+//! - **公式格（P2-3 双通道 + 批 5 值面双载）**：单元格 = 反引号包裹
+//!   公式原文（`` `=SUM(B2:B4)` ``——calamine 读侧无 `=` 前缀[office-io
 //!   FIDELITY §1 在档]，本层补 `=`；写面对称接受带/不带前缀）；
-//!   缓存值进 stats `formulas` 清单（`{sheet, cell, text, cached}`
-//!   ——结构化面向下游消费方[标书侧 EngineReader 族]，md 单元格
-//!   保持 GFM 洁净）；渲染窗内计数 `formulas_imported`，越限（行/
+//!   **缓存值面双载（批 5，#29 三大发现 #2/#3 修复）**：缓存值
+//!   非空时追加 `` `=SUM(B2:B4)`=9 `` 形（`=` + 缓存值显示面——内容
+//!   提取/引用场景值面可见；错误格缓存 = 错误码文本，显示面忠实
+//!   原则 `#DIV/0!` 即 Excel 显示语义）；缓存空（calamine Empty）
+//!   保持单载。缓存值同时进 stats `formulas` 清单（`{sheet, cell,
+//!   text, cached}`）；渲染窗内计数 `formulas_imported`，越限（行/
 //!   列超出渲染窗）计数 `formulas_flattened`（值与文本同弃——
 //!   `rows_dropped`/`cols_dropped` 已登记其丢弃面）；
 //! - **超链接格（P2-3 四字段保留）**：单元格 = `[text](target)`
@@ -79,14 +82,22 @@
 //!
 //! ## 规模上限（markdown 产出可预期；越限丢弃计数显式化）
 //!
-//! [`MAX_SHEETS`] = 16 表 / [`MAX_ROWS`] = 50 行/表 / [`MAX_COLS`] = 32
-//! 列/表（使用区前缀截断）→ `sheets_dropped` / `rows_dropped` /
+//! [`MAX_SHEETS`] = 64 表 / [`MAX_ROWS`] = 5,000 行/表 / [`MAX_COLS`] =
+//! 128 列/表（使用区前缀截断）→ `sheets_dropped` / `rows_dropped` /
 //! `cols_dropped` stats。零表工作簿 → 空 markdown（编辑器空文档，
 //! `sheets` = 0）。
 //!
+//! **批 5 窗口提级（#29 三大发现 #1 修复）**：原 16/50/32 对真实数据
+//! 簿过紧（体检实测：196 行逮捕登记簿丢 146 行召回 0.242；36 列簿
+//! 丢 4 列；5 件窗口案）——真实报表/登记簿普遍 50-5,000 行、
+//! ≤128 列，新窗覆盖该全域（R-1 系 50MB 件的 ~3,250 行亦全覆盖）。
+//! 大档防线不依赖本窗：读面上限（office-io `io::read_book`：表数
+//! 1,000 / 稠密包围盒格总面积 4,000,000——r4-t2 资源上限）+ 容器
+//! 预扫门（门 1/门 2）仍是安全拒绝层；渲染窗仅是消费子集截断
+//! （越限计数进 stats + P2-4 error 档可见警告——丢弃可见不可恢复）。
+//!
 //! **两层关系登记（r4-t2）**：本三常量是**渲染窗**（markdown 产出
-//! 可预期）——读面全提取（office-io `io::read_book`：表数 1,000 /
-//! 稠密包围盒格总面积 4,000,000 —— r4-t2 资源上限）之上的消费
+//! 可预期）——读面全提取之上的消费
 //! 子集截断，**渲染截断非拒绝**（越限计数进 stats，丢弃可见）；
 //! 读面上限是安全拒绝（typed `PrescanRejected`）。两层无重复定义
 //! 不收敛：读面 = C1 大档能力宣称面（office-io SECURITY_POLICY
@@ -152,14 +163,25 @@ use wasm_bindgen::prelude::*;
 // ---------------------------------------------------------------------------
 
 /// 渲染表数上限（工作簿表序前缀）。
-pub const MAX_SHEETS: usize = 16;
+///
+/// 批 5（#29 三大发现 #1）：16 → 64——真实多表簿（登记簿/月报表
+/// 常见 2-10 表）+ 多年归档簿覆盖；安全层在读面（1,000 表）与容器
+/// 预扫门，不依赖本窗。
+pub const MAX_SHEETS: usize = 64;
 /// 每表渲染行数上限（使用区行序前缀，含表头行）。
-pub const MAX_ROWS: usize = 50;
+///
+/// 批 5（#29 三大发现 #1）：50 → 5,000——体检实测 196 行真实簿丢
+/// 146 行（召回 0.242）；R-1 系 50MB 件 ~3,250 行。5,000 覆盖真实
+/// 报表全域；越限计数 + error 档警告（P2-4）可见。
+pub const MAX_ROWS: usize = 5_000;
 /// 每表渲染列数上限（使用区列序前缀）。
-pub const MAX_COLS: usize = 32;
+///
+/// 批 5（#29 三大发现 #1）：32 → 128——体检实测 36 列真实簿丢 4 列；
+/// Excel 实用簿列域普遍 ≤52（A-AZ），128 覆盖全域。
+pub const MAX_COLS: usize = 128;
 
 /// P2-3：stats `formulas`/`hyperlinks` 明细清单上限（200 条——计数键
-/// `*_imported` 恒全量，清单截断仅影响明细面；渲染窗 16×50×32 内
+/// `*_imported` 恒全量，清单截断仅影响明细面；渲染窗 64×5,000×128 内
 /// 公式/链接数理论上限远大于此，截断防 stats 无界膨胀）。
 const FORMULA_INVENTORY_CAP: usize = 200;
 
@@ -475,7 +497,17 @@ fn sheet_to_section(sheet: &SheetData) -> SheetOutcome {
                             Some(value_text.clone())
                         },
                     });
-                    format!("`{f}`")
+                    // 批 5 值面双载（#29 三大发现 #2/#3）：缓存值非空
+                    // 追加 `=值` 后缀——值面可见（内容提取/引用场景
+                    // 公式格读出数字而非公式文本；错误格缓存 = 错误码
+                    // 文本，`#DIV/0!` 即 Excel 显示语义——显示面忠实
+                    // 原则）；缓存空（calamine Empty）保持单载。
+                    // 写面对称解析（xlsx_export::cell_value——同形判据）。
+                    if value_text.is_empty() {
+                        format!("`{f}`")
+                    } else {
+                        format!("`{f}`={value_text}")
+                    }
                 }
                 None => value_text.clone(),
             };
@@ -787,7 +819,8 @@ mod tests {
     }
 
     /// 写读映射全环精确等值（夹具 = 产线单一真源 build_sample_xlsx）。
-    /// P2-3：公式格 = 反引号包裹公式原文；超链接格 = [text](url) GFM 形。
+    /// P2-3：公式格 = 反引号包裹公式原文；批 5 值面双载：缓存值非空
+    /// 追加 `=值` 后缀；超链接格 = [text](url) GFM 形。
     #[test]
     fn writer_roundtrip_import_maps_structure() {
         let payload = import_json(&build_sample_xlsx());
@@ -799,7 +832,7 @@ mod tests {
              | Item | Qty | Note |\n\
              | --- | --- | --- |\n\
              | Widget | 4.5 | has \\| pipe |\n\
-             | Gadget | `=SUM(B2:B2)*2` | [docs](https://example.com/docs) |\n\
+             | Gadget | `=SUM(B2:B2)*2`=9 | [docs](https://example.com/docs) |\n\
              | merged top |  |  |\n\
              \n\
              ## Notes\n\
@@ -852,17 +885,19 @@ mod tests {
     }
 
     /// P2-3：公式双通道——单元格 = 反引号公式原文；缓存值进 stats
-    /// 清单（结构化面；渲染窗内零丢弃）。
+    /// 清单（结构化面；渲染窗内零丢弃）+ 批 5 值面双载：缓存值面
+    /// 在 md 单元格可见（`=formula`=cached 形）。
     #[test]
     fn formula_policy_keeps_text_and_cached_channels() {
         let payload = import_json(&build_sample_xlsx());
         let md = payload["markdown"].as_str().expect("markdown");
         assert!(
-            md.contains("| Gadget | `=SUM(B2:B2)*2` | [docs](https://example.com/docs) |"),
-            "公式格应为反引号包裹公式原文 + 链接格 GFM 形: {md}"
+            md.contains("| Gadget | `=SUM(B2:B2)*2`=9 | [docs](https://example.com/docs) |"),
+            "公式格应为双载形：公式原文 + `=缓存值` + 链接格 GFM 形: {md}"
         );
-        assert!(!md.contains("| Gadget | 9 |"), "缓存值不再直接渲染: {md}");
-        // 双通道：文本在 md，缓存在清单（"cached": "9"）。
+        // 值面不再缺席（#29 三大发现 #2）：公式格的缓存值在 md 可见。
+        assert!(md.contains("=9"), "缓存值面缺席: {md}");
+        // 双通道清单面保持：文本与缓存在清单（"cached": "9"）。
         assert_eq!(payload["stats"]["formulas_imported"], 1);
         assert_eq!(
             payload["stats"]["formulas"][0]["cached"],
@@ -963,36 +998,53 @@ mod tests {
         assert_eq!(payload["stats"]["warnings"][0]["severity"], "info");
     }
 
-    /// 规模上限：表数/行/列前缀截断 + 丢弃计数显式化。
+    /// 规模上限：表数/行/列前缀截断 + 丢弃计数显式化。批 5 窗口提级
+    /// 后夹具稀疏化：窗口越限表仅点写边界格（used range 包围盒由非空
+    /// 格撑开——高度/宽度越限不需稠密矩阵，测试不随窗口提级线性变重）。
     #[test]
     fn caps_truncate_with_drop_stats() {
         use mdc_office_io::write::{CellValue, WorkbookWriter};
         let mut w = WorkbookWriter::new();
-        // MAX_SHEETS + 3 表（前 16 渲染，3 丢弃）。
+        // MAX_SHEETS + 3 表（前 MAX_SHEETS 渲染，3 丢弃）。
         for i in 0..(MAX_SHEETS + 3) {
             let mut s = w.add_sheet(&format!("S{i}")).expect("sheet");
-            // 首 3 表造 55 行 × 35 列（50 行/32 列渲染，5 行/3 列丢弃）。
-            let (rows, cols) = if i < 3 { (55, 35) } else { (2, 2) };
-            for r in 0..rows {
-                let cells: Vec<CellValue> = (0..cols)
-                    .map(|c| CellValue::Number(((r * 100 + c) % 10) as f64))
-                    .collect();
-                s.write_row(r as u32, &cells).expect("row");
+            // 表 0 行窗越限：(0,0) 与 (MAX_ROWS+4,0) 两点撑开高度
+            // MAX_ROWS+5（渲染 MAX_ROWS，丢弃 5）。
+            // 表 1 列窗越限：(0,0) 与 (0,MAX_COLS+2) 两点撑开宽度
+            // MAX_COLS+3（渲染 MAX_COLS，丢弃 3）。
+            // 其余表 2×2 常规。
+            match i {
+                0 => {
+                    s.write(0, 0, CellValue::Number(1.0), None).expect("pt a");
+                    s.write((MAX_ROWS + 4) as u32, 0, CellValue::Number(2.0), None)
+                        .expect("pt b");
+                }
+                1 => {
+                    s.write(0, 0, CellValue::Number(1.0), None).expect("pt a");
+                    s.write(0, (MAX_COLS + 2) as u16, CellValue::Number(2.0), None)
+                        .expect("pt b");
+                }
+                _ => {
+                    for r in 0..2u32 {
+                        let cells = [CellValue::Number(1.0), CellValue::Number(2.0)];
+                        s.write_row(r, &cells).expect("row");
+                    }
+                }
             }
         }
         let payload = import_json(&w.save_to_vec().expect("save"));
         let stats = &payload["stats"];
         assert_eq!(stats["sheets"], MAX_SHEETS);
         assert_eq!(stats["sheets_dropped"], 3);
-        assert_eq!(stats["rows_dropped"], 15); // 3 表 × 5 行
-        assert_eq!(stats["cols_dropped"], 9); // 3 表 × 3 列
+        assert_eq!(stats["rows_dropped"], 5); // 表 0：高度 MAX_ROWS+5 − MAX_ROWS
+        assert_eq!(stats["cols_dropped"], 3); // 表 1：宽度 MAX_COLS+3 − MAX_COLS
                                               // #22 P2-4：截断面（内容整体不可见）→ error 档可见警告三连
                                               //（count = stats 同键镜像）。
         let warns = stats["warnings"].as_array().expect("warnings array");
         for (kind, count) in [
             ("sheets_dropped", 3),
-            ("rows_dropped", 15),
-            ("cols_dropped", 9),
+            ("rows_dropped", 5),
+            ("cols_dropped", 3),
         ] {
             let hit = warns
                 .iter()
@@ -1001,14 +1053,58 @@ mod tests {
             assert_eq!(hit["count"], count, "{kind} 计数镜像");
             assert_eq!(hit["part"], "xlsx");
         }
-        assert_eq!(stats["rows"], 3 * MAX_ROWS + 13 * 2);
+        // 表 0 渲染 MAX_ROWS 行 + 表 1 1 行 + 62 常规表 × 2 行。
+        assert_eq!(stats["rows"], MAX_ROWS + 1 + (MAX_SHEETS - 2) * 2);
         let md = payload["markdown"].as_str().expect("markdown");
-        // 每表 50 数据行 + 表头 + 分隔行 = 52 行；表节 16 个。
+        // 全部渲染表有内容 → 表节 = 上限数。
         let sheet_sections = md.split("\n\n## ").count();
         assert_eq!(sheet_sections, MAX_SHEETS, "渲染表节数应为上限");
         let s0 = md.split("\n\n## ").next().expect("first section");
-        // 标题 + 空行 +（表头 + 分隔行 + 50 数据行）= 53 行。
-        assert_eq!(s0.lines().count(), 3 + MAX_ROWS, "首表行数 = 表头+分隔+50");
+        // 标题 + 空行 +（表头 + 分隔行 + MAX_ROWS 行）= 3 + MAX_ROWS 行。
+        assert_eq!(
+            s0.lines().count(),
+            3 + MAX_ROWS,
+            "首表行数 = 表头+分隔+MAX_ROWS"
+        );
+    }
+
+    /// 批 5 窗口提级（#29 三大发现 #1）：真实数据簿规模（196 行 × 36 列
+    /// ——体检实测 minimal_package 形态：原 50/32 窗丢 146 行/4 列召回
+    /// 0.242）全量导入零丢弃、零截断警告。
+    #[test]
+    fn window_raise_covers_real_scale_sheets() {
+        use mdc_office_io::write::{CellValue, WorkbookWriter};
+        let mut w = WorkbookWriter::new();
+        let mut s = w.add_sheet("register").expect("sheet");
+        for r in 0..196u32 {
+            let cells: Vec<CellValue> = (0..36)
+                .map(|c| CellValue::Text(format!("v{r}-{c}")))
+                .collect();
+            s.write_row(r, &cells).expect("row");
+        }
+        let payload = import_json(&w.save_to_vec().expect("save"));
+        let stats = &payload["stats"];
+        assert_eq!(stats["rows_dropped"], 0, "196 行簿不再截断");
+        assert_eq!(stats["cols_dropped"], 0, "36 列簿不再截断");
+        assert_eq!(stats["rows"], 196);
+        assert_eq!(stats["sheets_dropped"], 0);
+        assert!(
+            stats["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .all(|w| !matches!(
+                    w["kind"].as_str(),
+                    Some("rows_dropped") | Some("cols_dropped")
+                )),
+            "无截断警告: {}",
+            stats["warnings"]
+        );
+        let md = payload["markdown"].as_str().expect("markdown");
+        assert!(
+            md.contains("v195-35"),
+            "末行末列在场（原窗口丢 146 行）: {md}"
+        );
     }
 
     /// 空表：标题 + (empty sheet) 段落 + 计数（不静默丢表）。
