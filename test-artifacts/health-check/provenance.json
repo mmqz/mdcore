@@ -16,11 +16,20 @@
       "license": "Apache-2.0（ASF 政策；POI git 仓不携带顶层 LICENSE 文件——LICENSE.poi 为 apache.org 官方全文替代性存档，注明缘由）",
       "taken": "test-data/document/*.docx 全量 129 件（130 件中 1 件 >2MiB 按铁律跳过——saut_page.docx 2,959,626B；合计 4,969,445B ≈ 4.74MiB）——真实世界回归样本：Word 各版本生成件、含畸形/崩溃回归件（51921-Word-Crash067 等）、修订/批注/域/文本框/嵌套表等结构面；未取 .doc/.docm（mdcore office 面 .docx-only）",
       "size_bytes": 4969445
+    },
+    {
+      "path": "corpus/docx4j/*.docx",
+      "repo": "plutext/docx4j",
+      "commit": "b21e0172beb9e667f42a552ab37dd77c92dc1b48 (master@2026-10-29, sparse fetch)",
+      "license": "Apache-2.0（项目声明；仓无顶层 LICENSE 文件——LICENSE.docx4j 为 apache.org 官方全文替代性存档，注明缘由）",
+      "taken": "docx4j-core-tests/src/test/resources/**/*.docx 全量 501 件（全部 ≤2MiB，合计 10,069,129B ≈ 9.6MiB；路径分隔符平化为下划线保留目录上下文——revisions_147/fields_113/runprops_72/mc-fun_33/charts_32/OpenDoPE_18/text-extraction_16/AlteredParts_13/headers_footers_10/2010_8/OLE_5/strict_4 + 根级散件）——复杂结构真实样本：修订追踪/域代码/run 属性矩阵/MC 兼容/图表/OLE 嵌入/OpenDoPE 文档装配",
+      "size_bytes": 10069129
     }
   ],
   "pending_sources": [
-    { "source": "LibreOffice sw/qa/extras/ooxmlexport", "status": "未采集", "note": "LO 修 bug 边界样本——docx 写面为主，量级大需筛读面适用子集" },
-    { "source": "docx4j / python-docx tests", "status": "未采集", "note": "复杂结构 docx" },
+    { "source": "docx-rs tests", "status": "不适用", "note": "仓内零存储 .docx 语料（bokuweb/docx-rs 全部测试文档为测试内程序化生成件——与本仓 examples/gen_* 夹具产线同模式），无可扒取数据面" },
+    { "source": "python-docx tests", "status": "评估中", "note": "测试多为生成件；待核存量夹具是否与既有语料重叠" },
+    { "source": "LibreOffice sw/qa/extras/ooxmlexport", "status": "未采集", "note": "LO 修 bug 边界样本——docx 写面为主且多为测试内生成件，需筛存储型读面适用子集" },
     { "source": "pdf.js test corpus", "status": "未采集", "note": "PDF 边界——pkg_pdf 模型面适用" }
   ]
 }

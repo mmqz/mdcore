@@ -1,11 +1,15 @@
 //! 阶段 B 竞品体检 · 六维 runner——docx 面（issue #29 任务 4）。
 //!
-//! # 语料与溯源
+//! # 语料与溯源（双语料各自独立基线节）
 //!
-//! `test-artifacts/health-check/corpus/poi-docx/`：apache/poi
-//! `test-data/document/` 129 件 .docx（Apache-2.0，钉定 commit
-//! ca95db9——provenance.json 在档）。真实世界回归样本：Word 各版本
-//! 生成件、畸形/崩溃回归件、修订/批注/域/文本框/嵌套表结构面。
+//! - `corpus/poi-docx/`：apache/poi `test-data/document/` 129 件
+//!   .docx（Apache-2.0，钉定 commit ca95db9）——真实世界回归样本：
+//!   Word 各版本生成件、畸形/崩溃回归件（clusterfuzz 最小化件）。
+//! - `corpus/docx4j/`：plutext/docx4j `core-tests/src/test/resources/`
+//!   501 件 .docx（Apache-2.0，钉定 commit b21e0172）——复杂结构
+//!   真实样本：修订追踪/域代码/run 属性矩阵/MC 兼容/图表/OLE 嵌入/
+//!   OpenDoPE 文档装配（路径平化下划线保留目录上下文）。
+//!   provenance.json 在档；docx-rs 源零存储语料不适用（见 provenance）。
 //!
 //! # 六维判据（与 health_check_xlsx.rs 同构——Lead 规格「每类语料都跑」）
 //!
@@ -147,6 +151,8 @@ struct Rec {
     import_ms: u128,
     stat_paragraphs: usize,
     stat_tables: usize,
+    /// panic 载荷首行（诊断证据；class 恒 "panic" 保持基线稳定）。
+    panic_msg: String,
 }
 
 fn run_file(name: &str, bytes: &[u8]) -> Rec {
@@ -163,6 +169,7 @@ fn run_file(name: &str, bytes: &[u8]) -> Rec {
         import_ms: 0,
         stat_paragraphs: 0,
         stat_tables: 0,
+        panic_msg: String::new(),
     };
 
     // 维 1+2：崩溃率 + 解析成功率。
@@ -171,8 +178,19 @@ fn run_file(name: &str, bytes: &[u8]) -> Rec {
     rec.import_ms = t0.elapsed().as_millis();
 
     let json = match outcome {
-        Err(_) => {
+        Err(payload) => {
             rec.class = "panic".into();
+            rec.panic_msg = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect::<String>();
             return rec;
         }
         Ok(Err(e)) => {
@@ -249,13 +267,17 @@ fn run_file(name: &str, bytes: &[u8]) -> Rec {
 // 基线与结果 IO
 // ---------------------------------------------------------------------------
 
-fn load_baseline() -> Option<serde_json::Value> {
+// ---------------------------------------------------------------------------
+// 基线与结果 IO（section 参数化——双语料门共享）
+// ---------------------------------------------------------------------------
+
+fn load_baseline(section: &str) -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(root().join("BASELINE.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v.get("hc_poi_docx").cloned()
+    v.get(section).cloned()
 }
 
-fn save_artifacts(recs: &[Rec]) {
+fn save_artifacts(recs: &[Rec], section: &str, results_name: &str, corpus_source: &str) {
     let files = recs.len();
     let ok = recs.iter().filter(|r| r.class == "ok").count();
     let mean_recall = recs.iter().filter_map(|r| r.recall).sum::<f64>()
@@ -273,7 +295,7 @@ fn save_artifacts(recs: &[Rec]) {
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_else(|| serde_json::json!({"schema": 1}));
     base["schema"] = serde_json::json!(1);
-    base["hc_poi_docx"] = serde_json::json!({
+    base[section] = serde_json::json!({
         "files": files,
         "ok": ok,
         "structure_ok": structure_ok,
@@ -290,7 +312,7 @@ fn save_artifacts(recs: &[Rec]) {
     let results = serde_json::json!({
         "schema": 1,
         "runner": "crates/mdcore-wasm/tests/health_check_docx.rs",
-        "corpus": {"source": "apache/poi@ca95db9", "files": files},
+        "corpus": {"source": corpus_source, "files": files},
         "dimensions": {
             "ok": ok, "panic": recs.iter().filter(|r| r.class == "panic").count(),
             "err": recs.iter().filter(|r| r.class.starts_with("err:")).count(),
@@ -307,34 +329,40 @@ fn save_artifacts(recs: &[Rec]) {
             "gt_chars": r.gt_chars_total, "md_lines": r.md_lines,
             "import_ms": r.import_ms,
             "stat_paragraphs": r.stat_paragraphs, "stat_tables": r.stat_tables,
+            "panic_msg": r.panic_msg,
         })).collect::<Vec<_>>(),
     });
     std::fs::write(
-        rp.join("poi-docx.json"),
+        rp.join(results_name),
         serde_json::to_string_pretty(&results).expect("pretty"),
     )
-    .expect("write results/poi-docx.json");
+    .expect("write results file");
 }
 
 // ---------------------------------------------------------------------------
-// 门（下降即红）
+// 门（下降即红——section 参数化，双语料各自独立基线）
 // ---------------------------------------------------------------------------
 
-#[test]
-fn hc_poi_docx_six_dimensions_gate() {
-    let dir = root().join("corpus/poi-docx");
+fn six_dim_gate(
+    corpus_dir: &str,
+    section: &str,
+    anchor: usize,
+    results_name: &str,
+    corpus_source: &str,
+) {
+    let dir = root().join("corpus").join(corpus_dir);
     let mut files: Vec<String> = std::fs::read_dir(&dir)
-        .expect("poi-docx corpus dir")
+        .unwrap_or_else(|e| panic!("{corpus_dir} corpus dir: {e}"))
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n.ends_with(".docx"))
         .collect();
     files.sort();
-    // 口径锚：provenance 声明 129 件。
+    // 口径锚：provenance 声明件数（漂移 = provenance 与扫描面失锁）。
     assert_eq!(
         files.len(),
-        129,
-        "poi-docx corpus count drift: {}",
+        anchor,
+        "{corpus_dir} corpus count drift: {}",
         files.len()
     );
 
@@ -346,28 +374,29 @@ fn hc_poi_docx_six_dimensions_gate() {
         })
         .collect();
 
-    // 维 1 硬门：panic 恒 0。
-    let panics: Vec<&str> = recs
+    // 维 1（基线锚定——M-1 门哲学「允许已知失败，不许新增失败」）：
+    // 依赖层 panic（docx-rs 等）按已知失败锁入基线；**新增 panic = 红**。
+    // 首 boot 无基线时先落档（None 分支），panic 集合进基线后锁定。
+    let panic_files: Vec<&str> = recs
         .iter()
         .filter(|r| r.class == "panic")
         .map(|r| r.file.as_str())
         .collect();
-    assert!(panics.is_empty(), "D1 崩溃率: panic on {panics:?}");
 
-    let baseline = match load_baseline() {
+    let baseline = match load_baseline(section) {
         Some(b) => b,
         None => {
-            save_artifacts(&recs);
+            save_artifacts(&recs, section, results_name, corpus_source);
             panic!(
-                "首 boot：BASELINE.json hc_poi_docx 节已生成 + results/poi-docx.json \
+                "首 boot：BASELINE.json {section} 节已生成 + results/{results_name} \
                  全量证据已写——提交入库后重跑"
             );
         }
     };
 
     if std::env::var("HC_REGEN_BASELINE").is_ok() {
-        save_artifacts(&recs);
-        eprintln!("HC baseline + results 再生完成（hc_poi_docx）");
+        save_artifacts(&recs, section, results_name, corpus_source);
+        eprintln!("HC baseline + results 再生完成（{section}）");
         return;
     }
 
@@ -388,7 +417,7 @@ fn hc_poi_docx_six_dimensions_gate() {
     let b_round = baseline["roundtrip_exact"].as_u64().unwrap_or(0) as usize;
     let b_fixed = baseline["fixed_point"].as_u64().unwrap_or(0) as usize;
 
-    assert_eq!(b_files, files.len(), "语料件数 vs 基线漂移");
+    assert_eq!(b_files, files.len(), "{section} 语料件数 vs 基线漂移");
     assert!(ok >= b_ok, "D2 解析成功率下降: {ok} < 基线 {b_ok}");
     assert!(
         mean_recall >= b_recall - 0.005,
@@ -407,6 +436,34 @@ fn hc_poi_docx_six_dimensions_gate() {
         "D6 幂等下降: {fixed_point} < 基线 {b_fixed}"
     );
 
+    // 维 1 锚定断言：基线已知 panic 集合外的新增 panic = 红。
+    let base_panic_set: std::collections::BTreeSet<String> = baseline["classes"]
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .filter(|(_, v)| v.as_str() == Some("panic"))
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let new_panics: Vec<&str> = panic_files
+        .iter()
+        .copied()
+        .filter(|f| !base_panic_set.contains(*f))
+        .collect();
+    assert!(
+        new_panics.is_empty(),
+        "D1 新增 panic（基线已知集合外）: {new_panics:?}"
+    );
+    let resolved: Vec<String> = base_panic_set
+        .iter()
+        .filter(|f| !panic_files.contains(&f.as_str()))
+        .cloned()
+        .collect();
+    if !resolved.is_empty() {
+        eprintln!("{section} panic 已消除（{resolved:?}）——HC_REGEN_BASELINE=1 再生基线入档");
+    }
+
     let base_classes: BTreeMap<String, String> = baseline["classes"]
         .as_object()
         .map(|o| {
@@ -419,8 +476,11 @@ fn hc_poi_docx_six_dimensions_gate() {
     let mut improved: Vec<String> = Vec::new();
     for r in &recs {
         if let Some(old) = base_classes.get(&r.file) {
-            if *old == "ok" && r.class != "ok" {
-                regress.push(format!("{}: ok → {}", r.file, r.class));
+            // 回归两类：ok→非 ok；非 panic→panic（panic 严格劣于 err）。
+            let worse =
+                (*old == "ok" && r.class != "ok") || (*old != "panic" && r.class == "panic");
+            if worse {
+                regress.push(format!("{}: {} → {}", r.file, old, r.class));
             } else if *old != "ok" && r.class == "ok" {
                 improved.push(format!("{}: {} → ok", r.file, old));
             }
@@ -428,9 +488,33 @@ fn hc_poi_docx_six_dimensions_gate() {
     }
     assert!(
         regress.is_empty(),
-        "逐件 class 回归（下降即红）: {regress:?}"
+        "{section} 逐件 class 回归（下降即红）: {regress:?}"
     );
     if !improved.is_empty() {
-        eprintln!("baseline improved（{improved:?}）——HC_REGEN_BASELINE=1 重跑再生基线入档");
+        eprintln!(
+            "{section} baseline improved（{improved:?}）——HC_REGEN_BASELINE=1 重跑再生基线入档"
+        );
     }
+}
+
+#[test]
+fn hc_poi_docx_six_dimensions_gate() {
+    six_dim_gate(
+        "poi-docx",
+        "hc_poi_docx",
+        129,
+        "poi-docx.json",
+        "apache/poi@ca95db9",
+    );
+}
+
+#[test]
+fn hc_docx4j_six_dimensions_gate() {
+    six_dim_gate(
+        "docx4j",
+        "hc_docx4j",
+        501,
+        "docx4j.json",
+        "plutext/docx4j@b21e0172",
+    );
 }

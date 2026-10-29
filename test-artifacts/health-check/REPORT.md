@@ -157,3 +157,56 @@ HC_REGEN_BASELINE=1 cargo test -p mdcore-wasm --test health_check_xlsx
 ## docx 面结论
 
 **docx 导入面健康度显著优于 xlsx 面**：内容保真全满、结构全等、往返稳定收敛、安全拒绝正确。仅有的两个缺口都在依赖层（docx-rs 深嵌套 + 实体拒读后者实为安全优点）。**修复优先级应全部投向 xlsx 面**（REPORT 上半部 #1-#5）。
+
+---
+
+# 批 4 报告（docx 面 / docx4j 语料）
+
+> 体检日期：2026-10-29 · runner：`health_check_docx.rs`（双语料门之二）
+> 语料：plutext/docx4j `core-tests/src/test/resources/` 501 件（Apache-2.0，钉定 `b21e0172`）——修订 147/域 113/run 属性 72/MC 33/图表 32/OpenDoPE 18/文本抽取 16/AlteredParts 13/页眉脚 10/2010 8/OLE 5/strict 4 + 根级
+> 基线：`BASELINE.json` 节 `hc_docx4j` · 证据：`results/docx4j.json`
+
+## 六维总览
+
+| 维 | 实测 | 评价 |
+|---|---|---|
+| 崩溃率 | **panic 4/501**（docx-rs 层，已锁基线——新增即红） | 🔴 依赖层崩溃实锤（见 #E1） |
+| 解析成功率 | ok 476 / err 21 / panic 4 | ⚠️ err 集中 word365 属性形态族（#E2） |
+| 内容保真 | **1.0000 全满**（476 件可读件） | ✅ 与 POI 批一致 |
+| 结构保真 | **476/476 标题数精确等** | ✅ |
+| 往返一致 | 382/476 精确（80.3%） | ⚠️ 94 件非精确（同批 3 两类良性模式） |
+| 幂等 | **476/476 二轮定点** | ✅ docx 面往返稳定性再次确认 |
+
+## 发现（docx4j 面）
+
+### E1. docx-rs 0.4.22 四处 panic——wasm 面生产即 trap 🔴
+
+| 件 | panic 位点 |
+|---|---|
+| runprops_word365_props-{b,enum,u}-styles.docx（3 件） | `run_property.rs:110/155` **index out of bounds**（空 vec 取 [0]） |
+| strict_strict-sample-docx.docx | `width.rs:18` **ParseFloatError unwrap** |
+
+catch_unwind 在 runner 内捕获（测试不炸），**生产 wasm 面 = trap**。POI 批 129 件零 panic，docx4j 批 501 件抓出 4 处——语料多样性的直接价值。**修复面在依赖层**：上游修复 / 升版评估 / 我方预检防御。基线已锁（新增 panic = 红，消除提示再生）。
+
+### E2. Word 365 非规范属性形态族 22 件失败（19 err + 3 panic）🔴
+
+`runprops_word365_*` 系列失败 **22/23 件**：colour-case/hex/names 变体、onoff={TRUE,empty,space,yes} 变体、props-enum-{missing,other}、props-u-{case,other}、props-toggles——全部 `err:docx_parse` 或 panic。**根因**：docx-rs 读层对 ST_OnOff/ST_Color/枚举的**非规范形态**（大小写、空串、缺省值）不容忍，而 OOXML 规范允许且真实世界存在（老生成器/第三方工具产物）。Word 365 是当前最主流 docx 生产者——**现代 Word 文档导入面在依赖层有结构性风险**（规范形大概率能读、边缘形大面积失败）。自家测试全部用引擎写面生成的规范形——这正是「自家测试没覆盖到」的典型面。
+
+### E3. vml_textbox.docx 容器拒绝 🟡
+
+`err:container_invalid_part`（我们自己的门 3 拒绝，非 docx-rs）——VML 文本框件的部件良构性拒绝。#18 已声明 VML textbox 读面支持，此件被容器门拦截——**门与特性面的交互需复查**（可能误拒）。
+
+### E4. fields_docprop-case 解析失败 🟡
+
+`err:docx_parse`——docProps 域大小写变体（docx4j 专测 case 容忍）。同 #E2 族（大小写不容忍）。
+
+### E5. 其余面健康 ✅
+
+476 可读件召回 1.0 全满、结构全等、全定点收敛、性能 p50=12ms/p90=39ms/max=363ms（无 POI 批的 3.8s 离群）。
+
+## 修复优先级综合（docx 面，跨批 3+4）
+
+1. **docx-rs word365 属性形态族**（22 件）——升版评估或上游 issue（含 4 panic 的崩溃位点在档）
+2. deep-table-cell 深嵌套（批 3 #D2）
+3. vml_textbox 门交互复查（#E3）
+4. 26+94 件非精确往返的两类良性模式（标题内联强调 + 页眉脚不对称——低优先）
