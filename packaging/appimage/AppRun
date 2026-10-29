@@ -14,5 +14,11 @@ export GIO_MODULE_DIR="${HERE}/usr/lib/gio/modules:${GIO_MODULE_DIR:-}"
 # 先保守开启，R24-d 实测后按需收敛（packaging/README 运行时依赖节）。
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 
+# 工作台 bundle 路径（Q3-3 实测缺陷修复——壳的三候选解析序
+# --dist / MDCORE_DIST / /usr/share/mdcore/dist / ./web/dist 中，绝对
+# 系统路径与 CWD 相对路径在 AppImage 挂载布局下均不可达；AppDir 内
+# 镜像 deb 布局的 usr/share/mdcore/dist 经此变量投递）。
+export MDCORE_DIST="${HERE}/usr/share/mdcore/dist"
+
 # AppImage 单实例：--appimage-extract-and-run 场景下 %F 参数直传
 exec "${HERE}/usr/bin/{{APP_EXEC}}" "$@"

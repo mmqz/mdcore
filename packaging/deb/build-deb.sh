@@ -36,7 +36,7 @@ sed -e 's/mang/mdcore/g' \
     -e 's/{{APP_EXEC}}/mdcore/g' \
     -e 's/{{BUNDLE_ICON}}/mdcore/g' \
     "$ROOT/packaging/shared/app.desktop.tpl" \
-    > "$STAGE/usr/share/applications/dev.mdcore.editor.desktop"
+    | sed '/^#/d' > "$STAGE/usr/share/applications/dev.mdcore.editor.desktop"
 if [ -f "$ROOT/packaging/appimage/icon-placeholder.png" ]; then
   install -m 0644 "$ROOT/packaging/appimage/icon-placeholder.png" \
     "$STAGE/usr/share/icons/hicolor/256x256/apps/mdcore.png"
