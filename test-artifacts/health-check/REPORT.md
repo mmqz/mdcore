@@ -192,9 +192,14 @@ catch_unwind 在 runner 内捕获（测试不炸），**生产 wasm 面 = trap**
 
 `runprops_word365_*` 系列失败 **22/23 件**：colour-case/hex/names 变体、onoff={TRUE,empty,space,yes} 变体、props-enum-{missing,other}、props-u-{case,other}、props-toggles——全部 `err:docx_parse` 或 panic。**根因**：docx-rs 读层对 ST_OnOff/ST_Color/枚举的**非规范形态**（大小写、空串、缺省值）不容忍，而 OOXML 规范允许且真实世界存在（老生成器/第三方工具产物）。Word 365 是当前最主流 docx 生产者——**现代 Word 文档导入面在依赖层有结构性风险**（规范形大概率能读、边缘形大面积失败）。自家测试全部用引擎写面生成的规范形——这正是「自家测试没覆盖到」的典型面。
 
-### E3. vml_textbox.docx 容器拒绝 🟡
+### E3. vml_textbox.docx 容器拒绝——**自家门 3 误拒（已修复）** ✅→🔧
 
-`err:container_invalid_part`（我们自己的门 3 拒绝，非 docx-rs）——VML 文本框件的部件良构性拒绝。#18 已声明 VML textbox 读面支持，此件被容器门拦截——**门与特性面的交互需复查**（可能误拒）。
+`err:container_invalid_part`——诊断定性为**误拒**并当场修复：
+- **根因**：quick-xml 0.41 `buffer_position` 边界计量偏移（实测区段起点含前一事件尾字节/前导空白，终点可截断闭合标签中段）→ docx-rs EventReader 首事件成 `Whitespace`/`Characters` → 门 3 "textbox region malformed" 拒绝**整个文档**。紧凑 Word 件因"首事件任意 StartElement 均可"**恰巧**工作过——pretty-printed 形态（docx4j 等工具输出）是真实盲区
+- **连带发现**：残缺闭合标签会令 docx-rs `TextBoxContent::read` 在 EOF 上**死循环**（`_ => {}` 不终止）——修复过程中实证（首版修复只裁起点未补终点即触发）
+- **修复**（docx.rs）：scan 区段双端前向修复（起点走到下一 `<`、终点补到下一 `>`）+ parse 首事件空白容忍；防回归锁 tr18 新增 pretty-printed 最小夹具测试
+- **实效**：vml_textbox err→ok（召回 1.0）；docx4j 面 ok 476→477 / roundtrip 382→383；poi 面零漂移（111/18 恒——既有行为不受扰动）；tr18 5/5
+- **这是体检批的直接产出**：语料 → 发现 → 定性 → 修复 → 回归锁 → 基线改善，全链闭环
 
 ### E4. fields_docprop-case 解析失败 🟡
 

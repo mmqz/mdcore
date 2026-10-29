@@ -226,3 +226,86 @@ fn drawingml_text_box_read_from_handbuilt_package() {
         "宿主段完整: {hosts:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 批 4 体检回归锁（health-check docx4j 语料 vml_textbox.docx 发现）：
+// pretty-printed document.xml（元素间换行缩进空白）此前被门 3 误拒
+// "textbox region malformed (missing txbxContent open)"——quick-xml 0.41
+// buffer_position 边界计量偏移使区段起点带前导空白/终点截断闭合标签
+// （docx.rs scan_vml_textbox_regions 双端前向修复 + parse_textbox_region
+// 前导空白容忍）。紧凑 Word 件因"首事件任意 StartElement 均可"恰巧
+// 工作过——空白形态是真实盲区（docx4j 等工具 pretty-print 输出）。
+// ---------------------------------------------------------------------------
+
+/// 构造 pretty-printed VML 文本框 docx（v:textbox 与 w:txbxContent 之间
+/// 换行 + 缩进空白——复现误拒形态；文本含跨行空白干扰字节）。
+#[test]
+fn pretty_printed_vml_textbox_not_rejected() {
+    use std::io::Write as _;
+
+    const CT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    const DOC_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
+    // pretty-printed：pict/v:shape/v:textbox/txbxContent 元素间全部换行缩进。
+    const DOC: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:t>宿主段落：正文承载体。</w:t>
+      </w:r>
+      <w:r>
+        <w:pict>
+          <v:shape id="TB1" style="width:100pt;height:50pt">
+            <v:textbox>
+              <w:txbxContent>
+                <w:p>
+                  <w:r>
+                    <w:t>框内条款：pretty-print 形态文本框内容。</w:t>
+                  </w:r>
+                </w:p>
+              </w:txbxContent>
+            </v:textbox>
+          </v:shape>
+        </w:pict>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+
+    let mut cw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let mut opts: zip::write::SimpleFileOptions = Default::default();
+    opts = opts.compression_method(zip::CompressionMethod::Stored);
+    for (name, data) in [
+        ("[Content_Types].xml", CT.to_vec()),
+        ("_rels/.rels", RELS.to_vec()),
+        ("word/_rels/document.xml.rels", DOC_RELS.to_vec()),
+        ("word/document.xml", DOC.as_bytes().to_vec()),
+    ] {
+        cw.start_file(name, opts).unwrap();
+        cw.write_all(&data).unwrap();
+    }
+    let bytes = cw.finish().unwrap().into_inner();
+
+    // 修复前：Container(InvalidPart "textbox region malformed")。
+    let doc = read_docx_from_bytes_with_options(&bytes, &ReadOptions { compat: true })
+        .expect("pretty-printed VML 文本框不再被误拒");
+    let tbs: Vec<&TextBoxData> = doc
+        .blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::TextBox(tb) => Some(tb),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tbs.len(), 1, "文本框块恰 1: {}", doc.blocks.len());
+    let texts = flattened_paragraph_texts(&doc);
+    assert!(
+        texts.iter().any(|t| t.contains("框内条款")),
+        "框内文本在块流: {texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("宿主段落")),
+        "宿主段完整: {texts:?}"
+    );
+}

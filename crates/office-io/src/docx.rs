@@ -2291,7 +2291,32 @@ fn scan_vml_textbox_regions(xml: &str) -> Vec<(usize, String)> {
                                 let host = *host;
                                 capture = None;
                                 let span_end = reader.buffer_position() as usize;
-                                out.push((host, xml[span_start..span_end].to_string()));
+                                // quick-xml 0.41 buffer_position 边界计量偏移（批 4
+                                // 体检实测：区段起点可含前一事件尾字节/前导空白，
+                                // 终点可截断闭合标签中段——残缺闭合标签会令
+                                // docx-rs TextBoxContent::read 在 EOF 上死循环）。
+                                // 双端前向修复：起点走到下一个 '<'（= txbxContent
+                                // 自身开标签——XML 属性值不可含裸 '<'）；终点若
+                                // 不在标签边界则补到下一个 '>' 含端点（欠报修复；
+                                // 过报多带尾部字节对解析无害——read 于正确闭合
+                                // 事件返回）。
+                                let bytes = xml.as_bytes();
+                                let mut s = span_start.min(xml.len());
+                                while s < xml.len() && bytes[s] != b'<' {
+                                    s += 1;
+                                }
+                                let mut e = span_end.min(xml.len());
+                                if e == 0 || bytes[e - 1] != b'>' {
+                                    while e < xml.len() && bytes[e] != b'>' {
+                                        e += 1;
+                                    }
+                                    if e < xml.len() {
+                                        e += 1;
+                                    }
+                                }
+                                if s < e {
+                                    out.push((host, xml[s..e].to_string()));
+                                }
                             }
                         }
                     }
@@ -2323,14 +2348,18 @@ fn parse_textbox_region(
     // 模块本体私有）。
     use docx_rs::{ElementReader, EventReader, XmlEvent};
     let mut er = EventReader::new(region.as_bytes());
-    // 首事件 = txbxContent Start（区段起点恒是）——属性透传。
-    let attrs = match er.next_event() {
-        Ok(XmlEvent::StartElement { attributes, .. }) => attributes,
-        _ => {
-            return Err(io::ReadError::InvalidPart {
-                part: part.to_string(),
-                detail: "textbox region malformed (missing txbxContent open)".into(),
-            })
+    // 首事件 = txbxContent Start（区段起点恒是；批 4 加固：前导空白
+    // 事件容忍——quick-xml 位置偏移的防御纵深）——属性透传。
+    let attrs = loop {
+        match er.next_event() {
+            Ok(XmlEvent::StartElement { attributes, .. }) => break attributes,
+            Ok(XmlEvent::Whitespace(_)) => continue,
+            _ => {
+                return Err(io::ReadError::InvalidPart {
+                    part: part.to_string(),
+                    detail: "textbox region malformed (missing txbxContent open)".into(),
+                })
+            }
         }
     };
     let content =

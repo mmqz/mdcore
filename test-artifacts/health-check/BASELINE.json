@@ -500,15 +500,15 @@
       "theme-colors_tc-p2-colour-map.docx": "ok",
       "theme-colors_tc-p3-transforms.docx": "ok",
       "tracked-changes-equations.docx": "ok",
-      "vml_textbox.docx": "err:container_invalid_part",
+      "vml_textbox.docx": "ok",
       "xhtml_inheritance.docx": "ok"
     },
     "files": 501,
-    "fixed_point": 476,
+    "fixed_point": 477,
     "mean_recall": 1.0,
-    "ok": 476,
-    "roundtrip_exact": 382,
-    "structure_ok": 476
+    "ok": 477,
+    "roundtrip_exact": 383,
+    "structure_ok": 477
   },
   "hc_poi_docx": {
     "classes": {
