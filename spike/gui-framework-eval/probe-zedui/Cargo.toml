@@ -1,0 +1,11 @@
+[package]
+name = "probe-zedui"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+gpui = "0.2.2"
+# 试拉 Zed 的 ui crate（git 依赖，钉 rev）
+ui    = { git = "https://github.com/zed-industries/zed", rev = "6865a42df9718498f136c03e512c9710e62ce494" }

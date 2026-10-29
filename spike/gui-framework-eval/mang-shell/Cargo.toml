@@ -1,0 +1,10 @@
+[package]
+name = "mang-shell"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+tao = "0.37"
+wry = "0.57"

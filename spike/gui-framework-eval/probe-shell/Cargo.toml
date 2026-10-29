@@ -1,0 +1,12 @@
+[package]
+name = "probe-shell"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+gpui-kit = "0.8.1"
+wry = "0.57"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+raw-window-handle = "0.6"
