@@ -1,0 +1,15 @@
+[package]
+name = "menu"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+# [lints] 移植时删除：第三方代码不受项目 lint 门（Zed workspace lints）
+[lib]
+path = "src/menu.rs"
+doctest = false
+test = false
+
+[dependencies]
+gpui = { path = "../gpui" }

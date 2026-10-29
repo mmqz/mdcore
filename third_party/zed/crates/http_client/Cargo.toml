@@ -1,0 +1,29 @@
+[package]
+name = "http_client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+description = "A HTTP client library for Zed and GPUI"
+
+# [lints] 移植时删除：第三方代码不受项目 lint 门（Zed workspace lints）
+[features]
+test-support = ["dep:log"]
+
+[lib]
+path = "src/http_client.rs"
+test = false
+doctest = false
+
+[dependencies]
+anyhow = "1.0.86"
+bytes = "1.0"
+futures = "0.3.34"
+http-body = "1.0"
+http = "1.1"
+log = { version = "0.4", default-features = false, features = ["std"], optional = true }
+parking_lot = "0.12.1"
+serde = { version = "1.0", features = ["rc"] }
+serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
+serde_urlencoded = "0.7"
+url = "2.2"

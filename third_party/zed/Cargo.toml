@@ -1,0 +1,37 @@
+# Zed 搬运 workspace —— 由 zed_port.py 生成
+# 来源: https://github.com/zed-industries/zed @ 1663af412c625417759561c0d15ab5a1668aafa1
+# 决策与清单见 third_party/zed/PROVENANCE.md
+[workspace]
+resolver = "2"
+members = ["crates/bench_metrics", "crates/collections", "crates/component", "crates/derive_refineable", "crates/gpui", "crates/gpui_macros", "crates/gpui_shared_string", "crates/gpui_util", "crates/http_client", "crates/icons", "crates/menu", "crates/refineable", "crates/scheduler", "crates/sum_tree", "crates/syntax_theme", "crates/theme", "crates/ui", "crates/ui_macros", "crates/zlog", "crates/ztracing", "crates/ztracing_macro"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+[profile.dev]
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 16
+debug = "limited"
+
+[profile.dev.build-override]
+codegen-units = 16
+split-debuginfo = "unpacked"
+debug = "limited"
+
+[profile.dev.package]
+gpui_macros = { opt-level = 3 }
+derive_refineable = { opt-level = 3 }
+ui_macros = { opt-level = 3 }
+
+[profile.release]
+debug = "limited"
+lto = "thin"
+codegen-units = 1
+
+[patch.crates-io]
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7" }
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
