@@ -1,0 +1,18 @@
+{
+  "note": "阶段 B 竞品体检语料溯源（issue #29 任务 4 扒取铁律：只取输入数据不取代码；GPL 源仅数据；>2MB 不入库；provenance 全记）。M-1 门（test-artifacts/external-corpus/）已覆盖 commonmark/markdown-it/pandoc/poi-docx 四源——本目录为其增量扩展，不重复收录。",
+  "sources": [
+    {
+      "path": "corpus/calamine/*.xlsx",
+      "repo": "tafia/calamine",
+      "commit": "c922fc0a0c3cc9901e7d0b7a40507140478e5912 (2026-10-22)",
+      "license": "MIT（LICENSE.calamine 同目录在档）",
+      "taken": "tests/*.xlsx 全量 75 件（≤2MiB 门槛全过，合计 ~1.1MiB）——含 OOM_alloc 系列（资源炸弹防御面）、date_1904（1904 纪元边界）、date_east_asian（CJK 日期）、biff5 富文本等边界样本；未取 .xls/.xlsb/.ods（mdcore office 面 xlsx-only）",
+      "size_bytes": 1134592
+    }
+  ],
+  "pending_sources": [
+    { "source": "LibreOffice sw/qa/extras/ooxmlexport", "status": "未采集", "note": "LO 修 bug 边界样本——docx 写面为主，量级大需筛读面适用子集" },
+    { "source": "docx4j / python-docx tests", "status": "未采集", "note": "复杂结构 docx" },
+    { "source": "pdf.js test corpus", "status": "未采集", "note": "PDF 边界——pkg_pdf 模型面适用" }
+  ]
+}
