@@ -110,3 +110,50 @@ HC_REGEN_BASELINE=1 cargo test -p mdcore-wasm --test health_check_xlsx
 ```
 
 后续语料批（LO ooxmlexport / docx4j·python-docx / pdf.js——docx/pdf 面）到位后以同构 runner 扩展，六维口径不变。
+
+---
+
+# 批 3 报告（docx 面 / POI 语料）
+
+> 体检日期：2026-10-29 · runner：`crates/mdcore-wasm/tests/health_check_docx.rs`
+> 语料：apache/poi `test-data/document/` 129 件 .docx（Apache-2.0，钉定 `ca95db9`，provenance.json 在档）
+> 基线：`BASELINE.json` 节 `hc_poi_docx`（下降即红） · 全量证据：`results/poi-docx.json`
+
+## 六维总览
+
+| 维 | 判据 | 实测 | 评价 |
+|---|---|---|---|
+| 崩溃率 | 零 panic | **0/129** | ✅ 含 clusterfuzz 最小化崩溃件与密码保护件 |
+| 解析成功率 | 三分归类 | **ok 111 / err 18 / panic 0** | ✅ 16 件 container_corrupt = 密码保护/容器畸形正确拒绝 |
+| 内容保真 | 字符级召回 | **1.0000（全满）** | ✅ 111 件可读件内容零丢失 |
+| 结构保真 | 标题数精确等 | **111/111** | ✅ 含文本框扁平化 + 页眉页脚吸收同口径 |
+| 往返一致 | 精确 / 行等价 | **85/111 精确**；非精确 26 件 line_eq p50=0.607 | ⚠️ 全部二轮收敛（见 #D4） |
+| 幂等 | 二轮定点 | **111/111** | ✅ 与 xlsx 面（0/72）形成鲜明对照 |
+
+## 发现（docx 面）
+
+### D1. docx 面内容保真全满——与 xlsx 面反差本身是发现 ✅
+
+111 件可读件召回全部 1.0000（含 51921-Word-Crash067 等崩溃回归件）。**xlsx 面的召回塌陷（公式/窗口）在 docx 面不存在**——docx 导入的 GT 面（全块文本）与 md 渲染面语义同构。这佐证 xlsx 面的损失是**特定于 xlsx 渲染设计**（公式通道选择 + 窗口限制），不是系统性保真缺陷。
+
+### D2. deep-table-cell 解析失败：docx-rs 依赖层深嵌套缺口 🟡
+
+`deep-table-cell.docx` → `err:docx_parse`（"Failed to read from zip"——docx-rs 0.4.22 锁定版读层失败）。POI 将该件视为有效文件（其测试面向深嵌套表）。**依赖层缺口非 mdcore 自有代码**，但用户面表现就是我们读不了。自家测试 docx_nested_tables.rs 用合成缩影（2 层），真实件更深。建议：登记依赖面缺口 + docx-rs 升版评估时以此为验收锚点。
+
+### D3. ExternalEntityInText 拒绝 = XXE 防御正确行为 ✅
+
+`err:docx_parse`（"Failed to read xml"）——文本内外部实体被 docx-rs 拒读。POI 该件测的是**外部实体处理**；拒绝实体展开正是 XXE 防线。登记为通过面（安全优先于可读）。
+
+### D4. 26 件非精确往返：两类良性模式 🟡
+
+- **标题内联强调丢失**：`## *Introduction*` → `## Introduction`（61787.docx——标题内斜体记号经导出再导入后丢弃；内联 emphasis 在标题块内的往返面）
+- **页眉/页脚结构不对称**（9 件嫌疑：DiffFirstPageHeadFoot / FancyFoot / HeaderFooterUnicode 等）：导入时页眉→文档前导文本；导出为正文；再导入不再识别为页眉——**md 无页眉概念的结构性不对称**，内容不丢（召回 1.0）但 md 形态漂移
+- **关键对照**：全部 111 件二轮定点收敛——docx 往返**稳定**（对比 xlsx 面 0/72 不收敛 + 无界膨胀）。差异根源：docx 导出把表块与文本块都映射进正文流，无 Document 合成表注入机制
+
+### D5. 性能离群件 🟡
+
+`bug65649.docx` 导入 3,768ms（p50=8ms 的 470 倍）——深/退化结构件的单件长尾。其余 128 件 p90=26ms。建议：perf 面后续专项（非阻断）。
+
+## docx 面结论
+
+**docx 导入面健康度显著优于 xlsx 面**：内容保真全满、结构全等、往返稳定收敛、安全拒绝正确。仅有的两个缺口都在依赖层（docx-rs 深嵌套 + 实体拒读后者实为安全优点）。**修复优先级应全部投向 xlsx 面**（REPORT 上半部 #1-#5）。
