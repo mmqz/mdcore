@@ -14,7 +14,7 @@ doctest = false
 default = []
 
 [dependencies]
-collections = { path = "../collections" }
+collections = { path = "../collections", version = "0.1.0" }
 chrono = { version = "0.4", default-features = true, features = ["std", "serde"] }
 log = { version = "0.4", default-features = false, features = ["std", "kv_unstable_std"] }
 anyhow = "1.0.86"
