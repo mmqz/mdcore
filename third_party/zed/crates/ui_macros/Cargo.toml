@@ -1,0 +1,20 @@
+[package]
+name = "ui_macros"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+# [lints] 移植时删除：第三方代码不受项目 lint 门（Zed workspace lints）
+[lib]
+path = "src/ui_macros.rs"
+proc-macro = true
+test = false
+
+[dependencies]
+quote = "1.0.9"
+syn = { version = "2.0", default-features = false, features = ["proc-macro", "derive", "parsing", "printing"] }
+
+[dev-dependencies]
+component = { path = "../component" }
+ui = { path = "../ui" }

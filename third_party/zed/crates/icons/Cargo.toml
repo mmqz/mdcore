@@ -1,0 +1,15 @@
+[package]
+name = "icons"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+# [lints] 移植时删除：第三方代码不受项目 lint 门（Zed workspace lints）
+[lib]
+path = "src/icons.rs"
+doctest = false
+
+[dependencies]
+serde = { version = "1.0", features = ["rc", "derive"] }
+strum = { version = "0.28", features = ["derive"] }
