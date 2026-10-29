@@ -72,6 +72,7 @@ import * as wasmMod from '../pkg/mdcore_wasm.js';
 import { wasmBoot } from './wasm_boot.js';
 import { setupCanvasView } from './canvas_view.js';
 import { setupCollabChannel } from './collab_channel.js';
+import { readDraft, setupDraftPersistence } from './draft.js';
 import { setupEvidencePanel } from './evidence_panel.js';
 import { setupPdfView } from './pdf_view.js';
 import { setupXlsxGrid, gridOpenBytesWhenReady } from './xlsx_grid.js';
@@ -1394,6 +1395,16 @@ declare global {
     __save: () => boolean;
     /** TR-UI 批 A-2：最近一次保存结果（{ok, revision, bytes}）。 */
     __lastSave: { ok: boolean; revision?: number; bytes?: number } | null;
+    /** M-2（#29）：未保存态（状态栏 Ctrl+S 口径 dirty——beforeunload
+     *  拦截与 e2e 的单一真源；草稿落稿不改此位——草稿≠保存）。 */
+    __unsaved: () => boolean;
+    /** M-2（#29）：草稿面探针（active/key/pending/restoredTs/bytes/ts）。 */
+    __draftInfo: () => {
+      active: boolean; key: string; pending: boolean; restoredTs: number | null;
+      bytes: number; ts: number | null;
+    };
+    /** M-2（#29）：boot 草稿恢复时间戳（null = 非恢复启动；内部传递面）。 */
+    __draftRestoredTs: number | null;
     /** TR-UI 批 A：格式命令统一入口（UI 按钮/keymap/测试桥同源；未知命令拒 false）。 */
     __format: (kind: string) => boolean;
     /** TR-4（issue #10）：读当前导出格式选项（预设名 + 组装后的 options JSON）。 */
@@ -1589,7 +1600,12 @@ async function main(): Promise<void> {
     const ingestMs = performance.now() - t1;
     window.__perf.progressive = { ttiMs, ingestMs, finalRenderMs: performance.now() - t2, chunks: chunks.length };
   } else {
-    const md = big ? buildBigDoc(kb * 1024) : SAMPLE_MD;
+    // M-2（#29）草稿恢复：优先于样例文档（激活门在 draft.ts——协同/
+    // 夹具参数阻断；session_restore 从权威快照直传：此刻 __settings 桥
+    // 尚未安装，读不得）。关时 readDraft 恒 null，行为与旧路径逐字节一致。
+    const draft = readDraft(settingsSnapshot.storage.session_restore === true);
+    const md = big ? buildBigDoc(kb * 1024) : (draft?.text ?? SAMPLE_MD);
+    window.__draftRestoredTs = draft ? draft.ts : null;
     await initP;
     const core = new WasmCore(md);
     const view = new CM6View(core, document.getElementById('editor') as HTMLElement);
@@ -1651,6 +1667,10 @@ async function main(): Promise<void> {
       undoMs: null,
       progressive: null,
     };
+    // M-2（#29）：整核重建 = 导入语义（新权威内容，非用户编辑）——通知
+    // 状态栏重基线（防新核 rev 归零被误判为变更→「导入即未保存」脏位
+    // 复活缺陷）；草稿面（若激活）经 mdc-inject 监听直通置换。
+    window.dispatchEvent(new CustomEvent('mdc-core-reinstalled'));
   };
   window.addEventListener('mdc-inject', (ev) => {
     installNewCore((ev as CustomEvent<string>).detail);
@@ -1725,6 +1745,19 @@ async function main(): Promise<void> {
   setupCollabChannel(() => import(new URL('./pkg/mdcore_wasm.js', import.meta.url).href));
 
   window.__ready = true;
+
+  // M-2（#29）：boot 完成即派发重基线（与 installNewCore 同事件——「核
+  // 已安装」的统一信号）：状态栏同步锚定 boot rev，紧随 boot 的编辑
+  // （500ms 轮询窗内）不再对 dirty 检测不可见。
+  window.dispatchEvent(new CustomEvent('mdc-core-reinstalled'));
+  // M-2（#29）：草稿恢复通告（宿主/测试可听；恢复内容已在 boot 主路径
+  // 就位——本事件只报事实，非恢复动作本身）。
+  if (window.__draftRestoredTs !== null && window.__draftRestoredTs !== undefined) {
+    window.dispatchEvent(new CustomEvent('mdc-draft-restored', { detail: { ts: window.__draftRestoredTs } }));
+  }
+  // M-2（#29）：草稿持久化 + beforeunload 拦截（在状态栏之后——读
+  // __unsaved 桥；激活门在 draft.ts）。
+  setupDraftPersistence(window.__draftRestoredTs ?? null);
 
   setupThemeControl();
   setupSettingsButton();
@@ -2635,6 +2668,23 @@ function setupStatusBar(): void {
   window.setInterval(refresh, 500);
   refresh();
 
+  // M-2（#29）：未保存态探针（beforeunload 拦截/e2e 单一真源；与
+  // Ctrl+S 同口径——草稿落稿不改此位）。
+  window.__unsaved = (): boolean => dirty;
+
+  // M-2（#29）：整核重建重基线（__inject 族 = 导入语义非用户编辑；
+  // 新核 rev 计数归零，若不重基线 rev !== lastSeenRev 恒真→「导入即
+  // 未保存」脏位复活——草稿恢复同理必须清位，否则恢复完仍提示未保存）。
+  // 同步锚定（非置 -1 等下轮轮询）：500ms 轮询窗内落键的编辑曾对
+  // 状态栏不可见（boot 后立即打字 → 首轮把编辑后 rev 当基线 → 变更
+  // 永不报 dirty——实测复现）。
+  window.addEventListener('mdc-core-reinstalled', () => {
+    dirty = false;
+    dirtySince = 0;
+    const core = window.__core;
+    lastSeenRev = core ? Number(core.revision()) : -1;
+  });
+
   // Ctrl+S：preventDefault（浏览器下载对话框拦截）+ mdc-save 事件
   //（宿主桥消费；web 独立态 = 提示自足）+ dirty 清位 + 测试桥。
   const doSave = (): boolean => {
@@ -2657,6 +2707,7 @@ function setupStatusBar(): void {
   });
   window.__save = doSave;
   window.__lastSave = null;
+  window.__draftRestoredTs = window.__draftRestoredTs ?? null; // 类型收口（chunks 路径未赋值）
 }
 
 setupStatusBar();
