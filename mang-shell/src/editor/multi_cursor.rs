@@ -26,11 +26,13 @@ pub struct Cursors {
     pending_batch: usize,
 }
 
-/// 光标移动方向（多光标同向独立移动）。
+/// 光标移动方向（多光标同向独立移动；r42 阶段 D：词跳入集）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Move {
     Left,
     Right,
+    WordLeft,
+    WordRight,
     Up,
     Down,
     Home,
@@ -192,6 +194,8 @@ impl Cursors {
         for (a, h) in &self.sels {
             let na = if extend { *a } else { *h };
             let nh = match dir {
+                Move::WordLeft => word_left(buffer, *h),
+                Move::WordRight => word_right(buffer, *h),
                 Move::Left => {
                     if h.col > 0 {
                         Point::new(h.line, h.col - 1)
@@ -589,5 +593,85 @@ mod tests {
             "含 2 换行：行 +2 尾段列=末段 chars"
         );
         assert_eq!(b.to_plain_text(), "aa\nbX\nY\nZb");
+    }
+}
+
+// r42 阶段 D：词跳（与 Buffer.move_word_* 同口径——is_word_char：
+// 字母数字含 CJK + 下划线；行首/行尾跨界）。
+fn word_left(buffer: &Buffer, h: Point) -> Point {
+    let text = buffer.line(h.line);
+    let chars: Vec<char> = text.chars().collect();
+    let in_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut col = h.col;
+    while col > 0 && !in_word(chars[col - 1]) {
+        col -= 1;
+    }
+    while col > 0 && in_word(chars[col - 1]) {
+        col -= 1;
+    }
+    if col == 0 && h.line > 0 {
+        Point::new(h.line - 1, buffer.line_len(h.line - 1))
+    } else {
+        Point::new(h.line, col)
+    }
+}
+
+fn word_right(buffer: &Buffer, h: Point) -> Point {
+    let text = buffer.line(h.line);
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let in_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut col = h.col;
+    while col < len && !in_word(chars[col]) {
+        col += 1;
+    }
+    while col < len && in_word(chars[col]) {
+        col += 1;
+    }
+    if col == len && h.line + 1 < buffer.line_count() {
+        Point::new(h.line + 1, 0)
+    } else {
+        Point::new(h.line, col)
+    }
+}
+
+#[cfg(test)]
+mod word_move_tests {
+    use super::*;
+
+    fn p(l: usize, c: usize) -> Point {
+        Point::new(l, c)
+    }
+
+    #[test]
+    fn word_move_all_multi_cursor() {
+        let b = Buffer::from_plain_text("foo bar\n中文 混合x");
+        let mut c = Cursors::single(p(1, 5)); // 混合x 词内
+        c.push(p(0, 4), p(0, 4)); // bar 词内
+        // 多光标词左跳：(0,4)=bar 词首——从词首再跳 → 前一词 foo=(0,0)；
+        // (1,5)=混合x 词内 → 词首 (1,3)
+        c.move_all(&b, Move::WordLeft, false);
+        assert_eq!(c.entries()[0].1, p(0, 0), "bar 词首再跳 → foo 词首");
+        assert_eq!(c.entries()[1].1, p(1, 3), "混合x 词首（col5→3）");
+        // 再跳：foo 文首不动；(1,3)→吃词体到 (1,0) 后跨行 → bar 尾 (0,7)
+        //（Buffer.move_word_left 同款语义：词首在行首时跳到上行行尾）
+        c.move_all(&b, Move::WordLeft, false);
+        assert_eq!(c.entries()[0].1, p(0, 0), "文首不动");
+        assert_eq!(c.entries()[1].1, p(0, 7), "中文 词首在行首 → 跨行 bar 尾");
+        // 词右跳：(0,0)→foo 尾；(0,7)→跨行 (1,0)
+        c.move_all(&b, Move::WordRight, false);
+        assert_eq!(c.entries()[0].1, p(0, 3), "foo 词尾");
+        assert_eq!(c.entries()[1].1, p(1, 0), "行尾词跳 → 下行行首");
+    }
+
+    #[test]
+    fn word_move_crosses_line_boundaries() {
+        let b = Buffer::from_plain_text("ab cd\nef");
+        let mut c = Cursors::single(p(1, 0));
+        c.move_all(&b, Move::WordLeft, false);
+        assert_eq!(c.primary().1, p(0, 5), "行首词跳 → 上行行尾");
+        let mut d = Cursors::single(p(0, 5));
+        d.move_all(&b, Move::WordRight, false);
+        assert_eq!(d.primary().1, p(1, 0), "行尾词跳 → 下行行首");
     }
 }

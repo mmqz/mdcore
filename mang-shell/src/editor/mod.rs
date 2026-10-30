@@ -392,6 +392,19 @@ impl Editor {
         self.scroll.scroll_to_item(row, ScrollStrategy::Top);
     }
 
+    /// 折叠 toggle（r42 阶段 D：Alt+F 与 gutter 指示物共用）——
+    /// 已折叠/命中折叠区 → 展开；在围栏块内 → 折叠整块。
+    fn toggle_fold_at(&mut self, line: usize) {
+        let folded = self.display_map.fold_containing(line).is_some()
+            || self.display_map.fold_head_at(line).is_some();
+        if folded {
+            self.display_map.unfold_at(line);
+        } else if let Some((s, e)) = self.fence_span_at(line) {
+            self.display_map
+                .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0));
+        }
+    }
+
     /// 光标行所属围栏块的整行区间（含 ``` 开行/闭行）；不在围栏内 → None。
     /// fence_cache[i] = 行 i 行首处于围栏内部（``` 开行/闭行行首均 false）。
     fn fence_span_at(&self, line: usize) -> Option<(usize, usize)> {
@@ -594,17 +607,9 @@ impl Editor {
                 }
             }
             "f" if ks.modifiers.alt => {
-                // r42 阶段 B：围栏块折叠 toggle（md 态浏览类手势——
-                // display_map fold/unfold 的生产消费者）。
+                // r42 阶段 B/D：围栏块折叠 toggle（与 gutter 指示物共用）。
                 let line = self.buffer.cursor().line;
-                let folded = self.display_map.fold_containing(line).is_some()
-                    || self.display_map.fold_head_at(line).is_some();
-                if folded {
-                    self.display_map.unfold_at(line);
-                } else if let Some((s, e)) = self.fence_span_at(line) {
-                    self.display_map
-                        .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0));
-                }
+                self.toggle_fold_at(line);
             }
             "f" if ctrl => self.open_find(window, cx),
             "s" if ctrl => {
@@ -674,18 +679,20 @@ impl Editor {
         match dir {
             MultiMove::Left => {
                 if ctrl {
-                    self.buffer.move_word_left(extend);
-                } else {
-                    self.buffer.move_left(extend);
+                    self.do_move(MultiMove::WordLeft, false, extend);
+                    return;
                 }
+                self.buffer.move_left(extend);
             }
             MultiMove::Right => {
                 if ctrl {
-                    self.buffer.move_word_right(extend);
-                } else {
-                    self.buffer.move_right(extend);
+                    self.do_move(MultiMove::WordRight, false, extend);
+                    return;
                 }
+                self.buffer.move_right(extend);
             }
+            MultiMove::WordLeft => self.buffer.move_word_left(extend),
+            MultiMove::WordRight => self.buffer.move_word_right(extend),
             MultiMove::Up => self.buffer.move_up(extend),
             MultiMove::Down => self.buffer.move_down(extend),
             MultiMove::Home => self.buffer.move_home(extend),
@@ -1437,13 +1444,32 @@ impl Editor {
                     .unwrap_or((row, 0));
                 let is_fold = seg == display_map::FOLD_SEG;
                 let line_text = if is_fold {
-                    // 折叠行概要：区间首行 + 已折叠行数（装饰属渲染层）
-                    let n = self
-                        .display_map
-                        .fold_head_at(line)
+                    // 折叠行概要：区间首行 + 已折叠行数 + find 命中数（r42 阶段 D）
+                    let f = self.display_map.fold_head_at(line);
+                    let n = f
                         .map(|f| f.range.end.line - f.range.start.line - 1)
                         .unwrap_or(0);
-                    format!("{} ⋯ 已折叠 {n} 行", self.buffer.line(line))
+                    let hits_in = f
+                        .map(|f| {
+                            self.find
+                                .as_ref()
+                                .map(|fd| {
+                                    fd.matches()
+                                        .iter()
+                                        .filter(|m| {
+                                            m.line > f.range.start.line && m.line < f.range.end.line
+                                        })
+                                        .count()
+                                })
+                                .unwrap_or(0)
+                        })
+                        .unwrap_or(0);
+                    let hit_note = if hits_in > 0 {
+                        format!(" ⌕{hits_in}")
+                    } else {
+                        String::new()
+                    };
+                    format!("{} ⋯ 已折叠 {n} 行{}", self.buffer.line(line), hit_note)
                 } else {
                     self.display_map.row_text(&self.buffer, row)
                 };
@@ -1510,6 +1536,35 @@ impl Editor {
                             .pr(px(10.))
                             .text_size(px(12.))
                             .text_color(num_color)
+                            // r42 阶段 D：折叠指示物（折叠头 ▾ 点击展开；
+                            // 围栏块内 ▸ 点击折叠；鼠标日志同 alt-f 口径）
+                            .when_some(
+                                {
+                                    let collapsed = self.display_map.fold_head_at(line).is_some();
+                                    let foldable = !collapsed && self.fence_span_at(line).is_some();
+                                    (collapsed || foldable).then_some((collapsed, line))
+                                },
+                                |el, (collapsed, mark_line)| {
+                                    el.child(
+                                        div()
+                                            .id(SharedString::from(format!("fold-{row}")))
+                                            .size(px(16.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_color(num_color)
+                                            .hover(|e| e.bg(colors.element_hover))
+                                            .child(if collapsed { "▾" } else { "▸" })
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_fold_at(mark_line);
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                    )
+                                },
+                            )
                             .child(line_number),
                     )
                     .child(
