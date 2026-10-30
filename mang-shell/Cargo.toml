@@ -1,0 +1,65 @@
+# mang-shell —— GPUI 主线桌面外壳（#63 Lead 布局骨架）
+#
+# 独立 cargo workspace（循 third_party/zed 先例）：主仓门禁
+# （build/test/clippy/fmt）不触达本目录，自身门禁单独跑（见 PR 证据）。
+# 依赖面 = third_party/zed 搬运闭包（29 crate，源码零修改口径）。
+#
+# 布局规格（#63 Lead 原文，逐项落实在 src/）：
+#   顶部：标题栏（自绘，可拖拽窗口）          → title_bar.rs
+#   左侧：图标条（36×36 按钮 / 间距 4 / 边距 8 → 实宽 52px）→ activity_bar.rs
+#   左栏：文件树（可折叠，260px）             → panels.rs
+#   中间：编辑区（主视图，flex）              → shell.rs
+#   右侧：属性/来源面板（可折叠，280px）      → panels.rs
+#   底部：状态栏                              → status_bar.rs
+#   面板边框用背景色差代替 1px 边框；主区 12-16px 内边距；无 AI 面板（MCP 暴露）
+[package]
+name = "mang-shell"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "mang-shell"
+path = "src/main.rs"
+
+[workspace]
+
+[dependencies]
+anyhow = "1.0.86"
+gpui = { path = "../third_party/zed/crates/gpui", default-features = false }
+gpui_platform = { path = "../third_party/zed/crates/gpui_platform", features = [
+    "wayland",
+    "x11",
+] }
+theme = { path = "../third_party/zed/crates/theme" }
+ui = { path = "../third_party/zed/crates/ui" }
+
+# 与 third_party/zed/Cargo.toml 保持同源（生效的 3 条）：gpui 的 async-task、
+# gpui_linux 的 calloop、wgpu-hal 传递的 khronos-egl 均被上游 patch 到自维护
+# fork（API 钉 rev），不 patch 则闭包在主解析图下取 crates.io 版编译漂移。
+# （third_party 侧另有 cpal 一条，不在本外壳依赖图内，未镜像——镜像会产生
+# 「patch not used」构建警告。）
+[patch.crates-io]
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+
+[profile.dev]
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 16
+debug = "limited"
+
+[profile.dev.build-override]
+codegen-units = 16
+split-debuginfo = "unpacked"
+debug = "limited"
+
+[profile.dev.package]
+gpui_macros = { opt-level = 3 }
+ui_macros = { opt-level = 3 }
+
+[profile.release]
+debug = "limited"
+lto = "thin"
