@@ -56,9 +56,9 @@ struct Edit {
     new_text: String,
 }
 
-/// 词字符判定（词跳边界）：字母 / 数字 / 下划线。
-/// CJK 汉字 `is_alphanumeric` 为真——连续汉字整段视为一个词。
-fn is_word_char(c: char) -> bool {
+/// 词字符判定（`word_jump` 与双击选词 [`super::mouse::word_range_at`] 共用
+/// 口径：字母数字（含 CJK 汉字——连续汉字算一个词）+ 下划线）。
+pub(crate) fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 

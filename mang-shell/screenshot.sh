@@ -21,9 +21,10 @@ fi
 
 CARGO_INCREMENTAL=0 cargo build
 
-RUN_ENV=(env)
+# 运行期 ICD（export 直传——`env` 前缀形式在 xvfb-run/Xvfb 下静默 127，
+# r39 实测）。
 if [ ! -d /usr/share/vulkan/icd.d ] && [ -f "$SYSROOT/usr/share/vulkan/icd.d/lvp_icd.json" ]; then
-  RUN_ENV+=("VK_DRIVER_FILES=$SYSROOT/usr/share/vulkan/icd.d/lvp_icd.json")
+  export VK_DRIVER_FILES="$SYSROOT/usr/share/vulkan/icd.d/lvp_icd.json"
 fi
 
 DISPLAY_ID=":98"
@@ -33,9 +34,9 @@ trap 'kill $XVFB_PID 2>/dev/null || true' EXIT
 sleep 1
 
 if [ -n "$SMOKE_FILE" ]; then
-  "${RUN_ENV[@]}" DISPLAY="$DISPLAY_ID" ./target/debug/mang-shell --smoke-sec "$((WAIT + 10))" "$SMOKE_FILE" &
+  DISPLAY="$DISPLAY_ID" ./target/debug/mang-shell --smoke-sec "$((WAIT + 10))" "$SMOKE_FILE" &
 else
-  "${RUN_ENV[@]}" DISPLAY="$DISPLAY_ID" ./target/debug/mang-shell --smoke-sec "$((WAIT + 10))" &
+  DISPLAY="$DISPLAY_ID" ./target/debug/mang-shell --smoke-sec "$((WAIT + 10))" &
 fi
 APP_PID=$!
 

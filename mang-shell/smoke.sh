@@ -16,6 +16,8 @@ cd "$(dirname "$0")"
 SMOKE_SEC="${1:-5}"
 SMOKE_FILE="${2:-}"
 SYSROOT="${MANG_SYSROOT:-/home/z/.local/sysroot}"
+# 截图/授权链（xwd/xauth/netpbm）与 cargo 均可能在 sysroot/用户目录。
+export PATH="/home/z/.cargo/bin:$SYSROOT/usr/bin:/home/z/.local/bin:$PATH"
 
 # 链接期（仅无 root 沙箱需要；宿主机自带 dev 面时该目录不存在，跳过）
 if [ -d "$SYSROOT/usr/lib/x86_64-linux-gnu" ]; then
@@ -24,21 +26,22 @@ fi
 
 CARGO_INCREMENTAL=0 cargo build
 
-# 运行期：sysroot 运行库 + lavapipe ICD（仅当系统无 vulkan ICD 时挂）
-RUN_ENV=(env)
+# 运行期：sysroot 运行库 + lavapipe ICD（仅当系统无 vulkan ICD 时挂）。
+# 注意：用 export 直传——`env VAR=... cmd` 前缀形式在 xvfb-run 下会
+# 静默 127（r39 实测），不用 RUN_ENV 数组。
 if [ -d "$SYSROOT/usr/lib/x86_64-linux-gnu" ]; then
-  RUN_ENV+=("LD_LIBRARY_PATH=$SYSROOT/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}")
+  export LD_LIBRARY_PATH="$SYSROOT/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 if [ ! -d /usr/share/vulkan/icd.d ] && [ -f "$SYSROOT/usr/share/vulkan/icd.d/lvp_icd.json" ]; then
-  RUN_ENV+=("VK_DRIVER_FILES=$SYSROOT/usr/share/vulkan/icd.d/lvp_icd.json")
+  export VK_DRIVER_FILES="$SYSROOT/usr/share/vulkan/icd.d/lvp_icd.json"
 fi
 
 if [ -n "$SMOKE_FILE" ]; then
   echo "[smoke] xvfb-run -a ./target/debug/mang-shell --smoke-sec $SMOKE_SEC $SMOKE_FILE"
-  xvfb-run -a -s "-screen 0 1280x800x24" "${RUN_ENV[@]}" \
+  xvfb-run -a -s "-screen 0 1280x800x24" \
     ./target/debug/mang-shell --smoke-sec "$SMOKE_SEC" "$SMOKE_FILE"
 else
   echo "[smoke] xvfb-run -a ./target/debug/mang-shell --smoke-sec $SMOKE_SEC"
-  xvfb-run -a -s "-screen 0 1280x800x24" "${RUN_ENV[@]}" \
+  xvfb-run -a -s "-screen 0 1280x800x24" \
     ./target/debug/mang-shell --smoke-sec "$SMOKE_SEC"
 fi

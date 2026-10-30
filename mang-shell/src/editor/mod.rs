@@ -25,9 +25,22 @@
 //!   `window.handle_input` 接线（X11 预编辑实测登记于 #68 阶段 7）
 //! - 可打印字符兜底：`keystroke.key_char`（无 IME 的直输路径）
 //!
-//! ## 已知边界（批 1 登记，#68 后续批补）
+//! ## 鼠标通路（批 2：点击定位 / 拖选 / 双击词 / 三击行 / 滚轮）
 //!
-//! - 鼠标点击仅聚焦（不定位行列）；拖选未做（Shift+方向键选区可用）
+//! - mousedown → [`Editor::dispatch_mouse_down`]：单击定位（Shift=扩展）/
+//!   双击选词（`click_count` 原生归一）/ 三击选行
+//! - 拖选：`on_drag` + `on_drag_move`（锚不动、光标头跟随；双击/三击拖拽
+//!   按词/行粒度对齐扩展）；拖出可见行区间自动滚动（40ms 任务步进）
+//! - mouseup：窗口级监听（canvas paint 期每帧注册——任意位置抬起收尾）
+//! - 行定位：每帧行 bounds 由行内 canvas prepaint 记录（虚拟化行准确），
+//!   行内列定位 `shape_line` + `closest_index_for_position`
+//! - 纯逻辑面（命中/clamp/词行选区/扩展粒度）在 [`mouse`]——单测钉定
+//!
+//! ## 已知边界（批 2 登记，#68 后续批补）
+//!
+//! - 软换行命中近似：行高固定 24px、长行视觉裁切——按未换行 shaping 命中
+//! - gutter 点击按列 0 处理（不做 gutter 选行）
+//! - 自动滚动步进 1 行/40ms（非像素级平滑）
 //! - 行高统一（md 标题不放大字号——用粗体+色区分）
 //! - 光标不闪烁（恒显）
 //! - 保存为同步 `fs::write`（P2-5 异步化设计已有，暂不接线）
@@ -36,16 +49,21 @@
 pub mod buffer;
 pub mod find_bar;
 pub mod highlight;
+pub mod mouse;
 
+use std::cell::RefCell;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler,
-    FocusHandle, FontStyle, FontWeight, HighlightStyle, IntoElement, KeyDownEvent, Pixels, Render,
-    ScrollStrategy, SharedString, StyledText, TextStyle, UTF16Selection, UnderlineStyle,
+    AnyElement, App, Bounds, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
+    ElementInputHandler, EntityInputHandler, FocusHandle, FontStyle, FontWeight, HighlightStyle,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Render,
+    ScrollStrategy, SharedString, StyledText, Task, TextStyle, UTF16Selection, UnderlineStyle,
     UniformListScrollHandle, Window, canvas, px, uniform_list,
 };
+use mouse::ClickKind;
 use theme::ThemeColors;
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
@@ -53,6 +71,35 @@ use ui::{Icon, IconName, IconSize, Label, LabelSize};
 use buffer::{Buffer, Point};
 use find_bar::{FindKeyOutcome, FindState};
 use highlight::{TokenKind, highlight_line};
+
+// ---------------------------------------------------------------------------
+// 拖选状态与载荷
+// ---------------------------------------------------------------------------
+
+/// 拖选会话状态（mousedown 落锚 → drag_move 扩展 → mouseup 收尾）。
+#[derive(Clone, Copy, Debug)]
+struct MouseDrag {
+    /// 拖拽锚（单击=命中点；双击=词首；三击=行首）。
+    anchor: Point,
+    /// 扩展粒度（单击=字符级；双击=词边界；三击=行边界）。
+    kind: ClickKind,
+}
+
+/// 拖选 drag 载荷类型（`on_drag` / `on_drag_move` 配对标识；值本身无语义）。
+#[derive(Clone, Copy)]
+struct EditorDrag;
+
+/// 拖选跟随视图（`on_drag` 契约需要一个 Render 实体——空渲染不可见）。
+struct DragGhost;
+
+/// 每帧行 bounds 记录（行号 → 窗口 bounds；canvas prepaint 每帧重填）。
+type RowBounds = Rc<RefCell<Vec<(usize, Bounds<Pixels>)>>>;
+
+impl Render for DragGhost {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().id("drag-ghost").size_0()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -92,6 +139,17 @@ pub struct Editor {
     fence_cache: Vec<bool>,
     /// IME 预编辑段（全文 UTF16 偏移区间）。
     marked: Option<Range<usize>>,
+    /// 本帧可见行 bounds（行内 canvas prepaint 记录——鼠标 hit-test 行
+    /// 定位；虚拟化滚动后每帧重填）。
+    row_bounds: RowBounds,
+    /// 拖选会话（`None` = 非拖拽中）。
+    drag: Option<MouseDrag>,
+    /// 拖拽自动滚动目标（窗口坐标；`None` = 界内不滚）。
+    autoscroll_target: Option<gpui::Point<Pixels>>,
+    /// 自动滚动任务（40ms 步进；随拖拽会话存亡）。
+    autoscroll_task: Option<Task<()>>,
+    /// 鼠标事件 stdout 日志（`--smoke-mouse` 烟雾断言通道）。
+    mouse_log: bool,
 }
 
 impl Editor {
@@ -115,6 +173,11 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
             marked: None,
+            row_bounds: Rc::new(RefCell::new(Vec::new())),
+            drag: None,
+            autoscroll_target: None,
+            autoscroll_task: None,
+            mouse_log: false,
         };
         this.refresh_caches();
         // 初始聚焦由 ShellApp::new 完成（需要 window 上下文）。
@@ -370,6 +433,280 @@ impl Editor {
     }
 
     // -----------------------------------------------------------------------
+    // 鼠标（#68 阶段 1 批 2：点击定位 / 拖选 / 双击词 / 三击行 / 自动滚动）
+    // -----------------------------------------------------------------------
+
+    /// 鼠标事件 stdout 日志开关（`--smoke-mouse` 烟雾断言通道）。
+    pub fn set_mouse_log(&mut self, on: bool) {
+        self.mouse_log = on;
+    }
+
+    /// 编辑区 mousedown 分派（`click_count` 原生归一：单击定位 / Shift
+    /// 扩展 / 双击选词 / 三击选行——词/行边界纯逻辑见 [`mouse`]）。
+    fn dispatch_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus, cx);
+        let hit = self.hit_test(event.position, window);
+        let kind = mouse::click_kind(event.click_count);
+        let anchor = match kind {
+            ClickKind::Single => {
+                if event.modifiers.shift {
+                    // Shift+单击：扩展现有选区（无选区以当前光标为锚）。
+                    let anchor = self
+                        .buffer
+                        .selection()
+                        .map(|s| s.start)
+                        .unwrap_or_else(|| self.buffer.cursor());
+                    self.buffer.set_selection(anchor, hit);
+                    anchor
+                } else {
+                    self.buffer.set_cursor(hit);
+                    hit
+                }
+            }
+            ClickKind::Double => match mouse::word_range_at(self.buffer.line(hit.line), hit.col) {
+                Some(r) => {
+                    let (start, end) = (Point::new(hit.line, r.start), Point::new(hit.line, r.end));
+                    self.buffer.set_selection(start, end);
+                    start
+                }
+                None => {
+                    // 空行无可选词——仅定位。
+                    self.buffer.set_cursor(hit);
+                    hit
+                }
+            },
+            ClickKind::Triple => {
+                let (start, end) = mouse::line_range(&self.buffer, hit.line);
+                self.buffer.set_selection(start, end);
+                start
+            }
+        };
+        self.drag = Some(MouseDrag { anchor, kind });
+        self.stop_autoscroll();
+        if self.mouse_log {
+            println!(
+                "mouse: down count={} ({}, {}) -> line {}, col {}",
+                event.click_count,
+                event.position.x,
+                event.position.y,
+                hit.line + 1,
+                hit.col + 1
+            );
+        }
+        cx.notify();
+    }
+
+    /// 拖选扩展（`on_drag_move`：锚不动、光标头跟随鼠标；扩展粒度按
+    /// mousedown 类型对齐词/行边界；出界挂自动滚动）。
+    fn dispatch_drag_move(
+        &mut self,
+        event: &DragMoveEvent<EditorDrag>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drag) = self.drag else {
+            return;
+        };
+        let pos = event.event.position;
+        // 拖拽语义 clamp：出界落**可见边界行**（渐进式——自动滚动逐步
+        // 扩展；与点击的文档边界 clamp 区分）。
+        let (yhit, col) = self.hit_test_parts(pos, window);
+        let target = mouse::visible_clamp_point(&self.buffer, yhit, col, self.visible_lines());
+        let head = mouse::drag_head(&self.buffer, drag.kind, drag.anchor, target);
+        self.buffer.set_selection(drag.anchor, head);
+        // 出界自动滚动（回入界内即停目标——任务待命随会话存亡）。
+        if let Some((first_top, last_bottom)) = self.rows_extent() {
+            if mouse::autoscroll_dir(pos.y, first_top, last_bottom).is_some() {
+                self.autoscroll_target = Some(pos);
+                self.ensure_autoscroll_task(cx);
+            } else {
+                self.autoscroll_target = None;
+            }
+        }
+        if self.mouse_log {
+            let c = self.buffer.cursor();
+            println!(
+                "mouse: drag ({}, {}) -> line {}, col {}",
+                pos.x,
+                pos.y,
+                c.line + 1,
+                c.col + 1
+            );
+        }
+        cx.notify();
+    }
+
+    /// 拖拽收尾（窗口级 mouseup——任意位置抬起都结束拖选与自动滚动）。
+    fn end_drag(&mut self, cx: &mut Context<Self>) {
+        if self.drag.take().is_none() {
+            return;
+        }
+        self.autoscroll_target = None;
+        self.autoscroll_task = None;
+        if self.mouse_log {
+            match self.buffer.selection() {
+                Some(r) => {
+                    let text = self.buffer.selection_text();
+                    let snippet: String = text.chars().take(24).collect();
+                    println!(
+                        "mouse: up -- selection {}..{} ({} chars) [{}]",
+                        format_point(&r.start),
+                        format_point(&r.end),
+                        text.chars().count(),
+                        snippet
+                    );
+                }
+                None => println!("mouse: up -- no selection"),
+            }
+        }
+        cx.notify();
+    }
+
+    /// 启动自动滚动任务（已运行则仅由调用方更新目标）。
+    fn ensure_autoscroll_task(&mut self, cx: &mut Context<Self>) {
+        if self.autoscroll_task.is_some() {
+            return;
+        }
+        self.autoscroll_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(40))
+                    .await;
+                let again = this
+                    .update(cx, |editor, cx| editor.autoscroll_tick(cx))
+                    .unwrap_or(false);
+                if !again {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// 自动滚动一步（任务每 40ms 驱动；`ScrollStrategy::Top/Bottom` 单行
+    /// 步进）。返回任务是否继续。
+    fn autoscroll_tick(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(target) = self.autoscroll_target else {
+            return true; // 界内待命（拖拽会话未结束）
+        };
+        let Some(drag) = self.drag else {
+            return false; // 防御：拖拽已结束（end_drag 应已停任务）
+        };
+        let Some((first_line, last_line)) = self.visible_lines() else {
+            return true;
+        };
+        let Some((first_top, last_bottom)) = self.rows_extent() else {
+            return true;
+        };
+        let Some(dir) = mouse::autoscroll_dir(target.y, first_top, last_bottom) else {
+            self.autoscroll_target = None;
+            return true;
+        };
+        let (target_line, strategy) = match dir {
+            mouse::ScrollDir::Up => (first_line.saturating_sub(1), ScrollStrategy::Top),
+            mouse::ScrollDir::Down => (
+                (last_line + 1).min(self.buffer.line_count() - 1),
+                ScrollStrategy::Bottom,
+            ),
+        };
+        self.scroll.scroll_to_item(target_line, strategy);
+        // 选区头跟到边界行（列取当前列 clamp——纵向意图保持）。
+        let col = self
+            .buffer
+            .cursor()
+            .col
+            .min(self.buffer.line_len(target_line));
+        let head = mouse::drag_head(
+            &self.buffer,
+            drag.kind,
+            drag.anchor,
+            Point::new(target_line, col),
+        );
+        self.buffer.set_selection(drag.anchor, head);
+        if self.mouse_log {
+            println!("mouse: autoscroll {:?} -> line {}", dir, target_line + 1);
+        }
+        cx.notify();
+        true
+    }
+
+    /// 停止自动滚动（新 mousedown / 拖拽收尾——drop 任务即取消）。
+    fn stop_autoscroll(&mut self) {
+        self.autoscroll_target = None;
+        self.autoscroll_task = None;
+    }
+
+    /// 可见行区间（首/末行号；无渲染记录 `None`）。
+    fn visible_lines(&self) -> Option<(usize, usize)> {
+        let rows = self.row_bounds.borrow();
+        Some((rows.first()?.0, rows.last()?.0))
+    }
+
+    /// 可见行 y 区间（首行顶缘 / 末行底缘——自动滚动出界判定基准）。
+    fn rows_extent(&self) -> Option<(Pixels, Pixels)> {
+        let rows = self.row_bounds.borrow();
+        let first = rows.first()?;
+        let last = rows.last()?;
+        Some((first.1.origin.y, last.1.origin.y + last.1.size.height))
+    }
+
+    /// 窗口坐标 → 点击语义文档 Point（y=可见行命中 + 文档边界 clamp；
+    /// x=shaping 最近字符边界）。gutter 与正文左侧 → 列 0；行尾外 →
+    /// 行尾；文末空白 → 文末（Lead 验收口径）。
+    fn hit_test(&self, position: gpui::Point<Pixels>, window: &mut Window) -> Point {
+        let (yhit, col) = self.hit_test_parts(position, window);
+        mouse::clamp_point(&self.buffer, yhit, col)
+    }
+
+    /// 窗口坐标 → (y 原始命中, 行内列)——clamp 语义由调用方选择（点击=
+    /// 文档边界 [`mouse::clamp_point`]；拖拽=可见边界 [`mouse::visible_clamp_point`]）。
+    fn hit_test_parts(
+        &self,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+    ) -> (mouse::YHit, usize) {
+        let rows = self.row_bounds.borrow();
+        match mouse::line_for_y(position.y, &rows) {
+            mouse::YHit::Row(idx) => {
+                let row_x = rows
+                    .iter()
+                    .find(|(i, _)| *i == idx)
+                    .map(|(_, b)| b.origin.x)
+                    .unwrap_or(px(0.));
+                let x_in_text = position.x - row_x - GUTTER_WIDTH - TEXT_PADDING;
+                let col = self.column_for_x(idx, x_in_text, window);
+                (mouse::YHit::Row(idx), col)
+            }
+            other => (other, 0),
+        }
+    }
+
+    /// 行内 x（相对正文原点）→ char 列（`shape_line` 单 run + 最近字符
+    /// 边界——与渲染同字体面；高亮不改变字形位置）。
+    fn column_for_x(&self, idx: usize, x: Pixels, window: &mut Window) -> usize {
+        if x <= px(0.) {
+            return 0;
+        }
+        let line = self.buffer.line(idx);
+        if line.is_empty() {
+            return 0;
+        }
+        let style = editor_hit_text_style();
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let run = style.to_run(line.len());
+        let shaped = window
+            .text_system()
+            .shape_line(line.into(), font_size, &[run], None);
+        // 行内未换行 shaping——最近字符边界（越界=行尾字节偏移）。
+        let byte = shaped.closest_index_for_x(x);
+        mouse::byte_index_to_col(line, byte)
+    }
+
+    // -----------------------------------------------------------------------
     // 渲染
     // -----------------------------------------------------------------------
 
@@ -464,7 +801,7 @@ impl Editor {
             )
     }
 
-    /// 编辑区主体：焦点域 + 键盘 + 虚拟化行列表 + IME 接线。
+    /// 编辑区主体：焦点域 + 键盘 + 鼠标（批 2）+ 虚拟化行列表 + IME 接线。
     fn render_editor_area(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
         let line_count = self.buffer.line_count();
@@ -472,6 +809,7 @@ impl Editor {
         let entity = cx.entity();
         let weak = entity.downgrade();
         let ime_entity = entity.clone();
+        let up_entity = entity.clone();
 
         div()
             .id("editor-surface")
@@ -479,14 +817,12 @@ impl Editor {
             .relative()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::dispatch_key))
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _event: &gpui::MouseDownEvent, window, cx| {
-                    // 点击聚焦（批 1：点击不定位行列——登记后续批）。
-                    window.focus(&this.focus, cx);
-                    cx.notify();
-                }),
-            )
+            // 批 2：mousedown 分派（单击定位 / Shift 扩展 / 双击词 / 三击行）。
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::dispatch_mouse_down))
+            // 批 2：拖选（drag 会话内 move 事件全量回调——含元素外；
+            // `DragMoveEvent.bounds` 不用，行定位走每帧行 bounds 记录）。
+            .on_drag(EditorDrag, |_, _, _, cx| cx.new(|_| DragGhost))
+            .on_drag_move::<EditorDrag>(cx.listener(Self::dispatch_drag_move))
             .child(
                 uniform_list(
                     "editor-lines",
@@ -501,8 +837,8 @@ impl Editor {
                 .track_scroll(&self.scroll)
                 .h_full(),
             )
-            // IME 接线：paint 期把 ElementInputHandler 绑到编辑区焦点域
-            //（canvas size_0 不占布局——仅借 paint 时机与 bounds）。
+            // IME 接线 + 批 2 mouseup 收尾（paint 期每帧注册；canvas
+            // size_0 不占布局——仅借 paint 时机与 bounds）。
             .child(div().id("ime-hook").absolute().size_0().child(canvas(
                 move |bounds, _window, _cx| bounds,
                 move |bounds: Bounds<Pixels>, _t, window: &mut Window, cx: &mut App| {
@@ -512,6 +848,13 @@ impl Editor {
                         ElementInputHandler::new(bounds, ime_entity.clone()),
                         cx,
                     );
+                    // 批 2：窗口级 mouseup（任意位置抬起都收尾拖选/停自动
+                    // 滚动；本编辑器不可见时 canvas 不 paint，监听自然失活）。
+                    window.on_mouse_event(move |event: &MouseUpEvent, phase, _window, cx| {
+                        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                            up_entity.update(cx, |this, cx| this.end_drag(cx));
+                        }
+                    });
                 },
             )))
             .when(!focused, |el| {
@@ -562,6 +905,8 @@ impl Editor {
             .map(|f| f.query().chars().count())
             .unwrap_or(0);
         let marked = self.marked.clone();
+        // 批 2：本帧行 bounds 记录重置（下方各行的 canvas prepaint 重填）。
+        self.row_bounds.borrow_mut().clear();
 
         (visible.start..visible.end)
             .map(|idx| {
@@ -641,6 +986,19 @@ impl Editor {
                                 .h(LINE_HEIGHT - px(4.))
                                 .bg(colors.text),
                         )
+                    })
+                    // 批 2：行 bounds 记录（absolute 左上角=行原点；size_0
+                    // 不占布局——prepaint 收 bounds，paint 空）。
+                    .child({
+                        let rows = self.row_bounds.clone();
+                        canvas(
+                            move |bounds, _, _| rows.borrow_mut().push((idx, bounds)),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_0()
                     })
                     .into_any_element()
             })
@@ -754,10 +1112,11 @@ impl Editor {
 // 文本样式与颜色映射
 // ---------------------------------------------------------------------------
 
-/// 编辑器正文 TextStyle（Sarasa Mono SC 15px / 24px 行高；shape 定宽用）。
-fn editor_text_style(colors: &ThemeColors) -> TextStyle {
+/// 编辑器正文 TextStyle 基座（字体面——hit-test shaping 与渲染共用；
+/// 颜色不影响字形位置，hit-test 用占位色）。
+fn editor_hit_text_style() -> TextStyle {
     TextStyle {
-        color: colors.text,
+        color: gpui::black(),
         font_family: EDITOR_FONT.into(),
         font_features: Default::default(),
         font_fallbacks: None,
@@ -772,6 +1131,14 @@ fn editor_text_style(colors: &ThemeColors) -> TextStyle {
         text_overflow: None,
         text_align: Default::default(),
         line_clamp: None,
+    }
+}
+
+/// 编辑器正文 TextStyle（Sarasa Mono SC 15px / 24px 行高；shape 定宽用）。
+fn editor_text_style(colors: &ThemeColors) -> TextStyle {
+    TextStyle {
+        color: colors.text,
+        ..editor_hit_text_style()
     }
 }
 
@@ -862,6 +1229,11 @@ fn shape_text_width(window: &mut Window, text: &str, style: &TextStyle) -> Pixel
         .text_system()
         .shape_line(text.into(), font_size, &[run], None)
         .width()
+}
+
+/// Point 日志格式（1 基「行:列」——`--smoke-mouse` 断言通道）。
+fn format_point(p: &Point) -> String {
+    format!("{}:{}", p.line + 1, p.col + 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,12 +1415,14 @@ impl EntityInputHandler for Editor {
 
     fn character_index_for_point(
         &mut self,
-        _point: gpui::Point<Pixels>,
-        _window: &mut Window,
+        point: gpui::Point<Pixels>,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        // 鼠标位置 → 字符索引（iOS/Android 文本交互面；桌面批 1 不需要）。
-        None
+        // 批 2：接鼠标 hit-test（iOS/Android 文本交互面；桌面同路径复用）。
+        // 输出全文 UTF16 偏移（IME 坐标同制）。
+        let p = self.hit_test(point, window);
+        Some(self.point_to_utf16(p))
     }
 }
 
