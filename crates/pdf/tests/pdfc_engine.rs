@@ -35,7 +35,11 @@
 //! 12. `send_witness_and_worker_roundtrip`——`PdfiumEngine: Send` 见证
 //!     （thread_safe 特性背书）+ 真实引擎过渲染工人（S4.1 所有权转移）；
 //! 13. `full_chain_cache_hit_zero_rasterize`——全链路：工人渲染 → 缓存
-//!     → 二次命中**零 rasterize 调用**（阅读面翻页性能根保障的引擎实证）。
+//!     → 二次命中**零 rasterize 调用**（阅读面翻页性能根保障的引擎实证）；
+//! 14. `outline_positive_tree_includes_first_top_level`——带书签正路径
+//!     首证（#68 批 4 修复回归锁）：前序树全量，首个顶层书签不丢
+//!     （修复前症状：`root()` 首个顶层书签被 `iter_siblings()` 自排除
+//!     恒丢失——3 条实得 2）。
 
 // feature 门（默认构建零引擎依赖——本文件整体退化为空目标，跨环境
 // 可构建纪律保持）。
@@ -205,6 +209,47 @@ fn outline_empty_tree_for_plain_fixture() {
     let engine = open_small();
     let outline = engine.outline().expect("大纲查询不因无书签失败");
     assert!(outline.is_empty(), "plain fixture 无书签 → 空树");
+}
+
+#[test]
+fn outline_positive_tree_includes_first_top_level() {
+    // 正路径首证（#68 批 4 修复回归锁）：带书签文档 → 前序树全量。
+    // 修复前症状：`PdfBookmarks::root()` 返回首个顶层书签本体（非伪根，
+    // = `FPDFBookmark_GetFirstChild(doc, NULL)`），而 `iter_siblings()`
+    // 迭代时自排除——首个顶层书签恒丢失（3 条实得 2）。
+    // 夹具：bookmarked.pdf（3 页 + 嵌套大纲 5 条，生成器
+    // scripts/gen_bookmarked_fixture.py——crates/pdf/fixtures/ 入库）。
+    let engine = match PdfiumEngine::open(fixture_bytes("bookmarked.pdf")) {
+        Ok(engine) => engine,
+        Err(CommandError::Engine(detail)) => {
+            panic!("pdfium 绑定/打开失败（库定位序：MDC_PDFIUM_LIB → 候选 → 系统）：{detail}")
+        }
+        Err(other) => panic!("打开 bookmarked.pdf 失败：{other:?}"),
+    };
+    let outline = engine.outline().expect("带书签文档大纲查询成功");
+    let flat: Vec<(usize, String, u32)> = outline
+        .iter()
+        .map(|(depth, node)| {
+            (
+                depth,
+                node.title.clone(),
+                match node.target {
+                    mdc_pdf::outline::OutlineTarget::Page(p) => p.0,
+                },
+            )
+        })
+        .collect();
+    assert_eq!(
+        flat,
+        vec![
+            (0, "第一章".to_string(), 0),
+            (0, "第二章".to_string(), 1),
+            (1, "2.1".to_string(), 1),
+            (1, "2.2".to_string(), 2),
+            (0, "第三章".to_string(), 2),
+        ],
+        "前序文档序 + 层级 + 目标页——首顶层书签不丢、嵌套子级全量"
+    );
 }
 
 // ---------------------------------------------------------------------------
