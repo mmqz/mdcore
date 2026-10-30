@@ -16,10 +16,14 @@
 //! mang-shell --version         版本号
 //! ```
 //!
-//! 引导链：`gpui_platform::application()`（OS 后端选择器）→ 内嵌资产源
-//! （图标）→ `theme::init`（内置基础主题）→ `set_theme_settings_provider`
-//! （ui 组件字体面契约）→ 文档分派（`document::open`）→ `Editor` 实体 →
-//! 开窗（1280×800，X11 客户端装饰请求，无合成器自动回退服务端装饰）。
+//! 引导链：`gpui_platform::application()`（OS 后端选择器）→ `zlog`
+//! 日志面（读 `ZED_LOG`/`RUST_LOG`——未设则静默；适配器选择/GPU 枚举
+//! 等可观测性前提，#68 批 5 前置）→ 内嵌资产源（图标）→ `theme::init`
+//! （内置基础主题）→ `set_theme_settings_provider`（ui 组件字体面契约）
+//! → 文档分派（`document::open`）→ `Editor` 实体 → 开窗（1280×800，
+//! X11 客户端装饰请求，无合成器自动回退服务端装饰）。
+//! 开窗失败（GPU/图形栈不可用）≠ panic 白屏：stderr 双语错误链 +
+//! 面向用户的提示文案 + 退出码 70（EX_SOFTWARE）。
 
 use std::time::Duration;
 
@@ -48,6 +52,14 @@ fn main() {
         println!("mang-shell {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    // 日志面（#68）：zlog 读 ZED_LOG/RUST_LOG（env_config 过滤语法与
+    // env_logger 兼容，如 `gpui_wgpu=info,wgpu_hal=debug`）；未设环境变量时
+    // 静默——不产生输出面。GPU 适配器枚举（gpui_wgpu wgpu_context）与
+    // DirectX 设备选择（gpui_windows directx_devices）的既有 log 调用
+    // 由此激活——此前二进制无 logger，RUST_LOG 完全无效。
+    zlog::init();
+    zlog::init_output_stderr();
+
     let smoke_sec: Option<f64> = args
         .iter()
         .position(|a| a == "--smoke-sec")
@@ -141,11 +153,26 @@ fn main() {
                 ..Default::default()
             };
             let editor_for_log = editor_entity.clone();
-            let window_handle = cx
-                .open_window(options, |window, cx| {
-                    cx.new(|cx| shell::ShellApp::new(editor_entity, window, cx))
-                })
-                .expect("mang-shell: 打开主窗口失败");
+            // 开窗失败产品化（#68）：GPU/图形栈不可用时给出可读错误链与
+            // 面向用户的提示（双语——老机器用户 locale 考量），退出码 70
+            // （EX_SOFTWARE）——替代原 .expect 的裸 panic（exit 101 裸
+            // 错误链，桌面双击启动时 stderr 无处落 ≈ 静默失败）。
+            let window_handle = match cx.open_window(options, |window, cx| {
+                cx.new(|cx| shell::ShellApp::new(editor_entity, window, cx))
+            }) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    eprintln!("mang-shell: 打开主窗口失败 / failed to open main window:");
+                    eprintln!("  {error:#}");
+                    eprintln!(
+                        "提示：图形初始化需要 GPU 支持——Linux 需 Vulkan 驱动或 \
+                         OpenGL 4.3+（软件渲染 llvmpipe 亦可）；Windows 需 \
+                         Direct3D 11（FL 10.1+）。请更新显卡驱动后重试；\
+                         仍失败时运行 `RUST_LOG=gpui_wgpu=info mang-shell` 采集日志。"
+                    );
+                    std::process::exit(70);
+                }
+            };
 
             // 批 2：鼠标烟雾脚本（Editor 日志开启 + 合成事件序列驱动）。
             if smoke_mouse {

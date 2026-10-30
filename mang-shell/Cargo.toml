@@ -41,6 +41,10 @@ gpui_platform = { path = "../third_party/zed/crates/gpui_platform", features = [
 ] }
 theme = { path = "../third_party/zed/crates/theme" }
 ui = { path = "../third_party/zed/crates/ui" }
+# 日志面（#68 批 5 前置）：zlog 读 ZED_LOG/RUST_LOG——激活 gpui_wgpu
+# 适配器枚举与 gpui_windows DirectX 设备选择的既有 log 调用（此前无
+# logger，RUST_LOG 无效）。Apache-2.0，闭包内 crate（PROVENANCE 已录）。
+zlog = { path = "../third_party/zed/crates/zlog" }
 
 [dev-dependencies]
 # 烟雾夹具书签注入（测试面独占——不进 shipped 依赖图；版本与 mdc-pdf

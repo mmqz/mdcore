@@ -73,7 +73,22 @@
 8. （r39）闭包内 path 依赖保留 Zed 根表附加字段（如 `gpui = { path, default-features = false }`）——此前根表字段被丢弃导致依赖静默吃默认 features，与上游语义不一致
 9. （r39）Zed 根表子段形式 `[workspace.dependencies.windows]`（TOML 子表而非 inline）解析并入展开源——此前该形态全部漏解析（windows 依赖被注释）
 
-**源码（.rs/build.rs）零修改**——与上游同 commit diff 仅在 Cargo.toml 与目录布局，上游升级可重放。
+**源码（.rs/build.rs）零修改，唯一例外见下方「源码补丁登记」**——与上游同 commit diff 仅在 Cargo.toml、目录布局与已登记补丁，上游升级可重放。
+
+## 源码补丁登记（.rs 修改 · 逐条列出）
+
+> 「源码零修改」口径的例外清单。每条须含：动机（上游平台语义偏差）、
+> 对齐依据（其余后端同 trait 方法的既有行为）、重放指引。除下列条目外
+> 源码与上游同 commit 零 diff；上游修复对应问题后删除条目恢复原样。
+
+### P1 · gpui_windows `zoom()` toggle 化（2026-10-30，#68）
+
+- **位置**：`crates/gpui_windows/src/window.rs` — `impl PlatformWindow for WindowsWindow` 的 `fn zoom`（~L947）
+- **动机**：#68 Lead Windows 11 真机报告「点最大化 → 最大化；再点不还原」。上游无条件 `ShowWindowAsync(hwnd, SW_MAXIMIZE)`，对已最大化窗口是 no-op。
+- **对齐依据**：`PlatformWindow::zoom`（crates/gpui/src/platform.rs:1304）在其余三后端均为 toggle 语义——macOS `NSWindow zoom:`（gpui_macos/window.rs:1924）、X11 `_NET_WM_STATE` Toggle hint（gpui_linux/x11/window.rs:1678）、Wayland set/unset_maximized（gpui_linux/wayland/window.rs:1942）。属后端间语义偏差修复，非功能新增。
+- **内容**：可见时先查 `IsZoomed`：已最大化 → `SW_RESTORE`；否则 `SW_MAXIMIZE`。两符号均已在本文件既有使用（`is_maximized` ~L202 / `activate()` ~L826），零新导入。
+- **重放指引**：上游升级时若 zed 已修为 toggle（关注 zed-industries/zed gpui_windows `fn zoom`），删除本条恢复上游原样；否则按动机重放 4 行分支。
+- **关联修复**：mang-shell 侧无改动——`Window::zoom_window()` 调用面不变（macOS/X11/Wayland 本就 toggle，Windows 补齐后四端语义一致）。
 
 ## 决策依据（#63 决策规则对表）
 
