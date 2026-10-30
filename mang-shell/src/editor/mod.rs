@@ -52,6 +52,7 @@ pub mod docx_doc;
 pub mod find_bar;
 pub mod highlight;
 pub mod mouse;
+pub mod multi_cursor; // r42 阶段 C（#68）：多光标 + 列选择（编辑器层；Buffer 单光标契约不变）
 pub mod pdf_doc;
 
 use std::cell::RefCell;
@@ -61,6 +62,8 @@ use std::rc::Rc;
 
 // r42 阶段 B：显示映射（软换行 + 折叠）。
 use display_map::DisplayMap;
+// r42 阶段 C：多光标 + 列选择（编辑器层；Buffer 单光标契约不变）。
+use multi_cursor::{Cursors, Move as MultiMove};
 
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
@@ -91,6 +94,8 @@ struct MouseDrag {
     anchor: Point,
     /// 扩展粒度（单击=字符级；双击=词边界；三击=行边界）。
     kind: ClickKind,
+    /// r42 阶段 C：Alt+拖列选择（矩形构造——drag_head 不适用）。
+    column: bool,
 }
 
 /// 拖选 drag 载荷类型（`on_drag` / `on_drag_move` 配对标识；值本身无语义）。
@@ -150,6 +155,10 @@ pub struct Editor {
     /// 在 row_bounds clear 前采样）。
     display_map: DisplayMap,
     last_text_width: RefCell<Option<Pixels>>,
+    /// r42 阶段 C：多光标 + 列选择（编辑器层选区状态；常态与
+    /// Buffer 单光标同步，多光标态以主光标同步进 Buffer——状态栏/
+    /// 保存/IME 走 Buffer 面即主光标）。
+    cursors: Cursors,
     /// IME 预编辑段（全文 UTF16 偏移区间）。
     marked: Option<Range<usize>>,
     /// 本帧可见行 bounds（行内 canvas prepaint 记录——鼠标 hit-test 行
@@ -193,6 +202,7 @@ impl Editor {
             fence_cache: Vec::new(),
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -230,6 +240,7 @@ impl Editor {
             fence_cache: vec![false; line_count],
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -266,6 +277,7 @@ impl Editor {
             fence_cache: vec![false; line_count],
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -301,9 +313,14 @@ impl Editor {
         format!("{}, {}", c.line + 1, c.col + 1)
     }
 
-    /// 字数标签（状态栏——char 计数，CJK 逐字）。
+    /// 字数标签（状态栏——char 计数，CJK 逐字；r42 阶段 C：多光标计数）。
     pub fn char_label(&self) -> String {
-        format!("{} 字符", self.buffer.char_count())
+        let cursors = if self.cursors.len() > 1 {
+            format!(" · {} 光标", self.cursors.len())
+        } else {
+            String::new()
+        };
+        format!("{} 字符{}", self.buffer.char_count(), cursors)
     }
 
     /// 只读标记（状态栏「只读」——docx 渲染面）。
@@ -474,54 +491,60 @@ impl Editor {
         }
 
         match key.as_str() {
-            "left" => {
-                if ctrl {
-                    self.buffer.move_word_left(shift);
-                } else {
-                    self.buffer.move_left(shift);
-                }
-            }
-            "right" => {
-                if ctrl {
-                    self.buffer.move_word_right(shift);
-                } else {
-                    self.buffer.move_right(shift);
-                }
-            }
-            "up" => self.buffer.move_up(shift),
-            "down" => self.buffer.move_down(shift),
+            // r42 阶段 C：移动统一入口 do_move（多光标同向分派）
+            "left" => self.do_move(MultiMove::Left, ctrl, shift),
+            "right" => self.do_move(MultiMove::Right, ctrl, shift),
+            "up" => self.do_move(MultiMove::Up, ctrl, shift),
+            "down" => self.do_move(MultiMove::Down, ctrl, shift),
             "home" => {
                 if ctrl {
-                    self.buffer.move_doc_start(shift);
+                    self.do_move(MultiMove::DocStart, ctrl, shift);
                 } else {
-                    self.buffer.move_home(shift);
+                    self.do_move(MultiMove::Home, ctrl, shift);
                 }
             }
             "end" => {
                 if ctrl {
-                    self.buffer.move_doc_end(shift);
+                    self.do_move(MultiMove::DocEnd, ctrl, shift);
                 } else {
-                    self.buffer.move_end(shift);
+                    self.do_move(MultiMove::End, ctrl, shift);
                 }
             }
             "pageup" => {
                 for _ in 0..PAGE_LINES {
-                    self.buffer.move_up(shift);
+                    self.do_move(MultiMove::Up, false, shift);
                 }
             }
             "pagedown" => {
                 for _ in 0..PAGE_LINES {
-                    self.buffer.move_down(shift);
+                    self.do_move(MultiMove::Down, false, shift);
                 }
             }
-            "enter" => self.buffer.newline(),
-            "backspace" => self.buffer.backspace(),
-            "delete" => self.buffer.delete_forward(),
-            "tab" => self.buffer.tab(),
+            "enter" => {
+                self.newline_multi();
+                self.after_edit();
+            }
+            "backspace" => {
+                self.backspace_multi();
+                self.after_edit();
+            }
+            "delete" => {
+                self.delete_forward_multi();
+                self.after_edit();
+            }
+            "tab" => {
+                self.tab_multi();
+                self.after_edit();
+            }
             "escape" => {
-                if self.buffer.selection().is_some() {
+                // r42 阶段 C：多光标优先收拢（主光标头）
+                if self.cursors.is_multiple() {
+                    self.cursors.collapse_to_primary();
+                    self.sync_buffer_from_cursors_primary();
+                } else if self.buffer.selection().is_some() {
                     let head = self.buffer.cursor();
                     self.buffer.set_cursor(head);
+                    self.sync_cursors_from_buffer();
                 }
             }
             "a" if ctrl => self.buffer.select_all(),
@@ -544,10 +567,31 @@ impl Editor {
                 self.buffer.redo();
             }
             "z" if ctrl => {
-                self.buffer.undo();
+                // r42 阶段 C：批撤销（多点编辑一次撤整批）
+                let n = self.cursors.take_undo_batch();
+                if n > 1 {
+                    for _ in 0..n {
+                        if !self.buffer.undo() {
+                            break;
+                        }
+                    }
+                    self.sync_cursors_from_buffer();
+                } else {
+                    self.buffer.undo();
+                    self.sync_cursors_from_buffer();
+                }
             }
             "y" if ctrl => {
                 self.buffer.redo();
+                self.sync_cursors_from_buffer();
+            }
+            "d" if ctrl => {
+                // r42 阶段 C：Ctrl+D 加同词光标（文档序下一个完整词匹配；
+                // 词源=主选区文本或主光标头处词）
+                if let Some(c2) = Cursors::add_next_word_match(&self.buffer, &self.cursors) {
+                    self.cursors = c2;
+                    self.sync_buffer_from_cursors_primary();
+                }
             }
             "f" if ks.modifiers.alt => {
                 // r42 阶段 B：围栏块折叠 toggle（md 态浏览类手势——
@@ -576,12 +620,145 @@ impl Editor {
                     && !c.is_empty()
                     && c.chars().all(|ch| !ch.is_control())
                 {
-                    self.buffer.insert(c);
+                    // r42 阶段 C：多光标多点插入
+                    self.insert_text_multi(c);
                 }
             }
         }
         self.after_edit();
         cx.notify();
+    }
+
+    // ------------------------------------------------------------------
+    // r42 阶段 C：光标同步协议 + 编辑分流
+    // ------------------------------------------------------------------
+
+    /// 单光路径后同步（多光标态保持——列选择拖拽进行中不覆盖）。
+    fn sync_cursors_from_buffer_if_single(&mut self) {
+        if !self.cursors.is_multiple() {
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// Buffer → Cursors 同步（单光路径后调用——清多光标态）。
+    fn sync_cursors_from_buffer(&mut self) {
+        let c = self.buffer.cursor();
+        let a = self.buffer.selection().map(|s| s.start);
+        let sels = match a {
+            Some(a) => vec![(a, c)],
+            None => vec![(c, c)],
+        };
+        self.cursors = Cursors::from_single_sel(sels[0].0, sels[0].1);
+    }
+
+    /// Cursors 主光标 → Buffer（多光标编辑/移动后；状态栏/IME/保存走
+    /// Buffer 面即主光标）。
+    fn sync_buffer_from_cursors_primary(&mut self) {
+        let (a, h) = self.cursors.primary();
+        if a != h {
+            self.buffer.set_selection(a, h);
+        } else {
+            self.buffer.set_cursor(h);
+        }
+    }
+
+    /// 移动命令统一入口（r42 阶段 C）：多光标态同向分派；常态含
+    /// 词跳/粘性列全语义。doc home/end 同向到文档边界。
+    fn do_move(&mut self, dir: MultiMove, ctrl: bool, shift: bool) {
+        if self.cursors.is_multiple() {
+            // 多光标：词跳暂同向字符级（阶段 D selection 模块精化，登记）
+            self.move_multi(dir, shift);
+            return;
+        }
+        let extend = shift;
+        match dir {
+            MultiMove::Left => {
+                if ctrl {
+                    self.buffer.move_word_left(extend);
+                } else {
+                    self.buffer.move_left(extend);
+                }
+            }
+            MultiMove::Right => {
+                if ctrl {
+                    self.buffer.move_word_right(extend);
+                } else {
+                    self.buffer.move_right(extend);
+                }
+            }
+            MultiMove::Up => self.buffer.move_up(extend),
+            MultiMove::Down => self.buffer.move_down(extend),
+            MultiMove::Home => self.buffer.move_home(extend),
+            MultiMove::End => self.buffer.move_end(extend),
+            MultiMove::DocStart => self.buffer.move_doc_start(extend),
+            MultiMove::DocEnd => self.buffer.move_doc_end(extend),
+        }
+        self.sync_cursors_from_buffer();
+    }
+
+    /// 多光标插入（常态走 Buffer 单点路径）。
+    fn insert_text_multi(&mut self, text: &str) {
+        if self.cursors.is_multiple() {
+            self.cursors.insert_all(&mut self.buffer, text);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.insert(text);
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标换行（单光态走 Buffer 语义 API——newline/tab 的生产消费面）。
+    fn newline_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.insert_all(&mut self.buffer, "\n");
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.newline();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标 Tab。
+    fn tab_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.insert_all(&mut self.buffer, "    ");
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.tab();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标退格。
+    fn backspace_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.backspace_all(&mut self.buffer);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.backspace();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标前删。
+    fn delete_forward_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.delete_all(&mut self.buffer);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.delete_forward();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标同向移动（常态走 Buffer 原路径——含词跳/粘性列全语义）。
+    fn move_multi(&mut self, dir: MultiMove, extend: bool) {
+        if self.cursors.is_multiple() {
+            self.cursors.move_all(&self.buffer, dir, extend);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.sync_cursors_from_buffer(); // 常态下由调用方走 buffer 路径
+        }
     }
 
     /// 编辑命令后的公共收尾：缓存刷新 + 光标行滚入可视区。
@@ -688,6 +865,8 @@ impl Editor {
         window.focus(&self.focus, cx);
         let hit = self.hit_test(event.position, window);
         let kind = mouse::click_kind(event.click_count);
+        // r42 阶段 C：Alt+拖 = 列选择（仅单击粒度启动；双/三击 Alt 忽略）
+        let column = event.modifiers.alt && matches!(kind, ClickKind::Single);
         let anchor = match kind {
             ClickKind::Single => {
                 if event.modifiers.shift {
@@ -722,7 +901,12 @@ impl Editor {
                 start
             }
         };
-        self.drag = Some(MouseDrag { anchor, kind });
+        self.sync_cursors_from_buffer();
+        self.drag = Some(MouseDrag {
+            anchor,
+            kind,
+            column,
+        });
         self.stop_autoscroll();
         if self.mouse_log {
             println!(
@@ -753,8 +937,15 @@ impl Editor {
         // 扩展；与点击的文档边界 clamp 区分）。
         let (yhit, col) = self.hit_test_parts(pos, window);
         let target = mouse::visible_clamp_point(&self.buffer, yhit, col, self.visible_lines());
-        let head = mouse::drag_head(&self.buffer, drag.kind, drag.anchor, target);
-        self.buffer.set_selection(drag.anchor, head);
+        if drag.column {
+            // r42 阶段 C：Alt+拖列选择（矩形；每行一光标）
+            self.cursors = Cursors::column_select(&self.buffer, drag.anchor, target);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            let head = mouse::drag_head(&self.buffer, drag.kind, drag.anchor, target);
+            self.buffer.set_selection(drag.anchor, head);
+        }
+        self.sync_cursors_from_buffer_if_single();
         // 出界自动滚动（回入界内即停目标——任务待命随会话存亡）。
         if let Some((first_top, last_bottom)) = self.rows_extent() {
             if mouse::autoscroll_dir(pos.y, first_top, last_bottom).is_some() {
@@ -1133,7 +1324,6 @@ impl Editor {
         let colors = cx.theme().colors().clone();
         let text_style = editor_text_style(&colors);
         let cursor = self.buffer.cursor();
-        let selection = self.buffer.selection();
         // 本可见区间的查找命中（含是否激活项）。
         // r42 阶段 B：visible 是显示行区间——换算到 buffer 行区间再过滤
         // （显示行序保持 buffer 行序）。
@@ -1220,8 +1410,24 @@ impl Editor {
             }
         }
 
-        // r42 阶段 B：光标显示化（caret 只画在光标所在显示行）。
-        let cursor_dp = self.display_map.to_display(&self.buffer, cursor);
+        // r42 阶段 C：光标集 display 化（多光标各头；caret 每处一竖线）
+        let carets: Vec<(usize, usize)> = self
+            .cursors
+            .entries()
+            .iter()
+            .map(|(_, h)| {
+                let dp = self.display_map.to_display(&self.buffer, *h);
+                (dp.row, dp.col)
+            })
+            .collect();
+        // r42 阶段 C：多选区集（零宽不渲染；列选择矩形各行为独立选区）
+        let selections: Vec<Range<Point>> = self
+            .cursors
+            .entries()
+            .iter()
+            .filter(|(a, h)| a != h)
+            .map(|(a, h)| if a <= h { *a..*h } else { *h..*a })
+            .collect();
         (visible.start..visible.end)
             .map(|row| {
                 // r42：display row → (buffer 行, 段)；折叠行 seg=FOLD_SEG
@@ -1246,13 +1452,13 @@ impl Editor {
                     &line_text,
                     &tokens,
                     line,
-                    selection.clone(),
+                    &selections,
                     &find_hits,
                     query_len,
                     marked.clone(),
                     &colors,
                 );
-                // 光标行高亮按 buffer 行（软换行后所有段同亮）
+                // 光标行高亮按 buffer 行（主光标行；软换行后所有段同亮）
                 let is_cursor_line = line == cursor.line;
                 // 行号：首段/折叠头显示 buffer 行号；续段空
                 let line_number = if seg == 0 || is_fold {
@@ -1261,10 +1467,16 @@ impl Editor {
                     String::new()
                 };
 
-                // 光标竖线 x：shape 光标前前缀（段内 col 语义）。
-                let is_caret_row = row == cursor_dp.row;
+                // 光标竖线 x（r42 阶段 C：carets 集——多光标每处一竖线，
+                // 段内 col 语义）。
+                let is_caret_row = carets.iter().any(|(r, _)| *r == row);
+                let caret_col = carets
+                    .iter()
+                    .find(|(r, _)| *r == row)
+                    .map(|(_, c)| *c)
+                    .unwrap_or(0);
                 let caret_x = if is_caret_row && focused {
-                    let prefix: String = line_text.chars().take(cursor_dp.col).collect();
+                    let prefix: String = line_text.chars().take(caret_col).collect();
                     GUTTER_WIDTH + TEXT_PADDING + shape_text_width(window, &prefix, &text_style)
                 } else {
                     px(0.)
@@ -1351,7 +1563,7 @@ impl Editor {
         line: &str,
         tokens: &highlight::LineHighlight,
         line_idx: usize,
-        selection: Option<Range<Point>>,
+        selections: &[Range<Point>],
         find_hits: &[(Point, bool)],
         query_len: usize,
         marked: Option<Range<usize>>,
@@ -1361,16 +1573,26 @@ impl Editor {
         let n = chars.len();
         let base = base_highlight(colors);
 
-        // 该行选区 char 范围。
-        let sel_range: Option<Range<usize>> = selection.map(|s| {
-            let start = if s.start.line == line_idx {
-                s.start.col
-            } else {
-                0
-            };
-            let end = if s.end.line == line_idx { s.end.col } else { n };
-            start.min(end)..end.max(start)
-        });
+        // 该行选区 char 范围集（r42 阶段 C：多选区；零宽不渲染；
+        // 跨行选区在首/尾行取行内剩余段）。
+        let sel_ranges: Vec<Range<usize>> = selections
+            .iter()
+            .filter_map(|s| {
+                if s.start.line > line_idx || s.end.line < line_idx {
+                    return None; // 不相交
+                }
+                let start = if s.start.line == line_idx {
+                    s.start.col
+                } else {
+                    0
+                };
+                let end = if s.end.line == line_idx { s.end.col } else { n };
+                if start >= end {
+                    return None; // 零宽（裸光标）不渲染
+                }
+                Some(start..end)
+            })
+            .collect();
         // 本行查找命中 char 范围集。
         let hit_ranges: Vec<(Range<usize>, bool)> = find_hits
             .iter()
@@ -1404,8 +1626,8 @@ impl Editor {
                     break;
                 }
             }
-            // 选区底色（最高优先）。
-            if sel_range.as_ref().is_some_and(|r| r.contains(&i)) {
+            // 选区底色（最高优先；多选区任一命中）。
+            if sel_ranges.iter().any(|r| r.contains(&i)) {
                 s.background_color = Some(colors.element_selection_background);
             }
             // IME 预编辑下划线。

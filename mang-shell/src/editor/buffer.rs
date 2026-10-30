@@ -425,6 +425,12 @@ impl Buffer {
         }
     }
 
+    /// [`Buffer::end_after_insert`] 的模块内公开转发（multi_cursor 的
+    /// 多点插入尾部定位消费——同一公式保证与 Buffer 光标语义一致）。
+    pub(crate) fn end_after_insert_pub(&self, start: &Point, text: &str) -> Point {
+        self.end_after_insert(start, text)
+    }
+
     // ---------------------------------------------------------------------------
     // 光标移动
     // ---------------------------------------------------------------------------
