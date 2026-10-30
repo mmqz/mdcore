@@ -47,6 +47,7 @@
 //! - IME 候选框定位 `bounds_for_range` 返回 `None`（精化登记阶段 7）
 
 pub mod buffer;
+pub mod display_map; // r42 阶段 B（#68）：buffer <-> 显示行列映射（软换行 + 折叠）
 pub mod docx_doc;
 pub mod find_bar;
 pub mod highlight;
@@ -57,6 +58,9 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
+
+// r42 阶段 B：显示映射（软换行 + 折叠）。
+use display_map::DisplayMap;
 
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
@@ -141,6 +145,11 @@ pub struct Editor {
     scroll: UniformListScrollHandle,
     /// 每行行首的代码围栏状态缓存（文档变更时重算）。
     fence_cache: Vec<bool>,
+    /// r42 阶段 B：buffer <-> 显示行列映射（软换行 + 折叠）。
+    /// 断点回填基准宽 = 上一帧行 bounds 宽（RefCell——render_lines 里
+    /// 在 row_bounds clear 前采样）。
+    display_map: DisplayMap,
+    last_text_width: RefCell<Option<Pixels>>,
     /// IME 预编辑段（全文 UTF16 偏移区间）。
     marked: Option<Range<usize>>,
     /// 本帧可见行 bounds（行内 canvas prepaint 记录——鼠标 hit-test 行
@@ -182,6 +191,8 @@ impl Editor {
             find: None,
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -217,6 +228,8 @@ impl Editor {
             // docx 无围栏语义——fence 恒 false（refresh_caches 在 docx
             // 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -251,6 +264,8 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
             fence_cache: vec![false; line_count],
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -352,7 +367,32 @@ impl Editor {
     pub fn jump_to_line(&mut self, line: usize) {
         let line = line.min(self.buffer.line_count().saturating_sub(1));
         self.buffer.set_cursor(Point::new(line, 0));
-        self.scroll.scroll_to_item(line, ScrollStrategy::Top);
+        // r42：buffer 行 → 显示行（软换行后光标行占多个显示行——滚到行首段）
+        let row = self
+            .display_map
+            .line_row(&self.buffer, line)
+            .unwrap_or(line);
+        self.scroll.scroll_to_item(row, ScrollStrategy::Top);
+    }
+
+    /// 光标行所属围栏块的整行区间（含 ``` 开行/闭行）；不在围栏内 → None。
+    /// fence_cache[i] = 行 i 行首处于围栏内部（``` 开行/闭行行首均 false）。
+    fn fence_span_at(&self, line: usize) -> Option<(usize, usize)> {
+        let inside = |i: usize| self.fence_cache.get(i).copied().unwrap_or(false);
+        if !inside(line) {
+            return None;
+        }
+        // 连续 true 段边界：a..b = 围栏内部（含闭 ``` 行）；开 ``` 行 = a-1
+        let mut a = line;
+        while a > 0 && inside(a - 1) {
+            a -= 1;
+        }
+        let mut b = line;
+        while inside(b + 1) {
+            b += 1;
+        }
+        // 折叠区间 [a-1, b+1)：开 ``` 行起、闭行后第一行止（end 行可见）
+        Some((a.saturating_sub(1), b + 1))
     }
 
     /// 保存（Ctrl+S）：同步写盘 + 清修改标记。未命名文档无路径——
@@ -381,8 +421,11 @@ impl Editor {
         }
     }
 
-    /// 文档变更后的缓存刷新（fence 状态 + 查找匹配）。
+    /// 文档变更后的缓存刷新（fence 状态 + 查找匹配 + 断点失效）。
     fn refresh_caches(&mut self) {
+        // r42 阶段 B：编辑后断点全部失效（被编辑行的断点需重算；
+        // 下一帧对可见行重新回填）。
+        self.display_map.reset_wraps();
         // fence：逐行推进（md 模式；docx 只读态无围栏语义且免大文档
         // 逐行 md 高亮的无效开销——fence_cache 构造时恒 false）。
         if self.docx.is_none() {
@@ -506,6 +549,19 @@ impl Editor {
             "y" if ctrl => {
                 self.buffer.redo();
             }
+            "f" if ks.modifiers.alt => {
+                // r42 阶段 B：围栏块折叠 toggle（md 态浏览类手势——
+                // display_map fold/unfold 的生产消费者）。
+                let line = self.buffer.cursor().line;
+                let folded = self.display_map.fold_containing(line).is_some()
+                    || self.display_map.fold_head_at(line).is_some();
+                if folded {
+                    self.display_map.unfold_at(line);
+                } else if let Some((s, e)) = self.fence_span_at(line) {
+                    self.display_map
+                        .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0));
+                }
+            }
             "f" if ctrl => self.open_find(window, cx),
             "s" if ctrl => {
                 self.save();
@@ -532,7 +588,12 @@ impl Editor {
     fn after_edit(&mut self) {
         self.refresh_caches();
         let line = self.buffer.cursor().line;
-        self.scroll.scroll_to_item(line, ScrollStrategy::Nearest);
+        // r42：buffer 行 → 显示行（段首行）
+        let row = self
+            .display_map
+            .line_row(&self.buffer, line)
+            .unwrap_or(line);
+        self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
     }
 
     /// 行样式源分派：docx/pdf 只读态取预计算 span，md 态走围栏感知高亮。
@@ -771,7 +832,7 @@ impl Editor {
         let Some(drag) = self.drag else {
             return false; // 防御：拖拽已结束（end_drag 应已停任务）
         };
-        let Some((first_line, last_line)) = self.visible_lines() else {
+        let Some((first_row, last_row)) = self.visible_lines() else {
             return true;
         };
         let Some((first_top, last_bottom)) = self.rows_extent() else {
@@ -781,29 +842,31 @@ impl Editor {
             self.autoscroll_target = None;
             return true;
         };
-        let (target_line, strategy) = match dir {
-            mouse::ScrollDir::Up => (first_line.saturating_sub(1), ScrollStrategy::Top),
+        // r42：first/last 是显示行（row_bounds 记录口径）——scroll 直接用；
+        // buffer 语义（line_len/drag_head）经 to_buffer 换算。
+        let row_count = self.display_map.display_row_count(&self.buffer);
+        let (target_row, strategy) = match dir {
+            mouse::ScrollDir::Up => (first_row.saturating_sub(1), ScrollStrategy::Top),
             mouse::ScrollDir::Down => (
-                (last_line + 1).min(self.buffer.line_count() - 1),
+                (last_row + 1).min(row_count.saturating_sub(1)),
                 ScrollStrategy::Bottom,
             ),
         };
-        self.scroll.scroll_to_item(target_line, strategy);
+        self.scroll.scroll_to_item(target_row, strategy);
         // 选区头跟到边界行（列取当前列 clamp——纵向意图保持）。
-        let col = self
-            .buffer
-            .cursor()
-            .col
-            .min(self.buffer.line_len(target_line));
+        let tp = self
+            .display_map
+            .to_buffer(&self.buffer, display_map::DisplayPoint::new(target_row, 0));
+        let col = self.buffer.cursor().col.min(self.buffer.line_len(tp.line));
         let head = mouse::drag_head(
             &self.buffer,
             drag.kind,
             drag.anchor,
-            Point::new(target_line, col),
+            Point::new(tp.line, col),
         );
         self.buffer.set_selection(drag.anchor, head);
         if self.mouse_log {
-            println!("mouse: autoscroll {:?} -> line {}", dir, target_line + 1);
+            println!("mouse: autoscroll {:?} -> row {}", dir, target_row + 1);
         }
         cx.notify();
         true
@@ -847,6 +910,9 @@ impl Editor {
         let rows = self.row_bounds.borrow();
         match mouse::line_for_y(position.y, &rows) {
             mouse::YHit::Row(idx) => {
+                // r42：idx = 显示行——origin 查找同口径；列按段文本算
+                //（段内 col），产出前 to_buffer 换算成 buffer 语义（mouse.rs
+                // 纯函数零改动）。
                 let row_x = rows
                     .iter()
                     .find(|(i, _)| *i == idx)
@@ -854,7 +920,10 @@ impl Editor {
                     .unwrap_or(px(0.));
                 let x_in_text = position.x - row_x - GUTTER_WIDTH - TEXT_PADDING;
                 let col = self.column_for_x(idx, x_in_text, window);
-                (mouse::YHit::Row(idx), col)
+                let p = self
+                    .display_map
+                    .to_buffer(&self.buffer, display_map::DisplayPoint::new(idx, col));
+                (mouse::YHit::Row(p.line), p.col)
             }
             other => (other, 0),
         }
@@ -862,11 +931,13 @@ impl Editor {
 
     /// 行内 x（相对正文原点）→ char 列（`shape_line` 单 run + 最近字符
     /// 边界——与渲染同字体面；高亮不改变字形位置）。
+    /// r42 阶段 B：idx = 显示行，文本取段切片（row_text），返回**段内 col**
+    ///（调用方 to_buffer 换算 buffer col）。
     fn column_for_x(&self, idx: usize, x: Pixels, window: &mut Window) -> usize {
         if x <= px(0.) {
             return 0;
         }
-        let line = self.buffer.line(idx); // r42：String（行文本即时取）
+        let line = self.display_map.row_text(&self.buffer, idx); // r42：段文本
         if line.is_empty() {
             return 0;
         }
@@ -979,7 +1050,9 @@ impl Editor {
     /// 编辑区主体：焦点域 + 键盘 + 鼠标（批 2）+ 虚拟化行列表 + IME 接线。
     fn render_editor_area(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
-        let line_count = self.buffer.line_count();
+        // r42 阶段 B：uniform_list 行数 = 显示行数（软换行/折叠后的行序；
+        // wrap 断点回填后行数随之增长——首帧无断点时退化为 buffer 行数）。
+        let line_count = self.display_map.display_row_count(&self.buffer);
         let focused = self.focus.is_focused(window);
         let entity = cx.entity();
         let weak = entity.downgrade();
@@ -1062,6 +1135,18 @@ impl Editor {
         let cursor = self.buffer.cursor();
         let selection = self.buffer.selection();
         // 本可见区间的查找命中（含是否激活项）。
+        // r42 阶段 B：visible 是显示行区间——换算到 buffer 行区间再过滤
+        // （显示行序保持 buffer 行序）。
+        let vis_first_line = self
+            .display_map
+            .row_source(&self.buffer, visible.start)
+            .map(|(l, _)| l)
+            .unwrap_or(0);
+        let vis_last_line = self
+            .display_map
+            .row_source(&self.buffer, visible.end.saturating_sub(1))
+            .map(|(l, _)| l)
+            .unwrap_or_else(|| self.buffer.line_count().saturating_sub(1));
         let find_hits: Vec<(Point, bool)> = self
             .find
             .as_ref()
@@ -1069,7 +1154,7 @@ impl Editor {
                 f.matches()
                     .iter()
                     .enumerate()
-                    .filter(|(_, m)| visible.contains(&m.line))
+                    .filter(|(_, m)| m.line >= vis_first_line && m.line <= vis_last_line)
                     .map(|(i, m)| (*m, i == f.active_index()))
                     .collect()
             })
@@ -1080,29 +1165,106 @@ impl Editor {
             .map(|f| f.query().chars().count())
             .unwrap_or(0);
         let marked = self.marked.clone();
+        // r42 阶段 B：上一帧行宽采样（clear 前——本帧 wrap 回填基准；
+        // 末条记录是最大显示行的整行 bounds）。
+        {
+            let rows = self.row_bounds.borrow();
+            if let Some((_, b)) = rows.last() {
+                *self.last_text_width.borrow_mut() = Some(b.size.width);
+            }
+        }
         // 批 2：本帧行 bounds 记录重置（下方各行的 canvas prepaint 重填）。
         self.row_bounds.borrow_mut().clear();
 
+        // r42 阶段 B：软换行断点回填（可见显示行 → 所属 buffer 行；折叠
+        // 行/已回填行跳过）。宽度基准 = 上一帧整行宽减 gutter/padding；
+        // 首帧无采样 → 跳过（首帧无断点，第二帧起生效）；断点回填后
+        // 行数增长在下一帧 uniform_list 生效（一帧收敛，Zed 同款异步）。
+        if let Some(full_w) = *self.last_text_width.borrow() {
+            let target = full_w - GUTTER_WIDTH - TEXT_PADDING;
+            if target > px(50.) {
+                let row_end = visible
+                    .end
+                    .min(self.display_map.display_row_count(&self.buffer));
+                for row in visible.start..row_end {
+                    let Some((line, seg)) = self.display_map.row_source(&self.buffer, row) else {
+                        continue;
+                    };
+                    if seg == display_map::FOLD_SEG || self.display_map.has_wrap_points(line) {
+                        continue;
+                    }
+                    let text = self.buffer.line(line);
+                    let n = text.chars().count();
+                    if n == 0 {
+                        self.display_map.set_wrap_points(&self.buffer, line, vec![]);
+                        continue;
+                    }
+                    let run = text_style.to_run(text.len());
+                    let font_size = text_style.font_size.to_pixels(window.rem_size());
+                    let shaped = window.text_system().shape_line(
+                        text.as_str().into(),
+                        font_size,
+                        &[run],
+                        None,
+                    );
+                    let advances: Vec<f32> = (1..=n)
+                        .map(|i| {
+                            let b = buffer::char_to_byte_pub(&text, i);
+                            f32::from(shaped.x_for_index(b))
+                        })
+                        .collect();
+                    let pts =
+                        display_map::wrap_points_from_advances(&advances, n, f32::from(target));
+                    self.display_map.set_wrap_points(&self.buffer, line, pts);
+                }
+            }
+        }
+
+        // r42 阶段 B：光标显示化（caret 只画在光标所在显示行）。
+        let cursor_dp = self.display_map.to_display(&self.buffer, cursor);
         (visible.start..visible.end)
-            .map(|idx| {
-                let line = self.buffer.line(idx); // r42：line() 返回 String（rope 无行借用面）
-                let tokens = self.line_tokens(idx, &line);
+            .map(|row| {
+                // r42：display row → (buffer 行, 段)；折叠行 seg=FOLD_SEG
+                let (line, seg) = self
+                    .display_map
+                    .row_source(&self.buffer, row)
+                    .unwrap_or((row, 0));
+                let is_fold = seg == display_map::FOLD_SEG;
+                let line_text = if is_fold {
+                    // 折叠行概要：区间首行 + 已折叠行数（装饰属渲染层）
+                    let n = self
+                        .display_map
+                        .fold_head_at(line)
+                        .map(|f| f.range.end.line - f.range.start.line - 1)
+                        .unwrap_or(0);
+                    format!("{} ⋯ 已折叠 {n} 行", self.buffer.line(line))
+                } else {
+                    self.display_map.row_text(&self.buffer, row)
+                };
+                let tokens = self.line_tokens(line, &line_text);
                 let runs = self.styled_runs_for_line(
-                    &line,
+                    &line_text,
                     &tokens,
-                    idx,
+                    line,
                     selection.clone(),
                     &find_hits,
                     query_len,
                     marked.clone(),
                     &colors,
                 );
-                let is_cursor_line = idx == cursor.line;
-                let line_number = (idx + 1).to_string();
+                // 光标行高亮按 buffer 行（软换行后所有段同亮）
+                let is_cursor_line = line == cursor.line;
+                // 行号：首段/折叠头显示 buffer 行号；续段空
+                let line_number = if seg == 0 || is_fold {
+                    (line + 1).to_string()
+                } else {
+                    String::new()
+                };
 
-                // 光标竖线 x：shape 光标前前缀。
-                let caret_x = if is_cursor_line && focused {
-                    let prefix: String = line.chars().take(cursor.col).collect();
+                // 光标竖线 x：shape 光标前前缀（段内 col 语义）。
+                let is_caret_row = row == cursor_dp.row;
+                let caret_x = if is_caret_row && focused {
+                    let prefix: String = line_text.chars().take(cursor_dp.col).collect();
                     GUTTER_WIDTH + TEXT_PADDING + shape_text_width(window, &prefix, &text_style)
                 } else {
                     px(0.)
@@ -1115,7 +1277,7 @@ impl Editor {
                 };
 
                 div()
-                    .id(SharedString::from(format!("line-{idx}")))
+                    .id(SharedString::from(format!("line-{row}")))
                     .h(LINE_HEIGHT)
                     .w_full()
                     .flex()
@@ -1126,7 +1288,7 @@ impl Editor {
                     })
                     .child(
                         div()
-                            .id(SharedString::from(format!("gutter-{idx}")))
+                            .id(SharedString::from(format!("gutter-{row}")))
                             .w(GUTTER_WIDTH)
                             .flex_none()
                             .h_full()
@@ -1140,7 +1302,7 @@ impl Editor {
                     )
                     .child(
                         div()
-                            .id(SharedString::from(format!("text-{idx}")))
+                            .id(SharedString::from(format!("text-{row}")))
                             .pl(TEXT_PADDING)
                             .min_w_0()
                             .flex_1()
@@ -1148,12 +1310,12 @@ impl Editor {
                             .line_height(LINE_HEIGHT)
                             .font_family(EDITOR_FONT)
                             .text_color(colors.text)
-                            .child(StyledText::new(line).with_highlights(runs)),
+                            .child(StyledText::new(line_text).with_highlights(runs)),
                     )
-                    .when(is_cursor_line && focused, |el| {
+                    .when(is_caret_row && focused, |el| {
                         el.child(
                             div()
-                                .id(SharedString::from(format!("caret-{idx}")))
+                                .id(SharedString::from(format!("caret-{row}")))
                                 .absolute()
                                 .left(caret_x)
                                 .top(px(2.))
@@ -1163,11 +1325,12 @@ impl Editor {
                         )
                     })
                     // 批 2：行 bounds 记录（absolute 左上角=行原点；size_0
-                    // 不占布局——prepaint 收 bounds，paint 空）。
+                    // 不占布局——prepaint 收 bounds，paint 空）。idx 语义 =
+                    // 显示行（hit-test 侧 to_buffer 换算）。
                     .child({
                         let rows = self.row_bounds.clone();
                         canvas(
-                            move |bounds, _, _| rows.borrow_mut().push((idx, bounds)),
+                            move |bounds, _, _| rows.borrow_mut().push((row, bounds)),
                             |_, _, _, _| {},
                         )
                         .absolute()
