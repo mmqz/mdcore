@@ -77,9 +77,23 @@ fn main() {
                 Some(OpenedDocument::EditableText { path, content }) => {
                     Some(cx.new(|cx| Editor::new(Some(path), content, cx)))
                 }
+                Some(OpenedDocument::ReadOnlyDocx { path, payload }) => {
+                    // 批 3 证据通道：启动日志一行（属性面 + 只读标记）。
+                    eprintln!(
+                        "docx: {} 段 / {} 表（{} 行）/ {} 标题 / {} 图片 / {} 警告（只读，{}）",
+                        payload.props.paragraphs,
+                        payload.props.tables,
+                        payload.props.table_rows,
+                        payload.headings.len(),
+                        payload.props.images,
+                        payload.props.warnings,
+                        path.display()
+                    );
+                    Some(cx.new(|cx| Editor::new_docx(path, payload, cx)))
+                }
                 Some(OpenedDocument::ReadOnlyPending { path, kind }) => {
                     eprintln!(
-                        "mang-shell: {kind} 只读渲染面随批 2 接线（{}）",
+                        "mang-shell: {kind} 只读渲染面随批 4 接线（{}）",
                         path.display()
                     );
                     None

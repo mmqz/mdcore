@@ -47,6 +47,7 @@
 //! - IME 候选框定位 `bounds_for_range` 返回 `None`（精化登记阶段 7）
 
 pub mod buffer;
+pub mod docx_doc;
 pub mod find_bar;
 pub mod highlight;
 pub mod mouse;
@@ -69,6 +70,7 @@ use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
 use buffer::{Buffer, Point};
+use docx_doc::{DocxPayload, DocxProps, HeadingEntry};
 use find_bar::{FindKeyOutcome, FindState};
 use highlight::{TokenKind, highlight_line};
 
@@ -150,6 +152,10 @@ pub struct Editor {
     autoscroll_task: Option<Task<()>>,
     /// 鼠标事件 stdout 日志（`--smoke-mouse` 烟雾断言通道）。
     mouse_log: bool,
+    /// 只读模式（批 3：docx 渲染面——变更类命令整段拒绝）。
+    read_only: bool,
+    /// docx 转换产物（行模型 + 标题树 + 属性；`None` = md 可编辑态）。
+    docx: Option<DocxPayload>,
 }
 
 impl Editor {
@@ -178,9 +184,44 @@ impl Editor {
             autoscroll_target: None,
             autoscroll_task: None,
             mouse_log: false,
+            read_only: false,
+            docx: None,
         };
         this.refresh_caches();
         // 初始聚焦由 ShellApp::new 完成（需要 window 上下文）。
+        this
+    }
+
+    /// 打开 docx 只读文档（批 3）：行模型喂 Buffer（移动/选区/查找/
+    /// 滚动全复用），样式 span 与标题树由 [`docx_doc`] 预计算承载。
+    pub fn new_docx(path: PathBuf, payload: DocxPayload, cx: &mut Context<Self>) -> Self {
+        let buffer = Buffer::from_plain_text(&payload.text);
+        let display_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名".to_string());
+        let line_count = buffer.line_count();
+        let mut this = Self {
+            buffer,
+            file_path: Some(path),
+            display_name: SharedString::from(display_name),
+            focus: cx.focus_handle(),
+            find_focus: cx.focus_handle(),
+            find: None,
+            scroll: UniformListScrollHandle::new(),
+            // docx 无围栏语义——fence 恒 false（refresh_caches 在 docx
+            // 模式下跳过 md 逐行推进）。
+            fence_cache: vec![false; line_count],
+            marked: None,
+            row_bounds: Rc::new(RefCell::new(Vec::new())),
+            drag: None,
+            autoscroll_target: None,
+            autoscroll_task: None,
+            mouse_log: false,
+            read_only: true,
+            docx: Some(payload),
+        };
+        this.refresh_caches();
         this
     }
 
@@ -210,9 +251,39 @@ impl Editor {
         format!("{} 字符", self.buffer.char_count())
     }
 
+    /// 只读标记（状态栏「只读」——docx 渲染面）。
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// docx 文档属性（右栏属性面板；`None` = md 可编辑态）。
+    pub fn docx_props(&self) -> Option<&DocxProps> {
+        self.docx.as_ref().map(|d| &d.props)
+    }
+
+    /// 标题树（左栏「文档结构」；md 态为空）。
+    pub fn headings(&self) -> &[HeadingEntry] {
+        self.docx
+            .as_ref()
+            .map(|d| d.headings.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// 跳转到行（标题树点击锚点——光标落行首 + 滚入可视区顶部）。
+    pub fn jump_to_line(&mut self, line: usize) {
+        let line = line.min(self.buffer.line_count().saturating_sub(1));
+        self.buffer.set_cursor(Point::new(line, 0));
+        self.scroll.scroll_to_item(line, ScrollStrategy::Top);
+    }
+
     /// 保存（Ctrl+S）：同步写盘 + 清修改标记。未命名文档无路径——
     /// 批 1 无「另存为」对话框，返回 false 登记。
+    /// 只读文档（docx）无保存语义——双保险早退（键分发已拒 Ctrl+S，
+    /// 此处防止任何其他调用面把行模型文本覆写 docx 二进制）。
     pub fn save(&mut self) -> bool {
+        if self.read_only {
+            return true;
+        }
         match &self.file_path {
             Some(path) => {
                 let content = self.buffer.to_plain_text();
@@ -233,14 +304,17 @@ impl Editor {
 
     /// 文档变更后的缓存刷新（fence 状态 + 查找匹配）。
     fn refresh_caches(&mut self) {
-        // fence：逐行推进。
-        let mut states = Vec::with_capacity(self.buffer.line_count());
-        let mut fence = false;
-        for i in 0..self.buffer.line_count() {
-            states.push(fence);
-            fence = highlight_line(self.buffer.line(i), fence).fence_at_end;
+        // fence：逐行推进（md 模式；docx 只读态无围栏语义且免大文档
+        // 逐行 md 高亮的无效开销——fence_cache 构造时恒 false）。
+        if self.docx.is_none() {
+            let mut states = Vec::with_capacity(self.buffer.line_count());
+            let mut fence = false;
+            for i in 0..self.buffer.line_count() {
+                states.push(fence);
+                fence = highlight_line(self.buffer.line(i), fence).fence_at_end;
+            }
+            self.fence_cache = states;
         }
-        self.fence_cache = states;
         if let Some(f) = &mut self.find {
             f.refresh(&self.buffer);
         }
@@ -267,6 +341,14 @@ impl Editor {
         let ctrl = ks.modifiers.control || ks.modifiers.platform;
         let shift = ks.modifiers.shift;
         let key = ks.key.to_lowercase();
+
+        // 只读门禁（批 3）：浏览类命令放行（移动/选区/全选/复制/查找），
+        // 变更类整段拒绝（输入/删除/回车/Tab/剪切/粘贴/撤销/重做/保存）
+        // ——纯函数面单测钉定（docx_doc::readonly_allows）。
+        if self.read_only && !docx_doc::readonly_allows(&key, ctrl) {
+            cx.notify();
+            return;
+        }
 
         match key.as_str() {
             "left" => {
@@ -371,6 +453,17 @@ impl Editor {
         self.refresh_caches();
         let line = self.buffer.cursor().line;
         self.scroll.scroll_to_item(line, ScrollStrategy::Nearest);
+    }
+
+    /// 行样式源分派：docx 只读态取预计算 span，md 态走围栏感知高亮。
+    fn line_tokens(&self, idx: usize, line: &str) -> highlight::LineHighlight {
+        match &self.docx {
+            Some(payload) => highlight::LineHighlight {
+                runs: payload.spans.get(idx).cloned().unwrap_or_default(),
+                fence_at_end: false,
+            },
+            None => highlight_line(line, self.fence_at(idx)),
+        }
     }
 
     /// 复制选区（无选区无操作）。
@@ -911,7 +1004,7 @@ impl Editor {
         (visible.start..visible.end)
             .map(|idx| {
                 let line = self.buffer.line(idx).to_string();
-                let tokens = highlight_line(&line, self.fence_at(idx));
+                let tokens = self.line_tokens(idx, &line);
                 let runs = self.styled_runs_for_line(
                     &line,
                     &tokens,
@@ -1356,6 +1449,10 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 只读门禁（IME 通道——键分发同口径）。
+        if self.read_only {
+            return;
+        }
         let (s, e) = match range {
             Some(r) => (self.utf16_to_point(r.start), self.utf16_to_point(r.end)),
             None => match self.buffer.selection() {
@@ -1380,6 +1477,10 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 只读门禁（IME 预编辑通道——只读文档不接预编辑）。
+        if self.read_only {
+            return;
+        }
         // 预编辑语义：替换旧预编辑段（或指定范围），记录新段。
         let (s, e) = match (&self.marked, range) {
             (Some(r), _) => (self.utf16_to_point(r.start), self.utf16_to_point(r.end)),
