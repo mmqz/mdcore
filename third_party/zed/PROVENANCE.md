@@ -59,7 +59,29 @@
 | crates/gpui_apple/ | third_party/zed/crates/gpui_apple/ | Apache-2.0 | 4,483 | 仅 Cargo.toml 同上（gpui_macos/gpui_ios 共享底座，build.rs 随行搬运） |
 
 增补合计 **62,164 LOC**（全部 Apache-2.0，零 GPL 增量）。
-当前总闭包 **29 crate / 219,506 LOC**。
+
+## 增补搬运（r42 · text 编辑器基座闭包 · 3 crate）
+
+> 背景：#68 阶段 A——Lead 定调「抄 Zed 的设计思路，自己写干净的实现」+
+> 「已有的独立 crate：text / rope（这两个是干净的）」；自研 buffer（908 行
+> Vec<String>，O(n) 编辑无锚点）换 text::Buffer（rope + 锚点，O(log n)）。
+> 闭包根 = `text`（与 ui/gpui_platform 并集）；text 闭包新增仅 3 crate
+> （collections/gpui_util/sum_tree/ztracing/ztracing_macro 已在闭包）。
+> 同批根固定：`zlog`/`bench_metrics` 升为闭包根（前者 ztracing 的 optional
+> prod 依赖 + mang-shell 日志面直接引用；后者 gpui bench-support feature
+> 面）——optional 跳过规则会把它们甩出闭包致 [features] `dep:` 引用悬空解析红。
+
+| 来源路径 | 本地路径 | 许可 | LOC | 改动说明 |
+|---|---|---|---:|---|
+| crates/text/ | third_party/zed/crates/text/ | GPL-3.0-or-later | 6,746 | 仅 Cargo.toml 同上；feature-gated optional `util`（test-support 专用）不搬，其 [features] 引用由改写规则 10 剥离 |
+| crates/rope/ | third_party/zed/crates/rope/ | GPL-3.0-or-later | 4,166 | 仅 Cargo.toml 同上；dev `util`/`zlog` 删除 |
+| crates/clock/ | third_party/zed/crates/clock/ | GPL-3.0-or-later | 338 | 仅 Cargo.toml 同上 |
+
+增补合计 **11,250 LOC**（全部 GPL-3.0-or-later；GPL 记账按 Lead 规则——
+开源时整体 GPL 无冲突，闭源时需替换：ui/theme/component/icons/menu/
+syntax_theme/ui_macros 之外新增 text/rope/clock 三件）。
+当前总闭包 **32 crate / 230,756 LOC**（GPL 系 48,562 / Apache 系 182,194）。
+编译证据：`cargo check`（独立 workspace）32/32 零 error（2026-10-30，1m52s）。
 
 ## Cargo.toml 改写规则（全部由 `scripts/zed_port.py` 自动完成）
 
@@ -72,6 +94,8 @@
 7. （r39）依赖子段形式 `[<section>.<name>]`（body 为 `workspace = true` + 可选字段，如 gpui_windows 的 scap）→ 转写为父段内 inline 条目
 8. （r39）闭包内 path 依赖保留 Zed 根表附加字段（如 `gpui = { path, default-features = false }`）——此前根表字段被丢弃导致依赖静默吃默认 features，与上游语义不一致
 9. （r39）Zed 根表子段形式 `[workspace.dependencies.windows]`（TOML 子表而非 inline）解析并入展开源——此前该形态全部漏解析（windows 依赖被注释）
+10. （r42）闭包计算跳过含 `optional` 的依赖行——feature-gated 依赖（text 的 `dep:util` 仅 test-support 激活）不搬则不雪球（util → path/util_macros/async_zip 等）；若未来激活相应 feature，Cargo 显式报缺（可发现非静默）。安全方向：误跳导致解析期/编译期红，不导致静默行为漂移
+11. （r42）被删 optional prod 依赖若被 [features] 引用（`dep:X` / `"X/..."` / `"X"` 三形式），同步从 feature 列表剥离（text 的 `test-support = ["rand"]`）——否则 Cargo 解析期对悬空 dep: 引用报错
 
 **源码（.rs/build.rs）零修改，唯一例外见下方「源码补丁登记」**——与上游同 commit diff 仅在 Cargo.toml、目录布局与已登记补丁，上游升级可重放。
 

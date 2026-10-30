@@ -1,0 +1,33 @@
+[package]
+name = "rope"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+# [lints] 移植时删除：第三方代码不受项目 lint 门（Zed workspace lints）
+[lib]
+path = "src/rope.rs"
+doctest = false
+
+[dependencies]
+gpui_util = { path = "../gpui_util" }
+heapless = "0.9.2"
+log = { version = "0.4", default-features = false, features = ["std"] }
+rayon = "1.8"
+sum_tree = { path = "../sum_tree" }
+unicode-segmentation = "1.10"
+ztracing = { path = "../ztracing" }
+tracing = "0.1.40"
+
+[dev-dependencies]
+ctor = "1.0.12"
+gpui = { path = "../gpui", default-features = false, features = ["test-support"] }
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+# [port] dev-dep util 在闭包外，删除
+criterion = { version = "0.8.2", features = ["html_reports"] }
+zlog = { path = "../zlog" }
+
+# [[bench]]/[[example]]/[[test]] 段移植时删除：对应目录不在搬运面
+[package.metadata.cargo-shear]
+ignored = ["tracing"]

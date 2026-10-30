@@ -3,7 +3,7 @@
 # 决策与清单见 third_party/zed/PROVENANCE.md
 [workspace]
 resolver = "2"
-members = ["crates/bench_metrics", "crates/collections", "crates/component", "crates/derive_refineable", "crates/gpui", "crates/gpui_apple", "crates/gpui_ios", "crates/gpui_linux", "crates/gpui_macos", "crates/gpui_macros", "crates/gpui_platform", "crates/gpui_shared_string", "crates/gpui_util", "crates/gpui_web", "crates/gpui_wgpu", "crates/gpui_windows", "crates/http_client", "crates/icons", "crates/menu", "crates/refineable", "crates/scheduler", "crates/sum_tree", "crates/syntax_theme", "crates/theme", "crates/ui", "crates/ui_macros", "crates/zlog", "crates/ztracing", "crates/ztracing_macro"]
+members = ["crates/bench_metrics", "crates/clock", "crates/collections", "crates/component", "crates/derive_refineable", "crates/gpui", "crates/gpui_apple", "crates/gpui_ios", "crates/gpui_linux", "crates/gpui_macos", "crates/gpui_macros", "crates/gpui_platform", "crates/gpui_shared_string", "crates/gpui_util", "crates/gpui_web", "crates/gpui_wgpu", "crates/gpui_windows", "crates/http_client", "crates/icons", "crates/menu", "crates/refineable", "crates/rope", "crates/scheduler", "crates/sum_tree", "crates/syntax_theme", "crates/text", "crates/theme", "crates/ui", "crates/ui_macros", "crates/zlog", "crates/ztracing", "crates/ztracing_macro"]
 
 [workspace.package]
 edition = "2024"
