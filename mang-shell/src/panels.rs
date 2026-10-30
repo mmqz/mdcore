@@ -2,15 +2,18 @@
 //! 280px 可折叠）。
 //!
 //! #68 阶段 1 接线：左栏文件树首组呈现当前打开文档（真实数据），
-//! 磁盘目录树与大纲面板随阶段 2/3 接线；右栏属性面板的文件名/字数
-//! 已联动，其余键值行仍为骨架占位（mdcore 引擎面后续批）。
-//! 面板边框一律背景色差（Lead：用背景色差代替 1px 边框）。
+//! docx 文档第二组呈现「文档结构」标题树（批 3——层级缩进 + 点击
+//! 跳转，#68 阶段 3.1 docx 面提前落地）；磁盘目录树随阶段 2 接线。
+//! 右栏属性面板：md 态文件名/字数联动；docx 态引擎实测属性面
+//! （块/段/表/图/页眉页脚/批注/警告——批 3）。面板边框一律背景色差
+//! （Lead：用背景色差代替 1px 边框）。
 
-use gpui::{App, Entity, Hsla, Pixels, px};
+use gpui::{App, Entity, Hsla, MouseButton, Pixels, px};
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
 use crate::editor::Editor;
+use crate::editor::docx_doc::HeadingEntry;
 
 /// 左栏宽度（px）。
 pub const LEFT_PANEL_WIDTH: Pixels = px(260.);
@@ -21,7 +24,8 @@ const PANEL_PADDING: Pixels = px(12.);
 /// 面板头部下缘留白（px）。
 const HEADER_MARGIN: Pixels = px(8.);
 
-/// 左栏：文件树（首组 = 当前打开文档；磁盘目录树随阶段 2 接线）。
+/// 左栏：文件树（首组 = 当前打开文档；docx 第二组 = 文档结构标题
+/// 树；磁盘目录树随阶段 2 接线）。
 pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     let hover = colors.element_hover;
@@ -30,6 +34,17 @@ pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
         None => vec![],
     };
     let open_docs: Vec<(&str, bool)> = open_docs.iter().map(|(n, a)| (n.as_str(), *a)).collect();
+    // 标题树（docx 态；点击跳转锚点携带行号）。
+    let headings: Vec<(HeadingEntry, usize)> = match editor {
+        Some(ed) => ed
+            .read(cx)
+            .headings()
+            .iter()
+            .map(|h| (h.clone(), h.line))
+            .collect(),
+        None => vec![],
+    };
+    let headings_ref: Vec<(&HeadingEntry, usize)> = headings.iter().map(|(h, l)| (h, *l)).collect();
     v_flex()
         .id("left-panel")
         .w(LEFT_PANEL_WIDTH)
@@ -54,6 +69,9 @@ pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
             hover,
             colors.element_selected,
         ))
+        .when_some((!headings_ref.is_empty()).then_some(()), |el, _| {
+            el.child(heading_tree("tg-outline", &headings_ref, editor, hover))
+        })
         .child(tree_group(
             "tg-import",
             "导入（阶段 2 接线）",
@@ -72,23 +90,123 @@ pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
         ))
 }
 
-/// 右栏：属性 / 来源（文件名/字数联动；其余骨架占位）。
+/// 文档结构标题树（批 3——#68 阶段 3.1 docx 面提前落地）：层级缩进 +
+/// 点击跳转（光标落标题行首 + 滚入可视区顶部）。
+fn heading_tree(
+    id: &'static str,
+    headings: &[(&HeadingEntry, usize)],
+    editor: Option<&Entity<Editor>>,
+    hover_bg: Hsla,
+) -> impl IntoElement {
+    v_flex()
+        .id(id)
+        .gap_1()
+        .child(
+            h_flex()
+                .id(SharedString::from(format!("{id}-head")))
+                .gap_1()
+                .rounded_sm()
+                .child(
+                    Icon::new(IconName::ChevronDown)
+                        .size(IconSize::XSmall)
+                        .color(ui::Color::Muted),
+                )
+                .child(
+                    Icon::new(IconName::ListTree)
+                        .size(IconSize::XSmall)
+                        .color(ui::Color::Muted),
+                )
+                .child(Label::new("文档结构").size(LabelSize::Small)),
+        )
+        .children(headings.iter().enumerate().map(|(i, (h, line))| {
+            let label: SharedString = SharedString::from(format!("H{}  {}", h.level, h.text));
+            let editor = editor.cloned();
+            let line = *line;
+            h_flex()
+                .id(SharedString::from(format!("{id}-item-{i}")))
+                // 层级缩进：每级 12px（1 级不缩进——标题本体已带 Hn 前缀）。
+                .pl(px(12. + ((h.level.saturating_sub(1)) as f32) * 12.))
+                .gap_1()
+                .rounded_sm()
+                .hover(move |el| el.bg(hover_bg))
+                .when_some(editor, |el, ed| {
+                    el.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                        ed.update(cx, |ed, _| ed.jump_to_line(line));
+                        // 点击后面板焦点不影响编辑区键盘域；防窗口默认行为。
+                        window.prevent_default();
+                    })
+                })
+                .child(Label::new(label).size(LabelSize::Small))
+        }))
+}
+
+/// 右栏：属性 / 来源（md 态：文件名/字数联动；docx 态：引擎实测
+/// 属性面——批 3）。
 pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
-    let (name, chars, modified) = match editor {
+    let (name, chars, modified, mode, engine) = match editor {
         Some(ed) => {
             let ed = ed.read(cx);
             (
                 ed.display_name().to_string(),
                 ed.char_label(),
-                if ed.is_modified() {
+                if ed.is_read_only() {
+                    "只读渲染".to_string()
+                } else if ed.is_modified() {
                     "已修改（未保存）".to_string()
                 } else {
                     "无未保存修改".to_string()
                 },
+                if ed.is_read_only() {
+                    "只读（docx 块序 → 行模型）".to_string()
+                } else {
+                    "源文本（md）".to_string()
+                },
+                if ed.is_read_only() {
+                    "mdc-office-io（docx-rs）".to_string()
+                } else {
+                    "mdcore 0.1.0".to_string()
+                },
             )
         }
-        None => ("—".to_string(), "—".to_string(), "—".to_string()),
+        None => (
+            "—".to_string(),
+            "—".to_string(),
+            "—".to_string(),
+            "—".to_string(),
+            "—".to_string(),
+        ),
+    };
+    // docx 实测属性面（批 3）。
+    let docx_rows: Vec<(String, String)> = match editor {
+        Some(ed) => ed
+            .read(cx)
+            .docx_props()
+            .map(|p| {
+                vec![
+                    (
+                        "块 / 段落".into(),
+                        format!("{} / {}", p.blocks, p.paragraphs),
+                    ),
+                    (
+                        "表格 / 行".into(),
+                        format!("{} / {}", p.tables, p.table_rows),
+                    ),
+                    ("图片".into(), format!("{}（不入行流）", p.images)),
+                    (
+                        "页眉 / 页脚".into(),
+                        format!("{} / {}（不入行流）", p.headers, p.footers),
+                    ),
+                    (
+                        "批注 / 脚注 / 尾注".into(),
+                        format!("{} / {} / {}", p.comments, p.footnotes, p.endnotes),
+                    ),
+                    ("文本框".into(), format!("{}（平铺渲染）", p.textboxes)),
+                    ("兼容警告".into(), format!("{}", p.warnings)),
+                ]
+            })
+            .unwrap_or_default(),
+        None => vec![],
     };
     v_flex()
         .id("right-panel")
@@ -108,14 +226,34 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
         )
         .child(property_row("文件", &name))
         .child(property_row("字数", &chars))
-        .child(property_row("修改状态", &modified))
-        .child(property_row("引擎", "mdcore 0.1.0"))
-        .child(property_row("编辑器", "源文本（md）"))
+        .child(property_row("状态", &modified))
+        .child(property_row("引擎", &engine))
+        .child(property_row("编辑器", &mode))
+        .children(docx_rows.iter().map(|(k, v)| {
+            let k = k.clone();
+            let v = v.clone();
+            property_row_owned(k, v)
+        }))
         .child(
             Label::new("块级锚定 / 边注 / 证据来源随 #68 阶段 4 接线")
                 .size(LabelSize::XSmall)
                 .color(ui::Color::Hidden),
         )
+}
+
+/// 属性键值行（_owned 变体——docx 行动态 String 键；视觉与
+/// [`property_row`] 恒同）。
+fn property_row_owned(key: String, value: String) -> impl IntoElement {
+    h_flex()
+        .id(SharedString::from(format!("prop-{key}")))
+        .w_full()
+        .justify_between()
+        .child(
+            Label::new(key)
+                .size(LabelSize::Small)
+                .color(ui::Color::Muted),
+        )
+        .child(Label::new(value).size(LabelSize::Small))
 }
 
 /// 文件树分组：折叠箭头 + 文件夹图标 + 组名，展开时子行缩进。

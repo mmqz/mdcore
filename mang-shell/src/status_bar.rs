@@ -19,7 +19,13 @@ pub fn status_bar(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
     let left = match editor {
         Some(ed) => {
             let ed = ed.read(cx);
-            let modified = if ed.is_modified() { " ●" } else { "" };
+            let modified = if ed.is_read_only() {
+                " · 只读"
+            } else if ed.is_modified() {
+                " ●"
+            } else {
+                ""
+            };
             format!(
                 "{}{modified}  ·  行, 列 {}  ·  {}",
                 ed.display_name(),
