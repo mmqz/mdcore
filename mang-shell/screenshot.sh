@@ -12,7 +12,10 @@ OUT="${1:-screenshot.png}"
 WAIT="${2:-6}"
 SMOKE_FILE="${3:-}"
 SYSROOT="${MANG_SYSROOT:-/home/z/.local/sysroot}"
-export PATH="/home/z/.cargo/bin:/home/z/.local/bin:$PATH"
+# 截图链（xwd/xwdtopnm/pnmtopng）与 cargo 均可能在 sysroot/用户目录
+# （sysroot bin 对齐 smoke.sh——r40 实施发现：宿主无系统级 x11-apps 时
+# 本脚本曾因缺 $SYSROOT/usr/bin 而 xwd not found）。
+export PATH="/home/z/.cargo/bin:$SYSROOT/usr/bin:/home/z/.local/bin:$PATH"
 export LD_LIBRARY_PATH="$SYSROOT/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # 与 smoke.sh 同一链接面（sysroot dev 库）——RUSTFLAGS 变化会触发全量重编。
 if [ -d "$SYSROOT/usr/lib/x86_64-linux-gnu" ]; then
@@ -28,7 +31,9 @@ if [ ! -d /usr/share/vulkan/icd.d ] && [ -f "$SYSROOT/usr/share/vulkan/icd.d/lvp
 fi
 
 DISPLAY_ID=":98"
-Xvfb "$DISPLAY_ID" -screen 0 1280x800x24 &
+# 屏面 1600×1000 > 窗面 1280×800@（96,64）——整窗入画（r40 实施发现：
+# 1280×800 屏下窗底 64px 被裁，状态栏（页码验收面）恰在屏外）。
+Xvfb "$DISPLAY_ID" -screen 0 1600x1000x24 &
 XVFB_PID=$!
 trap 'kill $XVFB_PID 2>/dev/null || true' EXIT
 sleep 1

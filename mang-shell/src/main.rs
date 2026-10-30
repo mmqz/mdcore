@@ -3,7 +3,8 @@
 //! 用法：
 //! ```text
 //! mang-shell [FILE]            正常启动（FILE = .md/.markdown/.txt 打开为
-//!                               可编辑文档；.docx/.pdf 只读面待批 2）
+//!                               可编辑文档；.docx 只读渲染（批 3）；
+//!                               .pdf 只读渲染（批 4））
 //! mang-shell --smoke-sec N     烟雾模式：开窗 N 秒后自动退出（exit 0 +
 //!                               stdout 末行 "smoke: quit reached"——Xvfb
 //!                               无头验证通道）
@@ -91,12 +92,23 @@ fn main() {
                     );
                     Some(cx.new(|cx| Editor::new_docx(path, payload, cx)))
                 }
-                Some(OpenedDocument::ReadOnlyPending { path, kind }) => {
+                Some(OpenedDocument::ReadOnlyPdf { path, payload }) => {
+                    // 批 4 证据通道：启动日志一行（属性面 + 只读标记）。
+                    let scanned = if payload.props.scanned {
+                        " / 全文无文本层（扫描件提示）"
+                    } else {
+                        ""
+                    };
                     eprintln!(
-                        "mang-shell: {kind} 只读渲染面随批 4 接线（{}）",
+                        "pdf: {} 页 / {} 字符 / {} 书签 / {} 空文本页{}（只读，{}）",
+                        payload.props.pages,
+                        payload.props.chars,
+                        payload.headings.len(),
+                        payload.props.empty_pages,
+                        scanned,
                         path.display()
                     );
-                    None
+                    Some(cx.new(|cx| Editor::new_pdf(path, payload, cx)))
                 }
                 Some(OpenedDocument::Unsupported { path }) => {
                     eprintln!(

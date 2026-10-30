@@ -26,14 +26,20 @@ pub fn status_bar(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
             } else {
                 ""
             };
+            // 页码标签（批 4：pdf 态「第 N / M 页」——光标行经页表映射；
+            // md/docx 态无页语义，不占位）。
+            let page = ed
+                .page_label()
+                .map(|l| format!("  ·  {l}"))
+                .unwrap_or_default();
             format!(
-                "{}{modified}  ·  行, 列 {}  ·  {}",
+                "{}{modified}  ·  行, 列 {}{page}  ·  {}",
                 ed.display_name(),
                 ed.cursor_label(),
                 ed.char_label()
             )
         }
-        None => "就绪 —— 打开 .md 文件开始编辑".to_string(),
+        None => "就绪 —— 打开 .md/.docx/.pdf（mang-shell FILE）".to_string(),
     };
 
     h_flex()

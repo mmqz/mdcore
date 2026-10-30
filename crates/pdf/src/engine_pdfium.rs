@@ -208,7 +208,13 @@ impl DocumentEngine for PdfiumEngine {
         let page_count = self.document.pages().len() as u32;
         let mut roots = Vec::new();
         if let Some(root) = self.document.bookmarks().root() {
-            for bookmark in root.iter_siblings() {
+            // pdfium-render 语义：`root()` 返回**首个顶层书签本体**（非伪根，
+            // `PdfBookmarks::root` = `FPDFBookmark_GetFirstChild(doc, NULL)`），
+            // 而 `iter_siblings()` 迭代时自排除（skip_over: Some(self)）——
+            // 首条必须显式并入，否则首个顶层书签恒丢失（正路径首证：
+            // #68 批 4 带书签夹具 3 条实得 2；负路径此前仅有
+            // `outline_empty_tree_for_plain_fixture` 背书，正路径零实证）。
+            for bookmark in std::iter::once(root.clone()).chain(root.iter_siblings()) {
                 if let Some(node) = engine_outline_node(&bookmark, page_count) {
                     roots.push(node);
                 }
