@@ -3,17 +3,18 @@
 //!
 //! #68 阶段 1 接线：左栏文件树首组呈现当前打开文档（真实数据），
 //! docx 文档第二组呈现「文档结构」标题树（批 3——层级缩进 + 点击
-//! 跳转，#68 阶段 3.1 docx 面提前落地）；磁盘目录树随阶段 2 接线。
+//! 跳转，#68 阶段 3.1 docx 面提前落地）；pdf 同组呈现书签树（批 4
+//! ——页号前缀 + 点击跳页分隔行）；磁盘目录树随阶段 2 接线。
 //! 右栏属性面板：md 态文件名/字数联动；docx 态引擎实测属性面
-//! （块/段/表/图/页眉页脚/批注/警告——批 3）。面板边框一律背景色差
-//! （Lead：用背景色差代替 1px 边框）。
+//! （块/段/表/图/页眉页脚/批注/警告——批 3）；pdf 态引擎实测属性面
+//! （页/字符/书签/扫描件——批 4）。面板边框一律背景色差（Lead：
+//! 用背景色差代替 1px 边框）。
 
 use gpui::{App, Entity, Hsla, MouseButton, Pixels, px};
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
 use crate::editor::Editor;
-use crate::editor::docx_doc::HeadingEntry;
 
 /// 左栏宽度（px）。
 pub const LEFT_PANEL_WIDTH: Pixels = px(260.);
@@ -34,17 +35,18 @@ pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
         None => vec![],
     };
     let open_docs: Vec<(&str, bool)> = open_docs.iter().map(|(n, a)| (n.as_str(), *a)).collect();
-    // 标题树（docx 态；点击跳转锚点携带行号）。
-    let headings: Vec<(HeadingEntry, usize)> = match editor {
-        Some(ed) => ed
-            .read(cx)
-            .headings()
-            .iter()
-            .map(|h| (h.clone(), h.line))
-            .collect(),
+    // 结构树（docx = 标题树 / pdf = 书签树；标签带 Hn/页号前缀，
+    // 点击跳转锚点携带行号）。
+    let headings: Vec<(String, usize, usize)> = match editor {
+        Some(ed) => {
+            let e = ed.read(cx);
+            e.headings()
+                .iter()
+                .map(|h| (e.heading_label(h), h.level, h.line))
+                .collect()
+        }
         None => vec![],
     };
-    let headings_ref: Vec<(&HeadingEntry, usize)> = headings.iter().map(|(h, l)| (h, *l)).collect();
     v_flex()
         .id("left-panel")
         .w(LEFT_PANEL_WIDTH)
@@ -69,8 +71,8 @@ pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
             hover,
             colors.element_selected,
         ))
-        .when_some((!headings_ref.is_empty()).then_some(()), |el, _| {
-            el.child(heading_tree("tg-outline", &headings_ref, editor, hover))
+        .when_some((!headings.is_empty()).then_some(()), |el, _| {
+            el.child(heading_tree("tg-outline", &headings, editor, hover))
         })
         .child(tree_group(
             "tg-import",
@@ -90,11 +92,11 @@ pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
         ))
 }
 
-/// 文档结构标题树（批 3——#68 阶段 3.1 docx 面提前落地）：层级缩进 +
-/// 点击跳转（光标落标题行首 + 滚入可视区顶部）。
+/// 结构树（批 3 docx 标题树 + 批 4 pdf 书签树）：层级缩进 +
+/// 点击跳转（光标落条目行首 + 滚入可视区顶部）。
 fn heading_tree(
     id: &'static str,
-    headings: &[(&HeadingEntry, usize)],
+    headings: &[(String, usize, usize)],
     editor: Option<&Entity<Editor>>,
     hover_bg: Hsla,
 ) -> impl IntoElement {
@@ -118,30 +120,34 @@ fn heading_tree(
                 )
                 .child(Label::new("文档结构").size(LabelSize::Small)),
         )
-        .children(headings.iter().enumerate().map(|(i, (h, line))| {
-            let label: SharedString = SharedString::from(format!("H{}  {}", h.level, h.text));
-            let editor = editor.cloned();
-            let line = *line;
-            h_flex()
-                .id(SharedString::from(format!("{id}-item-{i}")))
-                // 层级缩进：每级 12px（1 级不缩进——标题本体已带 Hn 前缀）。
-                .pl(px(12. + ((h.level.saturating_sub(1)) as f32) * 12.))
-                .gap_1()
-                .rounded_sm()
-                .hover(move |el| el.bg(hover_bg))
-                .when_some(editor, |el, ed| {
-                    el.on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        ed.update(cx, |ed, _| ed.jump_to_line(line));
-                        // 点击后面板焦点不影响编辑区键盘域；防窗口默认行为。
-                        window.prevent_default();
-                    })
-                })
-                .child(Label::new(label).size(LabelSize::Small))
-        }))
+        .children(
+            headings
+                .iter()
+                .enumerate()
+                .map(|(i, (label, level, line))| {
+                    let editor = editor.cloned();
+                    let line = *line;
+                    h_flex()
+                        .id(SharedString::from(format!("{id}-item-{i}")))
+                        // 层级缩进：每级 12px（1 级不缩进——条目已带 Hn/页号前缀）。
+                        .pl(px(12. + (level.saturating_sub(1)) as f32 * 12.))
+                        .gap_1()
+                        .rounded_sm()
+                        .hover(move |el| el.bg(hover_bg))
+                        .when_some(editor, |el, ed| {
+                            el.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                ed.update(cx, |ed, _| ed.jump_to_line(line));
+                                // 点击后面板焦点不影响编辑区键盘域；防窗口默认行为。
+                                window.prevent_default();
+                            })
+                        })
+                        .child(Label::new(label.as_str()).size(LabelSize::Small))
+                }),
+        )
 }
 
 /// 右栏：属性 / 来源（md 态：文件名/字数联动；docx 态：引擎实测
-/// 属性面——批 3）。
+/// 属性面——批 3；pdf 态：页/字符/书签/扫描件——批 4）。
 pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     let (name, chars, modified, mode, engine) = match editor {
@@ -157,15 +163,15 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
                 } else {
                     "无未保存修改".to_string()
                 },
-                if ed.is_read_only() {
-                    "只读（docx 块序 → 行模型）".to_string()
-                } else {
-                    "源文本（md）".to_string()
+                match ed.doc_kind() {
+                    "pdf" => "只读（pdf 文本层 → 行模型）".to_string(),
+                    "docx" => "只读（docx 块序 → 行模型）".to_string(),
+                    _ => "源文本（md）".to_string(),
                 },
-                if ed.is_read_only() {
-                    "mdc-office-io（docx-rs）".to_string()
-                } else {
-                    "mdcore 0.1.0".to_string()
+                match ed.doc_kind() {
+                    "pdf" => "mdc-pdf（pdfium chromium/8086 non-V8）".to_string(),
+                    "docx" => "mdc-office-io（docx-rs）".to_string(),
+                    _ => "mdcore 0.1.0".to_string(),
                 },
             )
         }
@@ -208,6 +214,31 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
             .unwrap_or_default(),
         None => vec![],
     };
+    // pdf 实测属性面（批 4）。
+    let pdf_rows: Vec<(String, String)> = match editor {
+        Some(ed) => ed
+            .read(cx)
+            .pdf_props()
+            .map(|p| {
+                vec![
+                    ("页数".into(), format!("{}", p.pages)),
+                    ("可提取字符".into(), format!("{}（非空白）", p.chars)),
+                    ("内容行".into(), format!("{}", p.content_lines)),
+                    ("无文本页".into(), format!("{}", p.empty_pages)),
+                    ("书签".into(), format!("{}", p.bookmarks)),
+                    (
+                        "扫描件".into(),
+                        if p.scanned {
+                            "是（全文无文本层）".to_string()
+                        } else {
+                            "否".to_string()
+                        },
+                    ),
+                ]
+            })
+            .unwrap_or_default(),
+        None => vec![],
+    };
     v_flex()
         .id("right-panel")
         .w(RIGHT_PANEL_WIDTH)
@@ -230,6 +261,11 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
         .child(property_row("引擎", &engine))
         .child(property_row("编辑器", &mode))
         .children(docx_rows.iter().map(|(k, v)| {
+            let k = k.clone();
+            let v = v.clone();
+            property_row_owned(k, v)
+        }))
+        .children(pdf_rows.iter().map(|(k, v)| {
             let k = k.clone();
             let v = v.clone();
             property_row_owned(k, v)

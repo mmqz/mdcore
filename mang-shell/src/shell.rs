@@ -117,7 +117,7 @@ fn editor_area(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> impl IntoEle
             .child(ui::Headline::new("mang").size(ui::HeadlineSize::Large))
             .child(
                 ui::Label::new(
-                    "打开 .md 文件开始编辑（mang-shell FILE.md）——docx/pdf 渲染随批 2 接线",
+                    "打开 .md 可编辑；.docx/.pdf 只读渲染（mang-shell FILE）——文件树/多标签随阶段 2 接线",
                 )
                 .color(ui::Color::Muted),
             )

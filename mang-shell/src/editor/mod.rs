@@ -51,6 +51,7 @@ pub mod docx_doc;
 pub mod find_bar;
 pub mod highlight;
 pub mod mouse;
+pub mod pdf_doc;
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -73,6 +74,7 @@ use buffer::{Buffer, Point};
 use docx_doc::{DocxPayload, DocxProps, HeadingEntry};
 use find_bar::{FindKeyOutcome, FindState};
 use highlight::{TokenKind, highlight_line};
+use pdf_doc::{PdfPayload, PdfProps};
 
 // ---------------------------------------------------------------------------
 // 拖选状态与载荷
@@ -152,10 +154,12 @@ pub struct Editor {
     autoscroll_task: Option<Task<()>>,
     /// 鼠标事件 stdout 日志（`--smoke-mouse` 烟雾断言通道）。
     mouse_log: bool,
-    /// 只读模式（批 3：docx 渲染面——变更类命令整段拒绝）。
+    /// 只读模式（批 3：docx 渲染面——变更类命令整段拒绝；批 4 复用同门）。
     read_only: bool,
-    /// docx 转换产物（行模型 + 标题树 + 属性；`None` = md 可编辑态）。
+    /// docx 转换产物（行模型 + 标题树 + 属性；`None` = 非 docx 态）。
     docx: Option<DocxPayload>,
+    /// pdf 转换产物（批 4：行模型 + 书签树 + 页表；`None` = 非 pdf 态）。
+    pdf: Option<PdfPayload>,
 }
 
 impl Editor {
@@ -186,6 +190,7 @@ impl Editor {
             mouse_log: false,
             read_only: false,
             docx: None,
+            pdf: None,
         };
         this.refresh_caches();
         // 初始聚焦由 ShellApp::new 完成（需要 window 上下文）。
@@ -220,6 +225,41 @@ impl Editor {
             mouse_log: false,
             read_only: true,
             docx: Some(payload),
+            pdf: None,
+        };
+        this.refresh_caches();
+        this
+    }
+
+    /// 打开 pdf 只读文档（批 4）：行模型喂 Buffer（移动/选区/查找/滚轮
+    /// 批 1-2 管线全复用），样式 span（页分隔行）与书签树/页表由
+    /// [`pdf_doc`] 预计算承载；页码标签走 [`Self::page_label`]。
+    pub fn new_pdf(path: PathBuf, payload: PdfPayload, cx: &mut Context<Self>) -> Self {
+        let buffer = Buffer::from_plain_text(&payload.text);
+        let display_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名".to_string());
+        let line_count = buffer.line_count();
+        let mut this = Self {
+            buffer,
+            file_path: Some(path),
+            display_name: SharedString::from(display_name),
+            focus: cx.focus_handle(),
+            find_focus: cx.focus_handle(),
+            find: None,
+            scroll: UniformListScrollHandle::new(),
+            // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
+            fence_cache: vec![false; line_count],
+            marked: None,
+            row_bounds: Rc::new(RefCell::new(Vec::new())),
+            drag: None,
+            autoscroll_target: None,
+            autoscroll_task: None,
+            mouse_log: false,
+            read_only: true,
+            docx: None,
+            pdf: Some(payload),
         };
         this.refresh_caches();
         this
@@ -261,12 +301,51 @@ impl Editor {
         self.docx.as_ref().map(|d| &d.props)
     }
 
-    /// 标题树（左栏「文档结构」；md 态为空）。
+    /// pdf 文档属性（右栏属性面板；批 4）。
+    pub fn pdf_props(&self) -> Option<&PdfProps> {
+        self.pdf.as_ref().map(|p| &p.props)
+    }
+
+    /// 文档形态标识（panels/status_bar 分派："md" / "docx" / "pdf"）。
+    pub fn doc_kind(&self) -> &'static str {
+        if self.docx.is_some() {
+            "docx"
+        } else if self.pdf.is_some() {
+            "pdf"
+        } else {
+            "md"
+        }
+    }
+
+    /// 页码标签（状态栏——pdf 态：「第 N / M 页」由光标行经页表映射；
+    /// 其余形态 `None`）。
+    pub fn page_label(&self) -> Option<String> {
+        let p = self.pdf.as_ref()?;
+        let line = self.buffer.cursor().line;
+        let no = p.page_of_line(line)?;
+        Some(format!("第 {} / {} 页", no, p.props.pages))
+    }
+
+    /// 标题树（左栏「文档结构」）；md 态为空。
+    /// docx = 标题树；pdf = 书签树（扁平文档序——批 4）。
     pub fn headings(&self) -> &[HeadingEntry] {
         self.docx
             .as_ref()
             .map(|d| d.headings.as_slice())
+            .or_else(|| self.pdf.as_ref().map(|p| p.headings.as_slice()))
             .unwrap_or(&[])
+    }
+
+    /// 结构条目显示标签（左栏）：docx `Hn · 文本`；pdf `第 N 页 · 文本`
+    /// （书签带页号前缀——跳转目标即该页页分隔行）。
+    pub fn heading_label(&self, h: &HeadingEntry) -> String {
+        match &self.pdf {
+            Some(p) => match p.page_of_line(h.line) {
+                Some(no) => format!("第 {no} 页 · {}", h.text),
+                None => h.text.clone(),
+            },
+            None => format!("H{} · {}", h.level, h.text),
+        }
     }
 
     /// 跳转到行（标题树点击锚点——光标落行首 + 滚入可视区顶部）。
@@ -455,14 +534,16 @@ impl Editor {
         self.scroll.scroll_to_item(line, ScrollStrategy::Nearest);
     }
 
-    /// 行样式源分派：docx 只读态取预计算 span，md 态走围栏感知高亮。
+    /// 行样式源分派：docx/pdf 只读态取预计算 span，md 态走围栏感知高亮。
     fn line_tokens(&self, idx: usize, line: &str) -> highlight::LineHighlight {
-        match &self.docx {
-            Some(payload) => highlight::LineHighlight {
-                runs: payload.spans.get(idx).cloned().unwrap_or_default(),
-                fence_at_end: false,
-            },
-            None => highlight_line(line, self.fence_at(idx)),
+        let runs = match (&self.docx, &self.pdf) {
+            (Some(d), _) => d.spans.get(idx).cloned(),
+            (None, Some(p)) => p.spans.get(idx).cloned(),
+            (None, None) => return highlight_line(line, self.fence_at(idx)),
+        };
+        highlight::LineHighlight {
+            runs: runs.unwrap_or_default(),
+            fence_at_end: false,
         }
     }
 

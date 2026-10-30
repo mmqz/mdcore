@@ -5,7 +5,8 @@
 //! - `.md` / `.markdown` / `.txt` → **可编辑**（源文本编辑——批 1）
 //! - `.docx` → **只读渲染**（批 3：mdc-office-io 块序 → 行模型，
 //!   标题树 + 样式 span——见 [`crate::editor::docx_doc`]）
-//! - `.pdf` → 只读渲染面（批 4 接线：mdc-pdf）
+//! - `.pdf` → **只读渲染**（批 4：mdc-pdf 文本层 → 行模型，书签树 +
+//!   页分隔 + 页码标签——见 [`crate::editor::pdf_doc`]；100MB 前置门）
 //! - 其余 → `Unsupported`（空态提示）
 //!
 //! 大小写不敏感匹配扩展名；读取失败返回 `OpenError`（空态呈现原因）。
@@ -13,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::editor::docx_doc::{self, DocxPayload};
+use crate::editor::pdf_doc::{self, PdfPayload};
 
 /// 打开结果。
 pub enum OpenedDocument {
@@ -20,8 +22,8 @@ pub enum OpenedDocument {
     EditableText { path: PathBuf, content: String },
     /// docx 只读渲染（批 3）：mdc-office-io 解析 + 行模型转换产物。
     ReadOnlyDocx { path: PathBuf, payload: DocxPayload },
-    /// pdf——只读渲染面待批 4 引擎接线。
-    ReadOnlyPending { path: PathBuf, kind: &'static str },
+    /// pdf 只读渲染（批 4）：mdc-pdf 文本层/书签抽取 + 行模型转换产物。
+    ReadOnlyPdf { path: PathBuf, payload: PdfPayload },
     /// 不支持的扩展名。
     Unsupported { path: PathBuf },
     /// 读取失败（IO 错误 / 超大等）。
@@ -57,9 +59,17 @@ pub fn open(path: &Path) -> OpenedDocument {
                 message,
             },
         },
-        "pdf" => OpenedDocument::ReadOnlyPending {
-            path: path.to_path_buf(),
-            kind: "PDF 文档（.pdf）",
+        // 批 4：pdf 只读渲染（应用层 100MB 前置门 + 引擎层 S3 双防线；
+        // 扫描件/空页 → 标记行明确提示而非白屏）。
+        "pdf" => match pdf_doc::load(path) {
+            Ok(payload) => OpenedDocument::ReadOnlyPdf {
+                path: path.to_path_buf(),
+                payload,
+            },
+            Err(message) => OpenedDocument::OpenError {
+                path: path.to_path_buf(),
+                message,
+            },
         },
         _ => OpenedDocument::Unsupported {
             path: path.to_path_buf(),

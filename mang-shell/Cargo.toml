@@ -30,6 +30,10 @@ anyhow = "1.0.86"
 # 批 3（#68）：docx 只读渲染引擎依赖（path 接入，类型零泄漏面不变）
 # ——读面（read_docx 块序）+ 烟雾夹具生成（写面 save_to_vec）。
 mdc-office-io = { path = "../crates/office-io" }
+# 批 4（#68）：pdf 只读渲染引擎依赖（path 接入，类型零泄漏面不变）
+# ——读面（pdfium 文本层/书签树，engine-pdfium）+ 烟雾夹具生成
+# （lopdf 写面 generate，engine-lopdf——与 mdc-pdf 版本 pin 同源）。
+mdc-pdf = { path = "../crates/pdf", features = ["engine-pdfium", "engine-lopdf"] }
 gpui = { path = "../third_party/zed/crates/gpui", default-features = false }
 gpui_platform = { path = "../third_party/zed/crates/gpui_platform", features = [
     "wayland",
@@ -37,6 +41,11 @@ gpui_platform = { path = "../third_party/zed/crates/gpui_platform", features = [
 ] }
 theme = { path = "../third_party/zed/crates/theme" }
 ui = { path = "../third_party/zed/crates/ui" }
+
+[dev-dependencies]
+# 烟雾夹具书签注入（测试面独占——不进 shipped 依赖图；版本与 mdc-pdf
+# 内 pin 同源 =0.45.0，default-features 同关）。
+lopdf = { version = "=0.45.0", default-features = false }
 
 # 与 third_party/zed/Cargo.toml 保持同源（生效的 3 条）：gpui 的 async-task、
 # gpui_linux 的 calloop、wgpu-hal 传递的 khronos-egl 均被上游 patch 到自维护
