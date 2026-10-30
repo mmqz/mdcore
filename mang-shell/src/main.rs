@@ -1,18 +1,19 @@
-//! mang 桌面外壳入口 —— GPUI 主线 UI（#63）。
+//! mang 桌面外壳入口 —— GPUI 主线 UI（#63 骨架 / #68 阶段 1 编辑区接线）。
 //!
 //! 用法：
 //! ```text
-//! mang-shell                 正常启动
-//! mang-shell --smoke-sec N   烟雾模式：开窗 N 秒后自动退出（exit 0 +
-//!                            stdout 末行 "smoke: quit reached"——Xvfb 无头
-//!                            验证通道，循 mdshell-native xvfb_smoke 先例）
-//! mang-shell --version       版本号
+//! mang-shell [FILE]            正常启动（FILE = .md/.markdown/.txt 打开为
+//!                               可编辑文档；.docx/.pdf 只读面待批 2）
+//! mang-shell --smoke-sec N     烟雾模式：开窗 N 秒后自动退出（exit 0 +
+//!                               stdout 末行 "smoke: quit reached"——Xvfb
+//!                               无头验证通道）
+//! mang-shell --version         版本号
 //! ```
 //!
 //! 引导链：`gpui_platform::application()`（OS 后端选择器）→ 内嵌资产源
 //! （图标）→ `theme::init`（内置基础主题）→ `set_theme_settings_provider`
-//! （ui 组件字体面契约）→ 开窗（1280×800，X11 客户端装饰请求，无合成器
-//! 自动回退服务端装饰）。
+//! （ui 组件字体面契约）→ 文档分派（`document::open`）→ `Editor` 实体 →
+//! 开窗（1280×800，X11 客户端装饰请求，无合成器自动回退服务端装饰）。
 
 use std::time::Duration;
 
@@ -24,11 +25,16 @@ use gpui_platform::application;
 
 mod activity_bar;
 mod assets;
+mod document;
+mod editor;
 mod panels;
 mod settings;
 mod shell;
 mod status_bar;
 mod title_bar;
+
+use document::OpenedDocument;
+use editor::Editor;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -41,12 +47,49 @@ fn main() {
         .position(|a| a == "--smoke-sec")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok());
+    let smoke_pos = args.iter().position(|a| a == "--smoke-sec");
 
     application()
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             theme::init(theme::LoadThemes::JustBase, cx);
             theme::set_theme_settings_provider(Box::new(settings::ShellThemeSettings), cx);
+
+            // 文档分派：首个非 flag 参数为文件路径（#68 阶段 1.1；
+            // 跳过 `--smoke-sec` 的值参数，避免数字误判为文件）。
+            let file_arg = args
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|(i, a)| !a.starts_with('-') && !matches!(smoke_pos, Some(p) if *i == p + 1))
+                .map(|(_, a)| a.clone());
+            let opened = file_arg
+                .as_ref()
+                .map(|p| document::open(std::path::Path::new(p)));
+            let editor_entity = match opened {
+                Some(OpenedDocument::EditableText { path, content }) => {
+                    Some(cx.new(|cx| Editor::new(Some(path), content, cx)))
+                }
+                Some(OpenedDocument::ReadOnlyPending { path, kind }) => {
+                    eprintln!(
+                        "mang-shell: {kind} 只读渲染面随批 2 接线（{}）",
+                        path.display()
+                    );
+                    None
+                }
+                Some(OpenedDocument::Unsupported { path }) => {
+                    eprintln!(
+                        "mang-shell: 暂不支持该文件类型（{}）——支持 .md/.markdown/.txt",
+                        path.display()
+                    );
+                    None
+                }
+                Some(OpenedDocument::OpenError { path, message }) => {
+                    eprintln!("mang-shell: 打开失败（{}）：{message}", path.display());
+                    None
+                }
+                None => None,
+            };
 
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -65,7 +108,7 @@ fn main() {
                 ..Default::default()
             };
             cx.open_window(options, |window, cx| {
-                cx.new(|cx| shell::ShellApp::new(window, cx))
+                cx.new(|cx| shell::ShellApp::new(editor_entity, window, cx))
             })
             .expect("mang-shell: 打开主窗口失败");
 
@@ -74,7 +117,7 @@ fn main() {
                     cx.background_executor()
                         .timer(Duration::from_secs_f64(sec))
                         .await;
-                    let _ = cx.update(|cx| cx.quit());
+                    cx.update(|cx| cx.quit());
                 })
                 .detach();
             }

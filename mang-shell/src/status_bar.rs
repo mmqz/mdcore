@@ -1,17 +1,35 @@
-//! 底部状态栏（#63 Lead：底部状态栏）。
+//! 底部状态栏（#63 Lead 布局 + #68 阶段 1 文档状态联动）。
 //!
-//! 左：应用/文档状态；右：版本与引擎标识。背景色差（title_bar_background）
-//! 与主编辑区区分，无 1px 边框。
+//! 左：文档状态（文件名 + 修改标记 ● + 行,列 + 字数——无文档时「就绪」）；
+//! 右：版本与许可标识。背景色差（title_bar_background）区分主编辑区，
+//! 无 1px 边框。
 
-use gpui::{App, Pixels, px};
+use gpui::{App, Entity, Pixels, px};
 use ui::prelude::*;
 use ui::{Label, LabelSize};
+
+use crate::editor::Editor;
 
 /// 状态栏高度（px）。
 pub const STATUS_BAR_HEIGHT: Pixels = px(24.);
 
-pub fn status_bar(cx: &App) -> impl IntoElement {
+/// 渲染状态栏。`editor`：打开的编辑器实体（`None` = 无文档就绪态）。
+pub fn status_bar(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
+    let left = match editor {
+        Some(ed) => {
+            let ed = ed.read(cx);
+            let modified = if ed.is_modified() { " ●" } else { "" };
+            format!(
+                "{}{modified}  ·  行, 列 {}  ·  {}",
+                ed.display_name(),
+                ed.cursor_label(),
+                ed.char_label()
+            )
+        }
+        None => "就绪 —— 打开 .md 文件开始编辑".to_string(),
+    };
+
     h_flex()
         .id("status-bar")
         .h(STATUS_BAR_HEIGHT)
@@ -21,7 +39,7 @@ pub fn status_bar(cx: &App) -> impl IntoElement {
         .px_3()
         .justify_between()
         .child(
-            Label::new("就绪 —— GPUI 外壳骨架")
+            Label::new(left)
                 .size(LabelSize::XSmall)
                 .color(ui::Color::Muted),
         )

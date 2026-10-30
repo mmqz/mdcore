@@ -47,7 +47,7 @@ khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42
 
 [profile.dev]
 split-debuginfo = "unpacked"
-incremental = true
+incremental = false
 codegen-units = 16
 debug = "limited"
 

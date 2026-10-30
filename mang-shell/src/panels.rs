@@ -1,13 +1,16 @@
 //! 左右面板（#63 Lead：左栏文件树/大纲 260px 可折叠；右侧属性/来源
 //! 280px 可折叠）。
 //!
-//! 骨架面：静态结构占位（文件树两层 / 属性键值行），真实数据接线
-//! （mdcore 引擎文档模型）在后续 PR。面板边框一律背景色差
-//! （Lead：用背景色差代替 1px 边框）。
+//! #68 阶段 1 接线：左栏文件树首组呈现当前打开文档（真实数据），
+//! 磁盘目录树与大纲面板随阶段 2/3 接线；右栏属性面板的文件名/字数
+//! 已联动，其余键值行仍为骨架占位（mdcore 引擎面后续批）。
+//! 面板边框一律背景色差（Lead：用背景色差代替 1px 边框）。
 
-use gpui::{App, Hsla, Pixels, px};
+use gpui::{App, Entity, Hsla, Pixels, px};
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
+
+use crate::editor::Editor;
 
 /// 左栏宽度（px）。
 pub const LEFT_PANEL_WIDTH: Pixels = px(260.);
@@ -18,10 +21,15 @@ const PANEL_PADDING: Pixels = px(12.);
 /// 面板头部下缘留白（px）。
 const HEADER_MARGIN: Pixels = px(8.);
 
-/// 左栏：文件树骨架（静态两层）。
-pub fn left_panel(cx: &App) -> impl IntoElement {
+/// 左栏：文件树（首组 = 当前打开文档；磁盘目录树随阶段 2 接线）。
+pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     let hover = colors.element_hover;
+    let open_docs: Vec<(String, bool)> = match editor {
+        Some(ed) => vec![(ed.read(cx).display_name().to_string(), true)],
+        None => vec![],
+    };
+    let open_docs: Vec<(&str, bool)> = open_docs.iter().map(|(n, a)| (n.as_str(), *a)).collect();
     v_flex()
         .id("left-panel")
         .w(LEFT_PANEL_WIDTH)
@@ -40,15 +48,15 @@ pub fn left_panel(cx: &App) -> impl IntoElement {
         )
         .child(tree_group(
             "tg-docs",
-            "我的文档",
+            "打开的文档",
             true,
-            &[("标书 v3.md", true), ("会议纪要.md", false)],
+            &open_docs,
             hover,
             colors.element_selected,
         ))
         .child(tree_group(
             "tg-import",
-            "导入",
+            "导入（阶段 2 接线）",
             false,
             &[],
             hover,
@@ -56,7 +64,7 @@ pub fn left_panel(cx: &App) -> impl IntoElement {
         ))
         .child(tree_group(
             "tg-export",
-            "导出",
+            "导出（阶段 5 接线）",
             false,
             &[],
             hover,
@@ -64,9 +72,24 @@ pub fn left_panel(cx: &App) -> impl IntoElement {
         ))
 }
 
-/// 右栏：属性 / 来源骨架（静态键值行）。
-pub fn right_panel(cx: &App) -> impl IntoElement {
+/// 右栏：属性 / 来源（文件名/字数联动；其余骨架占位）。
+pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
+    let (name, chars, modified) = match editor {
+        Some(ed) => {
+            let ed = ed.read(cx);
+            (
+                ed.display_name().to_string(),
+                ed.char_label(),
+                if ed.is_modified() {
+                    "已修改（未保存）".to_string()
+                } else {
+                    "无未保存修改".to_string()
+                },
+            )
+        }
+        None => ("—".to_string(), "—".to_string(), "—".to_string()),
+    };
     v_flex()
         .id("right-panel")
         .w(RIGHT_PANEL_WIDTH)
@@ -83,13 +106,13 @@ pub fn right_panel(cx: &App) -> impl IntoElement {
                 .color(ui::Color::Muted)
                 .mb(HEADER_MARGIN),
         )
-        .child(property_row("来源", "本地文件"))
+        .child(property_row("文件", &name))
+        .child(property_row("字数", &chars))
+        .child(property_row("修改状态", &modified))
         .child(property_row("引擎", "mdcore 0.1.0"))
-        .child(property_row("语言", "中文"))
-        .child(property_row("字数", "—"))
-        .child(property_row("修改时间", "—"))
+        .child(property_row("编辑器", "源文本（md）"))
         .child(
-            Label::new("骨架占位——文档属性接线随 mdcore 引擎面引入")
+            Label::new("块级锚定 / 边注 / 证据来源随 #68 阶段 4 接线")
                 .size(LabelSize::XSmall)
                 .color(ui::Color::Hidden),
         )
@@ -100,7 +123,7 @@ fn tree_group(
     id: &'static str,
     name: &'static str,
     expanded: bool,
-    children: &[(&'static str, bool)],
+    children: &[(&str, bool)],
     hover_bg: Hsla,
     selected_bg: Hsla,
 ) -> impl IntoElement {
@@ -150,7 +173,7 @@ fn tree_group(
 }
 
 /// 属性键值行：键（muted）— 值（默认色），两端对齐。
-fn property_row(key: &'static str, value: &'static str) -> impl IntoElement {
+fn property_row(key: &str, value: &str) -> impl IntoElement {
     h_flex()
         .id(SharedString::from(format!("prop-{key}")))
         .w_full()

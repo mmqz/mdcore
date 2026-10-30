@@ -1,24 +1,25 @@
-//! 外壳根视图 —— #63 Lead 布局的组合点。
+//! 外壳根视图 —— #63 Lead 布局的组合点 + #68 阶段 1 编辑区接线。
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────┐
-//! │ 标题栏 36px（自绘：拖拽 + 窗口控制）            │
+//! │ 标题栏 36px（自绘：拖拽 + 窗口控制 + 文档名）    │
 //! ├────┬─────────┬──────────────────┬────────────┤
 //! │图标│ 左栏     │ 编辑区           │ 右栏        │
-//! │条  │ 260px   │ (flex)           │ 280px      │
-//! │52px│ 文件树   │ 空态占位          │ 属性/来源   │
+//! │条  │ 260px   │ Editor / 空态     │ 280px      │
+//! │52px│ 文件树   │ (#68 md 编辑面)  │ 属性/来源   │
 //! ├────┴─────────┴──────────────────┴────────────┤
-//! │ 状态栏 24px                                   │
+//! │ 状态栏 24px（文件 / 修改标记 / 行,列 / 字数）    │
 //! └──────────────────────────────────────────────┘
 //! ```
 //!
-//! 折叠状态是本视图唯一的自持状态（`left_open`/`right_open`）——
-//! 编辑区内容、文件树数据、属性面板数据均后续 PR 接线（mdcore 引擎面）。
+//! 折叠状态（`left_open` / `right_open`）与 `editor`（`Option<Entity<Editor>>`，
+//! 由 main 的 CLI 文档分派构造）是本视图全部自持状态。
 
-use gpui::{Context, Render, Window};
+use gpui::{Context, Entity, Render, Window};
 use ui::prelude::*;
 
 use crate::activity_bar;
+use crate::editor::Editor;
 use crate::panels;
 use crate::status_bar;
 use crate::title_bar;
@@ -26,13 +27,20 @@ use crate::title_bar;
 pub struct ShellApp {
     left_open: bool,
     right_open: bool,
+    editor: Option<Entity<Editor>>,
 }
 
 impl ShellApp {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    /// `editor`：成功打开的文档编辑器（`None` = 空态）。
+    pub fn new(
+        editor: Option<Entity<Editor>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             left_open: true,
             right_open: true,
+            editor,
         }
     }
 
@@ -49,16 +57,27 @@ impl ShellApp {
     }
 }
 
+impl ShellApp {
+    /// 标题栏文案：`mang — 文件名`（无文档仅 `mang`）。
+    fn title_with(&self, cx: &gpui::App) -> String {
+        match &self.editor {
+            Some(ed) => format!("mang — {}", ed.read(cx).display_name()),
+            None => "mang".to_string(),
+        }
+    }
+}
+
 impl Render for ShellApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
+        let title = self.title_with(cx);
         v_flex()
             .id("shell-root")
             .size_full()
             .bg(colors.background)
             .text_color(colors.text)
             .font_family("Noto Sans SC")
-            .child(title_bar::title_bar("mang", cx))
+            .child(title_bar::title_bar(&title, cx))
             .child(
                 h_flex()
                     .id("shell-body")
@@ -69,40 +88,48 @@ impl Render for ShellApp {
                         self.right_open,
                         cx,
                     ))
-                    .when(self.left_open, |el| el.child(panels::left_panel(cx)))
-                    .child(editor_area(cx))
-                    .when(self.right_open, |el| el.child(panels::right_panel(cx))),
+                    .when(self.left_open, |el| {
+                        el.child(panels::left_panel(self.editor.as_ref(), cx))
+                    })
+                    .child(editor_area(self, cx))
+                    .when(self.right_open, |el| {
+                        el.child(panels::right_panel(self.editor.as_ref(), cx))
+                    }),
             )
-            .child(status_bar::status_bar(cx))
+            .child(status_bar::status_bar(self.editor.as_ref(), cx))
     }
 }
 
-/// 编辑区空态占位（Lead：主视图 flex；骨架期无文档接线）。
-fn editor_area(cx: &mut Context<ShellApp>) -> impl IntoElement {
+/// 编辑区：有文档 → `Editor` 实体；无文档 / 打开失败 → 引导空态。
+fn editor_area(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
-    v_flex()
-        .id("editor-area")
-        .flex_1()
-        .min_w_0()
-        .h_full()
-        .bg(colors.background)
-        .items_center()
-        .justify_center()
-        .gap_3()
-        .child(ui::Headline::new("mang").size(ui::HeadlineSize::Large))
-        .child(
-            ui::Label::new("打开或创建文档以开始（骨架——引擎接线随后续 PR）")
+    match &shell.editor {
+        Some(editor) => editor.clone().into_any_element(),
+        None => v_flex()
+            .id("editor-area-empty")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .bg(colors.background)
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(ui::Headline::new("mang").size(ui::HeadlineSize::Large))
+            .child(
+                ui::Label::new(
+                    "打开 .md 文件开始编辑（mang-shell FILE.md）——docx/pdf 渲染随批 2 接线",
+                )
                 .color(ui::Color::Muted),
-        )
+            )
+            .into_any_element(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// 纯状态机面：无需 gpui 上下文即可钉定折叠语义。
     /// （Entity 构造需要 App 上下文，此处以最小桩验证状态翻转逻辑——
-    /// 真值由 Xvfb 烟雾与后续 render 测试背书。）
+    /// 真值由 Xvfb 烟雾与编辑器纯逻辑单测背书。）
     #[test]
     fn toggle_semantics_flip_independently() {
         let mut left = true;
