@@ -11,8 +11,8 @@ path = "src/component.rs"
 test = false
 
 [dependencies]
-collections = { path = "../collections" }
-gpui = { path = "../gpui" }
+collections = { path = "../collections", version = "0.1.0" }
+gpui = { path = "../gpui", default-features = false }
 inventory = "0.3.19"
 parking_lot = "0.12.1"
 strum = { version = "0.28", features = ["derive"] }

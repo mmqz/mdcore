@@ -23,4 +23,4 @@ quote = "1.0.9"
 syn = { version = "2.0", default-features = true, features = ["proc-macro", "full", "extra-traits", "visit-mut"] }
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["inspector"] }
+gpui = { path = "../gpui", default-features = false, features = ["inspector"] }

@@ -43,6 +43,25 @@ for line in ws_deps_sec.splitlines():
             ws_deps[m.group(1)] = ' '.join(m.group(2).split())  # 多行压平成单行
         buf = ''
 
+# 子段形式 `[workspace.dependencies.<name>]`（如 windows —— r39 发现：
+# 此前主段正则在首个 \n\[ 处截断，子段定义全部漏解析，windows 依赖
+# 被注释掉。子段条目序列化为 inline table 形并入 ws_deps）。
+for sub in re.finditer(r'\[workspace\.dependencies\.([a-zA-Z0-9_-]+)\]\n(.*?)(?=\n\[|\Z)', root_src, re.S):
+    name, body = sub.group(1), sub.group(2)
+    fields = []
+    kv_buf = ''
+    for line in body.splitlines():
+        if not line.strip() or line.strip().startswith('#'):
+            continue
+        kv_buf = (kv_buf + ' ' + line.strip()) if kv_buf else line.strip()
+        opens = kv_buf.count('{') + kv_buf.count('[')
+        closes = kv_buf.count('}') + kv_buf.count(']')
+        if opens == closes:
+            fields.append(' '.join(kv_buf.split()))
+            kv_buf = ''
+    if fields:
+        ws_deps[name] = '{ ' + ', '.join(fields) + ' }'
+
 def dep_sections(src):
     normal, targeted = '', ''
     m = re.search(r'\[dependencies\]\n(.*?)(?=\n\[|\Z)', src, re.S)
@@ -63,8 +82,8 @@ def internal_prod_deps(cname, cdir):
     return out
 
 # ---------- 2. 闭包递归 ----------
-def compute_closure(root_crate):
-    seen, queue = {root_crate}, [root_crate]
+def compute_closure(root_crates):
+    seen, queue = set(root_crates), list(root_crates)
     while queue:
         c = queue.pop()
         cdir = f'{ZED}/crates/{internal_ws[c]}'
@@ -73,26 +92,67 @@ def compute_closure(root_crate):
                 seen.add(d); queue.append(d)
     return seen
 
-closure = compute_closure('ui')
+# 闭包根：ui（组件库，PR #65 原根）+ gpui_platform（窗口/平台层，
+# r39 增补——上游已把 OS 后端拆出 gpui 成独立 crate，ui 闭包天然
+# 不含它；真实窗口必需）。多根闭包 = 两者并集。
+closure = compute_closure(['ui', 'gpui_platform'])
 print(f"[闭包] {len(closure)} crates: {sorted(closure)}")
 
 # ---------- 3. 复制 + 改写 ----------
 def rewrite_toml(src, crate_name, dropped):
     """改写单个 crate 的 Cargo.toml。返回改写后文本。"""
     lines = src.splitlines(keepends=True)
-    out, section, i = [], None, 0
+    out, section, i, last_plain_section = [], None, 0, None
     in_lints = False
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
 
-        # 段头跟踪
-        sec_m = re.match(r'^\[([^\]]+)\]\s*$', line)
+        # 段头跟踪（[[bench]] 数组段与 [package] 单段都吃——r39 修正：
+        # 原单括号正则漏配 [[...]] 头，bench/example 段被照抄导致
+        # manifest 解析期「can't find bench」错）
+        sec_m = re.match(r'^\[{1,2}([^\]]+)\]{1,2}\s*$', line)
         if sec_m:
             section = sec_m.group(1)
             in_lints = section == 'lints'
+            # 依赖子段形式 `[...dependencies.<name>]`（body 为 workspace = true
+            # + 可选字段，如 gpui_windows 的 scap——r39 发现）→ 改写为父段头
+            # + _emit_dep 展开的 inline 条目。
+            sub_m = re.match(r'^(dependencies|target\..*\.(build-)?dependencies)\.([a-zA-Z0-9_-]+)$', section)
+            if sub_m:
+                parent, dep_name = sub_m.group(1), sub_m.group(3)
+                # 吃掉子段 body 到下一段
+                i += 1
+                body_lines = []
+                while i < len(lines) and not lines[i].lstrip().startswith('['):
+                    body_lines.append(lines[i]); i += 1
+                extra_fields = []
+                for bl in body_lines:
+                    bls = bl.strip()
+                    if not bls or bls.startswith('#') or bls == 'workspace = true':
+                        continue
+                    extra_fields.append(' '.join(bls.split()))
+                # 不发新段头：行并入当前段（TOML 段体延伸至下一头——
+                # 子段紧邻父段是 Cargo.toml 惯例，此处即父段体的自然延伸）。
+                # 若前一段恰不是父段（罕见），退化为显式父段头（宁冒重复
+                # 段头错也不静默错段）。
+                if last_plain_section != parent:
+                    out.append(f'[{parent}]\n')
+                _emit_dep(out, dep_name, parent, dropped, extra=', '.join(extra_fields) or None)
+                continue
+            last_plain_section = section
             if in_lints and stripped == '':
                 pass
+            if section in ('bench', 'example', 'test'):
+                # [[bench]]/[[example]]/[[test]] 段整体删除——对应目录
+                # （benches/examples/tests）在搬运面已排除，无 path 的
+                # target 声明会在 manifest 解析期报「can't find ... bench」
+                # （r39 发现：gpui_platform/gpui_wgpu 的 bench 段）。
+                i += 1
+                while i < len(lines) and not lines[i].lstrip().startswith('['):
+                    i += 1
+                out.append('# [[bench]]/[[example]]/[[test]] 段移植时删除：对应目录不在搬运面\n')
+                continue
             if section == 'lints':
                 # 跳过 [lints] 段整个（直到下一段）
                 i += 1
@@ -156,34 +216,37 @@ def rewrite_toml(src, crate_name, dropped):
         out.append(line); i += 1; continue
     return ''.join(out)
 
+def _parse_dep_def(d):
+    """解析单条依赖定义（版本号串或 inline table 文本）为 dict。"""
+    d = d.strip()
+    if d.startswith('"') or d.startswith('=') or re.match(r'^[\d]', d):
+        return {'version': d}
+    d = d.strip('{}')
+    pairs, buf, depth = [], '', 0
+    for ch in d:
+        if ch in '[{': depth += 1
+        if ch in ']}': depth -= 1
+        if ch == ',' and depth == 0:
+            if buf.strip(): pairs.append(buf.strip())
+            buf = ''
+        else: buf += ch
+    if buf.strip(): pairs.append(buf.strip())
+    out = {}
+    for p in pairs:
+        k, _, v = p.partition('=')
+        out[k.strip()] = v.strip()
+    return out
+
 def _merge_inline(base_def, extra):
     """合并根表定义与 crate 处 extra 声明（features 拼接去重，其余 extra 覆盖）。"""
-    import re as _re
     def parse(d):
-        d = d.strip()
-        if d.startswith('"') or d.startswith('=') or _re.match(r'^[\d]', d):
-            return {'version': d}
-        d = d.strip('{}')
-        pairs, buf, depth = [], '', 0
-        for ch in d:
-            if ch in '[{': depth += 1
-            if ch in ']}': depth -= 1
-            if ch == ',' and depth == 0:
-                if buf.strip(): pairs.append(buf.strip())
-                buf = ''
-            else: buf += ch
-        if buf.strip(): pairs.append(buf.strip())
-        out = {}
-        for p in pairs:
-            k, _, v = p.partition('=')
-            out[k.strip()] = v.strip()
-        return out
+        return _parse_dep_def(d)
     b, e = parse(base_def), parse(extra) if extra else {}
     merged = dict(b)
     for k, v in e.items():
         if k == 'features' and 'features' in merged:
-            fa = _re.findall(r'"[^"]*"', merged['features'])
-            fb = _re.findall(r'"[^"]*"', v)
+            fa = re.findall(r'"[^"]*"', merged['features'])
+            fb = re.findall(r'"[^"]*"', v)
             seen = [x.strip('"') for x in fa]
             for x in fb:
                 if x.strip('"') not in seen: seen.append(x.strip('"'))
@@ -198,11 +261,17 @@ def _emit_dep(out, dep, section, dropped, extra):
     """输出一条依赖改写结果。"""
     is_dev = section == 'dev-dependencies' or (section and section.endswith('.dev-dependencies'))
     if dep in closure:
-        # 内部 → path
-        body = f'{{ path = "../{dep}"'
-        if extra: body += f', {extra}'
-        body += ' }'
-        out.append(f'{dep} = {body}\n')
+        # 内部 → path。根表若带除 path 外的字段（如 gpui_linux 的
+        # default-features = false），与 crate 处 extra 一起合并保真
+        # ——r39 增补（此前根表字段被丢弃，闭包内依赖静默吃默认 features）。
+        base = {}
+        if dep in ws_deps:
+            base = _parse_dep_def(ws_deps[dep])
+        merged = dict(base)
+        if extra:
+            merged.update(_parse_dep_def('{' + extra + '}'))
+        merged['path'] = f'"../{dep}"'
+        out.append(f'{dep} = {{ ' + ', '.join(f'{k} = {v}' for k, v in merged.items()) + ' }\n')
     elif dep in internal_ws:
         # 闭包外内部 crate：dev 面删除，生产面报错（不该出现）
         if is_dev:
@@ -222,8 +291,11 @@ def copy_crate(name):
     src_dir = f'{ZED}/crates/{internal_ws[name]}'
     dst_dir = f'{LAB}/third_party/zed/crates/{name}'
     if os.path.exists(dst_dir): shutil.rmtree(dst_dir)
-    # 全量复制（排除 tests/examples/benches/target/docs 等非构建面）
-    EXCLUDE = {'tests', 'examples', 'benches', 'target', 'docs', '.cargo_vcs_info.json', 'Cargo.lock'}
+    # 全量复制（排除 tests/examples/benches/target/docs 等非构建面；
+    # derive_refineable = 上游 refineable 源目录内嵌的同名子 crate，
+    # 闭包已平级搬运到 crates/derive_refineable，内嵌副本不随行——
+    # r38/e2514ae 手工去重后在此固化）
+    EXCLUDE = {'tests', 'examples', 'benches', 'target', 'docs', '.cargo_vcs_info.json', 'Cargo.lock', 'derive_refineable'}
     shutil.copytree(src_dir, dst_dir, ignore=shutil.ignore_patterns(*EXCLUDE))
     # 改写 Cargo.toml
     dropped = []

@@ -42,6 +42,25 @@
 合计 **157,342 LOC**（GPL 系 37,312 / Apache 系 120,030）。
 每个 crate 目录内保留上游原版 `LICENSE-*` 文件；`tests/`、`examples/`、`benches/`、`docs/` 目录未搬运（构建面外，dev-deps 闭包外依赖已从 Cargo.toml 删除并留 `# [port]` 注释）。
 
+## 增补搬运（r39 · gpui_platform 窗口层闭包 · 8 crate）
+
+> 背景：上游已把 OS 后端从 gpui 拆出为独立 crate 链（gpui_platform → gpui_linux/gpui_wgpu/…），
+> ui 闭包天然不含它们——仅有组件库而开不了真实窗口。增补闭包根 = `gpui_platform`（与 ui 并集）。
+
+| 来源路径 | 本地路径 | 许可 | LOC | 改动说明 |
+|---|---|---|---:|---|
+| crates/gpui_platform/ | third_party/zed/crates/gpui_platform/ | Apache-2.0 | 259 | 仅 Cargo.toml：按下方改写规则（各 OS 门控的后端选择器门面） |
+| crates/gpui_linux/ | third_party/zed/crates/gpui_linux/ | Apache-2.0 | 17,357 | 仅 Cargo.toml 同上（wayland+x11 双后端；xim 为上游 git 钉 rev 依赖照抄） |
+| crates/gpui_wgpu/ | third_party/zed/crates/gpui_wgpu/ | Apache-2.0 | 6,213 | 仅 Cargo.toml 同上（wgpu 渲染器 + cosmic-text/swash 文本面 + font-kit） |
+| crates/gpui_macos/ | third_party/zed/crates/gpui_macos/ | Apache-2.0 | 9,802 | 仅 Cargo.toml 同上（Linux 主机上 cfg 门控不参与编译，仅为闭包完整性与后续跨平台验证面） |
+| crates/gpui_windows/ | third_party/zed/crates/gpui_windows/ | Apache-2.0 | 13,450 | 仅 Cargo.toml 同上（同上 cfg 门控） |
+| crates/gpui_ios/ | third_party/zed/crates/gpui_ios/ | Apache-2.0 | 3,583 | 仅 Cargo.toml 同上 |
+| crates/gpui_web/ | third_party/zed/crates/gpui_web/ | Apache-2.0 | 7,017 | 仅 Cargo.toml 同上（wasm32 面） |
+| crates/gpui_apple/ | third_party/zed/crates/gpui_apple/ | Apache-2.0 | 4,483 | 仅 Cargo.toml 同上（gpui_macos/gpui_ios 共享底座，build.rs 随行搬运） |
+
+增补合计 **62,164 LOC**（全部 Apache-2.0，零 GPL 增量）。
+当前总闭包 **29 crate / 219,506 LOC**。
+
 ## Cargo.toml 改写规则（全部由 `scripts/zed_port.py` 自动完成）
 
 1. `[package]`：`version/edition/publish/rust-version` 的 `.workspace = true` → 显式值（`0.1.0` / `2024` / `false` / `1.86`）；元数据继承行（description/authors 等）删除
@@ -49,6 +68,10 @@
 3. 内部依赖（闭包内 21 crate）→ `{ path = "../<crate>", ... }`（features 保留）
 4. 外部依赖 → 从 Zed 根 `workspace.dependencies` 展开为显式定义（版本/features/default-features/optional 与上游解析结果一致；crate 处附加属性如 `optional = true` 与根表定义合并，features 拼接去重）
 5. workspace 根（third_party/zed/Cargo.toml）：members + dev profile（上游 dev/build-override/proc-macro opt-level=3）+ release profile + `[patch.crates-io]` 中处于本闭包依赖图内的 4 条（async-task/calloop/cpal/khronos-egl——上游为修上游 bug 的钉 rev，照抄保证行为一致；scap/wasm_thread 等由外部依赖的 git 引用自带）
+6. （r39）`[[bench]]`/`[[example]]`/`[[test]]` target 段整体删除——对应目录本就不在搬运面，且无显式 path 的 target 声明在 manifest 解析期即报错（gpui_platform/gpui_wgpu 实测）；带显式 path 的（gpui 24 个 example）一并删除保持口径一致
+7. （r39）依赖子段形式 `[<section>.<name>]`（body 为 `workspace = true` + 可选字段，如 gpui_windows 的 scap）→ 转写为父段内 inline 条目
+8. （r39）闭包内 path 依赖保留 Zed 根表附加字段（如 `gpui = { path, default-features = false }`）——此前根表字段被丢弃导致依赖静默吃默认 features，与上游语义不一致
+9. （r39）Zed 根表子段形式 `[workspace.dependencies.windows]`（TOML 子表而非 inline）解析并入展开源——此前该形态全部漏解析（windows 依赖被注释）
 
 **源码（.rs/build.rs）零修改**——与上游同 commit diff 仅在 Cargo.toml 与目录布局，上游升级可重放。
 
@@ -65,7 +88,11 @@
 
 **为何不用 crates.io gpui 0.2.2**：crates.io 版停留在 2025-10-22 快照，Zed 仓内 gpui 同号 0.2.2 但持续开发至今（2026-10-29 当日仍有提交）——ui/theme 针对仓内版编写，对一年前的发布版编译必然大面积漂移。物理搬运锁定自洽快照是唯一可行路径。
 
-## 编译证据（2026-10-29 沙箱实测）
+**为何 r39 增补平台层**：上游 2025 下半年把 OS 后端（窗口/事件循环/渲染器/文本系统）从 gpui crate 拆出为 gpui_platform → gpui_linux/gpui_wgpu/… 独立 crate 链。ui 闭包（PR #65）因此只有组件库无窗口能力——`Application::new()` 在上游现属 `gpui_platform::application()`。mang-shell 外壳（#63 Lead 布局要求：自绘标题栏/图标条/三栏/状态栏）需要真实窗口，必须补搬平台层。闭包计算自动收敛：gpui_platform 根新增 8 crate（含非 Linux 后端，保持全闭包口径与后续跨平台验证面），零源码修改口径不变。
+
+## 编译证据
+
+### 2026-10-29（PR #65 · ui 闭包 21 crate）
 
 ```
 $ cd third_party/zed && cargo build          # 独立 workspace
@@ -74,7 +101,20 @@ $ cd third_party/zed && cargo build -p gpui  # 最重一环单独复验
     Finished `dev` profile target(s) in 1m 55s
 ```
 
-系统依赖（Linux）：libX11/libxcb/libxkbcommon/libwayland-client/libvulkan 运行时库（链接面）+ Vulkan 走 loader 动态加载。工具链：rustc 1.99.0（与主仓 rust-toolchain.toml 同源）。
+### 2026-10-30（r39 · 增补 gpui_platform 闭包后 29 crate）
+
+```
+$ cd third_party/zed && cargo check --workspace
+    Finished `dev` profile target(s) in 1m 56s   # 29/29 crates 零 error
+$ cd third_party/zed && cargo check -p gpui_platform --features wayland,x11,font-kit
+    Finished `dev` profile target(s) in 34.02s   # Linux 真实后端全量编译
+                                                   # （x11rb/xkbcommon/wayland 栈/accesskit/
+                                                   #  gpui_wgpu 渲染器 wgpu+cosmic-text+font-kit）
+                                                   # 仅 gpui_linux 2 条 check-cfg 噪声警告
+                                                   # （上游 cfg(nightly_coverage) 词条，非错误）
+```
+
+系统依赖（Linux）：libX11/libxcb/libxkbcommon/libxkbcommon-x11/libwayland-client/libvulkan 运行时库 + fontconfig/freetype 开发面；Vulkan 走 loader 动态加载（wgpu/ash 自带头文件）。工具链：rustc 1.99.0（与主仓同源）。沙箱无 root 环境 libxkbcommon 开发面缺失时，可用 deb 解包用户态 sysroot + `PKG_CONFIG_PATH`/`RUSTFLAGS="-L …"` 过链接门（不影响仓内产物）。
 
 ## 与主仓的关系
 

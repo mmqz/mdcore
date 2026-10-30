@@ -16,8 +16,8 @@ doctest = false
 
 [dependencies]
 anyhow = "1.0.86"
-collections = { path = "../collections" }
-gpui = { path = "../gpui" }
+collections = { path = "../collections", version = "0.1.0" }
+gpui = { path = "../gpui", default-features = false }
 syntax_theme = { path = "../syntax_theme" }
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
@@ -31,4 +31,4 @@ thiserror = "2.0.12"
 uuid = { version = "1.1", features = ["serde"] }
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { path = "../gpui", default-features = false, features = ["test-support"] }

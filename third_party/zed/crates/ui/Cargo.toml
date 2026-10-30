@@ -14,7 +14,7 @@ path = "src/ui.rs"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 component = { path = "../component" }
 documented = "0.10"
-gpui = { path = "../gpui" }
+gpui = { path = "../gpui", default-features = false }
 gpui_macros = { path = "../gpui_macros" }
 icons = { path = "../icons" }
 itertools = "0.14.0"
@@ -30,7 +30,7 @@ web-time = "1.1.0"
 gpui_util = { path = "../gpui_util" }
 
 [dev-dependencies]
-gpui = { path = "../gpui", features = ["test-support"] }
+gpui = { path = "../gpui", default-features = false, features = ["test-support"] }
 # [port] dev-dep settings 在闭包外，删除
 # [port] dev-dep theme_settings 在闭包外，删除
 
