@@ -210,8 +210,8 @@ pub fn drag_head(buffer: &Buffer, kind: ClickKind, anchor: Point, target: Point)
     match kind {
         ClickKind::Single => target,
         ClickKind::Double => {
-            let line = buffer.line(target.line);
-            match word_range_at(line, target.col) {
+            let line = buffer.line(target.line); // r42：String（行文本即时取）
+            match word_range_at(&line, target.col) {
                 Some(r) => {
                     let word_end = Point::new(target.line, r.end);
                     let word_start = Point::new(target.line, r.start);
