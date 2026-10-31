@@ -67,6 +67,25 @@ pub fn load_indent_unit() -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// G4：面板宽度读写（`panel_widths` 键：`{"left": px, "right": px}`
+/// 对象——拖拽热区收尾时落盘；消费方钳制到面板拖拽域）。
+pub fn save_panel_widths(left: f32, right: f32) {
+    if let Some(dir) = config_dir() {
+        let mut value = load_from(&dir);
+        value["panel_widths"] = serde_json::json!({ "left": left, "right": right });
+        save_to(&dir, &value);
+    }
+}
+
+pub fn load_panel_widths() -> Option<(f32, f32)> {
+    let dir = config_dir()?;
+    let value = load_from(&dir);
+    let widths = value.get("panel_widths")?;
+    let left = widths.get("left")?.as_f64()? as f32;
+    let right = widths.get("right")?.as_f64()? as f32;
+    Some((left, right))
+}
+
 /// 记住工作区（`workspace` 键——路径以 lossy 写入，非 UTF-8 路径的
 /// 记忆为近似值[边界登记]）。
 pub fn remember_workspace(root: &Path) {
@@ -237,7 +256,6 @@ mod tests {
     }
 
     /// G3：缩进单位键往返 + 与既有键共存。
-    /// G3：缩进单位键往返 + 与既有键共存。
     ///
     /// 注：`save_indent_unit`/`load_indent_unit` 走全局 `config_dir()`，
     /// 测试并行时互相污染（各用例写同一文件）。此处测底层
@@ -252,6 +270,37 @@ mod tests {
             save_to(&dir, &value);
             let back = load_from(&dir);
             assert_eq!(back["indent_unit"].as_str(), Some(key), "键值往返 {key}");
+        }
+        let value = load_from(&dir);
+        assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// G4：面板宽度键往返 + 与既有键共存（含覆盖写）。
+    ///
+    /// 注：与 `indent_unit_roundtrip` 同理——`save_panel_widths`/
+    /// `load_panel_widths` 走全局 `config_dir()`，并行测试互相污染；
+    /// 此处测底层 `save_to`/`load_from` 的 `panel_widths` 键往返语义
+    ///（与生产同路径，无全局态）。
+    #[test]
+    fn panel_widths_roundtrip() {
+        let dir = temp_config("g4");
+        remember_workspace_in(&dir, Path::new("/ws"));
+        for (left, right) in [(300., 340.), (500., 600.)] {
+            let mut value = load_from(&dir);
+            value["panel_widths"] = serde_json::json!({ "left": left, "right": right });
+            save_to(&dir, &value);
+            let back = load_from(&dir);
+            assert_eq!(
+                back["panel_widths"]["left"].as_f64(),
+                Some(left),
+                "左宽往返"
+            );
+            assert_eq!(
+                back["panel_widths"]["right"].as_f64(),
+                Some(right),
+                "右宽往返（第二轮即覆盖写生效）"
+            );
         }
         let value = load_from(&dir);
         assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");

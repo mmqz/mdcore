@@ -114,6 +114,10 @@ fn main() {
     // 选 3 行 → Tab 缩进 → Shift+Tab 反缩进 → Ctrl+Z×2 连撤——断言
     // indent:/outdent: 证据行 + quit reached）。
     let smoke_indent = args.iter().any(|a| a == "--smoke-indent");
+    // G4：面板拖拽烟雾（--smoke-panel-resize——合成鼠标经完整派发管线：
+    // 左栏手柄拖宽 +40 → 右栏手柄拖宽 +60 → 断言 panel-resize: persist
+    // 证据行 + settings.json 落盘 + quit）。
+    let smoke_panel_resize = args.iter().any(|a| a == "--smoke-panel-resize");
     // F6：主题循环烟雾（--smoke-theme-cycle——3.5s 合成 Ctrl+T；
     // 断言 theme: 证据行 + settings.json theme 键 + 全窗重绘不崩）。
     let smoke_theme_cycle = args.iter().any(|a| a == "--smoke-theme-cycle");
@@ -487,6 +491,17 @@ fn main() {
                 .detach();
             }
 
+            // G4：面板拖拽烟雾（--smoke-panel-resize——合成鼠标事件）。
+            if smoke_panel_resize {
+                // WindowHandle 实现 Copy——直传免 clone（clippy::clone_on_copy；
+                // 既有 spawn 块的 .clone() 形态为 main 基线遗留，不在本 PR 清理）。
+                let handle = window_handle;
+                cx.spawn(async move |cx| {
+                    run_panel_resize_script(&handle, cx).await;
+                })
+                .detach();
+            }
+
             if let Some(sec) = smoke_sec {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -620,6 +635,86 @@ async fn dispatch_key_mods(
     if let Err(err) = &result {
         eprintln!("dispatch_key_mods({key}): update_window 失败: {err}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// G4：面板拖拽烟雾脚本（--smoke-panel-resize）
+// ---------------------------------------------------------------------------
+
+/// 合成鼠标事件驱动面板 resize 手柄（与真实事件同派发路径——hitbox
+/// 路由 + drag 会话）。
+///
+/// 坐标（1280×800 烟雾窗；左栏手柄 x∈[312,316]（图标条 52 + 左栏 260），
+/// 右栏手柄 x∈[996,1000]（右栏 280 + 手柄 4——编辑区 flex 自适应））：
+///
+/// 1. 左手柄 (314, 400) 按下 → 拖到 (354, 400)（+40 → 左栏 260→300）
+/// 2. 右手柄 (998, 300) 按下 → 拖到 (938, 300)（-60 → 右栏 280→340）
+///
+/// 每侧首步 move 激活 drag 会话（on_drag 构造），后续步进 drag_move
+/// ——与鼠标烟雾同坑位口径。
+async fn run_panel_resize_script(
+    window: &gpui::WindowHandle<shell::ShellApp>,
+    cx: &mut gpui::AsyncApp,
+) {
+    use gpui::{
+        Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point,
+        px,
+    };
+
+    let down = |x: f32, y: f32| {
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(x), px(y)),
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        })
+    };
+    let move_to = |x: f32, y: f32| {
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(x), px(y)),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        })
+    };
+    let up_at = |x: f32, y: f32| {
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: point(px(x), px(y)),
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        })
+    };
+
+    async fn step(
+        window: &gpui::WindowHandle<shell::ShellApp>,
+        cx: &mut gpui::AsyncApp,
+        delay_ms: u64,
+        ev: PlatformInput,
+    ) {
+        cx.background_executor()
+            .timer(Duration::from_millis(delay_ms))
+            .await;
+        // #89 坑3：不能经 window.update 派发（包住 ShellApp 实体更新
+        // ——鼠标事件再触发 shell 监听器即重入 panic，面板手柄实测）。
+        // update_window 拿 AnyView 闭包——与 dispatch_key 同口径。
+        let any_handle: gpui::AnyWindowHandle = (*window).into();
+        let _ = cx.update_window(any_handle, |_, window, cx| {
+            window.dispatch_event(ev, cx);
+        });
+    }
+
+    // ① 左栏手柄：down → 激活 → 步进 → up（宽 260 → 300）
+    step(window, cx, 3500, down(314., 400.)).await;
+    step(window, cx, 120, move_to(330., 400.)).await; // 首步：激活 drag 会话
+    step(window, cx, 120, move_to(354., 400.)).await; // 步进：+40
+    step(window, cx, 300, up_at(354., 400.)).await; // 收尾：persist + 证据行
+    // ② 右栏手柄：down → 激活 → 步进 → up（宽 280 → 340）
+    step(window, cx, 900, down(998., 300.)).await;
+    step(window, cx, 120, move_to(968., 300.)).await;
+    step(window, cx, 120, move_to(938., 300.)).await; // 步进：-60
+    step(window, cx, 300, up_at(938., 300.)).await;
+    eprintln!("panel-resize-smoke: script done (left +40 / right +60)");
 }
 
 // ---------------------------------------------------------------------------
