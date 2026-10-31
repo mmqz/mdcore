@@ -19,7 +19,7 @@
 //! `workspace`（`Option<Entity<FileTree>>`，Ctrl+K Ctrl+O 打开文件夹）——
 //! 记忆落盘随 settings（重启恢复）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gpui::{Context, Entity, FocusHandle, KeyDownEvent, PathPromptOptions, Render, Window};
@@ -30,6 +30,7 @@ use crate::document::{self, OpenOutcome};
 use crate::editor::Editor;
 use crate::file_tree::FileTree;
 use crate::panels;
+use crate::recent::RecentStore;
 use crate::status_bar;
 use crate::tab_bar::{self, TabItem};
 use crate::title_bar;
@@ -78,6 +79,8 @@ pub struct ShellApp {
     /// shell 根焦点域（空态回退——无标签时键事件仍走 root→shell 根
     /// 冒泡路径；无此前提派发路径止于合成根节点，shell 级键位全聋）。
     root_focus: FocusHandle,
+    /// F5：最近打开（文件 20 / 工作区 10——空态引导页呈现 + 写穿透落盘）。
+    recent: RecentStore,
     /// F1：提示横幅（打开失败 / 类型不支持 / 对话框不可用等面向用户消息）。
     notice_board: NoticeBoard,
 }
@@ -166,6 +169,19 @@ impl ShellApp {
         // 关闭 + 弹确认框；确认后保存/放弃再 cx.quit。
         let confirm_focus = cx.focus_handle();
         let root_focus = cx.focus_handle();
+        // F5：最近打开记忆（空态引导页数据源）。CLI 启动文件不走
+        // open_document（main 直构）——此处补记。
+        let mut recent = RecentStore::load();
+        for tab in &tabs {
+            recent.record_file(&tab.path);
+        }
+        if !recent.recent_files().is_empty() || !recent.recent_workspaces().is_empty() {
+            eprintln!(
+                "recent: {} 文件 / {} 工作区",
+                recent.recent_files().len(),
+                recent.recent_workspaces().len()
+            );
+        }
         let root_focus_for_init = root_focus.clone();
         {
             let shell = cx.entity().clone();
@@ -207,11 +223,12 @@ impl ShellApp {
             confirm: None,
             confirm_focus,
             root_focus,
+            recent,
             notice_board: NoticeBoard::default(),
         };
         // 初始焦点：有文档 → 编辑器（键入/编辑即时可用）；空态 →
         // shell 根域（Ctrl+O 等空态键位经 root→shell 根路径可达——
-        /// 无焦点时派发路径止于合成根节点，shell 监听器不触发）。
+        // 无焦点时派发路径止于合成根节点，shell 监听器不触发）。
         match this.editor() {
             Some(tab) => {
                 let focus = tab.read(cx).focus_handle().clone();
@@ -260,6 +277,7 @@ impl ShellApp {
                 });
                 self.active = self.tabs.len() - 1;
                 self.notice_board.clear();
+                self.recent.record_file(&path);
                 eprintln!(
                     "tabs: open → {} 开（active {}）",
                     self.tabs.len(),
@@ -485,6 +503,7 @@ impl ShellApp {
         let tree = cx.new(|_| FileTree::new(root.clone(), shell));
         self.workspace = Some(tree);
         crate::settings::remember_workspace(&root);
+        self.recent.record_workspace(&root);
         cx.notify();
     }
 
@@ -829,29 +848,146 @@ fn notice_bar(message: &str, colors: &theme::ThemeColors) -> impl IntoElement {
         )
 }
 
-/// 编辑区：当前标签的 `Editor` 实体；无标签 → 引导空态。
+/// 编辑区：当前标签的 `Editor` 实体；无标签 → 引导空态 + 最近打开
+/// 列表（F5——文件点击打开 / 工作区点击打开；已删除文件置灰不可点，
+/// 点击提示「文件不存在」）。
 fn editor_area(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     match shell.editor() {
         Some(editor) => editor.clone().into_any_element(),
-        None => v_flex()
-            .id("editor-area-empty")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .bg(colors.background)
-            .items_center()
-            .justify_center()
-            .gap_3()
-            .child(ui::Headline::new("mang").size(ui::HeadlineSize::Large))
-            .child(
-                ui::Label::new(
-                    "打开 .md 可编辑；.docx/.pdf 只读渲染——Ctrl+O 打开文件 / Ctrl+K Ctrl+O 打开文件夹（多标签已接线：Ctrl+Tab 切换）",
+        None => {
+            // F5：最近列表数据（文件至多 8 / 工作区至多 3 展示面——
+            // 记忆上限仍为 20/10，展示截断防长列表挤爆空态页）。
+            let recent_files: Vec<PathBuf> = shell
+                .recent
+                .recent_files()
+                .iter()
+                .take(8)
+                .cloned()
+                .collect();
+            let recent_workspaces: Vec<PathBuf> = shell
+                .recent
+                .recent_workspaces()
+                .iter()
+                .take(3)
+                .cloned()
+                .collect();
+            let hover = colors.element_hover;
+            v_flex()
+                .id("editor-area-empty")
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .bg(colors.background)
+                .items_center()
+                .justify_center()
+                .gap_3()
+                .child(ui::Headline::new("mang").size(ui::HeadlineSize::Large))
+                .child(
+                    ui::Label::new(
+                        "打开 .md 可编辑；.docx/.pdf 只读渲染——Ctrl+O 打开文件 / Ctrl+K Ctrl+O 打开文件夹（多标签已接线：Ctrl+Tab 切换）",
+                    )
+                    .color(ui::Color::Muted),
                 )
-                .color(ui::Color::Muted),
-            )
-            .into_any_element(),
+                .when(!recent_files.is_empty() || !recent_workspaces.is_empty(), |el| {
+                    el.child(
+                        v_flex()
+                            .id("recent-list")
+                            .gap_1()
+                            .mt_4()
+                            .w(px(420.))
+                            .child(
+                                ui::Label::new("最近打开")
+                                    .size(ui::LabelSize::Small)
+                                    .color(ui::Color::Muted),
+                            )
+                            .children(recent_files.iter().map(|path| {
+                                recent_row(path, false, hover, cx)
+                            }))
+                            .when(!recent_workspaces.is_empty(), |el| {
+                                el.child(
+                                    ui::Label::new("最近的工作区")
+                                        .size(ui::LabelSize::Small)
+                                        .color(ui::Color::Muted)
+                                        .mt_2(),
+                                )
+                                .children(recent_workspaces.iter().map(|path| {
+                                    recent_row(path, true, hover, cx)
+                                }))
+                            }),
+                    )
+                })
+                .into_any_element()
+        }
     }
+}
+
+/// F5：最近列表行（文件/工作区）。已删除 → 置灰（Hidden 色 + 不可点
+/// hover），点击仍给「不存在」提示（可感知而非无反应）。
+fn recent_row(
+    path: &Path,
+    is_workspace: bool,
+    hover: gpui::Hsla,
+    cx: &mut Context<ShellApp>,
+) -> gpui::AnyElement {
+    let exists = path.exists();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let detail = path.display().to_string();
+    let path_for_click = path.to_path_buf();
+
+    h_flex()
+        .id(gpui::SharedString::from(format!("recent-{detail}")))
+        .w_full()
+        .px_2()
+        .py_1()
+        .gap_2()
+        .items_center()
+        .rounded_sm()
+        .when(exists, move |el| el.hover(move |el| el.bg(hover)))
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(move |this, _, window, cx| {
+                if is_workspace {
+                    this.open_workspace(path_for_click.clone(), cx);
+                } else if path_for_click.exists() {
+                    this.open_document(path_for_click.clone(), window, cx);
+                } else {
+                    let message = format!("文件不存在：{}", path_for_click.display());
+                    this.show_notice(message, window, cx);
+                }
+            }),
+        )
+        .child(
+            ui::Icon::new(if is_workspace {
+                ui::IconName::Folder
+            } else {
+                ui::IconName::File
+            })
+            .size(ui::IconSize::XSmall)
+            .color(if exists {
+                ui::Color::Muted
+            } else {
+                ui::Color::Hidden
+            }),
+        )
+        .child(
+            ui::Label::new(name)
+                .size(ui::LabelSize::Small)
+                .color(if exists {
+                    ui::Color::Default
+                } else {
+                    ui::Color::Hidden
+                }),
+        )
+        .child(
+            ui::Label::new(detail)
+                .size(ui::LabelSize::XSmall)
+                .color(ui::Color::Hidden),
+        )
+        .into_any_element()
 }
 
 //-----------------------------------------------------------------------

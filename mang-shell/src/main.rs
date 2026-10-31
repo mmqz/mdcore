@@ -44,6 +44,7 @@ mod document;
 mod editor;
 mod file_tree;
 mod panels;
+mod recent;
 mod settings;
 mod shell;
 mod status_bar;

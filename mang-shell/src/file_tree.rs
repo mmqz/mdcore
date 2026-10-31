@@ -305,7 +305,7 @@ impl FileTree {
                         cx.notify();
                     } else {
                         let shell = this.shell.clone();
-                        shell.update_in(cx, |shell, window, cx| {
+                        let _ = shell.update_in(cx, |shell, window, cx| {
                             shell.open_document(path.clone(), window, cx);
                         });
                     }
