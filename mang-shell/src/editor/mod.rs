@@ -50,6 +50,7 @@ pub mod buffer;
 pub mod commands;
 pub mod display_map; // r42 阶段 B（#68）：buffer <-> 显示行列映射（软换行 + 折叠）
 pub mod docx_doc;
+pub mod docx_edit_bridge; // #115：docx 可编辑化——Buffer ↔ DocxEditor 可逆映射
 pub mod find_bar;
 pub mod highlight;
 pub mod mouse;
@@ -82,7 +83,8 @@ use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
 use buffer::{Buffer, IndentUnit, Point};
-use docx_doc::{DocxPayload, DocxProps, HeadingEntry};
+use docx_doc::{DocxPayload, DocxProps, EditablePayload, HeadingEntry};
+use docx_edit_bridge::{DocxEditing, LineBlock, Writeback};
 use find_bar::{FindKeyOutcome, FindState};
 use highlight::TokenKind;
 use pdf_doc::{PdfPayload, PdfProps};
@@ -156,6 +158,12 @@ fn goto_hint(input: &str, line_count: usize) -> String {
         return format!("越界 → 跳到末行（第 {line_count} 行）");
     }
     format!("Enter 跳到第 {requested} 行")
+}
+
+/// #115：引擎落账（独立函数——把 `dyn DocxPort::save` 的返回类型在这里
+/// 定死，绕开 `!Never` 推断）。
+fn docx_bytes(port: &dyn docx_edit_bridge::DocxPort) -> Result<Vec<u8>, String> {
+    port.save()
 }
 
 /// 拖选跟随视图（`on_drag` 契约需要一个 Render 实体——空渲染不可见）。
@@ -287,6 +295,13 @@ pub struct Editor {
     indent_unit: IndentUnit,
     /// docx 转换产物（行模型 + 标题树 + 属性；`None` = 非 docx 态）。
     docx: Option<DocxPayload>,
+    /// #115：docx 可编辑面（映射桥 + 引擎窄面；`None` = 只读 docx /
+    /// 非 docx 态）。缓冲区侧挂的是它的**句柄**（`Rc<RefCell<..>>`，唯一
+    /// 可变通路）：Buffer 每次变更 → 钩子重排行归属并当场回写引擎待落账
+    /// 层；保存只把已落账的字节落盘。
+    docx_edit: Option<Rc<RefCell<DocxEditing>>>,
+    /// #115：最近一次回写计划（状态栏/属性面板/RPC 诊断）。
+    docx_last_plan: Option<Writeback>,
     /// pdf 转换产物（批 4：行模型 + 书签树 + 页表；`None` = 非 pdf 态）。
     pdf: Option<PdfPayload>,
     /// xlsx 转换产物（G6：行模型 + 工作表树 + 属性；`None` = 非 xlsx 态）。
@@ -350,6 +365,8 @@ impl Editor {
             mouse_log: false,
             read_only,
             docx: None,
+            docx_edit: None,
+            docx_last_plan: None,
             pdf: None,
             xlsx: None,
         };
@@ -399,9 +416,77 @@ impl Editor {
             mouse_log: false,
             read_only: true,
             docx: Some(payload),
+            docx_edit: None,
+            docx_last_plan: None,
             pdf: None,
             xlsx: None,
         };
+        this.refresh_caches();
+        this
+    }
+
+    /// #115：打开 **可编辑** docx——行模型喂 Buffer（管线原样复用），
+    /// 编辑桥挂到 buffer 作 `EditHook`（锁定行门禁 + 行归属重排），引擎
+    /// 窄面留 `docx_edit` 供保存落账。
+    ///
+    /// 降级（`payload.bridge = None`：超门限 / 引擎严格门拒 / 段落序
+    /// 对账失败）→ 走 [`Self::new_docx`] 只读态，原因进 `docx.notice`
+    /// （状态栏 + 属性面板 + 启动日志三处呈现）。
+    pub fn new_docx_editable(path: PathBuf, item: EditablePayload, cx: &mut Context<Self>) -> Self {
+        let EditablePayload {
+            payload,
+            bridge,
+            port,
+        } = item;
+        let Some((bridge, port)) = bridge.zip(port) else {
+            // 降级只读：行模型照常渲染（payload.notice 已在 payload 里）。
+            return Self::new_docx(path, payload, cx);
+        };
+        let buffer = Buffer::from_plain_text(&payload.text);
+        let display_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名".to_string());
+        let line_count = buffer.line_count();
+        let mut this = Self {
+            buffer,
+            file_path: Some(path),
+            display_name: SharedString::from(display_name),
+            font_size: DEFAULT_FONT_SIZE,
+            indent_unit: IndentUnit::from_setting(
+                crate::settings::load_indent_unit()
+                    .as_deref()
+                    .unwrap_or("4"),
+            ),
+            focus: cx.focus_handle(),
+            find_focus: cx.focus_handle(),
+            find: None,
+            find_saved: FindState::default(),
+            scroll: UniformListScrollHandle::new(),
+            fence_cache: vec![false; line_count],
+            fence_lang_cache: vec![None; line_count],
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
+            goto: None,
+            marked: None,
+            row_bounds: Rc::new(RefCell::new(Vec::new())),
+            drag: None,
+            autoscroll_target: None,
+            autoscroll_task: None,
+            mouse_log: false,
+            // 可编辑：只读门禁关闭（锁定行的门禁在桥里逐行判）。
+            read_only: false,
+            docx: Some(payload),
+            docx_edit: Some(Rc::new(RefCell::new(DocxEditing::new(bridge, port)))),
+            docx_last_plan: None,
+            pdf: None,
+            xlsx: None,
+        };
+        // 编辑门禁接线：桥本体归 Editor（保存时取回写计划），Buffer 持钩子
+        // 句柄（锁定行拒改 + 行归属重排——Buffer 唯一变更入口处生效）。
+        this.install_docx_hook();
         this.refresh_caches();
         this
     }
@@ -447,6 +532,8 @@ impl Editor {
             mouse_log: false,
             read_only: true,
             docx: None,
+            docx_edit: None,
+            docx_last_plan: None,
             pdf: Some(payload),
             xlsx: None,
         };
@@ -497,11 +584,98 @@ impl Editor {
             mouse_log: false,
             read_only: true,
             docx: None,
+            docx_edit: None,
+            docx_last_plan: None,
             pdf: None,
             xlsx: Some(payload),
         };
         this.refresh_caches();
         this
+    }
+
+    // ------------------------------------------------------------------
+    // #115：docx 可编辑面（编辑门禁接线 + 保存回写 + 诊断）
+    // ------------------------------------------------------------------
+
+    /// 把编辑面挂到 buffer（Buffer 持有同一 `Rc` 的钩子句柄——锁行拒改
+    /// 与行归属重排都在 Buffer 唯一变更入口处生效）。
+    fn install_docx_hook(&mut self) {
+        let hook: Option<Box<dyn crate::editor::buffer::EditHook>> = self
+            .docx_edit
+            .as_ref()
+            .map(|edit| Box::new(edit.clone()) as Box<dyn crate::editor::buffer::EditHook>);
+        self.buffer.set_edit_hook(hook);
+        // 撤销/重做是物理回放（不经 EditHook）——另挂一行归属同步钩子，
+        // 否则「删行 → 撤销」后映射表少了该段的行，保存时认不出它。
+        let undo: Option<Box<dyn crate::editor::buffer::UndoHook>> = self
+            .docx_edit
+            .as_ref()
+            .map(|edit| Box::new(edit.clone()) as Box<dyn crate::editor::buffer::UndoHook>);
+        self.buffer.set_undo_hook(undo);
+    }
+
+    /// #115：**并行增删行**后的行归属平移（单点插入/整行删除之外的
+    /// 手势：缩进批的逐行插入、查找替换批的多点替换）。
+    ///
+    /// 单点编辑的行归属重排由 Buffer 钩子在 `replace_range` 内完成；批量
+    /// 手势逐行走 `replace_range` 时每次行数变化都会被重映射一次，等价于
+    /// 这里再按净变化补一次——`delta == 0` 时零操作。
+    /// #115：**批量手势**（缩进批 / 查找替换批）后的行归属兜底重排。
+    ///
+    /// 单点编辑的行归属重排由 Buffer 钩子在 `replace_range` 内完成（含
+    /// 派生入口）；批量手势里钩子被临时摘除（不逐点问门禁），故在收尾时
+    /// 按「行数净变化」补一次——**数量保真**的兜底（精确归属由下一帧
+    /// 保存时的正文比对承担：正文拿不对的段落按原文写回，绝不误改）。
+    fn remap_docx_rows_after_batch(&mut self) {
+        let Some(edit) = self.docx_edit.as_ref() else {
+            return;
+        };
+        let want = self.buffer.line_count();
+        let mut e = edit.borrow_mut();
+        let rows = e.bridge.rows_mut();
+        while rows.len() < want {
+            let last = rows
+                .last()
+                .copied()
+                .unwrap_or(LineBlock::User { join: true });
+            rows.push(last);
+        }
+        while rows.len() > want {
+            rows.pop();
+        }
+    }
+
+    /// #115：把 Buffer 现状重新落进 docx 引擎待落账层（幂等）。
+    ///
+    /// 钩子只在 `replace_range`/`replace_batch` 触发；**撤销/重做**走
+    /// Buffer 的 apply_core（物理回放，不过钩子），故编辑收尾统一补一次
+    /// ——`compute` 逐段比对，未动段零 set，代价与文档段数线性。
+    fn sync_docx_pending(&mut self) {
+        let Some(edit) = self.docx_edit.as_ref() else {
+            return;
+        };
+        let lines: Vec<String> = (0..self.buffer.line_count())
+            .map(|i| self.buffer.line(i))
+            .collect();
+        let plan = edit.borrow_mut().flush(&lines);
+        self.docx_last_plan = Some(plan);
+    }
+
+    /// docx 可编辑态？（只读 docx / md / pdf / xlsx 均 `false`）
+    pub fn docx_editable(&self) -> bool {
+        self.docx_edit.is_some()
+    }
+
+    /// #115：docx 回写诊断快照 `(成功, 同值, 失败)`（状态栏/属性面板/RPC）。
+    pub fn docx_edit_stats(&self) -> Option<(usize, usize, usize)> {
+        self.docx_edit.as_ref().map(|e| e.borrow().stats)
+    }
+
+    /// #115：最近一次回写计划摘要 `(需写段落, 未动段落, 无归属行)`。
+    pub fn docx_last_plan(&self) -> Option<(usize, usize, usize)> {
+        self.docx_last_plan
+            .as_ref()
+            .map(|p| (p.sets.len(), p.unchanged, p.dropped))
     }
 
     /// 标题栏/状态栏显示名（文件名）。
@@ -724,7 +898,9 @@ impl Editor {
         let selection = self.buffer.selection();
         let had_selection = selection.is_some();
         match selection {
-            Some(range) => self.buffer.replace_range(range.start, range.end, text),
+            Some(range) => {
+                self.buffer.replace_range(range.start, range.end, text);
+            }
             None => {
                 if text.is_empty() {
                     return Some((false, self.buffer.cursor()));
@@ -1056,6 +1232,11 @@ impl Editor {
         if self.read_only {
             return true;
         }
+        // #115：docx 可编辑态——回写桥 → 引擎落账 → **docx 字节**写盘
+        //（不是把行模型文本覆写进 .docx！）。
+        if self.docx_edit.is_some() {
+            return self.save_docx();
+        }
         match &self.file_path {
             Some(path) => {
                 let content = self.buffer.to_plain_text();
@@ -1075,12 +1256,103 @@ impl Editor {
         }
     }
 
+    /// #115：docx 保存——「Buffer → 回写计划 → 引擎待落账 → 完整 docx
+    /// 字节 → 写盘（临时文件 + rename，写坏不毁原件）」。
+    ///
+    /// 证据行（stderr——烟雾断言通道）：
+    /// `docx-save: 写回 N 段（未动 M 段 / 无归属 K 行）→ 路径（B 字节）`。
+    fn save_docx(&mut self) -> bool {
+        let Some(path) = self.file_path.clone() else {
+            return false;
+        };
+        // 1) 先把 Buffer 现状落进引擎（钩子已逐次回写，这里兜底 sync 一次——
+        //    撤销/重做的回放不走钩子，故保存前必须补一次）。
+        let lines: Vec<String> = (0..self.buffer.line_count())
+            .map(|i| self.buffer.line(i))
+            .collect();
+        let Some(edit) = self.docx_edit.as_ref() else {
+            return false;
+        };
+        let plan = edit.borrow_mut().flush(&lines);
+        self.docx_last_plan = Some(plan.clone());
+        // 2) 引擎落账出字节。
+        let saved = docx_bytes(edit.borrow().engine.as_ref());
+        let bytes: Vec<u8> = match saved {
+            Ok(b) => b,
+            Err(err) => {
+                eprintln!("mang-shell: docx 保存失败（引擎落账拒绝）：{err}");
+                return false;
+            }
+        };
+        // 3) 写盘（同目录临时文件 + rename——半截写入不毁原件）。
+        let tmp = path.with_extension("docx.saving");
+        if let Err(err) = std::fs::write(&tmp, &bytes) {
+            eprintln!(
+                "mang-shell: docx 保存失败（写临时文件 {}）：{err}",
+                tmp.display()
+            );
+            let _ = std::fs::remove_file(&tmp);
+            return false;
+        }
+        if let Err(err) = std::fs::rename(&tmp, &path) {
+            // 跨设备/占用等：退回直接写。
+            eprintln!("mang-shell: docx 临时文件落位失败（{err}），直接写入");
+            let _ = std::fs::remove_file(&tmp);
+            if let Err(err) = std::fs::write(&path, &bytes) {
+                eprintln!("mang-shell: docx 保存失败：{err}");
+                return false;
+            }
+        }
+        self.buffer.mark_saved();
+        eprintln!(
+            "docx-save: 写回 {} 段（未动 {} 段 / 无归属 {} 行）→ {}（{} 字节）",
+            plan.sets.len(),
+            plan.unchanged,
+            plan.dropped,
+            path.display(),
+            bytes.len()
+        );
+        true
+    }
+
     /// F4：另存为（新路径写盘 + 身份迁移——file_path/display_name 更新
     /// + mark_saved）。只读态拒（返回 false 不写盘）。
     pub fn save_as(&mut self, path: PathBuf) -> bool {
         if self.read_only {
             eprintln!("mang-shell: 只读文档不可另存（{}）", path.display());
             return false;
+        }
+        // #115：docx 可编辑态——另存为也写 **docx 字节**（不是行模型文本）。
+        if self.docx_edit.is_some() {
+            let lines: Vec<String> = (0..self.buffer.line_count())
+                .map(|i| self.buffer.line(i))
+                .collect();
+            let bytes = self.docx_edit.as_ref().and_then(|e| {
+                let mut e = e.borrow_mut();
+                let plan = e.flush(&lines);
+                self.docx_last_plan = Some(plan);
+                e.engine.save().ok()
+            });
+            let Some(bytes) = bytes else {
+                eprintln!(
+                    "mang-shell: docx 另存失败（引擎落账拒绝）{}",
+                    path.display()
+                );
+                return false;
+            };
+            if let Err(err) = std::fs::write(&path, bytes) {
+                eprintln!("mang-shell: docx 另存失败 {}: {err}", path.display());
+                return false;
+            }
+            self.display_name = SharedString::from(
+                path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "未命名".to_string()),
+            );
+            self.file_path = Some(path.clone());
+            self.buffer.mark_saved();
+            eprintln!("saved-as: {}（docx 字节）", path.display());
+            return true;
         }
         let content = self.buffer.to_plain_text();
         match std::fs::write(&path, content) {
@@ -1508,9 +1780,15 @@ impl Editor {
                 edits.push((start, end, text));
             }
             if !edits.is_empty() {
+                // #115：一手势多行批——与查找替换同口径（派生编辑：不逐行
+                // 问门禁，收尾按行数保真补映射；缩进只动行首空白，改不坏
+                // 段落文本）。
+                let hook = self.buffer.take_edit_hook();
                 for (start, end, text) in &edits {
                     self.buffer.replace_range(*start, *end, text);
                 }
+                self.buffer.set_edit_hook(hook);
+                self.remap_docx_rows_after_batch();
                 // 一手势批登记（含 ② 的插入条数——add_undo_batch 累加）。
                 self.cursors.add_undo_batch(edits.len());
                 // 光标/选区列按行位移平移。
@@ -1578,6 +1856,10 @@ impl Editor {
     ///（用户键入/IME/查找替换/RPC/撤销重做）的文档变更事件单点；
     /// 纯光标移动类调用（查找跳转）pending 为空自然不发。
     fn after_edit(&mut self) {
+        // #115：编辑面（可编辑 docx）撤销/重做等不经 Buffer 钩子的路径，
+        // 也要把 Buffer 现状重新落进引擎待落账层（幂等——compute 只在
+        // 段落文本变了时才出 set）。
+        self.sync_docx_pending();
         self.refresh_caches();
         let line = self.buffer.cursor().line;
         // r42：buffer 行 → 显示行（段首行）
@@ -1752,18 +2034,29 @@ impl Editor {
             }
             // G1：替换当前（替换行 Enter）——单点替换，一次 undo。
             FindKeyOutcome::ReplaceCurrent => {
+                // #115：查找替换是**派生编辑**（替换文本是查找条给的，不是
+                // 用户往正文里敲的）——不向 docx 桥问「这一行能否改」（否则
+                // 表格/锁定行全文会整体命中不了），安全面由随后的回写闸门
+                // （只回写可编辑段）承担。
+                let hook = self.buffer.take_edit_hook();
                 if let Some(f) = self.find.as_mut() {
                     f.replace_current(&mut self.buffer);
                 }
+                self.buffer.set_edit_hook(hook);
+                self.remap_docx_rows_after_batch();
                 self.sync_cursors_from_buffer();
                 self.after_edit();
             }
             // G1：全部替换——一次批量编辑，一条 undo 记录。
             FindKeyOutcome::ReplaceAll => {
+                // #115：同 ReplaceCurrent——整批一次派生（一条 undo）。
+                let hook = self.buffer.take_edit_hook();
                 if let Some(f) = self.find.as_mut() {
                     let n = f.replace_all(&mut self.buffer);
                     eprintln!("find-replace: replace-all {n} matches");
                 }
+                self.buffer.set_edit_hook(hook);
+                self.remap_docx_rows_after_batch();
                 self.sync_cursors_from_buffer();
                 self.after_edit();
             }

@@ -23,6 +23,12 @@ license = "GPL-3.0-or-later"
 name = "mang-shell"
 path = "src/main.rs"
 
+# #115：库目标（集成测试 tests/docx_edit_roundtrip.rs 复用编辑器模块树；
+# 与 bin 共用同一份源码——见 src/lib.rs 头注释）。
+[lib]
+name = "mang_shell"
+path = "src/lib.rs"
+
 [workspace]
 
 [dependencies]
