@@ -82,6 +82,10 @@ pub mod ocr;
 // 门面（add/remove/list/save）+ 增量删除面 + 11 kind 模型/写面。
 #[cfg(feature = "engine-lopdf")]
 pub mod annotate;
+// S2-5（issue #116 任务 1）：PDF 表单（AcroForm）读写——域读取/填写/
+// 增量写回/扁平化，中文走 CIDFont 嵌入（复用 generate 的 Type0 面）。
+#[cfg(feature = "engine-lopdf")]
+pub mod forms;
 
 #[cfg(feature = "engine-lopdf")]
 pub use annotate::{read_annotations, PdfAnnotator, ReadReport};

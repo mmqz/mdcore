@@ -80,6 +80,71 @@ pub struct GeneratedPdf {
     pub skipped_chars: usize,
 }
 
+// ---------------------------------------------------------------------------
+// S2-5（issue #116 任务 1）：CIDFont 复用面
+// ---------------------------------------------------------------------------
+
+/// 字符的 GID 查找面（表单中文外观/扁平化共用——本模块字体解析的出口）。
+///
+/// `None` = 字体缺该字形（调用方必须**显式**处理：报错或计数跳过，
+/// 绝不静默画乱码）。
+pub(crate) fn font_gid(ttf: &[u8], ch: char) -> Option<u16> {
+    TtfFace::parse(ttf).ok()?.char_gid(ch)
+}
+
+/// 构造可内嵌的 Type0/CIDFontType2 字体对象（自包含：FontFile2 /
+/// FontDescriptor / CIDFont / ToUnicode 全部内联进返回的字典）。
+///
+/// 与 [`generate_text_pdf`] 同一个字体面，区别是**对象直接内联**——
+/// 表单外观流与扁平化的资源字典要能就地塞这个对象，不需要跨文档引用。
+/// 返回 `None` = 字体不可解析或缺必需表。
+pub(crate) fn font_object(ttf: &[u8]) -> Option<lopdf::Dictionary> {
+    let face = TtfFace::parse(ttf).ok()?;
+    let scale = 1000.0 / face.units_per_em as f64;
+    let font_file = Stream::new(
+        dictionary! { "Length1" => Object::Integer(ttf.len() as i64) },
+        ttf.to_vec(),
+    );
+    let desc = dictionary! {
+        "Type" => "FontDescriptor",
+        "FontName" => Object::Name(b"EmbeddedCJK".to_vec()),
+        "Flags" => 4,
+        "FontBBox" => Object::Array(
+            [face.bbox.0, face.bbox.1, face.bbox.2, face.bbox.3]
+                .iter()
+                .map(|v| Object::Integer((*v as f64 * scale) as i64))
+                .collect(),
+        ),
+        "ItalicAngle" => 0,
+        "Ascent" => Object::Integer((face.ascent as f64 * scale) as i64),
+        "Descent" => Object::Integer((face.descent as f64 * scale) as i64),
+        "CapHeight" => Object::Integer((face.ascent as f64 * scale) as i64),
+        "StemV" => 80,
+        "FontFile2" => Object::Stream(font_file),
+    };
+    let mut csi = Dictionary::new();
+    csi.set("Registry", Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal));
+    csi.set("Ordering", Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal));
+    csi.set("Supplement", 0);
+    let mut cid = Dictionary::new();
+    cid.set("Type", "Font");
+    cid.set("Subtype", "CIDFontType2");
+    cid.set("BaseFont", Object::Name(b"EmbeddedCJK".to_vec()));
+    cid.set("CIDSystemInfo", csi);
+    cid.set("FontDescriptor", Object::Dictionary(desc));
+    cid.set("DW", 1000);
+    cid.set("CIDToGIDMap", "Identity");
+    let to_unicode = Stream::new(dictionary! {}, to_unicode_cmap(&face).into_bytes());
+    let mut t0 = Dictionary::new();
+    t0.set("Type", "Font");
+    t0.set("Subtype", "Type0");
+    t0.set("BaseFont", Object::Name(b"EmbeddedCJK".to_vec()));
+    t0.set("Encoding", "Identity-H");
+    t0.set("DescendantFonts", Object::Array(vec![Object::Dictionary(cid)]));
+    t0.set("ToUnicode", Object::Stream(to_unicode));
+    Some(t0)
+}
+
 /// R1 生成入口：纯文本 → A4 PDF（确定性——同输入逐字节同输出）。
 ///
 /// 排版口径（全角近似）：每字符宽 = 字号（DW=1000）；每行字符数 =
@@ -163,6 +228,11 @@ fn be32(b: &[u8], off: usize) -> u32 {
 }
 
 impl TtfFace {
+    /// 单字符 GID（S2-5 复用面——表单外观/扁平化的字形查表出口）。
+    pub(crate) fn char_gid(&self, ch: char) -> Option<u16> {
+        self.chars.get(&(ch as u32)).copied()
+    }
+
     fn parse(bytes: &[u8]) -> Result<Self, GenerateError> {
         if bytes.len() < 12 || be32(bytes, 0) != 0x0001_0000 {
             return Err(GenerateError::NotTrueType);
