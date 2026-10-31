@@ -83,7 +83,7 @@ use ui::{Icon, IconName, IconSize, Label, LabelSize};
 use buffer::{Buffer, Point};
 use docx_doc::{DocxPayload, DocxProps, HeadingEntry};
 use find_bar::{FindKeyOutcome, FindState};
-use highlight::{TokenKind, highlight_line};
+use highlight::TokenKind;
 use pdf_doc::{PdfPayload, PdfProps};
 
 // ---------------------------------------------------------------------------
@@ -165,6 +165,9 @@ pub struct Editor {
     scroll: UniformListScrollHandle,
     /// 每行行首的代码围栏状态缓存（文档变更时重算）。
     fence_cache: Vec<bool>,
+    /// G5：每行所属围栏块的语言标注（`Some(lang)` = 行首处于带语言
+    /// 标注的围栏内；`None` = 围栏外/无标注块——与 fence_cache 并行）。
+    fence_lang_cache: Vec<Option<highlight::CodeLang>>,
     /// r42 阶段 B：buffer <-> 显示行列映射（软换行 + 折叠）。
     /// 断点回填基准宽 = 上一帧行 bounds 宽（RefCell——render_lines 里
     /// 在 row_bounds clear 前采样）。
@@ -238,6 +241,7 @@ impl Editor {
             find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
+            fence_lang_cache: Vec::new(),
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -279,6 +283,7 @@ impl Editor {
             // docx 无围栏语义——fence 恒 false（refresh_caches 在 docx
             // 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
+            fence_lang_cache: vec![None; line_count],
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -319,6 +324,7 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
             fence_cache: vec![false; line_count],
+            fence_lang_cache: vec![None; line_count],
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -655,13 +661,30 @@ impl Editor {
         // 逐行 md 高亮的无效开销——fence_cache 构造时恒 false）。
         if self.docx.is_none() {
             let mut states = Vec::with_capacity(self.buffer.line_count());
+            // G5：语言态缓存（与 fence 并行——开围栏行捕获语言标注）。
+            let mut langs = Vec::with_capacity(self.buffer.line_count());
             let mut fence = false;
+            let mut cur_lang: Option<highlight::CodeLang> = None;
             for i in 0..self.buffer.line_count() {
                 states.push(fence);
-                fence = highlight_line(&self.buffer.line(i), fence).fence_at_end;
-                // r42：&String → &str deref（line() 返回 String）
+                langs.push(if fence { cur_lang } else { None });
+                let state = if fence {
+                    highlight::FenceState::CodeBlock(cur_lang)
+                } else {
+                    highlight::FenceState::Outside
+                };
+                let h = highlight::highlight_line_ex(&self.buffer.line(i), state);
+                if !fence && h.fence_at_end {
+                    // 开围栏：捕获语言标注（```rust → Rust）。
+                    cur_lang = highlight::fence_lang_of(&self.buffer.line(i));
+                } else if fence && !h.fence_at_end {
+                    // 闭围栏：语言态复位。
+                    cur_lang = None;
+                }
+                fence = h.fence_at_end;
             }
             self.fence_cache = states;
+            self.fence_lang_cache = langs;
         }
         if let Some(f) = &mut self.find {
             f.refresh(&self.buffer);
@@ -1008,17 +1031,75 @@ impl Editor {
         self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
     }
 
-    /// 行样式源分派：docx/pdf 只读态取预计算 span，md 态走围栏感知高亮。
+    /// 行样式源分派：docx/pdf 只读态取预计算 span，md 态走围栏感知
+    /// 高亮（G5：带语言标注的围栏体行走代码扫描）。
     fn line_tokens(&self, idx: usize, line: &str) -> highlight::LineHighlight {
         let runs = match (&self.docx, &self.pdf) {
             (Some(d), _) => d.spans.get(idx).cloned(),
             (None, Some(p)) => p.spans.get(idx).cloned(),
-            (None, None) => return highlight_line(line, self.fence_at(idx)),
+            (None, None) => {
+                return highlight::highlight_line_ex(
+                    line,
+                    if self.fence_at(idx) {
+                        highlight::FenceState::CodeBlock(
+                            self.fence_lang_cache.get(idx).copied().flatten(),
+                        )
+                    } else {
+                        highlight::FenceState::Outside
+                    },
+                );
+            }
         };
         highlight::LineHighlight {
             runs: runs.unwrap_or_default(),
             fence_at_end: false,
         }
+    }
+
+    /// G5 语法高亮烟雾探针：经**真实渲染分派路径**（`line_tokens`——
+    /// render_lines 同源）产出代码 token 证据行，证明围栏语言态缓存
+    /// 与代码扫描器在真实应用态生效。只读态（docx/pdf）无围栏语义，
+    /// 恒空。每证据行形如：
+    /// `syntax-hl: L14 [rust] fn main() { → kw@0..2`（kw/str/cmt/num）。
+    pub fn syntax_hl_evidence(&self) -> Vec<String> {
+        if self.docx.is_some() || self.pdf.is_some() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for idx in 0..self.buffer.line_count() {
+            let line = self.buffer.line(idx);
+            let h = self.line_tokens(idx, &line);
+            let code_runs: Vec<_> = h
+                .runs
+                .iter()
+                .filter(|(_, k)| {
+                    matches!(
+                        k,
+                        highlight::TokenKind::Keyword
+                            | highlight::TokenKind::Str
+                            | highlight::TokenKind::Comment
+                            | highlight::TokenKind::Number
+                    )
+                })
+                .collect();
+            if code_runs.is_empty() {
+                continue;
+            }
+            let lang = self
+                .fence_lang_cache
+                .get(idx)
+                .copied()
+                .flatten()
+                .map(|l| format!("{l:?}").to_lowercase())
+                .unwrap_or_else(|| "none".into());
+            let runs = code_runs
+                .iter()
+                .map(|(r, k)| format!("{}@{}..{}", short_kind(k), r.start, r.end))
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push(format!("syntax-hl: L{idx} [{lang}] {line} → {runs}"));
+        }
+        out
     }
 
     /// 复制选区（无选区无操作）。
@@ -2212,6 +2293,17 @@ fn editor_text_style(colors: &ThemeColors) -> TextStyle {
     }
 }
 
+/// G5 探针证据行的 token 简称（kw/str/cmt/num——其余类别不进代码证据）。
+fn short_kind(k: &highlight::TokenKind) -> &'static str {
+    match k {
+        highlight::TokenKind::Keyword => "kw",
+        highlight::TokenKind::Str => "str",
+        highlight::TokenKind::Comment => "cmt",
+        highlight::TokenKind::Number => "num",
+        _ => "other",
+    }
+}
+
 /// 查找条输入 TextStyle。
 fn find_text_style(colors: &ThemeColors) -> TextStyle {
     TextStyle {
@@ -2245,6 +2337,23 @@ fn token_style(kind: TokenKind, colors: &ThemeColors) -> HighlightStyle {
         }
         TokenKind::InlineCode | TokenKind::BlockCode => {
             s.background_color = Some(colors.element_hover);
+        }
+        // G5：代码高亮配色（ThemeColors 最小语义色映射——不硬编码
+        // RGB，随主题明暗：关键字=强调色加粗、字符串=占位色、注释=
+        // 弱化斜体、数字=强调色；后续语法色主题精化为独立 PR）。
+        TokenKind::Keyword => {
+            s.color = Some(colors.text_accent);
+            s.font_weight = Some(FontWeight::BOLD);
+        }
+        TokenKind::Str => {
+            s.color = Some(colors.text_placeholder);
+        }
+        TokenKind::Comment => {
+            s.color = Some(colors.text_muted);
+            s.font_style = Some(FontStyle::Italic);
+        }
+        TokenKind::Number => {
+            s.color = Some(colors.text_accent);
         }
         TokenKind::Quote => {
             s.color = Some(colors.text_muted);
