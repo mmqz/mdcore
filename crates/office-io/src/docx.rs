@@ -338,6 +338,7 @@ impl RelationshipTable {
 
     /// 条目迭代（媒体清单联接用——遍历序非确定，消费面须自排序）。
     /// S1 样式面：pub(crate)（style.rs 主题/样式部件定位消费）。
+    /// S1 编号面：pub(crate)（numbering.rs 部件定位消费）。
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Relationship> {
         self.by_id.values()
     }
@@ -886,6 +887,7 @@ fn parse_ct_entry(
 /// 包内部件路径词法归一化（`word/../x/y.xml` → `x/y.xml`）；越出
 /// 包根（`../` 弹空）返回 None——敌意路径逃逸面。
 /// S1 样式面：pub(crate)（style.rs 关系 target 归一复用）。
+/// S1 编号面：pub(crate)（numbering.rs 关系 target 归一复用）。
 pub(crate) fn normalize_part_path(path: &str) -> Option<String> {
     let mut stack: Vec<&str> = Vec::new();
     for seg in path.split('/') {
@@ -903,6 +905,7 @@ pub(crate) fn normalize_part_path(path: &str) -> Option<String> {
 /// 构建全包 `.rels` 捆绑（门后字节；条目读取有界——门 2 已验
 /// 实际 ≤ 声明 ≤ 上限）。
 /// S1 样式面：pub(crate)（style.rs 关系层复用）。
+/// S1 编号面：pub(crate)（numbering.rs 关系层复用）。
 pub(crate) fn build_rels_bundle<R: std::io::Read + std::io::Seek>(
     za: &mut zip::ZipArchive<R>,
     strict: bool,
@@ -4069,6 +4072,10 @@ pub struct DocxWriter {
     /// 随 Self::new() 重置为空集[新档无自定义样式，语义同
     /// numbering_registered]）。
     defined_styles: std::collections::HashSet<String>,
+    /// S1 编号面：自定义编号定义账本（id → 最大 ilvl——重名拒绝 +
+    /// numbered_list_item 引用/级域校验；save_to_vec 重建基态时随
+    /// Self::new() 重置[新档无自定义编号]）。
+    defined_numberings: std::collections::HashMap<usize, usize>,
 }
 
 impl DocxWriter {
@@ -4102,15 +4109,17 @@ impl DocxWriter {
             tables_emitted: 0,
             header_tables: std::collections::HashSet::new(),
             defined_styles: std::collections::HashSet::new(),
+            defined_numberings: std::collections::HashMap::new(),
         }
     }
 
     // -------------------------------------------------------------------
-    // S1 样式面访问器（style.rs 分文件 impl 桥——pub(crate) 单点）
+    // S1 样式面/编号面访问器（style.rs·numbering.rs 分文件 impl 桥
+    // ——pub(crate) 单点）
     // -------------------------------------------------------------------
 
-    /// 引擎文档可变引用（style.rs `define_style`/`styled_paragraph`
-    /// 的 take/写回模式用）。
+    /// 引擎文档可变引用（style.rs `define_style`/`styled_paragraph`、
+    /// numbering.rs 写面构造的 take/写回模式用）。
     pub(crate) fn docx_mut(&mut self) -> &mut docx_rs::Docx {
         &mut self.docx
     }
@@ -4123,6 +4132,18 @@ impl DocxWriter {
     /// 自定义样式 id 账本（可变——define_style 落账）。
     pub(crate) fn defined_styles_mut(&mut self) -> &mut std::collections::HashSet<String> {
         &mut self.defined_styles
+    }
+
+    /// 自定义编号定义账本（只读——id → 最大 ilvl）。
+    pub(crate) fn defined_numberings(&self) -> &std::collections::HashMap<usize, usize> {
+        &self.defined_numberings
+    }
+
+    /// 自定义编号定义账本（可变——define_numbering 落账）。
+    pub(crate) fn defined_numberings_mut(
+        &mut self,
+    ) -> &mut std::collections::HashMap<usize, usize> {
+        &mut self.defined_numberings
     }
 
     /// 标题段（level 1-9；样式引用 + outline 级双通道——样式被剥除
@@ -4183,6 +4204,7 @@ impl DocxWriter {
 
     /// r4-t2：段/run 计数单点（paras 含本段；脚注规格 +1 段 +1 run）。
     /// S1 样式面：pub(crate)（style.rs `styled_paragraph` 复用）。
+    /// S1 编号面：pub(crate)（numbering.rs `numbered_list_item` 复用）。
     pub(crate) fn count_specs(&mut self, paras: u64, runs: &[RunSpec]) {
         self.paragraphs += paras;
         self.runs += runs.len() as u64;
@@ -4722,6 +4744,7 @@ fn validate_bookmark_name(
 }
 
 /// S1 样式面：pub(crate)（style.rs `styled_paragraph` 复用——同构纯函数）。
+/// S1 编号面：pub(crate)（numbering.rs `numbered_list_item` 复用）。
 pub(crate) fn specs_to_paragraph(runs: &[RunSpec]) -> docx_rs::Paragraph {
     let mut p = docx_rs::Paragraph::new();
     for spec in runs {
