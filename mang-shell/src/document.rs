@@ -7,6 +7,8 @@
 //!   标题树 + 样式 span——见 [`crate::editor::docx_doc`]）
 //! - `.pdf` → **只读渲染**（批 4：mdc-pdf 文本层 → 行模型，书签树 +
 //!   页分隔 + 页码标签——见 [`crate::editor::pdf_doc`]；100MB 前置门）
+//! - `.xlsx` → **只读渲染**（G6：mdc-office-io 读面 → 行模型，工作表
+//!   树 + 列字母/行号网格——见 [`crate::editor::xlsx_doc`]）
 //! - 其余 → `Unsupported`（空态提示）
 //!
 //! 大小写不敏感匹配扩展名；读取失败返回 `OpenError`（空态呈现原因）。
@@ -18,6 +20,7 @@ use gpui::{App, AppContext, Entity};
 use crate::editor::Editor;
 use crate::editor::docx_doc::{self, DocxPayload};
 use crate::editor::pdf_doc::{self, PdfPayload};
+use crate::editor::xlsx_doc::{self, XlsxPayload};
 
 /// 打开结果。
 pub enum OpenedDocument {
@@ -27,6 +30,8 @@ pub enum OpenedDocument {
     ReadOnlyDocx { path: PathBuf, payload: DocxPayload },
     /// pdf 只读渲染（批 4）：mdc-pdf 文本层/书签抽取 + 行模型转换产物。
     ReadOnlyPdf { path: PathBuf, payload: PdfPayload },
+    /// xlsx 只读渲染（G6）：office-io 读面 + 行模型转换产物。
+    ReadOnlyXlsx { path: PathBuf, payload: XlsxPayload },
     /// 不支持的扩展名。
     Unsupported { path: PathBuf },
     /// 读取失败（IO 错误 / 超大等）。
@@ -66,6 +71,18 @@ pub fn open(path: &Path) -> OpenedDocument {
         // 扫描件/空页 → 标记行明确提示而非白屏）。
         "pdf" => match pdf_doc::load(path) {
             Ok(payload) => OpenedDocument::ReadOnlyPdf {
+                path: path.to_path_buf(),
+                payload,
+            },
+            Err(message) => OpenedDocument::OpenError {
+                path: path.to_path_buf(),
+                message,
+            },
+        },
+        // G6：xlsx 只读渲染（office-io 三门 + calamine 五面读面；兼容
+        // 模式畸形部件降级警告——查看器语义；空表/超限渲染护栏非静默）。
+        "xlsx" => match xlsx_doc::load(path) {
+            Ok(payload) => OpenedDocument::ReadOnlyXlsx {
                 path: path.to_path_buf(),
                 payload,
             },
@@ -134,6 +151,26 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
             );
             OpenOutcome::Opened(cx.new(|cx| Editor::new_pdf(path, payload, cx)))
         }
+        // G6 证据通道：启动日志一行（属性面 + 只读标记）。
+        OpenedDocument::ReadOnlyXlsx { path, payload } => {
+            let truncated = if payload.props.truncated_sheets > 0 {
+                format!(" / {} 表超渲染护栏", payload.props.truncated_sheets)
+            } else {
+                String::new()
+            };
+            eprintln!(
+                "xlsx: {} 表 / {} 非空格 / {} 公式 / {} 合并 / {} 超链接 / {} 警告{}（只读，{}）",
+                payload.props.sheets,
+                payload.props.cells,
+                payload.props.formulas,
+                payload.props.merges,
+                payload.props.hyperlinks,
+                payload.props.warnings,
+                truncated,
+                path.display()
+            );
+            OpenOutcome::Opened(cx.new(|cx| Editor::new_xlsx(path, payload, cx)))
+        }
         OpenedDocument::Unsupported { path } => OpenOutcome::Unsupported {
             message: unsupported_message(&path),
             path,
@@ -143,19 +180,19 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
 }
 
 /// 不支持类型的面向用户文案：区分「已知类型但编辑器渲染面未接」与
-/// 「未知类型」——前者明确告知边界（xlsx 引擎导入面已有，渲染面阶段 F
-/// 范围外），后者给出支持清单。
+/// 「未知类型」——前者明确告知边界（G6 起 xlsx 已接只读渲染，
+/// .xlsm/.xls 旧/宏格式仍在范围外），后者给出支持清单。
 fn unsupported_message(path: &Path) -> String {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     match ext.as_str() {
-        "xlsx" | "xlsm" | "xls" => {
-            "电子表格（.xlsx）编辑器渲染面未接——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf（只读）"
+        "xlsm" | "xls" => {
+            "电子表格旧/宏格式（.xlsm/.xls）渲染面未接——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf/.xlsx（只读）"
                 .to_string()
         }
-        _ => "暂不支持的文件类型——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf（只读）".to_string(),
+        _ => "暂不支持的文件类型——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf/.xlsx（只读）".to_string(),
     }
 }
 
@@ -163,12 +200,20 @@ fn unsupported_message(path: &Path) -> String {
 mod tests {
     use super::*;
 
-    /// F1：不支持文案分叉——xlsx（已知未接）与未知类型各走各的口径。
+    /// F1→G6：不支持文案分叉——.xls（已知未接）与未知类型各走各的
+    /// 口径；.xlsx 自 G6 起接只读渲染，不再落「已知未接」文案。
     #[test]
     fn unsupported_message_distinguishes_known_unrendered() {
+        let xls = unsupported_message(Path::new("a/b/旧版报价.xls"));
+        assert!(xls.contains("渲染面未接"), "xls 走已知未接文案：{xls}");
+        assert!(xls.contains(".xlsx"), "文案支持清单含 xlsx：{xls}");
+
+        // G6：xlsx 已接——不再出现「渲染面未接」边界文案。
         let xlsx = unsupported_message(Path::new("a/b/报价单.xlsx"));
-        assert!(xlsx.contains("渲染面未接"), "xlsx 走已知未接文案：{xlsx}");
-        assert!(xlsx.contains(".docx"), "文案含支持清单：{xlsx}");
+        assert!(
+            !xlsx.contains("渲染面未接"),
+            "xlsx 不再走已知未接文案：{xlsx}"
+        );
 
         let unknown = unsupported_message(Path::new("a/b/data.xyz"));
         assert!(
@@ -181,6 +226,29 @@ mod tests {
     /// F1：扩展名大小写不敏感（与 `open` 分派同口径）。
     #[test]
     fn unsupported_message_ext_case_insensitive() {
-        assert!(unsupported_message(Path::new("X.XLSX")).contains("渲染面未接"));
+        assert!(unsupported_message(Path::new("X.XLS")).contains("渲染面未接"));
+    }
+
+    /// G6：xlsx 分派接线——夹具经 `open` 落 ReadOnlyXlsx（载荷含
+    /// 工作表树/属性；夹具由 `gen_smoke_xlsx`（ignored）生成入库）。
+    #[test]
+    fn open_dispatches_xlsx_to_readonly_payload() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/smoke.xlsx");
+        match open(std::path::Path::new(path)) {
+            OpenedDocument::ReadOnlyXlsx { payload, .. } => {
+                assert_eq!(payload.headings.len(), 2, "两表树");
+                assert_eq!(payload.props.sheets, 2);
+                assert_eq!(payload.props.formulas, 1, "一格公式");
+                assert!(
+                    payload.text.contains("── 工作表: 销售明细 ──"),
+                    "表分隔行入文本：{}",
+                    payload.text.split('\n').next().unwrap_or_default()
+                );
+            }
+            OpenedDocument::Unsupported { .. } => {
+                panic!("夹具缺失：先跑 `cargo test gen_smoke_xlsx -- --ignored` 生成")
+            }
+            _ => panic!("xlsx 分派应落 ReadOnlyXlsx（实得其他形态——IO 错误/读失败）"),
+        }
     }
 }

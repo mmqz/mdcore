@@ -55,6 +55,7 @@ pub mod highlight;
 pub mod mouse;
 pub mod multi_cursor; // r42 阶段 C（#68）：多光标 + 列选择（编辑器层；Buffer 单光标契约不变）
 pub mod pdf_doc;
+pub mod xlsx_doc; // G6（#68）：xlsx 只读渲染——office-io 读面 → 行模型
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -85,6 +86,7 @@ use docx_doc::{DocxPayload, DocxProps, HeadingEntry};
 use find_bar::{FindKeyOutcome, FindState};
 use highlight::TokenKind;
 use pdf_doc::{PdfPayload, PdfProps};
+use xlsx_doc::{XlsxPayload, XlsxProps};
 
 // ---------------------------------------------------------------------------
 // 拖选状态与载荷
@@ -201,6 +203,8 @@ pub struct Editor {
     docx: Option<DocxPayload>,
     /// pdf 转换产物（批 4：行模型 + 书签树 + 页表；`None` = 非 pdf 态）。
     pdf: Option<PdfPayload>,
+    /// xlsx 转换产物（G6：行模型 + 工作表树 + 属性；`None` = 非 xlsx 态）。
+    xlsx: Option<XlsxPayload>,
 }
 
 impl Editor {
@@ -255,6 +259,7 @@ impl Editor {
             read_only,
             docx: None,
             pdf: None,
+            xlsx: None,
         };
         this.refresh_caches();
         // 初始聚焦由 ShellApp::new 完成（需要 window 上下文）。
@@ -297,6 +302,7 @@ impl Editor {
             read_only: true,
             docx: Some(payload),
             pdf: None,
+            xlsx: None,
         };
         this.refresh_caches();
         this
@@ -338,6 +344,51 @@ impl Editor {
             read_only: true,
             docx: None,
             pdf: Some(payload),
+            xlsx: None,
+        };
+        this.refresh_caches();
+        this
+    }
+
+    /// 打开 xlsx 只读文档（G6）：行模型喂 Buffer（移动/选区/查找/
+    /// 滚轮全复用批 1-2 管线），样式 span（表分隔/列字母/行号/公式
+    /// 回退）与工作表树由 [`xlsx_doc`] 预计算承载；只读门禁同
+    /// docx/pdf 口径。
+    pub fn new_xlsx(path: PathBuf, payload: XlsxPayload, cx: &mut Context<Self>) -> Self {
+        let buffer = Buffer::from_plain_text(&payload.text);
+        let display_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名".to_string());
+        let line_count = buffer.line_count();
+        let mut this = Self {
+            buffer,
+            file_path: Some(path),
+            display_name: SharedString::from(display_name),
+            font_size: DEFAULT_FONT_SIZE,
+            focus: cx.focus_handle(),
+            find_focus: cx.focus_handle(),
+            find: None,
+            find_saved: FindState::default(),
+            scroll: UniformListScrollHandle::new(),
+            // xlsx 无围栏语义——fence 恒 false（同 docx 态口径，
+            // refresh_caches 在 xlsx 模式下跳过 md 逐行推进）。
+            fence_cache: vec![false; line_count],
+            fence_lang_cache: vec![None; line_count],
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
+            marked: None,
+            row_bounds: Rc::new(RefCell::new(Vec::new())),
+            drag: None,
+            autoscroll_target: None,
+            autoscroll_task: None,
+            mouse_log: false,
+            read_only: true,
+            docx: None,
+            pdf: None,
+            xlsx: Some(payload),
         };
         this.refresh_caches();
         this
@@ -412,12 +463,20 @@ impl Editor {
         self.pdf.as_ref().map(|p| &p.props)
     }
 
-    /// 文档形态标识（panels/status_bar 分派："md" / "docx" / "pdf"）。
+    /// xlsx 工档属性（右栏属性面板；G6）。
+    pub fn xlsx_props(&self) -> Option<&XlsxProps> {
+        self.xlsx.as_ref().map(|x| &x.props)
+    }
+
+    /// 文档形态标识（panels/status_bar 分派："md" / "docx" / "pdf" /
+    /// "xlsx"）。
     pub fn doc_kind(&self) -> &'static str {
         if self.docx.is_some() {
             "docx"
         } else if self.pdf.is_some() {
             "pdf"
+        } else if self.xlsx.is_some() {
+            "xlsx"
         } else {
             "md"
         }
@@ -433,24 +492,33 @@ impl Editor {
     }
 
     /// 标题树（左栏「文档结构」）；md 态为空。
-    /// docx = 标题树；pdf = 书签树（扁平文档序——批 4）。
+    /// docx = 标题树；pdf = 书签树（扁平文档序——批 4）；
+    /// xlsx = 工作表树（G6——扁平簿序，锚点=表分隔行）。
     pub fn headings(&self) -> &[HeadingEntry] {
         self.docx
             .as_ref()
             .map(|d| d.headings.as_slice())
             .or_else(|| self.pdf.as_ref().map(|p| p.headings.as_slice()))
+            .or_else(|| self.xlsx.as_ref().map(|x| x.headings.as_slice()))
             .unwrap_or(&[])
     }
 
     /// 结构条目显示标签（左栏）：docx `Hn · 文本`；pdf `第 N 页 · 文本`
-    /// （书签带页号前缀——跳转目标即该页页分隔行）。
+    /// （书签带页号前缀——跳转目标即该页页分隔行）；xlsx `表 · 名称`
+    ///（工作表树——G6）。
     pub fn heading_label(&self, h: &HeadingEntry) -> String {
         match &self.pdf {
             Some(p) => match p.page_of_line(h.line) {
                 Some(no) => format!("第 {no} 页 · {}", h.text),
                 None => h.text.clone(),
             },
-            None => format!("H{} · {}", h.level, h.text),
+            None => {
+                if self.xlsx.is_some() {
+                    format!("表 · {}", h.text)
+                } else {
+                    format!("H{} · {}", h.level, h.text)
+                }
+            }
         }
     }
 
@@ -657,9 +725,9 @@ impl Editor {
         // r42 阶段 B：编辑后断点全部失效（被编辑行的断点需重算；
         // 下一帧对可见行重新回填）。
         self.display_map.reset_wraps();
-        // fence：逐行推进（md 模式；docx 只读态无围栏语义且免大文档
-        // 逐行 md 高亮的无效开销——fence_cache 构造时恒 false）。
-        if self.docx.is_none() {
+        // fence：逐行推进（md 模式；docx/xlsx 只读态无围栏语义且免大
+        // 文档逐行 md 高亮的无效开销——fence_cache 构造时恒 false）。
+        if self.docx.is_none() && self.xlsx.is_none() {
             let mut states = Vec::with_capacity(self.buffer.line_count());
             // G5：语言态缓存（与 fence 并行——开围栏行捕获语言标注）。
             let mut langs = Vec::with_capacity(self.buffer.line_count());
@@ -1031,13 +1099,14 @@ impl Editor {
         self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
     }
 
-    /// 行样式源分派：docx/pdf 只读态取预计算 span，md 态走围栏感知
+    /// 行样式源分派：docx/pdf/xlsx 只读态取预计算 span，md 态走围栏感知
     /// 高亮（G5：带语言标注的围栏体行走代码扫描）。
     fn line_tokens(&self, idx: usize, line: &str) -> highlight::LineHighlight {
-        let runs = match (&self.docx, &self.pdf) {
-            (Some(d), _) => d.spans.get(idx).cloned(),
-            (None, Some(p)) => p.spans.get(idx).cloned(),
-            (None, None) => {
+        let runs = match (&self.docx, &self.pdf, &self.xlsx) {
+            (Some(d), _, _) => d.spans.get(idx).cloned(),
+            (None, Some(p), _) => p.spans.get(idx).cloned(),
+            (None, None, Some(x)) => x.spans.get(idx).cloned(),
+            (None, None, None) => {
                 return highlight::highlight_line_ex(
                     line,
                     if self.fence_at(idx) {
@@ -1058,11 +1127,11 @@ impl Editor {
 
     /// G5 语法高亮烟雾探针：经**真实渲染分派路径**（`line_tokens`——
     /// render_lines 同源）产出代码 token 证据行，证明围栏语言态缓存
-    /// 与代码扫描器在真实应用态生效。只读态（docx/pdf）无围栏语义，
-    /// 恒空。每证据行形如：
+    /// 与代码扫描器在真实应用态生效。只读态（docx/pdf/xlsx）无围栏
+    /// 语义，恒空。每证据行形如：
     /// `syntax-hl: L14 [rust] fn main() { → kw@0..2`（kw/str/cmt/num）。
     pub fn syntax_hl_evidence(&self) -> Vec<String> {
-        if self.docx.is_some() || self.pdf.is_some() {
+        if self.docx.is_some() || self.pdf.is_some() || self.xlsx.is_some() {
             return Vec::new();
         }
         let mut out = Vec::new();
