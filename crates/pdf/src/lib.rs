@@ -68,6 +68,12 @@ pub mod generate;
 // 合并/拆分 + 书签/链接/表单域联动重映射 + 丢失面显式登记）。
 #[cfg(feature = "engine-lopdf")]
 pub mod organize;
+// S2-3（#103 任务 3）：链接跳转读取——/Link 标注 → 目标页/URI/登记面。
+#[cfg(feature = "engine-lopdf")]
+pub mod links;
+// S2-3（#103 任务 3）：图层（OCG）读取 + 默认可见性持久化开关。
+#[cfg(feature = "engine-lopdf")]
+pub mod layers;
 // S2-4（#103 任务 4）：扫描件 OCR——pdfium 渲染 → 灰度 PGM（零
 // image 依赖）→ tesseract 识别。环境门 ocr_available（bid-parse 式）。
 #[cfg(feature = "engine-pdfium")]

@@ -126,7 +126,7 @@ impl PdfiumEngine {
 
     /// 进程级 pdfium 单例引用（**交叉读面**：测试/宿主在同一绑定
     /// 纪律下复用单例打开其他文档——pdfium 进程级单实例，禁止二次
-    /// 绑定；S2-2 互通交叉测试消费）。绑定失败 = `Engine`（与
+    /// 绑定；S2-2 互通 / S2-3 交叉测试消费）。绑定失败 = `Engine`（与
     /// [`PdfiumEngine::open`] 同定位序合同）。
     pub fn shared_handle() -> Result<&'static pdfium_render::prelude::Pdfium, CommandError> {
         shared_pdfium()
@@ -326,7 +326,14 @@ impl Rasterizer for PdfiumEngine {
             .set_format(PdfBitmapFormat::BGRA)
             // 关闭 FPDF_REVERSE_BYTE_ORDER——原生 BGRA 直读
             // （默认 true 会把通道翻成 RGB 序）。
-            .set_reverse_byte_order(false);
+            .set_reverse_byte_order(false)
+            // S2-3（#103 任务 3）：注释渲染显式钉定——PDF 内标注
+            // （高亮/便签/形状…）随页面光栅化可见（FPDF_ANNOT）。
+            // pdfium-render 缺省即 true，此处**显式声明**而非依赖缺省：
+            // 行为契约进代码面（升级 pdfium-render 时缺省漂移即编译期
+            // 不可见的行为红——显式调用使意图持久）。语义锁
+            // pdff3_render_ext::annotations_visible_in_render。
+            .render_annotations(true);
         page.render_into_bitmap_with_config(&mut bitmap, &config)
             .map_err(CommandError::engine)?;
         let bgra = bitmap.as_raw_bytes();
