@@ -249,6 +249,27 @@ impl Cursors {
         std::mem::replace(&mut self.pending_batch, 0)
     }
 
+    /// G3：**累加**登记批撤销点数（行缩进/反缩进等非 `insert_all` 路径
+    /// 的批量编辑——一次手势产生的 N 条编辑记录经此登记，Ctrl+Z 一键
+    /// 连撤整批；与裸光标插入批同手势时累加合并）。
+    pub fn add_undo_batch(&mut self, n: usize) {
+        self.pending_batch += n;
+    }
+
+    /// G3：按行位移光标列（缩进 +delta / 反缩进 -delta；列下限 0）。
+    /// `delta_of(line)` 返回该行的位移量（未涉及行 0）。
+    pub fn shift_cols_by_line(&mut self, delta_of: impl Fn(usize) -> i64) {
+        for (a, h) in self.sels.iter_mut() {
+            for pt in [&mut *a, &mut *h] {
+                let d = delta_of(pt.line);
+                if d != 0 {
+                    let col = pt.col as i64 + d;
+                    pt.col = col.max(0) as usize;
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // 构造器
     // ------------------------------------------------------------------
@@ -486,6 +507,51 @@ mod tests {
         }
         assert_eq!(b.to_plain_text(), "aa\nbb\ncc");
         assert_eq!(c.take_undo_batch(), 0, "批已消费");
+    }
+
+    // ---------------- G3：行级批量编辑的批撤销登记 ----------------
+
+    #[test]
+    fn set_undo_batch_registers_external_batch() {
+        let mut b = Buffer::from_plain_text("aa\nbb\ncc");
+        // 模拟 Editor 行缩进路径：3 条独立编辑 + 登记批 3
+        b.replace_range(p(0, 0), p(0, 0), "  ");
+        b.replace_range(p(1, 0), p(1, 0), "  ");
+        b.replace_range(p(2, 0), p(2, 0), "  ");
+        assert_eq!(b.to_plain_text(), "  aa\n  bb\n  cc");
+        let mut c = Cursors::single(p(0, 0));
+        c.add_undo_batch(3);
+        let n = c.take_undo_batch();
+        assert_eq!(n, 3, "外登记批 = 3 条");
+        for _ in 0..n {
+            assert!(b.undo());
+        }
+        assert_eq!(b.to_plain_text(), "aa\nbb\ncc", "一次手势连撤整批");
+        assert_eq!(c.take_undo_batch(), 0, "批已消费");
+    }
+
+    #[test]
+    fn shift_cols_by_line_clamps_at_zero() {
+        let mut c = Cursors::single(p(0, 3));
+        c.push(p(2, 1), p(2, 5));
+        c.shift_cols_by_line(|line| if line == 0 { -10 } else { 0 });
+        assert_eq!(c.entries()[0].1, p(0, 0), "列下限 0");
+        assert_eq!(c.entries()[1].1, p(2, 5), "未涉及行不动");
+        c.shift_cols_by_line(|line| if line == 2 { 4 } else { 0 });
+        assert_eq!(
+            c.entries()[1],
+            (p(2, 5), p(2, 9)),
+            "锚与头同位移（选区保持）"
+        );
+    }
+
+    #[test]
+    fn add_undo_batch_accumulates() {
+        let mut c = Cursors::single(p(0, 0));
+        c.add_undo_batch(2);
+        c.add_undo_batch(3);
+        assert_eq!(c.take_undo_batch(), 5, "同手势多路径累加");
+        assert_eq!(c.take_undo_batch(), 0);
     }
 
     // ---------------- 移动 ----------------

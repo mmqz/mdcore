@@ -110,6 +110,10 @@ fn main() {
     // Ctrl+G → 输入行号 → Enter 跳转；再一轮越界行号 → 断言 goto: 两条
     // 证据行（正常跳转 + 越界 clamp）+ quit reached）。
     let smoke_goto_line = args.iter().any(|a| a == "--smoke-goto-line");
+    // G3：缩进烟雾（--smoke-indent——与启动 FILE 组合：home+Shift+↓×3
+    // 选 3 行 → Tab 缩进 → Shift+Tab 反缩进 → Ctrl+Z×2 连撤——断言
+    // indent:/outdent: 证据行 + quit reached）。
+    let smoke_indent = args.iter().any(|a| a == "--smoke-indent");
     // F6：主题循环烟雾（--smoke-theme-cycle——3.5s 合成 Ctrl+T；
     // 断言 theme: 证据行 + settings.json theme 键 + 全窗重绘不崩）。
     let smoke_theme_cycle = args.iter().any(|a| a == "--smoke-theme-cycle");
@@ -462,10 +466,23 @@ fn main() {
                 let handle = window_handle;
                 cx.spawn(async move |cx| {
                     run_syntax_hl_probe(&handle, cx).await;
-                    dispatch_key(&handle, cx, 400, "enter", false, false, None).await;
-                    eprintln!(
-                        "goto-smoke: script done (ctrl+g → 4 → enter → ctrl+g → 9999 → enter)"
-                    );
+                })
+                .detach();
+            }
+
+            // G3：缩进烟雾（--smoke-indent——与启动 FILE 组合）。
+            if smoke_indent {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "home", false, false, None).await;
+                    for _ in 0..3 {
+                        dispatch_key(&handle, cx, 120, "down", false, true, None).await;
+                    }
+                    dispatch_key(&handle, cx, 400, "tab", false, false, None).await;
+                    dispatch_key(&handle, cx, 600, "tab", false, true, None).await;
+                    dispatch_key(&handle, cx, 600, "z", true, false, None).await;
+                    dispatch_key(&handle, cx, 500, "z", true, false, None).await;
+                    eprintln!("indent-smoke: script done (home → shift+down×3 → tab → shift+tab → ctrl+z ×2)");
                 })
                 .detach();
             }
