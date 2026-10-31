@@ -3,7 +3,6 @@ use std::fmt::Write as _;
 use crate::{CanvasError, CanvasObject, CanvasSession, ObjectKind};
 
 // 常量
-const SUBSAMPLES: u32 = 4;
 const MAX_CURVE_SEGMENTS: usize = 64;
 const FLATTEN_TOLERANCE: f64 = 0.1;
 const MAX_PNG_SIDE: u32 = 65_536;
@@ -1283,7 +1282,7 @@ fn parse_points(s: &str) -> Vec<Point> {
 
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(s.len() / 2);
@@ -1552,18 +1551,18 @@ pub fn export_svg(canvas: &CanvasRendering) -> String {
     let b = canvas_bounds(canvas);
     let mut out = String::with_capacity(320 + canvas.shapes.len() * 96);
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    let _ = write!(
+    let _ = writeln!(
         out,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" version=\"1.1\" width=\"{w}\" height=\"{h}\" viewBox=\"{x} {y} {w} {h}\">\n",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" version=\"1.1\" width=\"{w}\" height=\"{h}\" viewBox=\"{x} {y} {w} {h}\">",
         w = num(b.w),
         h = num(b.h),
         x = num(b.x),
         y = num(b.y)
     );
     if !canvas.background.is_transparent() {
-        let _ = write!(
+        let _ = writeln!(
             out,
-            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"{}/>\n",
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"{}/>",
             num(b.x),
             num(b.y),
             num(b.w),
@@ -1787,67 +1786,105 @@ impl RasterRenderer {
 
 }
 
-/// 采样行循环：对 [y0,y1] 覆盖的每个像素行回调，给出采样行 y。
+/// 采样行循环：对区间 [y0,y1] 覆盖的每个像素行回调，给出采样行 y 与
+/// **该行的纵向覆盖率**（0..1）。
+///
+/// 纵向覆盖率是逐行解析算出来的，不是"数几条采样线"：一整行都落在
+/// 区间内时覆盖率必须是 1.0，否则实心填充会永远只有 0.75 的亮度
+/// （本站踩过：4px 黑描边画出 80/255 的灰）。采样行细分的意义只在
+/// 边缘那一行——那里用 SUBSAMPLES 级细分近似纵向部分覆盖。
 fn sample_rows(buf_h: u32, y0: f64, y1: f64, mut f: impl FnMut(u32, f64, f64)) {
     let (lo, hi) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
-    if !lo.is_finite() || !hi.is_finite() {
+    if !lo.is_finite() || !hi.is_finite() || hi <= lo {
         return;
     }
+    // 亚像素区间保护：区间窄于 1px 时（0.5px 宽的横线就是这样），按面积算
+    // 纵向覆盖率只有 0.25，在 256 色阶下几乎看不见。抬到最小 1 像素宽，
+    // 并保证**至少有一整行**被完整覆盖——否则线会在两个半行之间淡到看不出。
+    let (lo, hi) = if hi - lo < 1.0 {
+        let mid = (lo + hi) * 0.5;
+        (mid - 0.5, mid + 0.5)
+    } else {
+        (lo, hi)
+    };
     let top = lo.floor().max(0.0);
     let bot = hi.ceil().min(buf_h as f64);
     if bot <= top {
         return;
     }
-    let weight = 1.0 / SUBSAMPLES as f64;
     let mut py = top as u32;
     while (py as f64) < bot && py < buf_h {
-        for j in 0..SUBSAMPLES {
-            let sy = py as f64 + (j as f64 + 0.5) / SUBSAMPLES as f64;
-            if sy >= lo && sy < hi {
-                f(py, sy, weight);
-            }
+        let y_lo = py as f64;
+        let y_hi = y_lo + 1.0;
+        // 纵向覆盖率 = 该像素行与区间的实际重叠长度（解析，不是数采样点）。
+        let cov = (y_hi.min(hi) - y_lo.max(lo)).clamp(0.0, 1.0);
+        if cov > 0.0 {
+            f(py, y_lo + 0.5, cov);
         }
         py += 1;
     }
 }
-/// 某采样行上，把颜色按水平区间 [p0, p1]（像素坐标）并入。
+/// 落在像素边界上时，边界内侧那一列额外补到满覆盖。
 ///
-/// 覆盖率 = 区间与像素列的实际重叠长度（解析积分，端点保留 f64）。
-/// 这是唯一正确的过采样方式；"按像素中心归属"的近似在 1px 线上会把
-/// 抗锯齿整个做没（线看起来是硬的、且半像素落点会丢一半亮度）。
+/// 为什么必须这样：线宽 1 的描边区间恰好是一列宽 [x, x+1]。纯半开积分
+/// 下相邻列各得 0.5，1px 边框整条变灰（实测：本该 0 的黑边画出 167 的
+/// 灰）；矩形四角还会因为两段各贡献 0.5 而拼出更暗的角点。闭区间语义
+/// 保证「线宽 1 恰好占一列」，同时粗线边缘仍由部分重叠得到自然抗锯齿。
 fn blend_span(buf: &mut Bitmap, y: u32, p0: f64, p1: f64, weight: f64, color: Color) {
     if weight <= 0.0 || color.a == 0 {
         return;
     }
     let (a, b) = if p0 <= p1 { (p0, p1) } else { (p1, p0) };
-    if !a.is_finite() || !b.is_finite() || b <= a {
+    if !a.is_finite() || !b.is_finite() || b < a {
         return;
     }
     let w = buf.width as f64;
-    if b <= 0.0 || a >= w {
+    if b < 0.0 || a >= w {
         return;
     }
-    let start = a.max(0.0).floor() as u32;
-    let end = (b.min(w).ceil() as u32).min(buf.width);
+    let eps = 1e-9;
+    if (b - a).abs() <= eps {
+        // 零宽区间：只按闭区间原点归属一格（避免整段消失）。
+        let xi = if (a - a.floor() - 0.5).abs() <= 0.5 { a.floor() } else { a.ceil() };
+        if xi >= 0.0 && xi < w {
+            buf.blend_at(xi as u32, y, color, weight);
+        }
+        return;
+    }
+    let start = (a - eps).max(0.0).floor() as u32;
+    let end = ((b + eps).min(w).ceil() as u32).min(buf.width);
     let mut x = start;
     while x < end {
         let l = (x as f64).max(a);
         let r = ((x + 1) as f64).min(b);
-        if r > l {
-            buf.blend_at(x, y, color, (r - l) * weight);
+        let mut cov = (r - l).max(0.0);
+        // 闭区间端点补偿：端点贴住某列的内侧边界时，该列补到满覆盖。
+        let xf = x as f64;
+        if (a - xf).abs() <= eps || (a - (xf + 1.0)).abs() <= eps {
+            cov = 1.0;
+        }
+        if (b - xf).abs() <= eps || (b - (xf + 1.0)).abs() <= eps {
+            cov = 1.0;
+        }
+        if cov > 0.0 {
+            buf.blend_at(x, y, color, cov.clamp(0.0, 1.0) * weight);
         }
         x += 1;
     }
 }
-
-/// 线段光栅化（圆头）。
-///
-/// 以线段为中心、hw 为半径的胶囊：每个采样行上解析求出该行与胶囊的水平
-/// 区间，再交给 blend_span 做解析覆盖。
+/// 以线段为中心、hw 为半径的胶囊：逐采样行解析求出与胶囊的水平区间。
+/// 轴向部分用二次式解 t 的可行区间（不夹到 [0,1]，端帽交给圆补），
+/// 端帽用圆方程补两侧——这样 1px 竖线恰好占一列宽，不会因为投影
+/// 近似而比同宽度横线粗（漏掉端帽半径这个坑本站踩过：竖线画成 3 行）。
 fn raster_line(buf: &mut Bitmap, a: (f64, f64), b: (f64, f64), hw: f64, color: Color) {
     if hw <= 0.0 || color.a == 0 {
         return;
     }
+    // 亚像素线（宽 < 1px）必须有下限覆盖：几何上 [y-hw, y+hw] 可能整条落在
+    // 两条采样线之间，按面积算覆盖率是 0，线就"消失"了。渲染器的通行做法
+    // 是保证最小半像素覆盖——这里把 half-width 抬到 0.25（≥ 1/4 像素覆盖，
+    // 在 256 色阶下肉眼可见而不显脏）。
+    let hw = hw.max(0.25);
     let (ax, ay) = a;
     let (bx, by) = b;
     let dx = bx - ax;
@@ -1856,28 +1893,34 @@ fn raster_line(buf: &mut Bitmap, a: (f64, f64), b: (f64, f64), hw: f64, color: C
     sample_rows(buf.height, ay.min(by) - hw, ay.max(by) + hw, |py, sy, weight| {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
+        // 轴向部分：t 轴上距离 <= hw 的区间（半平面判定，不含端帽）。
         if len2 > 0.0 {
-            // 点到线段距离 <= hw 的水平范围：解二次式取 t 的可行区间，
-            // 再投影回 x。区间外扩 0.5 像素交给覆盖率积分做软边。
             let a2 = len2;
             let b2 = 2.0 * (dx * ax + dy * (ay - sy));
             let c2 = ax * ax + (ay - sy) * (ay - sy) - hw * hw;
             let disc = b2 * b2 - 4.0 * a2 * c2;
-            if disc >= 0.0 {
+            // 判别式恰为 0 = 采样行正好相切胶囊边缘，t0 == t1 退化成一点；
+            // 这时必须整条轴段都算覆盖（否则 0.5px 线整条消失，本站踩过）。
+            if (0.0..1e-12).contains(&disc) {
+                let xa = ax.min(bx);
+                let xb = ax.max(bx);
+                lo = lo.min(xa);
+                hi = hi.max(xb);
+            } else if disc > 0.0 {
                 let sq = disc.sqrt();
                 let t0 = (-b2 - sq) / (2.0 * a2);
                 let t1 = (-b2 + sq) / (2.0 * a2);
                 if t1 > 0.0 && t0 < 1.0 {
-                    let ta = t0.max(0.0);
-                    let tb = t1.min(1.0);
-                    let xa = ax + ta * dx;
-                    let xb = ax + tb * dx;
+                    // 需要的是该行在原始直线上的 x 范围（不夹到 [0,1]），
+                    // 端帽由下面的圆补——把 t 夹住会让端帽区变成矩形。
+                    let xa = ax + t0 * dx;
+                    let xb = ax + t1 * dx;
                     lo = lo.min(xa.min(xb));
                     hi = hi.max(xa.max(xb));
                 }
             }
         }
-        // 端点圆（圆头；退化零长线段也靠这里出像素）。
+        // 端帽（圆；退化零长线段也靠这里出像素）。
         for (cx, cy) in [(ax, ay), (bx, by)] {
             let dv = sy - cy;
             if dv.abs() < hw {
@@ -1919,16 +1962,27 @@ fn raster_rect_fill(buf: &mut Bitmap, p0: (f64, f64), p1: (f64, f64), color: Col
     });
 }
 
-/// 轴对齐矩形描边（四条边，闭区间）。
+/// 轴对齐矩形描边（矩形环带）。
+///
+/// 不用四条 raster_line 拼：四段的端帽会在四个角重叠叠加，1px 描边的
+/// 角上会被涂两遍（比边上深一倍）。这里按"环带"逐采样行直接求左右两条
+/// 竖边的覆盖区间——一条扫描线一次搞定，角上不重复。
 fn raster_rect_stroke(buf: &mut Bitmap, p0: (f64, f64), p1: (f64, f64), hw: f64, color: Color) {
     let x0 = p0.0.min(p1.0);
     let x1 = p0.0.max(p1.0);
     let y0 = p0.1.min(p1.1);
     let y1 = p0.1.max(p1.1);
-    raster_line(buf, (x0, y0), (x1, y0), hw, color);
-    raster_line(buf, (x0, y1), (x1, y1), hw, color);
-    raster_line(buf, (x0, y0), (x0, y1), hw, color);
-    raster_line(buf, (x1, y0), (x1, y1), hw, color);
+    let (iy0, iy1) = (y0 + hw, y1 - hw);
+    sample_rows(buf.height, y0 - hw, y1 + hw, |py, sy, weight| {
+        // 上下两条横边：整行按矩形横向区间铺满。
+        if sy < iy0 || sy > iy1 {
+            blend_span(buf, py, x0 - hw, x1 + hw, weight, color);
+            return;
+        }
+        // 左右两条竖边：各自一条区间，互不相交。
+        blend_span(buf, py, x0 - hw, x0 + hw, weight, color);
+        blend_span(buf, py, x1 - hw, x1 + hw, weight, color);
+    });
 }
 
 /// 椭圆填充（解析水平覆盖）。
