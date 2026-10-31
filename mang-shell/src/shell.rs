@@ -22,7 +22,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Entity, KeyDownEvent, PathPromptOptions, Render, Window};
+use gpui::{Context, Entity, FocusHandle, KeyDownEvent, PathPromptOptions, Render, Window};
 use ui::prelude::*;
 
 use crate::activity_bar;
@@ -37,6 +37,28 @@ use crate::title_bar;
 /// Ctrl+K 和弦窗口（第二键有效期；过期自动作废——惰性判定无需定时器）。
 const CHORD_WINDOW: Duration = Duration::from_secs(2);
 
+/// F4：确认框选项序（0 保存 / 1 不保存 / 2 取消）。键盘 Enter 激活
+/// 选中项、Tab/←/→ 循环、Esc 直接取消。
+const CONFIRM_BUTTONS: [&str; 3] = ["保存", "不保存", "取消"];
+
+/// F4：待确认动作（脏标签关闭 / 退出）。
+#[derive(Clone, Debug)]
+enum ConfirmAction {
+    /// 关闭 `idx` 标签（它有未保存修改）。
+    CloseTab { idx: usize },
+    /// 退出应用（存在未保存修改的标签）。
+    Quit,
+}
+
+/// F4：确认框状态。
+struct ConfirmState {
+    message: String,
+    detail: String,
+    action: ConfirmAction,
+    /// 选中按钮序（键盘循环 / 鼠标点击）。0=保存 1=不保存 2=取消。
+    selected: usize,
+}
+
 pub struct ShellApp {
     left_open: bool,
     right_open: bool,
@@ -48,6 +70,14 @@ pub struct ShellApp {
     workspace: Option<Entity<FileTree>>,
     /// F2：Ctrl+K 和弦待续期（None = 无和弦进行中）。
     chord_until: Option<Instant>,
+    /// F4：确认框（脏标签关闭/退出前确认；None = 无进行中）。
+    confirm: Option<ConfirmState>,
+    /// F4：确认框焦点域（模态开启时接管焦点——编辑器不再收键；
+    /// 键事件沿遮罩节点→shell 根冒泡，由确认拦截分支统一处理）。
+    confirm_focus: FocusHandle,
+    /// shell 根焦点域（空态回退——无标签时键事件仍走 root→shell 根
+    /// 冒泡路径；无此前提派发路径止于合成根节点，shell 级键位全聋）。
+    root_focus: FocusHandle,
     /// F1：提示横幅（打开失败 / 类型不支持 / 对话框不可用等面向用户消息）。
     notice_board: NoticeBoard,
 }
@@ -108,7 +138,7 @@ impl ShellApp {
     pub fn new(
         editor: Option<Entity<Editor>>,
         workspace_root: Option<PathBuf>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         if let Some(root) = &workspace_root {
@@ -131,15 +161,65 @@ impl ShellApp {
                 vec![TabItem { path, editor }]
             })
             .unwrap_or_default();
-        Self {
+        // F4：窗口关闭前确认钩子（平台 X 钮/OS 关闭——四后端均接线
+        // on_should_close；cx.quit 不经此路）。脏标签存在 → 拦截本次
+        // 关闭 + 弹确认框；确认后保存/放弃再 cx.quit。
+        let confirm_focus = cx.focus_handle();
+        let root_focus = cx.focus_handle();
+        let root_focus_for_init = root_focus.clone();
+        {
+            let shell = cx.entity().clone();
+            let confirm_focus = confirm_focus.clone();
+            window.on_window_should_close(cx, move |window, cx| {
+                let dirty: Vec<usize> = shell
+                    .read(cx)
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, tab)| tab.editor.read(cx).is_modified())
+                    .map(|(i, _)| i)
+                    .collect();
+                if dirty.is_empty() {
+                    return true;
+                }
+                shell.update(cx, |shell, cx| {
+                    eprintln!("confirm: 退出前确认（{} 个未保存）", dirty.len());
+                    shell.confirm = Some(ConfirmState {
+                        message: format!("有 {} 个未保存的文档", dirty.len()),
+                        detail: "退出前保存修改？".to_string(),
+                        action: ConfirmAction::Quit,
+                        selected: 0,
+                    });
+                    cx.notify();
+                });
+                // 模态接管焦点（编辑器隔离）。
+                window.focus(&confirm_focus, cx);
+                false
+            });
+        }
+        let this = Self {
             left_open: true,
             right_open: true,
             tabs,
             active: 0,
             workspace,
             chord_until: None,
+            confirm: None,
+            confirm_focus,
+            root_focus,
             notice_board: NoticeBoard::default(),
+        };
+        // 初始焦点：有文档 → 编辑器（键入/编辑即时可用）；空态 →
+        // shell 根域（Ctrl+O 等空态键位经 root→shell 根路径可达——
+        /// 无焦点时派发路径止于合成根节点，shell 监听器不触发）。
+        match this.editor() {
+            Some(tab) => {
+                let focus = tab.read(cx).focus_handle().clone();
+                window.focus(&focus, cx);
+            }
+            None => window.focus(&root_focus_for_init, cx),
         }
+        this
     }
 
     /// 当前标签的编辑器（无标签 = 空态 None）。
@@ -219,28 +299,163 @@ impl ShellApp {
         window.focus(&focus, cx);
     }
 
-    /// F3：关闭当前标签（Ctrl+W）——切邻位（右邻优先，末位回左；
-    /// 关唯一标签 → 空态）。
+    /// F3/F4：关闭当前标签（Ctrl+W）——脏标签先弹确认框（保存/不保存/
+    /// 取消）；干净标签直接关。
     pub fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let old_len = self.tabs.len();
-        if old_len == 0 {
+        if self.tabs.is_empty() {
             return;
         }
-        self.tabs.remove(self.active);
-        self.active = tab_bar::active_after_close(old_len, self.active);
+        // F4：脏标签 → 确认框拦截。
+        if self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| tab.editor.read(cx).is_modified())
+        {
+            let name = self.tabs[self.active]
+                .editor
+                .read(cx)
+                .display_name()
+                .to_string();
+            eprintln!("confirm: 关闭未保存标签（{name}）");
+            self.confirm = Some(ConfirmState {
+                message: format!("{name} 有未保存的修改"),
+                detail: "关闭前保存？".to_string(),
+                action: ConfirmAction::CloseTab { idx: self.active },
+                selected: 0,
+            });
+            // 模态接管焦点（编辑器隔离——可打印键不再入 buffer）。
+            window.focus(&self.confirm_focus.clone(), cx);
+            cx.notify();
+            return;
+        }
+        self.close_tab_at(self.active, window, cx);
+    }
+
+    /// F3/F4：关闭指定标签（无确认——确认面在 [`Self::close_active_tab`]）。
+    fn close_tab_at(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let old_len = self.tabs.len();
+        if idx >= old_len {
+            return;
+        }
+        self.tabs.remove(idx);
+        self.active = if idx < self.active {
+            self.active - 1
+        } else if idx == self.active {
+            tab_bar::active_after_close(old_len, self.active)
+        } else {
+            self.active
+        };
         eprintln!(
             "tabs: close → {} 开（active {}）",
             self.tabs.len(),
             self.active
         );
-        // 焦点跟到新活动标签（空态无焦点面）。
-        if let Some(tab) = self.tabs.get(self.active) {
-            let focus = tab.editor.read(cx).focus_handle().clone();
-            cx.notify();
-            window.focus(&focus, cx);
-        } else {
-            cx.notify();
+        // 焦点跟到新活动标签（空态回退 shell 根域）。
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// F4：确认框按钮激活（键盘 Enter / 鼠标点击）。`choice`：
+    /// 0 保存 / 1 不保存 / 2 取消。
+    fn resolve_confirm(&mut self, choice: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(confirm) = self.confirm.take() else {
+            return;
+        };
+        match confirm.action {
+            ConfirmAction::CloseTab { idx } => match choice {
+                0 => {
+                    // 保存后关（保存失败不关——不静默丢内容）。
+                    let saved = self
+                        .tabs
+                        .get(idx)
+                        .is_some_and(|tab| tab.editor.update(cx, |ed, _| ed.save()));
+                    if saved {
+                        self.close_tab_at(idx, window, cx);
+                    }
+                }
+                1 => self.close_tab_at(idx, window, cx),
+                _ => {}
+            },
+            ConfirmAction::Quit => match choice {
+                0 => {
+                    for tab in &self.tabs {
+                        tab.editor.update(cx, |ed, _| {
+                            ed.save();
+                        });
+                    }
+                    cx.quit();
+                }
+                1 => cx.quit(),
+                _ => {}
+            },
         }
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// 焦点归回当前活动标签的编辑器（确认框关闭后；空态回退 shell
+    /// 根域——键位不聋）。
+    fn focus_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.tabs.get(self.active) {
+            Some(tab) => {
+                let focus = tab.editor.read(cx).focus_handle().clone();
+                window.focus(&focus, cx);
+            }
+            None => window.focus(&self.root_focus, cx),
+        }
+    }
+
+    /// F4：另存为落位（对话框回调 / --smoke-save-as 钩子共用）——
+    /// 编辑器写盘 + 身份迁移 + 标签路径更新 + 文件树高亮同步。
+    pub fn save_active_as(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let path = std::path::absolute(&path).unwrap_or(path);
+        let Some(tab) = self.tabs.get_mut(self.active) else {
+            return;
+        };
+        let ok = tab.editor.update(cx, |ed, _| ed.save_as(path.clone()));
+        if !ok {
+            return;
+        }
+        self.tabs[self.active].path = path.clone();
+        if let Some(tree) = &self.workspace {
+            tree.update(cx, |tree, cx| {
+                tree.set_active_file(Some(path.clone()));
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
+    /// F4：Ctrl+Shift+S 另存为对话框（prompt_for_new_path——
+    /// 建议名取当前文件名；目录取当前文件所在目录，缺省工作区根/家目录）。
+    fn prompt_save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (directory, suggested) = match self.tabs.get(self.active) {
+            Some(tab) => (
+                tab.path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                tab.path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned()),
+            ),
+            None => return,
+        };
+        let rx = cx.prompt_for_new_path(&directory, suggested.as_deref());
+        cx.spawn_in(window, async move |this, cx| match rx.await {
+            Ok(Ok(Some(path))) => {
+                let _ = this.update(cx, |shell, cx| shell.save_active_as(path, cx));
+            }
+            Ok(Ok(None)) => {}
+            Ok(Err(err)) => {
+                let message = format!("另存为对话框不可用：{err}");
+                let _ = this.update_in(cx, |shell, window, cx| {
+                    shell.show_notice(message, window, cx);
+                });
+            }
+            Err(_canceled) => {}
+        })
+        .detach();
     }
 
     /// F3：循环切换标签（Ctrl+Tab 下一 / Ctrl+Shift+Tab 上一；
@@ -375,6 +590,7 @@ impl Render for ShellApp {
         v_flex()
             .id("shell-root")
             .size_full()
+            .track_focus(&self.root_focus)
             .bg(colors.background)
             .text_color(colors.text)
             .font_family("Noto Sans SC")
@@ -390,6 +606,43 @@ impl Render for ShellApp {
                 let ks = &event.keystroke;
                 let ctrl = ks.modifiers.control || ks.modifiers.platform;
                 let plain_ctrl = ctrl && !ks.modifiers.shift && !ks.modifiers.alt;
+                let key = ks.key.to_lowercase();
+
+                // F4：确认框模态拦截（最高优先——开启时其余键位全部隔离）。
+                if this.confirm.is_some() {
+                    match key.as_str() {
+                        "escape" => {
+                            this.confirm = None;
+                            this.focus_active(window, cx);
+                            cx.notify();
+                        }
+                        "enter" => {
+                            let selected = this.confirm.as_ref().map(|c| c.selected).unwrap_or(2);
+                            this.resolve_confirm(selected, window, cx);
+                        }
+                        "tab" => {
+                            if let Some(confirm) = this.confirm.as_mut() {
+                                confirm.selected = (confirm.selected + 1) % CONFIRM_BUTTONS.len();
+                                cx.notify();
+                            }
+                        }
+                        "left" => {
+                            if let Some(confirm) = this.confirm.as_mut() {
+                                confirm.selected = (confirm.selected + CONFIRM_BUTTONS.len() - 1)
+                                    % CONFIRM_BUTTONS.len();
+                                cx.notify();
+                            }
+                        }
+                        "right" => {
+                            if let Some(confirm) = this.confirm.as_mut() {
+                                confirm.selected = (confirm.selected + 1) % CONFIRM_BUTTONS.len();
+                                cx.notify();
+                            }
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
 
                 // F2 和弦第一键：Ctrl+K（进入待续期，重复按刷新窗口）。
                 if plain_ctrl && ks.key.eq_ignore_ascii_case("k") {
@@ -413,9 +666,18 @@ impl Render for ShellApp {
                     this.cycle_tab(!ks.modifiers.shift, window, cx);
                     return;
                 }
-                // F3：Ctrl+W 关闭当前标签。
+                // F3：Ctrl+W 关闭当前标签（F4：脏标签经确认框）。
                 if plain_ctrl && ks.key.eq_ignore_ascii_case("w") {
                     this.close_active_tab(window, cx);
+                    return;
+                }
+                // F4：Ctrl+Shift+S 另存为（编辑器 s 臂带 !shift 守卫冒泡至此）。
+                if ctrl
+                    && ks.modifiers.shift
+                    && !ks.modifiers.alt
+                    && ks.key.eq_ignore_ascii_case("s")
+                {
+                    this.prompt_save_as(window, cx);
                     return;
                 }
                 // F1：Ctrl+O 文件打开。
@@ -464,6 +726,11 @@ impl Render for ShellApp {
                 Some(message) => el.child(notice_bar(message, &colors)),
                 None => el,
             })
+            // F4：确认框模态（最后渲染最上层——半透明遮罩全屏拦截点按）。
+            .map(|el| match &self.confirm {
+                Some(confirm) => el.child(confirm_overlay(confirm, &self.confirm_focus, cx)),
+                None => el,
+            })
             .child(status_bar::status_bar(
                 self.editor().cloned().as_ref(),
                 self.workspace
@@ -472,6 +739,72 @@ impl Render for ShellApp {
                 cx,
             ))
     }
+}
+
+/// F4：确认框模态遮罩（半透明背景全屏 + 居中卡片 + 三钮）。遮罩
+/// 拦截一切点按（背景无事件——点击不穿透到底下 UI）；焦点域在遮罩
+/// 节点（track_focus）——编辑器隔离，键事件沿遮罩→shell 根冒泡。
+fn confirm_overlay(
+    confirm: &ConfirmState,
+    focus: &FocusHandle,
+    cx: &mut Context<ShellApp>,
+) -> impl IntoElement {
+    let colors = cx.theme().colors().clone();
+    div()
+        .id("confirm-backdrop")
+        .absolute()
+        .size_full()
+        .top_0()
+        .left_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(gpui::black().opacity(0.5))
+        .track_focus(focus)
+        .child(
+            v_flex()
+                .id("confirm-box")
+                .w(px(380.))
+                .p_4()
+                .gap_3()
+                .bg(colors.elevated_surface_background)
+                .border_1()
+                .border_color(colors.border)
+                .rounded_md()
+                .child(ui::Label::new(confirm.message.as_str()).size(ui::LabelSize::Default))
+                .child(
+                    ui::Label::new(confirm.detail.as_str())
+                        .size(ui::LabelSize::Small)
+                        .color(ui::Color::Muted),
+                )
+                .child(
+                    h_flex()
+                        .id("confirm-buttons")
+                        .gap_2()
+                        .justify_end()
+                        .children(CONFIRM_BUTTONS.iter().enumerate().map(|(i, label)| {
+                            let selected = confirm.selected == i;
+                            let selected_bg = colors.element_selected;
+                            let hover_bg = colors.element_hover;
+                            h_flex()
+                                .id(gpui::SharedString::from(format!("confirm-btn-{i}")))
+                                .px_3()
+                                .py_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(colors.border)
+                                .when(selected, move |el| el.bg(selected_bg))
+                                .hover(move |el| el.bg(hover_bg))
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.resolve_confirm(i, window, cx);
+                                    }),
+                                )
+                                .child(ui::Label::new(*label).size(ui::LabelSize::Small))
+                        })),
+                ),
+        )
 }
 
 /// F1：提示横幅（状态栏上方一条——警告性信息面：打开失败/类型不支持/

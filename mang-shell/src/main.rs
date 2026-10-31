@@ -83,6 +83,18 @@ fn main() {
     // 3.5s 合成 Ctrl+Tab 循环 + 4.5s 合成 Ctrl+W 关闭，经完整键派发
     // 管线断言 tabs 证据行）。
     let smoke_tab_keys = args.iter().any(|a| a == "--smoke-tab-keys");
+    // F4：保存流烟雾（--smoke-save-flow——启动 FILE 为标签：3.5s 合成
+    // 可打印键弄脏 + 4.5s Ctrl+W 弹确认 + 5.5s Enter 保存并关——断言
+    // confirm/saved/tabs 证据行 + 落盘内容外部校验）。
+    let smoke_save_flow = args.iter().any(|a| a == "--smoke-save-flow");
+    // F4：另存为烟雾（--smoke-save-as PATH——3.5s 弄脏 + 4.5s 另存到
+    // PATH（与对话框回调同走 save_active_as）+ 5.5s Ctrl+W 干净直关
+    // ——断言 saved-as 证据行 + 无 confirm 行 + 落盘内容外部校验）。
+    let smoke_save_as = args
+        .iter()
+        .position(|a| a == "--smoke-save-as")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
     // F2：工作区烟雾钩子（--smoke-workspace DIR）。
     let smoke_workspace = args
         .iter()
@@ -101,17 +113,21 @@ fn main() {
             // 文档分派：首个非 flag 参数为文件路径（#68 阶段 1.1；跳过
             // 各 flag 的值参数，避免误判为文件）。F1 起与 Ctrl+O 运行时
             // 打开共用 document::open_editor 通道（同一分派语义）。
-            let flag_value_positions: Vec<usize> =
-                ["--smoke-sec", "--smoke-open", "--smoke-workspace"]
-                    .iter()
-                    .flat_map(|flag| {
-                        args.iter()
-                            .enumerate()
-                            .filter(|(_, a)| a == flag)
-                            .map(|(i, _)| i + 1)
-                            .collect::<Vec<_>>()
-                    })
-                    .collect();
+            let flag_value_positions: Vec<usize> = [
+                "--smoke-sec",
+                "--smoke-open",
+                "--smoke-workspace",
+                "--smoke-save-as",
+            ]
+            .iter()
+            .flat_map(|flag| {
+                args.iter()
+                    .enumerate()
+                    .filter(|(_, a)| a == flag)
+                    .map(|(i, _)| i + 1)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
             let file_arg = args
                 .iter()
                 .enumerate()
@@ -208,8 +224,8 @@ fn main() {
                         })
                     });
                     if keys {
-                        dispatch_key(&handle, cx, 1000, "tab", true, false).await;
-                        dispatch_key(&handle, cx, 1000, "w", true, false).await;
+                        dispatch_key(&handle, cx, 1000, "tab", true, false, None).await;
+                        dispatch_key(&handle, cx, 1000, "w", true, false, None).await;
                     }
                 })
                 .detach();
@@ -230,6 +246,37 @@ fn main() {
                             shell.open_workspace(std::path::PathBuf::from(dir), cx);
                         })
                     });
+                })
+                .detach();
+            }
+
+            // F4：保存流烟雾——弄脏 → Ctrl+W 弹确认 → Enter 保存并关
+            //（与用户实操同链：可打印键入 buffer / 键位经完整派发管线）。
+            if smoke_save_flow {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "x", false, false, Some("x")).await;
+                    dispatch_key(&handle, cx, 1000, "w", true, false, None).await;
+                    dispatch_key(&handle, cx, 1000, "enter", false, false, None).await;
+                })
+                .detach();
+            }
+
+            // F4：另存为烟雾——弄脏 → 另存到 PATH（对话框回调同链）→
+            // Ctrl+W 干净直关（断言无 confirm 行）。
+            if let Some(target) = smoke_save_as {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "x", false, false, Some("x")).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1000))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, _window, cx| {
+                            shell.save_active_as(std::path::PathBuf::from(target), cx);
+                        })
+                    });
+                    dispatch_key(&handle, cx, 1000, "w", true, false, None).await;
                 })
                 .detach();
             }
@@ -263,6 +310,7 @@ async fn dispatch_key(
     key: &str,
     ctrl: bool,
     shift: bool,
+    key_char: Option<&str>,
 ) {
     use gpui::{KeyDownEvent, Keystroke, Modifiers, PlatformInput};
     cx.background_executor()
@@ -276,7 +324,7 @@ async fn dispatch_key(
                 ..Default::default()
             },
             key: key.to_string(),
-            key_char: None,
+            key_char: key_char.map(|c| c.to_string()),
         },
         is_held: false,
         prefer_character_input: false,
@@ -286,9 +334,12 @@ async fn dispatch_key(
     //（cx.listener）不重入。此前用 window.update 会包住 ShellApp
     // 实体更新——键事件再触发其监听器即「already being updated」panic。
     let any_handle: gpui::AnyWindowHandle = window.clone().into();
-    let _ = cx.update_window(any_handle, |_, window, cx| {
+    let result = cx.update_window(any_handle, |_, window, cx| {
         window.dispatch_event(event, cx);
     });
+    if let Err(err) = &result {
+        eprintln!("dispatch_key({key}): update_window 失败: {err}");
+    }
 }
 
 // ---------------------------------------------------------------------------

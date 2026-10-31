@@ -551,6 +551,7 @@ impl Editor {
                 match std::fs::write(path, content) {
                     Ok(()) => {
                         self.buffer.mark_saved();
+                        eprintln!("saved: {}", path.display());
                         true
                     }
                     Err(err) => {
@@ -560,6 +561,33 @@ impl Editor {
                 }
             }
             None => false,
+        }
+    }
+
+    /// F4：另存为（新路径写盘 + 身份迁移——file_path/display_name 更新
+    /// + mark_saved）。只读态拒（返回 false 不写盘）。
+    pub fn save_as(&mut self, path: PathBuf) -> bool {
+        if self.read_only {
+            eprintln!("mang-shell: 只读文档不可另存（{}）", path.display());
+            return false;
+        }
+        let content = self.buffer.to_plain_text();
+        match std::fs::write(&path, content) {
+            Ok(()) => {
+                self.display_name = SharedString::from(
+                    path.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "未命名".to_string()),
+                );
+                self.file_path = Some(path.clone());
+                self.buffer.mark_saved();
+                eprintln!("saved-as: {}", path.display());
+                true
+            }
+            Err(err) => {
+                eprintln!("mang-shell: 另存失败 {}: {err}", path.display());
+                false
+            }
         }
     }
 
@@ -746,9 +774,12 @@ impl Editor {
                 self.toggle_fold_at(line);
             }
             "f" if ctrl => self.open_find(window, cx),
-            "s" if ctrl => {
+            "s" if ctrl && !shift => {
                 self.save();
             }
+            // F4：Ctrl+Shift+S（另存为）不消费——冒泡至 shell 级钩子
+            //（另存为需 prompt_for_new_path 应用层面 + 标签身份更新）。
+            "s" if ctrl => {}
             _ => {
                 // 可打印字符（无修饰或仅 shift）：插入。
                 // key_char 为平台布局产生的实际字符（IME 未接管时的直输路径；
