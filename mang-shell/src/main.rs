@@ -13,6 +13,11 @@
 //!                               滚轮）过 Window::dispatch_event 完整
 //!                               派发管线，命中结果由 Editor 日志输出
 //!                               （需同时带 FILE——空态无编辑区）
+//! mang-shell --smoke-open FILE2  F1 替换管线烟雾：与 --smoke-sec 组合——
+//!                               开窗 2.5s 后经 ShellApp::open_document
+//!                               把 FILE2 换入编辑区（Ctrl+O 对话框回调
+//!                               同通道；对话框本体需真机/portal，沙箱
+//!                               以此钩子验证替换链）
 //! mang-shell --version         版本号
 //! ```
 //!
@@ -43,8 +48,7 @@ mod shell;
 mod status_bar;
 mod title_bar;
 
-use document::OpenedDocument;
-use editor::Editor;
+use document::OpenOutcome;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -65,7 +69,12 @@ fn main() {
         .position(|a| a == "--smoke-sec")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok());
-    let smoke_pos = args.iter().position(|a| a == "--smoke-sec");
+    // F1：替换管线烟雾钩子（--smoke-open FILE2）。
+    let smoke_open = args
+        .iter()
+        .position(|a| a == "--smoke-open")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
     // 批 2：鼠标烟雾脚本（需与 --smoke-sec + FILE 组合）。
     let smoke_mouse = args.iter().any(|a| a == "--smoke-mouse");
 
@@ -75,66 +84,32 @@ fn main() {
             theme::init(theme::LoadThemes::JustBase, cx);
             theme::set_theme_settings_provider(Box::new(settings::ShellThemeSettings), cx);
 
-            // 文档分派：首个非 flag 参数为文件路径（#68 阶段 1.1；
-            // 跳过 `--smoke-sec` 的值参数，避免数字误判为文件）。
+            // 文档分派：首个非 flag 参数为文件路径（#68 阶段 1.1；跳过
+            // 各 flag 的值参数，避免误判为文件）。F1 起与 Ctrl+O 运行时
+            // 打开共用 document::open_editor 通道（同一分派语义）。
+            let flag_value_positions: Vec<usize> = ["--smoke-sec", "--smoke-open"]
+                .iter()
+                .filter_map(|flag| args.iter().position(|a| a == flag).map(|pos| pos + 1))
+                .collect();
             let file_arg = args
                 .iter()
                 .enumerate()
                 .skip(1)
-                .find(|(i, a)| !a.starts_with('-') && !matches!(smoke_pos, Some(p) if *i == p + 1))
+                .find(|(i, a)| !a.starts_with('-') && !flag_value_positions.contains(i))
                 .map(|(_, a)| a.clone());
-            let opened = file_arg
-                .as_ref()
-                .map(|p| document::open(std::path::Path::new(p)));
-            let editor_entity = match opened {
-                Some(OpenedDocument::EditableText { path, content }) => {
-                    Some(cx.new(|cx| Editor::new(Some(path), content, cx)))
+            let editor_entity = file_arg.as_ref().and_then(|p| {
+                match document::open_editor(std::path::Path::new(p), cx) {
+                    OpenOutcome::Opened(editor) => Some(editor),
+                    OpenOutcome::Unsupported { path, message } => {
+                        eprintln!("mang-shell: {message}（{}）", path.display());
+                        None
+                    }
+                    OpenOutcome::Failed { path, message } => {
+                        eprintln!("mang-shell: 打开失败（{}）：{message}", path.display());
+                        None
+                    }
                 }
-                Some(OpenedDocument::ReadOnlyDocx { path, payload }) => {
-                    // 批 3 证据通道：启动日志一行（属性面 + 只读标记）。
-                    eprintln!(
-                        "docx: {} 段 / {} 表（{} 行）/ {} 标题 / {} 图片 / {} 警告（只读，{}）",
-                        payload.props.paragraphs,
-                        payload.props.tables,
-                        payload.props.table_rows,
-                        payload.headings.len(),
-                        payload.props.images,
-                        payload.props.warnings,
-                        path.display()
-                    );
-                    Some(cx.new(|cx| Editor::new_docx(path, payload, cx)))
-                }
-                Some(OpenedDocument::ReadOnlyPdf { path, payload }) => {
-                    // 批 4 证据通道：启动日志一行（属性面 + 只读标记）。
-                    let scanned = if payload.props.scanned {
-                        " / 全文无文本层（扫描件提示）"
-                    } else {
-                        ""
-                    };
-                    eprintln!(
-                        "pdf: {} 页 / {} 字符 / {} 书签 / {} 空文本页{}（只读，{}）",
-                        payload.props.pages,
-                        payload.props.chars,
-                        payload.headings.len(),
-                        payload.props.empty_pages,
-                        scanned,
-                        path.display()
-                    );
-                    Some(cx.new(|cx| Editor::new_pdf(path, payload, cx)))
-                }
-                Some(OpenedDocument::Unsupported { path }) => {
-                    eprintln!(
-                        "mang-shell: 暂不支持该文件类型（{}）——支持 .md/.markdown/.txt",
-                        path.display()
-                    );
-                    None
-                }
-                Some(OpenedDocument::OpenError { path, message }) => {
-                    eprintln!("mang-shell: 打开失败（{}）：{message}", path.display());
-                    None
-                }
-                None => None,
-            };
+            });
 
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -186,6 +161,25 @@ fn main() {
                     })
                     .detach();
                 }
+            }
+
+            // F1：替换管线烟雾——开窗 2.5s 后把 FILE2 换入编辑区
+            // （与 Ctrl+O 对话框回调同走 ShellApp::open_document；
+            // 断言通道 = stderr "open: <路径>" + docx/pdf 证据行 +
+            // "smoke: quit reached"）。
+            if let Some(extra) = smoke_open {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(2500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, window, cx| {
+                            shell.open_document(std::path::PathBuf::from(extra), window, cx);
+                        })
+                    });
+                })
+                .detach();
             }
 
             if let Some(sec) = smoke_sec {
