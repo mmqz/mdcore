@@ -22,6 +22,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::forms::dict_text;
+
 // ---------------------------------------------------------------------------
 // 公开类型
 // ---------------------------------------------------------------------------
@@ -668,12 +670,7 @@ fn build_signature_info(
 ) -> SignatureInfo {
     use lopdf::Object;
 
-    let get_str = |d: &lopdf::Dictionary, key: &[u8]| -> Option<String> {
-        d.get(key)
-            .ok()
-            .and_then(|o| o.as_str().ok())
-            .map(crate::forms::decode_pdf_string)
-    };
+
 
     // /V → 签名字典（可能是引用）
     let sig_dict: Option<lopdf::Dictionary> = match dict.get(b"V").ok() {
@@ -702,20 +699,13 @@ fn build_signature_info(
         return info;
     };
 
-    info.reason = get_str(&sd, b"Reason");
-    info.location = get_str(&sd, b"Location");
-    info.signer_name = get_str(&sd, b"Name");
-    info.sign_time = get_str(&sd, b"M");
-    // /SubFilter 是**名字对象**（/ETSI.CAdES.detached），不是字符串——
-    // 用 as_str() 会静默拿到空串（实测踩坑，测试抓到）
-    info.sub_filter = match sd.get(b"SubFilter").ok() {
-        Some(Object::Name(n)) => String::from_utf8_lossy(n).into_owned(),
-        Some(o) => o
-            .as_str()
-            .map(crate::forms::decode_pdf_string)
-            .unwrap_or_default(),
-        None => String::new(),
-    };
+    info.reason = dict_text(&sd, b"Reason");
+    info.location = dict_text(&sd, b"Location");
+    info.signer_name = dict_text(&sd, b"Name");
+    info.sign_time = dict_text(&sd, b"M");
+    // /SubFilter 是**名字对象**（/ETSI.CAdES.detached）——用 dict_text 兼容
+    // 名字/字符串两形态（as_str 对名字静默返回 None，见 crate 文档「三形态」）
+    info.sub_filter = dict_text(&sd, b"SubFilter").unwrap_or_default();
 
     // /ByteRange [start1 len1 start2 len2 ...]
     if let Ok(arr) = sd.get(b"ByteRange").and_then(|o| o.as_array()) {
