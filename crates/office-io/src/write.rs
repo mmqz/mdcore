@@ -718,6 +718,14 @@ impl SheetWriter<'_> {
         self.advance_water(row);
         Ok(())
     }
+
+    /// 图表挂载（issue #113 任务 3——翻译面 [`crate::xlsx_chart`]，
+    /// 引擎类型零泄漏）。规格语义（系列拆分约定/EMU 尺寸/校验面）见
+    /// [`crate::xlsx_chart`] 模块文档；两模式（流式/非流式）均可用
+    /// （图表不触单元格写路径，不参与行序水位纪律）。
+    pub fn add_chart(&mut self, spec: crate::xlsx_chart::ChartSpec) -> Result<(), WriteError> {
+        crate::xlsx_chart::apply(self.ws, &spec)
+    }
 }
 
 // ---------------------------------------------------------------------------
