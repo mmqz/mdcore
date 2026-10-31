@@ -158,6 +158,9 @@ pub struct Editor {
     find_focus: FocusHandle,
     /// 查找条状态（`None` = 关闭）。
     find: Option<FindState>,
+    /// G1：查找条关闭时的持久种子（选项/替换文本跨开关保留——
+    /// 下次 open/open_replace 经 `mem::take` 接续）。
+    find_saved: FindState,
     /// 行列表滚动句柄（光标行滚入可视区用）。
     scroll: UniformListScrollHandle,
     /// 每行行首的代码围栏状态缓存（文档变更时重算）。
@@ -232,6 +235,7 @@ impl Editor {
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
+            find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
             display_map: DisplayMap::default(),
@@ -270,6 +274,7 @@ impl Editor {
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
+            find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             // docx 无围栏语义——fence 恒 false（refresh_caches 在 docx
             // 模式下跳过 md 逐行推进）。
@@ -310,6 +315,7 @@ impl Editor {
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
+            find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
             fence_cache: vec![false; line_count],
@@ -472,6 +478,14 @@ impl Editor {
                 self.toggle_fold_at(line);
             }
             Cmd::OpenFind => self.open_find(window, cx),
+            // G1：替换（Ctrl+H——与键位同链；只读门禁在 exec 上游无覆盖，
+            // 面板入口补一道 read_only 拒——面板在只读态可开（浏览类））。
+            Cmd::OpenReplace => {
+                if self.read_only {
+                    return;
+                }
+                self.open_replace(window, cx);
+            }
             Cmd::Save => {
                 self.save();
             }
@@ -793,7 +807,13 @@ impl Editor {
                     }
                     self.sync_cursors_from_buffer();
                 } else {
+                    // G1：单光标路径——undo 栈顶若为批量记录（全部
+                    // 替换），一条记录一次撤整批；证据行供烟雾/日志面。
+                    let pending = self.buffer.last_undo_batch_count();
                     self.buffer.undo();
+                    if pending > 1 {
+                        eprintln!("find-replace: undo batch {pending} edits in one step");
+                    }
                     self.sync_cursors_from_buffer();
                 }
             }
@@ -815,6 +835,8 @@ impl Editor {
                 self.toggle_fold_at(line);
             }
             "f" if ctrl => self.open_find(window, cx),
+            // G1：Ctrl+H 替换条（只读门禁在前——docx/pdf 态不达此处）。
+            "h" if ctrl => self.open_replace(window, cx),
             "s" if ctrl && !shift => {
                 self.save();
             }
@@ -1008,17 +1030,34 @@ impl Editor {
     }
 
     /// 打开查找条（Ctrl+F）：初始化 query（选中文本优先）、聚焦输入域。
+    /// G1：选项/替换文本从上次会话接续（find_saved 种子——
+    /// `mem::take` 取用后由 close_find 回填）。
     fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut state = FindState::default();
+        let mut state = std::mem::take(&mut self.find_saved);
         state.open(&self.buffer);
         self.find = Some(state);
         window.focus(&self.find_focus, cx);
         cx.notify();
     }
 
-    /// 关闭查找条：焦点回编辑区。
+    /// G1：打开替换条（Ctrl+H）——查找条同链 + 替换输入行。
+    /// 只读态不达此处（dispatch 的 readonly 门禁已拦——docx/pdf 的
+    /// 变更类键整段拒绝，与 Ctrl+S 同口径）。
+    fn open_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut state = std::mem::take(&mut self.find_saved);
+        state.open_replace(&self.buffer);
+        self.find = Some(state);
+        window.focus(&self.find_focus, cx);
+        eprintln!("find-replace: bar open (replace mode)");
+        cx.notify();
+    }
+
+    /// 关闭查找条：焦点回编辑区；G1 起状态存回 find_saved（选项/替换
+    /// 文本跨开关保留——query 由下次 open 按选区语义重建）。
     fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.find = None;
+        if let Some(state) = self.find.take() {
+            self.find_saved = state;
+        }
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -1050,6 +1089,26 @@ impl Editor {
                 }
                 self.after_edit();
             }
+            // G1：替换当前（替换行 Enter）——单点替换，一次 undo。
+            FindKeyOutcome::ReplaceCurrent => {
+                if let Some(f) = self.find.as_mut() {
+                    f.replace_current(&mut self.buffer);
+                }
+                self.sync_cursors_from_buffer();
+                self.after_edit();
+            }
+            // G1：全部替换——一次批量编辑，一条 undo 记录。
+            FindKeyOutcome::ReplaceAll => {
+                if let Some(f) = self.find.as_mut() {
+                    let n = f.replace_all(&mut self.buffer);
+                    eprintln!("find-replace: replace-all {n} matches");
+                }
+                self.sync_cursors_from_buffer();
+                self.after_edit();
+            }
+            // G1：选项/输入行切换——纯 UI 态，重绘即可。
+            FindKeyOutcome::OptionsChanged => {}
+            FindKeyOutcome::FocusSwitched => {}
             FindKeyOutcome::Close => {
                 self.close_find(window, cx);
                 return;
@@ -1360,94 +1419,227 @@ impl Editor {
     // 渲染
     // -----------------------------------------------------------------------
 
-    /// 查找条（编辑区顶部）：放大镜 + query 输入区 + 计数 + 关闭钮。
+    /// 查找条（编辑区顶部）：放大镜 + query 输入区 + G1 选项钮 + 计数 +
+    /// 关闭钮；替换态（Ctrl+H）追加替换输入行（Enter 替换当前 /
+    /// Ctrl+Alt+Enter 全部替换；Tab/上下键切换输入行）。
     fn render_find_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
-        let query: SharedString = self
-            .find
-            .as_ref()
+        let find = self.find.as_ref();
+        let query: SharedString = find
             .map(|f| f.query().to_string())
             .unwrap_or_default()
             .into();
-        let label = self
-            .find
-            .as_ref()
-            .map(|f| f.match_label())
-            .unwrap_or_default();
-        let cursor_col = self.find.as_ref().map(|f| f.cursor_col()).unwrap_or(0);
+        let label = find.map(|f| f.match_label()).unwrap_or_default();
+        let cursor_col = find.map(|f| f.cursor_col()).unwrap_or(0);
+        // G1：选项/替换态。
+        let replace_mode = find.is_some_and(|f| f.is_replace_mode());
+        let focus_repl = find.is_some_and(|f| f.focus_is_replacement());
+        let case_on = find.is_some_and(|f| f.case_sensitive());
+        let word_on = find.is_some_and(|f| f.whole_word());
         // 输入光标 x：shape query 前缀宽度。
         let prefix: String = query.chars().take(cursor_col).collect();
         let text_style = find_text_style(&colors);
         let prefix_width = shape_text_width(window, &prefix, &text_style);
 
+        // G1：选项切换钮（与 Alt+C / Alt+W 同一状态源；激活态高亮）。
+        let chip = |id: &'static str, text: &'static str, active: bool| {
+            div()
+                .id(id)
+                .px_1()
+                .rounded_sm()
+                .text_size(px(11.))
+                .line_height(px(16.))
+                .font_family(EDITOR_FONT)
+                .when(active, |el| {
+                    el.bg(colors.element_active).text_color(colors.text)
+                })
+                .when(!active, |el| el.text_color(colors.text_muted))
+                .hover(|el| el.bg(colors.element_hover))
+                .child(text)
+        };
+
         h_flex()
             .id("find-bar")
             .w_full()
             .flex_none()
-            .h(px(36.))
-            .px_3()
+            .when(replace_mode, |el| el.h(px(72.)))
+            .when(!replace_mode, |el| el.h(px(36.)))
             .gap_2()
             .bg(colors.title_bar_background)
             .child(
-                Icon::new(IconName::MagnifyingGlass)
-                    .size(IconSize::Small)
-                    .color(ui::Color::Muted),
-            )
-            .child(
-                div()
-                    .id("find-input")
-                    .track_focus(&self.find_focus)
-                    .on_key_down(cx.listener(Self::dispatch_find_key))
+                v_flex()
+                    .id("find-rows")
                     .flex_1()
                     .min_w_0()
-                    .h_full()
-                    .relative()
                     .child(
-                        div()
-                            .id("find-input-text")
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .text_size(px(14.))
-                            .line_height(px(20.))
-                            .font_family(EDITOR_FONT)
-                            .text_color(colors.text)
-                            .child(StyledText::new(query)),
+                        h_flex()
+                            .id("find-row")
+                            .w_full()
+                            .flex_none()
+                            .h(px(36.))
+                            .px_3()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::MagnifyingGlass)
+                                    .size(IconSize::Small)
+                                    .color(ui::Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("find-input")
+                                    .track_focus(&self.find_focus)
+                                    .on_key_down(cx.listener(Self::dispatch_find_key))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        // 点击 query 行 → 输入行焦点回 query。
+                                        if let Some(f) = this.find.as_mut() {
+                                            f.set_focus_replacement(false);
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .relative()
+                                    .child(
+                                        div()
+                                            .id("find-input-text")
+                                            .h_full()
+                                            .flex()
+                                            .items_center()
+                                            .text_size(px(14.))
+                                            .line_height(px(20.))
+                                            .font_family(EDITOR_FONT)
+                                            .text_color(colors.text)
+                                            .child(StyledText::new(query)),
+                                    )
+                                    // 输入光标竖线（输入行在 query 时呈现）
+                                    .when(!focus_repl, |el| {
+                                        el.child(
+                                            div()
+                                                .id("find-caret")
+                                                .absolute()
+                                                .left(prefix_width)
+                                                .top(px(9.))
+                                                .w(px(2.))
+                                                .h(px(18.))
+                                                .bg(colors.text),
+                                        )
+                                    }),
+                            )
+                            // G1：区分大小写（Alt+C 同源）。
+                            .child(chip("find-case-chip", "Aa", case_on).on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    if let Some(f) = this.find.as_mut() {
+                                        f.toggle_case_sensitive(&this.buffer);
+                                    }
+                                    cx.notify();
+                                },
+                            )))
+                            // G1：全词匹配（Alt+W 同源）。
+                            .child(
+                                chip("find-word-chip", "[ab]", word_on).on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        if let Some(f) = this.find.as_mut() {
+                                            f.toggle_whole_word(&this.buffer);
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(
+                                Label::new(label)
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("find-close")
+                                    .size(px(24.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_sm()
+                                    .hover(|el| el.bg(colors.element_hover))
+                                    .child(
+                                        Icon::new(IconName::Close)
+                                            .size(IconSize::XSmall)
+                                            .color(ui::Color::Muted),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.close_find(window, cx);
+                                    })),
+                            ),
                     )
-                    // 输入光标竖线
-                    .child(
-                        div()
-                            .id("find-caret")
-                            .absolute()
-                            .left(prefix_width)
-                            .top(px(9.))
-                            .w(px(2.))
-                            .h(px(18.))
-                            .bg(colors.text),
-                    ),
-            )
-            .child(
-                Label::new(label)
-                    .size(LabelSize::XSmall)
-                    .color(ui::Color::Muted),
-            )
-            .child(
-                div()
-                    .id("find-close")
-                    .size(px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_sm()
-                    .hover(|el| el.bg(colors.element_hover))
-                    .child(
-                        Icon::new(IconName::Close)
-                            .size(IconSize::XSmall)
-                            .color(ui::Color::Muted),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.close_find(window, cx);
-                    })),
+                    // G1：替换行（替换态呈现）。
+                    .when(replace_mode, |rows| {
+                        let replacement: SharedString = find
+                            .map(|f| f.replacement().to_string())
+                            .unwrap_or_default()
+                            .into();
+                        let repl_col = find.map(|f| f.repl_cursor_col()).unwrap_or(0);
+                        let repl_prefix: String = replacement.chars().take(repl_col).collect();
+                        let repl_width = shape_text_width(window, &repl_prefix, &text_style);
+                        rows.child(
+                            h_flex()
+                                .id("replace-row")
+                                .w_full()
+                                .flex_none()
+                                .h(px(36.))
+                                .px_3()
+                                .gap_2()
+                                .child(
+                                    Label::new("替换为")
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Muted),
+                                )
+                                .child(
+                                    div()
+                                        .id("replace-input")
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h_full()
+                                        .relative()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            // 点击替换行 → 输入行焦点切到替换行
+                                            //（键盘仍由查找条同一焦点域承载）。
+                                            if let Some(f) = this.find.as_mut() {
+                                                f.set_focus_replacement(true);
+                                            }
+                                            window.focus(&this.find_focus, cx);
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .id("replace-input-text")
+                                                .h_full()
+                                                .flex()
+                                                .items_center()
+                                                .text_size(px(14.))
+                                                .line_height(px(20.))
+                                                .font_family(EDITOR_FONT)
+                                                .text_color(colors.text)
+                                                .child(StyledText::new(replacement)),
+                                        )
+                                        .when(focus_repl, |el| {
+                                            el.child(
+                                                div()
+                                                    .id("replace-caret")
+                                                    .absolute()
+                                                    .left(repl_width)
+                                                    .top(px(9.))
+                                                    .w(px(2.))
+                                                    .h(px(18.))
+                                                    .bg(colors.text),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    Label::new("Enter 替换 · Ctrl+Alt+Enter 全部")
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Muted),
+                                ),
+                        )
+                    }),
             )
     }
 

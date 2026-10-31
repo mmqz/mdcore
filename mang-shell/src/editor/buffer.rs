@@ -74,6 +74,43 @@ struct Edit {
     new_text: String,
 }
 
+/// G1 批量子编辑：字节偏移双坐标域（Point 坐标在批内其它子编辑改动
+/// 行数后会漂移——撤销/重放不能跨批用 Point；两域均在
+/// [`Buffer::replace_batch`] 时一次算定）。
+#[derive(Clone, Debug)]
+struct BatchEdit {
+    /// 原始文档坐标起点（批首光标/汇报用——撤销后文档即原始态，
+    /// 该 Point 恒有效）。
+    start: Point,
+    /// 原始文档删除域 `[z_start, z_end_del)`（字节 offset——重放用：
+    /// 批的 undo 使文档回原始态，LIFO 序下此域恒有效）。
+    z_del: (usize, usize),
+    /// 应用后占位域 `[z_start + shift, z_start + shift + new_len)`
+    ///（字节 offset——撤销用：当前文档即批量应用后的状态）。
+    z_applied: (usize, usize),
+    old_text: String,
+    new_text: String,
+}
+
+/// undo 栈条目（G1 查找替换）：单点编辑或**一批**多点编辑（一次
+/// 批量替换 = 一个栈条目——Ctrl+Z 一次整批回滚；批内子编辑互不
+/// 重叠、按文档序存储）。
+#[derive(Clone, Debug)]
+enum Undoable {
+    Single(Edit),
+    Batch(Vec<BatchEdit>),
+}
+
+impl Undoable {
+    /// 批量条目的子编辑数（单点为 1）。
+    fn edit_count(&self) -> usize {
+        match self {
+            Undoable::Single(_) => 1,
+            Undoable::Batch(v) => v.len(),
+        }
+    }
+}
+
 /// 词字符判定（`word_jump` 与双击选词 [`super::mouse::word_range_at`] 共用
 /// 口径：字母数字（含 CJK 汉字——连续汉字算一个词）+ 下划线）。
 pub(crate) fn is_word_char(c: char) -> bool {
@@ -83,6 +120,11 @@ pub(crate) fn is_word_char(c: char) -> bool {
 /// char 索引 → 字节偏移（越界 clamp 到末尾）。
 fn char_to_byte(s: &str, col: usize) -> usize {
     s.char_indices().nth(col).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+/// 字节偏移 → char 索引（G1 批量编辑光标逆换算；越界 clamp 末尾）。
+fn byte_to_char(s: &str, byte_col: usize) -> usize {
+    s.char_indices().take_while(|(b, _)| *b < byte_col).count()
 }
 
 /// [`char_to_byte`] 的模块内公开转发（display_map 的段文本切片消费）。
@@ -109,8 +151,8 @@ pub struct Buffer {
     anchor: Option<Point>,
     /// 上下移动的期望列粘性（被短行 clamp 时记忆原列）。
     desired_col: Option<usize>,
-    undo_stack: Vec<Edit>,
-    redo_stack: Vec<Edit>,
+    undo_stack: Vec<Undoable>,
+    redo_stack: Vec<Undoable>,
     /// 保存点对应的 undo 栈深度（`mark_saved` 快照）。
     /// 修改判定 = 当前深度 != 保存点深度——undo 到底即回初始态（redo
     /// 栈非空不代表内容偏离初始）。
@@ -283,17 +325,75 @@ impl Buffer {
         let Range { start, end } = self.ordered_range(start..end);
         let old_text = self.range_text(&(start..end));
         let cursor = self.apply_core(start, end, text);
-        self.undo_stack.push(Edit {
+        self.undo_stack.push(Undoable::Single(Edit {
             start,
             end_del: end,
             old_text,
             new_text: text.to_string(),
-        });
+        }));
         self.redo_stack.clear();
         self.anchor = None;
         self.desired_col = None;
         self.cursor = cursor;
         self.clamp_cursor();
+    }
+
+    /// **批量编辑原语**（G1 查找替换“全部替换”等一撤销多点位消费）：
+    /// 一次应用多点替换 + **落一条** undo 记录（`Ctrl+Z` 一次整批回滚）。
+    ///
+    /// 实现口径（#91 G1 验收：全部替换 = **一次**批量编辑，不是循环
+    /// 单点替换）：全部坐标先行换算（文档未动、Point 恒有效），
+    /// 交给 `inner.edit` **单事务**一次应用（zed text 层多区间一次
+    /// 消费——1000 处批量替换实测数十 ms 量级）。
+    ///
+    /// 契约：`edits` 各替换互不重叠（debug_assert；重复调用方保证——
+    /// 查找替换消费方已做非重叠过滤）。返回应用数（空入参 = 0 无操作）。
+    /// 光标落在文档序最后一个替换的尾部；清选区/列粘性；清 redo 栈。
+    pub fn replace_batch(&mut self, edits: Vec<(Point, Point, String)>) -> usize {
+        if edits.is_empty() {
+            return 0;
+        }
+        let mut ordered = edits;
+        ordered.sort_by_key(|(s, _, _)| *s);
+        // 先行换算：old_text 捕获 + 双坐标域（原始/应用后）一次算定。
+        let mut records: Vec<BatchEdit> = Vec::with_capacity(ordered.len());
+        let mut rope_edits: Vec<(Range<usize>, String)> = Vec::with_capacity(ordered.len());
+        let mut shift: i64 = 0; // 前序子编辑的净字节位移
+        for (start, end, new_text) in ordered {
+            let old_text = self.range_text(&(start..end));
+            let z_start = self.point_to_zoffset(start);
+            let z_end_del = self.point_to_zoffset(end);
+            let applied_start = (z_start as i64 + shift) as usize;
+            let applied_end = applied_start + new_text.len();
+            shift += new_text.len() as i64 - old_text.len() as i64;
+            debug_assert!(
+                records
+                    .last()
+                    .is_none_or(|prev: &BatchEdit| prev.z_del.1 <= z_start),
+                "replace_batch: 子编辑互不重叠（调用方契约）"
+            );
+            rope_edits.push((z_start..z_end_del, new_text.clone()));
+            records.push(BatchEdit {
+                start,
+                z_del: (z_start, z_end_del),
+                z_applied: (applied_start, applied_end),
+                old_text,
+                new_text,
+            });
+        }
+        let n = records.len();
+        // 单事务批量应用（O(批) 次坐标换算 + 1 次事务——非 1000 次事务）。
+        let _ops = self.inner.edit(rope_edits);
+        // 光标：批尾占位尾（字节 offset → 当前列；Point 直算在多行替换
+        // 下会漂移——统一走 zoffset 换算）。
+        let tail_end = records.last().expect("非空已判").z_applied.1;
+        self.cursor = self.zoffset_to_point(tail_end);
+        self.undo_stack.push(Undoable::Batch(records));
+        self.redo_stack.clear();
+        self.anchor = None;
+        self.desired_col = None;
+        self.clamp_cursor();
+        n
     }
 
     /// 在光标处插入文本（有选区则先被替换）。
@@ -366,20 +466,36 @@ impl Buffer {
 
     /// 撤销一步；返回是否发生撤销。
     pub fn undo(&mut self) -> bool {
-        let Some(edit) = self.undo_stack.pop() else {
+        let Some(entry) = self.undo_stack.pop() else {
             return false;
         };
-        // 逆方向：把 new_text 的当前占位换回 old_text。
-        let end_new = self.end_after_insert(&edit.start, &edit.new_text);
-        self.apply_core(edit.start, end_new, &edit.old_text);
-        // redo 方向的 Edit：old_text 恢复后的占位范围即 end_del。
-        self.redo_stack.push(Edit {
-            start: edit.start,
-            end_del: self.end_after_insert(&edit.start, &edit.old_text),
-            old_text: edit.old_text,
-            new_text: edit.new_text,
-        });
-        self.cursor = edit.start;
+        match entry {
+            Undoable::Single(edit) => {
+                // 逆方向：把 new_text 的当前占位换回 old_text。
+                let end_new = self.end_after_insert(&edit.start, &edit.new_text);
+                self.apply_core(edit.start, end_new, &edit.old_text);
+                // redo 方向的 Edit：old_text 恢复后的占位范围即 end_del。
+                self.redo_stack.push(Undoable::Single(Edit {
+                    start: edit.start,
+                    end_del: self.end_after_insert(&edit.start, &edit.old_text),
+                    old_text: edit.old_text,
+                    new_text: edit.new_text,
+                }));
+                self.cursor = edit.start;
+            }
+            Undoable::Batch(records) => {
+                // 逆方向整批：占位域（应用后字节坐标）一次批量换回
+                // old_text——单事务；LIFO 序下该域恒指本批占位。
+                let rope_edits: Vec<(Range<usize>, String)> = records
+                    .iter()
+                    .map(|r| (r.z_applied.0..r.z_applied.1, r.old_text.clone()))
+                    .collect();
+                let _ops = self.inner.edit(rope_edits);
+                // 批量撤销光标落批首（文档已回原始态——原始 Point 有效）。
+                self.cursor = records.first().map(|r| r.start).unwrap_or(self.cursor);
+                self.redo_stack.push(Undoable::Batch(records));
+            }
+        }
         self.anchor = None;
         self.desired_col = None;
         self.clamp_cursor();
@@ -388,18 +504,45 @@ impl Buffer {
 
     /// 重做一步；返回是否发生重做。
     pub fn redo(&mut self) -> bool {
-        let Some(edit) = self.redo_stack.pop() else {
+        let Some(entry) = self.redo_stack.pop() else {
             return false;
         };
-        // 重放方向：[start, end_del) 的 old_text 换成 new_text。
-        let new_cursor = self.end_after_insert(&edit.start, &edit.new_text);
-        self.apply_core(edit.start, edit.end_del, &edit.new_text);
-        self.undo_stack.push(edit);
-        self.cursor = new_cursor;
+        match entry {
+            Undoable::Single(edit) => {
+                // 重放方向：[start, end_del) 的 old_text 换成 new_text。
+                let new_cursor = self.end_after_insert(&edit.start, &edit.new_text);
+                self.apply_core(edit.start, edit.end_del, &edit.new_text);
+                self.undo_stack.push(Undoable::Single(edit));
+                self.cursor = new_cursor;
+            }
+            Undoable::Batch(records) => {
+                // 重放整批：原始删除域（原始字节坐标）一次批量换入
+                // new_text——单事务；LIFO 序下批的 undo 使文档回原始
+                // 态，该域恒有效。
+                let rope_edits: Vec<(Range<usize>, String)> = records
+                    .iter()
+                    .map(|r| (r.z_del.0..r.z_del.1, r.new_text.clone()))
+                    .collect();
+                let _ops = self.inner.edit(rope_edits);
+                // 批量重做光标落批尾占位尾（字节 offset → 当前列）。
+                let tail_end = records.last().map(|r| r.z_applied.1).unwrap_or(0);
+                self.cursor = self.zoffset_to_point(tail_end);
+                self.undo_stack.push(Undoable::Batch(records));
+            }
+        }
         self.anchor = None;
         self.desired_col = None;
         self.clamp_cursor();
         true
+    }
+
+    /// 最近一条 undo 记录的子编辑数（G1 查找替换烟雾/日志面：一次
+    /// 撤销手势到底还原了几处替换）。栈空 = 0。
+    pub fn last_undo_batch_count(&self) -> usize {
+        self.undo_stack
+            .last()
+            .map(Undoable::edit_count)
+            .unwrap_or(0)
     }
 
     /// 核心变更（不落外壳栈，由调用方组装 undo/redo 语义）：
@@ -624,27 +767,61 @@ impl Buffer {
 
     /// 全文大小写不敏感查找：返回所有匹配起点（按文档序；空 query 空）。
     pub fn find_matches(&self, query: &str) -> Vec<Point> {
+        self.find_matches_opts(query, false, false)
+    }
+
+    /// 带选项全文查找（G1 查找替换）：
+    /// - `case_sensitive`：大小写敏感（关闭 = 每字符 lowercase 比对）
+    /// - `whole_word`：全词匹配（前后边界不得为词字符——口径与
+    ///   [`is_word_char`] 一致：字母数字（含 CJK）+ 下划线）
+    /// 返回所有匹配起点（按文档序；含重叠命中——消费方按需过滤，
+    /// 替换全部在 find_bar 侧做非重叠筛选）。
+    pub fn find_matches_opts(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        whole_word: bool,
+    ) -> Vec<Point> {
         if query.is_empty() {
             return Vec::new();
         }
-        let needle: Vec<char> = query.to_lowercase().chars().collect();
+        let needle: Vec<char> = if case_sensitive {
+            query.chars().collect()
+        } else {
+            query.to_lowercase().chars().collect()
+        };
         let mut hits = Vec::new();
         for li in 0..self.line_count() {
             let line = self.line(li);
-            let lower: Vec<char> = line
-                .chars()
-                .map(|c| c.to_lowercase().next().unwrap_or(c))
-                .collect();
-            if lower.len() < needle.len() {
+            let hay: Vec<char> = if case_sensitive {
+                line.chars().collect()
+            } else {
+                line.chars()
+                    .map(|c| c.to_lowercase().next().unwrap_or(c))
+                    .collect()
+            };
+            if hay.len() < needle.len() {
                 continue;
             }
-            for start in 0..=lower.len() - needle.len() {
-                if lower[start..start + needle.len()] == needle[..] {
-                    hits.push(Point::new(li, start));
+            for start in 0..=hay.len() - needle.len() {
+                if hay[start..start + needle.len()] != needle[..] {
+                    continue;
                 }
+                if whole_word && !self.word_bounded(&hay, start, needle.len()) {
+                    continue;
+                }
+                hits.push(Point::new(li, start));
             }
         }
         hits
+    }
+
+    /// 全词边界判定：`[start, start+len)` 前后均不得为词字符。
+    fn word_bounded(&self, hay: &[char], start: usize, len: usize) -> bool {
+        let before_ok = start == 0 || !is_word_char(hay[start - 1]);
+        let after = start + len;
+        let after_ok = after >= hay.len() || !is_word_char(hay[after]);
+        before_ok && after_ok
     }
 
     // ---------------------------------------------------------------------------
@@ -681,6 +858,17 @@ impl Buffer {
         let byte_col = char_to_byte(&text, col);
         self.snap()
             .point_to_offset(zed_text::Point::new(line as u32, byte_col as u32))
+    }
+
+    /// rope 全文 offset（字节）→ mang `Point`（char 列）——G1 批量
+    /// 编辑光标换算（[`Buffer::replace_batch`]；字节 offset 由
+    /// 批内记录直算，逆变换走行文本 byte→char）。
+    fn zoffset_to_point(&self, z: usize) -> Point {
+        let rp = self.snap().offset_to_point(z);
+        let line = rp.row as usize;
+        let text = self.line(line);
+        let col = byte_to_char(&text, rp.column as usize);
+        Point::new(line, col)
     }
 
     /// 两点排序（start <= end）。
@@ -1276,4 +1464,163 @@ fn perf_rope_edit_find_2m_chars() {
         t_find < std::time::Duration::from_secs(1),
         "查找超红线：{t_find:?}"
     );
+}
+
+// =============================================================================
+// G1 查找替换：带选项查找 + 批量编辑原语（一次撤销整批）——专项单测
+// =============================================================================
+
+#[cfg(test)]
+mod g1_find_replace_tests {
+    use super::*;
+
+    fn p(line: usize, col: usize) -> Point {
+        Point::new(line, col)
+    }
+
+    // ---------------- find_matches_opts ----------------
+
+    #[test]
+    fn find_opts_case_sensitive_splits_hits() {
+        let b = Buffer::from_plain_text("foo bar\nfoo baz\nFOO");
+        // 既有语义（不敏感）：3 处
+        assert_eq!(b.find_matches_opts("foo", false, false).len(), 3);
+        // 敏感：仅小写 2 处
+        assert_eq!(b.find_matches_opts("foo", true, false).len(), 2);
+        // 敏感大写 query：仅 FOO 1 处
+        assert_eq!(b.find_matches_opts("FOO", true, false).len(), 1);
+        assert_eq!(b.find_matches_opts("FOO", true, false)[0], p(2, 0));
+    }
+
+    #[test]
+    fn find_opts_whole_word_skips_substrings() {
+        let b = Buffer::from_plain_text("foo foobar foo_bar foo, 12foo");
+        let hits = b.find_matches_opts("foo", false, true);
+        // foobar/foo_bar/12foo 均非全词；仅第 0 列与 foo 后逗号两处
+        assert_eq!(hits.len(), 2, "全词只命中独立 foo：{hits:?}");
+        assert_eq!(hits[0], p(0, 0));
+        assert_eq!(hits[1], p(0, 19), "foo, 的 foo（前是空格后是逗号）");
+    }
+
+    #[test]
+    fn find_opts_whole_word_cjk_boundary() {
+        // CJK 是词字符：查找「查找」在「查找中文」中命中（后是中文词字符
+        // → 不命中）；「中文查找」中命中（前是词字符 → 不命中）。
+        let b = Buffer::from_plain_text("查找中文\n中文 查找");
+        let hits = b.find_matches_opts("查找", false, true);
+        assert_eq!(hits.len(), 1, "仅第二行空格后的独立「查找」");
+        assert_eq!(hits[0], p(1, 3));
+    }
+
+    #[test]
+    fn find_opts_empty_query_and_overlapping_hits() {
+        let b = Buffer::from_plain_text("aaa");
+        assert!(b.find_matches_opts("", true, true).is_empty());
+        // 重叠命中语义：aaa 含 aa 两处（col 0/1）——替换侧负责过滤
+        assert_eq!(b.find_matches_opts("aa", false, false).len(), 2);
+    }
+
+    // ---------------- replace_batch ----------------
+
+    #[test]
+    fn replace_batch_applies_and_single_undo_restores_all() {
+        let mut b = Buffer::from_plain_text("foo bar\nfoo baz");
+        let n = b.replace_batch(vec![
+            (p(0, 0), p(0, 3), "QUUX".to_string()),
+            (p(1, 0), p(1, 3), "QUUX".to_string()),
+        ]);
+        assert_eq!(n, 2);
+        assert_eq!(b.to_plain_text(), "QUUX bar\nQUUX baz");
+        assert_eq!(b.last_undo_batch_count(), 2, "一条批量 undo 记录");
+        // 一次 undo 整批回滚
+        assert!(b.undo());
+        assert_eq!(b.to_plain_text(), "foo bar\nfoo baz");
+        assert_eq!(b.cursor(), p(0, 0), "批量撤销光标落批首");
+        // 一次 redo 整批重放
+        assert!(b.redo());
+        assert_eq!(b.to_plain_text(), "QUUX bar\nQUUX baz");
+        assert_eq!(b.cursor(), p(1, 4), "批量重做光标落批尾插入尾");
+    }
+
+    #[test]
+    fn replace_batch_empty_is_noop() {
+        let mut b = Buffer::from_plain_text("abc");
+        assert_eq!(b.replace_batch(Vec::new()), 0);
+        assert_eq!(b.to_plain_text(), "abc");
+        assert!(!b.undo(), "无记录可撤");
+        assert!(!b.is_modified());
+    }
+
+    #[test]
+    fn replace_batch_multiline_replacement_cross_lines() {
+        // 替换文本含换行：占位尾部按 end_after_insert 公式展开
+        let mut b = Buffer::from_plain_text("a X c\nX");
+        let n = b.replace_batch(vec![
+            (p(0, 2), p(0, 3), "1\n2".to_string()),
+            (p(1, 0), p(1, 1), "3\n4".to_string()),
+        ]);
+        assert_eq!(n, 2);
+        assert_eq!(b.to_plain_text(), "a 1\n2 c\n3\n4");
+        assert!(b.undo());
+        assert_eq!(b.to_plain_text(), "a X c\nX");
+        assert!(b.redo());
+        assert_eq!(b.to_plain_text(), "a 1\n2 c\n3\n4");
+    }
+
+    #[test]
+    fn replace_batch_mixed_with_single_undo_stack() {
+        // 批量记录与单点记录在同一栈内交替：深度计数（is_modified）
+        // 仍按条目数计——保存点语义不变
+        let mut b = Buffer::from_plain_text("aa bb aa");
+        b.replace_range(p(0, 3), p(0, 5), "cc"); // 单点 1 条
+        assert!(b.is_modified());
+        b.mark_saved();
+        assert!(!b.is_modified());
+        let n = b.replace_batch(vec![
+            (p(0, 0), p(0, 2), "zz".to_string()),
+            (p(0, 6), p(0, 8), "zz".to_string()),
+        ]);
+        assert_eq!(n, 2);
+        assert!(b.is_modified(), "批量替换后偏离保存点（深度 1→2）");
+        assert!(b.undo(), "撤批量");
+        assert!(!b.is_modified(), "撤批量 = 回保存点（单点编辑在保存点内）");
+    }
+
+    #[test]
+    fn replace_batch_thousand_matches_under_100ms() {
+        // #91 G1 验收线：1000 处全部替换 < 100ms（构建不计时——只卡
+        // 批量替换本体；单事务口径下实测应为数十 ms 量级）。
+        let lines: Vec<String> = (0..1000).map(|i| format!("第{i}行 foo 内容")).collect();
+        let mut b = Buffer::from_plain_text(&lines.join("\n"));
+        let edits: Vec<(Point, Point, String)> = b
+            .find_matches_opts("foo", false, false)
+            .into_iter()
+            .scan((0usize, 0usize), |(prev_line, prev_end_col), m| {
+                // 非重叠过滤（与 find_bar::replace_all 同口径：跨行必然
+                // 不重叠——query 不含换行、命中不跨行）
+                let ok = m.line > *prev_line || m.col >= *prev_end_col;
+                if ok {
+                    *prev_line = m.line;
+                    *prev_end_col = m.col + 3;
+                }
+                ok.then(|| (m, Point::new(m.line, m.col + 3), "FOO".to_string()))
+            })
+            .collect();
+        assert_eq!(edits.len(), 1000, "千行千处");
+        let t = std::time::Instant::now();
+        let n = b.replace_batch(edits);
+        let elapsed = t.elapsed();
+        assert_eq!(n, 1000);
+        println!("perf(千处批量替换) = {elapsed:?}  (验收线 <100ms)");
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "千处批量替换超验收线：{elapsed:?}"
+        );
+        // 一次撤销整批回滚同样在验收量级
+        let t = std::time::Instant::now();
+        assert!(b.undo());
+        let undo_elapsed = t.elapsed();
+        println!("perf(千处批量撤销) = {undo_elapsed:?}");
+        assert_eq!(b.to_plain_text(), lines.join("\n"));
+    }
 }

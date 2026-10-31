@@ -26,6 +26,8 @@ pub enum Cmd {
     DocEnd,
     ToggleFold,
     OpenFind,
+    /// G1：打开替换条（Ctrl+H）。
+    OpenReplace,
     Save,
     SelectAll,
     Undo,
@@ -47,6 +49,7 @@ impl Cmd {
         Cmd::DocEnd,
         Cmd::ToggleFold,
         Cmd::OpenFind,
+        Cmd::OpenReplace,
         Cmd::Save,
         Cmd::SelectAll,
         Cmd::Undo,
@@ -68,6 +71,8 @@ impl Cmd {
             Cmd::DocEnd => "移动：文尾",
             Cmd::ToggleFold => "折叠：切换围栏块",
             Cmd::OpenFind => "查找（Ctrl+F）",
+            // G1：替换（只读态 exec 侧拒——面板候选集含之，执行有门）。
+            Cmd::OpenReplace => "替换（Ctrl+H）",
             Cmd::Save => "保存（Ctrl+S）",
             Cmd::SelectAll => "全选（Ctrl+A）",
             Cmd::Undo => "撤销（Ctrl+Z）",
@@ -90,6 +95,7 @@ impl Cmd {
             Cmd::DocEnd => Some("Ctrl+End"),
             Cmd::ToggleFold => Some("Alt+F"),
             Cmd::OpenFind => Some("Ctrl+F"),
+            Cmd::OpenReplace => Some("Ctrl+H"),
             Cmd::Save => Some("Ctrl+S"),
             Cmd::SelectAll => Some("Ctrl+A"),
             Cmd::Undo => Some("Ctrl+Z"),
