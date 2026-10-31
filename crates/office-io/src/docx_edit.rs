@@ -91,6 +91,27 @@ pub struct ParagraphRef {
     text: String,
 }
 
+/// 表格栅格（#115 表格编辑加性扩展——**权威坐标**，非调用方推断）。
+///
+/// 只为 `document.xml` 里**最外层**的 `w:tbl` 建表；嵌套表的单元格
+/// 段落不进栅格（见 [`DocxEditor::table_cells`] 的收面说明）。
+#[derive(Debug, Clone, Default)]
+struct TableGrid {
+    /// 行 → 栅格列 → 单元格段落号（原文坐标系；重复号 = `gridSpan`
+    /// 覆盖列 / `vMerge` 续格指向起始格）。
+    rows: Vec<Vec<usize>>,
+    /// 该表文档序首段落号（诊断/对账面）。
+    first_paragraph: usize,
+    /// `tblGrid` 声明的列数（0 = 无 tblGrid，按行宽兜底）。
+    grid_width: usize,
+}
+
+impl TableGrid {
+    fn cells(&self) -> Vec<Vec<usize>> {
+        self.rows.clone()
+    }
+}
+
 /// 外科手术式 docx 编辑器（#79 T1）。
 ///
 /// ```ignore
@@ -111,6 +132,9 @@ pub struct DocxEditor {
     pending: Vec<Option<String>>,
     /// 修订策略。
     policy: RevisionPolicy,
+    /// 表格栅格（#115-表格编辑 加性扩展：表 → 行 → 栅格列 → 段落号）。
+    /// 原文坐标系，与 `paragraphs` 同源同序；open 后不变。
+    tables: Vec<TableGrid>,
 }
 
 impl DocxEditor {
@@ -155,7 +179,7 @@ impl DocxEditor {
                 }));
             }
         }
-        let paragraphs = scan_paragraphs(&xml)?;
+        let (paragraphs, tables) = scan_paragraphs(&xml)?;
         let n = paragraphs.len();
         Ok(Self {
             bytes: bytes.to_vec(),
@@ -163,6 +187,7 @@ impl DocxEditor {
             paragraphs,
             pending: vec![None; n],
             policy,
+            tables,
         })
     }
 
@@ -233,6 +258,54 @@ impl DocxEditor {
         self.policy
     }
 
+    // -----------------------------------------------------------------------
+    // #115 表格编辑（加性扩展——只读查表，不改既有语义）
+    // -----------------------------------------------------------------------
+
+    /// 表格栅格：表序号 → 行 → 单元格段落号（权威坐标，来自本文档
+    /// `document.xml` 扫描，非调用方推断）。
+    ///
+    /// 合并格按 OOXML 语义**占位**（与读面 `TableData::rows` 的栅格展开
+    /// 同口径）：`gridSpan` 展开的覆盖列重复给出首格段落号；`vMerge`
+    /// 的 `continue` 格给出**起始格**段落号。故每行长度 = 该行栅格宽度，
+    /// 消费方可以直接按 `cells[row][col]` 取段落号。
+    ///
+    /// 只收 `document.xml` 里**最外层**（正文直系）的 `w:tbl`：
+    /// 嵌套表（`w:tbl` 套 `w:tbl`）与其单元格段落不进任何表的栅格——
+    /// 它们在段落序里仍是段落（`in_table` 为真），但不出现在
+    /// `table_cells()` 里。理由：嵌套表单元格段落没有"文档序平面"上
+    /// 稳定的行列归属，猜坐标就会静默改错格（设计 §2 的三类静默错）。
+    ///
+    /// 本方法**只读**：不写盘、不改 `paragraphs`、不影晌 `save_to_vec`。
+    pub fn table_cells(&self) -> Vec<Vec<Vec<usize>>> {
+        self.tables.iter().map(TableGrid::cells).collect()
+    }
+
+    /// 表格数（`table_cells().len()` 的廉价别名）。
+    pub fn table_count(&self) -> usize {
+        self.tables.len()
+    }
+
+    /// 表 `table` 的文档序首段落号（诊断/对账锚）；越界 = `None`。
+    pub fn table_first_paragraph(&self, table: usize) -> Option<usize> {
+        self.tables.get(table).map(|t| t.first_paragraph)
+    }
+
+    /// 表 `table` 的 `tblGrid` 声明列数（0 = 无 `tblGrid`）；越界 = `None`。
+    pub fn table_grid_width(&self, table: usize) -> Option<usize> {
+        self.tables.get(table).map(|t| t.grid_width)
+    }
+
+    /// 表 `table` 的行列形状 `(rows, max_cols)`；越界 = `None`。
+    pub fn table_shape(&self, table: usize) -> Option<(usize, usize)> {
+        self.tables.get(table).map(|t| {
+            (
+                t.rows.len(),
+                t.rows.iter().map(|r| r.len()).max().unwrap_or(0),
+            )
+        })
+    }
+
     /// 保存（一次性落账全部待编辑；幂等——同状态重复调用产出相同字节）。
     pub fn save_to_vec(&self) -> Result<Vec<u8>, DocxError> {
         let new_xml = apply_pending_edits(&self.doc_xml, &self.paragraphs, &self.pending)?;
@@ -288,7 +361,8 @@ fn local_name(e: &quick_xml::events::BytesStart<'_>) -> String {
     String::from_utf8_lossy(e.local_name().as_ref()).into_owned()
 }
 
-fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
+
+fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), DocxError> {
     let mut reader = quick_xml::Reader::from_str(xml);
     let bytes = xml.as_bytes();
     let mut out: Vec<ParagraphRef> = Vec::new();
@@ -300,6 +374,17 @@ fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
     let mut fallback = 0usize;
     let mut tbl = 0usize;
     let mut txbx = 0usize;
+
+    // ── #115 表格编辑（加性扩展）栅格扫描状态 ──────────────────────
+    // 开启中的 `w:tbl`（只为**最外层**建栅格——见 DocxEditor::table_cells）。
+    let mut tbl_stack: Vec<TableBuild> = Vec::new();
+    // 表内 `w:tr` 深度（非 0 = 在表行内）。
+    let mut tr = 0usize;
+    // 开启中的 `w:tc`（每项 = 一个原生单元格；仅在表行内压栈）。
+    let mut tc_stack: Vec<CellBuild> = Vec::new();
+    // 落成的表栅格（文档序）。
+    let mut tables: Vec<TableGrid> = Vec::new();
+
     loop {
         let pos_before = reader.buffer_position() as usize;
         match reader.read_event() {
@@ -307,10 +392,61 @@ fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
                 let name = local_name(&e);
                 match name.as_str() {
                     "Fallback" => fallback += 1,
-                    "tbl" => tbl += 1,
+                    "tbl" => {
+                        // 深度 0 → 1 才是外层表；嵌套表（深度 ≥2）只加
+                        // 深度，其单元格段落**不进**任何栅格。
+                        if tbl == 0 {
+                            tbl_stack.push(TableBuild::default());
+                        }
+                        tbl += 1;
+                    }
+                    "tblGrid" if tbl == 1 => {
+                        if let Some(t) = tbl_stack.last_mut() {
+                            t.in_grid = true;
+                        }
+                    }
+                    "tr" if tbl > 0 => {
+                        tr += 1;
+                        // 只有外层表（tbl==1）才推进本表行号计数器；
+                        // 嵌套表的行数不参与外层栅格。
+                        if tbl == 1 {
+                            if let Some(t) = tbl_stack.last_mut() {
+                                t.tr_seen += 1;
+                            }
+                        }
+                    }
+                    "tc" if tbl > 0 && tr > 0 => {
+                        // 行号 = 本表内已开启行数 - 1（"tr" 分支先自增）。
+                        let row_abs = tbl_stack
+                            .last()
+                            .map(|t| t.tr_seen.saturating_sub(1))
+                            .unwrap_or(0);
+                        tc_stack.push(CellBuild {
+                            row_abs,
+                            ..CellBuild::default()
+                        });
+                    }
+                    "gridSpan" if !tc_stack.is_empty() => {
+                        if let Some(v) = attr_span(&e) {
+                            if let Some(c) = tc_stack.last_mut() {
+                                c.grid_span = v;
+                            }
+                        }
+                    }
+                    "vMerge" if !tc_stack.is_empty() => {
+                        // 无 `w:val` = continue（OOXML §17.7.41 语义）。
+                        let v = attr_val(&e);
+                        if let Some(c) = tc_stack.last_mut() {
+                            c.v_merge = Some(match v.as_deref() {
+                                Some("restart") => VMergeVal::Restart,
+                                _ => VMergeVal::Continue,
+                            });
+                        }
+                    }
                     "txbxContent" => txbx += 1,
                     "p" => {
                         let start = fwd_to_lt(bytes, pos_before);
+                        let idx = out.len();
                         out.push(ParagraphRef {
                             span: (start, usize::MAX),
                             field_code: false,
@@ -320,7 +456,18 @@ fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
                             in_textbox: txbx > 0,
                             text: String::new(),
                         });
-                        para_stack.push(out.len() - 1);
+                        para_stack.push(idx);
+                        // 栅格：单元格的**首个**段落进栅格（续段仍计
+                        // 段落序，但不再占一格——与读面 rows 栅格「每格
+                        // 一条文本」同口径）。嵌套表（tbl>1）内的段落
+                        // 不进外层栅格。
+                        if tbl <= 1 {
+                            if let Some(c) = tc_stack.last_mut() {
+                                if c.paragraph.is_none() {
+                                    c.paragraph = Some(idx);
+                                }
+                            }
+                        }
                     }
                     "t" if !para_stack.is_empty() => {
                         // 文本节点开：记 open 端（内容由配对 End 补齐——
@@ -340,13 +487,24 @@ fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
                     _ => {}
                 }
             }
+
             Ok(Event::Empty(e)) => {
                 let name = local_name(&e);
                 match name.as_str() {
+                    "gridCol" if tbl == 1 => {
+                        // 声明列数（只在表自己的 tblGrid 内计——单元格
+                        // 内嵌表的 tblGrid 由 tbl 深度挡在外面）。
+                        if let Some(t) = tbl_stack.last_mut() {
+                            if t.in_grid {
+                                t.grid_width += 1;
+                            }
+                        }
+                    }
                     "p" => {
                         // 自闭合空段：完整段（无子事件），即刻落账。
                         let start = fwd_to_lt(bytes, pos_before);
                         let end = fwd_to_gt(bytes, reader.buffer_position() as usize);
+                        let idx = out.len();
                         out.push(ParagraphRef {
                             span: (start, end),
                             field_code: false,
@@ -356,6 +514,29 @@ fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
                             in_textbox: txbx > 0,
                             text: String::new(),
                         });
+                        if tbl <= 1 {
+                            if let Some(c) = tc_stack.last_mut() {
+                                if c.paragraph.is_none() {
+                                    c.paragraph = Some(idx);
+                                }
+                            }
+                        }
+                    }
+                    "gridSpan" if !tc_stack.is_empty() => {
+                        if let Some(v) = attr_span(&e) {
+                            if let Some(c) = tc_stack.last_mut() {
+                                c.grid_span = v;
+                            }
+                        }
+                    }
+                    "vMerge" if !tc_stack.is_empty() => {
+                        let v = attr_val(&e);
+                        if let Some(c) = tc_stack.last_mut() {
+                            c.v_merge = Some(match v.as_deref() {
+                                Some("restart") => VMergeVal::Restart,
+                                _ => VMergeVal::Continue,
+                            });
+                        }
                     }
                     "tab" if !para_stack.is_empty() => {
                         if let Some(&i) = para_stack.last() {
@@ -392,7 +573,30 @@ fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
                 let name = local_name_end(&e);
                 match name.as_str() {
                     "Fallback" => fallback = fallback.saturating_sub(1),
-                    "tbl" => tbl = tbl.saturating_sub(1),
+                    "tbl" => {
+                        // 外层表收尾：栅格落表。
+                        if tbl == 1 {
+                            if let Some(t) = tbl_stack.pop() {
+                                tables.push(t.finish());
+                            }
+                        }
+                        tbl = tbl.saturating_sub(1);
+                    }
+                    "tblGrid" => {
+                        if let Some(t) = tbl_stack.last_mut() {
+                            t.in_grid = false;
+                        }
+                    }
+                    "tr" => tr = tr.saturating_sub(1),
+                    "tc" => {
+                        if tbl == 1 {
+                            if let Some(c) = tc_stack.pop() {
+                                if let Some(t) = tbl_stack.last_mut() {
+                                    t.cells.push(c);
+                                }
+                            }
+                        }
+                    }
                     "txbxContent" => txbx = txbx.saturating_sub(1),
                     "p" => {
                         let end = fwd_to_gt(bytes, reader.buffer_position() as usize);
@@ -436,7 +640,131 @@ fn scan_paragraphs(xml: &str) -> Result<Vec<ParagraphRef>, DocxError> {
             }
         }
     }
-    Ok(out)
+    Ok((out, tables))
+}
+
+/// 表栅格扫描累积态（扫描期）。
+#[derive(Debug, Default)]
+struct TableBuild {
+    /// 原生单元格（文档序）。
+    cells: Vec<CellBuild>,
+    /// `tblGrid` 声明列数。
+    grid_width: usize,
+    /// 是否处于本表自己的 `tblGrid` 内。
+    in_grid: bool,
+    /// 本表内已开启的 `w:tr` 数（0 基行号来源）。
+    tr_seen: usize,
+}
+
+impl TableBuild {
+    /// 栅格展开（与读面 `TableData::rows` 同口径：gridSpan 覆盖列重复
+    /// 首格段落号；vMerge 续格指向起始格段落号）。
+    fn finish(self) -> TableGrid {
+        let first_paragraph = self
+            .cells
+            .iter()
+            .find_map(|c| c.paragraph)
+            .unwrap_or(0);
+        let width = self.grid_width.max(1);
+        let mut rows: Vec<Vec<usize>> = Vec::new();
+        let mut current: Vec<usize> = Vec::new();
+        // vMerge 开放区：列区间 → 起始格段落号（跨行存续，换行不清）。
+        let mut open_v: Vec<((usize, usize), usize)> = Vec::new();
+        let mut cur_row: Option<usize> = None;
+        for c in &self.cells {
+            // 表行切换 = 换栅格行（vMerge 开放区**跨行**保持）。
+            if cur_row != Some(c.row_abs) {
+                if cur_row.is_some() {
+                    rows.push(std::mem::take(&mut current));
+                }
+                cur_row = Some(c.row_abs);
+            }
+            let start_col = current.len();
+            let span = c.grid_span.max(1);
+            let end_col = start_col + span - 1;
+            // 本格的落栅格段落号（无 `w:p` 的畸形格 = 该表首段，占位不
+            // 丢列——把'少一格'变成'最后一格'会静默错位）。
+            let own = c.paragraph.unwrap_or(first_paragraph);
+            let anchor = match c.v_merge {
+                Some(VMergeVal::Continue) => open_v
+                    .iter()
+                    .find(|((s, e2), _)| *s == start_col && *e2 == end_col)
+                    .map(|(_, p)| p)
+                    .copied()
+                    .unwrap_or(own),
+                Some(VMergeVal::Restart) => {
+                    open_v.retain(|((s, e2), _)| !(*s == start_col && *e2 == end_col));
+                    open_v.push(((start_col, end_col), own));
+                    own
+                }
+                None => {
+                    open_v.retain(|((s, e2), _)| !(*s == start_col && *e2 == end_col));
+                    own
+                }
+            };
+            for k in 0..span {
+                let _ = k;
+                current.push(anchor);
+            }
+        }
+        if !current.is_empty() {
+            rows.push(current);
+        }
+        // 宽兜底：tblGrid 声明比实际宽（缺格表）时补该行末格，保持矩形
+        // （消费方按栅格坐标取格，行长不一致 = 越界风险）。
+        for r in rows.iter_mut() {
+            if r.is_empty() {
+                r.push(first_paragraph);
+            }
+            while r.len() < width && self.grid_width > 0 {
+                let last = *r.last().unwrap_or(&first_paragraph);
+                r.push(last);
+            }
+        }
+        TableGrid {
+            rows,
+            first_paragraph,
+            grid_width: self.grid_width,
+        }
+    }
+}
+
+/// 单元格扫描累积态。
+#[derive(Debug, Default)]
+struct CellBuild {
+    /// 首段落号（None = 该格无 `w:p`——畸形格，落栅格时占位）。
+    paragraph: Option<usize>,
+    /// `w:gridSpan/@w:val`（缺省 1）。
+    grid_span: usize,
+    /// `w:vMerge` 在场值。
+    v_merge: Option<VMergeVal>,
+    /// 所属表行的绝对行序（扫描期 `w:tr` 深度）——栅格分行依据。
+    row_abs: usize,
+}
+
+/// `w:vMerge` 取值。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VMergeVal {
+    Restart,
+    Continue,
+}
+
+/// 取 `@w:val`（无命名空间前缀变体也认——`val`）。
+fn attr_val(e: &quick_xml::events::BytesStart<'_>) -> Option<String> {
+    for a in e.attributes().flatten() {
+        let key = String::from_utf8_lossy(a.key.local_name().as_ref()).into_owned();
+        if key == "val" {
+            return Some(String::from_utf8_lossy(a.value.as_ref()).into_owned());
+        }
+    }
+    None
+}
+
+/// 取 `w:gridSpan/@w:val`（解析失败/缺省 = 1）。
+fn attr_span(e: &quick_xml::events::BytesStart<'_>) -> Option<usize> {
+    attr_val(e)
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|v| v.max(1))
 }
 
 fn local_name_end(e: &quick_xml::events::BytesEnd<'_>) -> String {
@@ -1447,5 +1775,174 @@ xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><w:body
             e2.save_to_vec().unwrap()
         };
         assert_eq!(saved, again, "save 幂等");
+    }
+
+    // ── #115 表格编辑：table_cells() 权威栅格 ────────────────────
+
+    #[test]
+    fn table_cells_plain_grid() {
+        let body = "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>\
+<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:tr>\
+<w:tr><w:tc><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>B2</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+<w:p><w:r><w:t>Outro</w:t></w:r></w:p>";
+        let bytes = build_docx(body);
+        let ed = DocxEditor::open(&bytes).unwrap();
+        // 文档序：0=Intro, 1..4=四格, 5=Outro。
+        assert_eq!(ed.paragraphs().len(), 6);
+        assert_eq!(ed.table_count(), 1);
+        let cells = ed.table_cells();
+        assert_eq!(cells, vec![vec![vec![1, 2], vec![3, 4]]], "权威行列坐标");
+        assert_eq!(ed.table_shape(0), Some((2, 2)));
+        assert_eq!(ed.table_first_paragraph(0), Some(1));
+        // 栅格坐标里的段落号确实指向预期文本（不会静默改错格）。
+        for (r, row) in cells[0].iter().enumerate() {
+            for (c, para) in row.iter().enumerate() {
+                let want = ["A1", "B1", "A2", "B2"][r * 2 + c];
+                assert_eq!(ed.paragraph_text(*para), want, "[{r}][{c}]");
+            }
+        }
+    }
+
+    #[test]
+    fn table_cells_gridspan_repeats_anchor() {
+        // 第二行三格：A（1 列）+ B（gridSpan=2）。栅格宽 3。
+        let body = "<w:tbl><w:tr>\
+<w:tc><w:p><w:r><w:t>H1</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>H2</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>H3</w:t></w:r></w:p></w:tc></w:tr><w:tr>\
+<w:tc><w:p><w:r><w:t>X</w:t></w:r></w:p></w:tc>\
+<w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>\
+<w:p><w:r><w:t>Y</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let bytes = build_docx(body);
+        let ed = DocxEditor::open(&bytes).unwrap();
+        assert_eq!(ed.paragraphs().len(), 5);
+        let cells = ed.table_cells();
+        assert_eq!(
+            cells,
+            vec![vec![vec![0, 1, 2], vec![3, 4, 4]]],
+            "gridSpan 覆盖列重复首格段落号（OOXML 占位语义）"
+        );
+        assert_eq!(ed.paragraph_text(cells[0][1][1]), "Y");
+        assert_eq!(ed.paragraph_text(cells[0][1][2]), "Y", "覆盖列指回首格");
+    }
+
+    #[test]
+    fn table_cells_vmerge_continue_points_to_restart() {
+        // 2×2：左列 vMerge restart/continue，右列独立两格。
+        let body = "<w:tbl><w:tr>\
+<w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr>\
+<w:p><w:r><w:t>R</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>P</w:t></w:r></w:p></w:tc></w:tr><w:tr>\
+<w:tc><w:tcPr><w:vMerge/></w:tcPr>\
+<w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>Q</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let bytes = build_docx(body);
+        let ed = DocxEditor::open(&bytes).unwrap();
+        assert_eq!(ed.paragraphs().len(), 4);
+        let cells = ed.table_cells();
+        assert_eq!(
+            cells,
+            vec![vec![vec![0, 1], vec![0, 3]]],
+            "vMerge continue 格指向起始格段落号（0），自身段落(2)不进栅格"
+        );
+        // 续格自己的段落仍是合法段落（可被 set 但不该被栅格驱动）。
+        assert_eq!(ed.paragraph_text(2), "C");
+    }
+
+    #[test]
+    fn table_cells_self_closing_cell_paragraph() {
+        // 单元格里是自闭合 <w:p/>（空段落）——仍要有权威坐标。
+        let body = "<w:tbl><w:tr><w:tc><w:p/></w:tc>\
+<w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let bytes = build_docx(body);
+        let ed = DocxEditor::open(&bytes).unwrap();
+        assert_eq!(ed.table_cells(), vec![vec![vec![0, 1]]]);
+        assert_eq!(ed.paragraph_text(0), "");
+    }
+
+    #[test]
+    fn table_cells_multiple_tables_in_document_order() {
+        let body = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>T1</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+<w:p><w:r><w:t>Between</w:t></w:r></w:p>\
+<w:tbl><w:tr><w:tc><w:p><w:r><w:t>T2a</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>T2b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let bytes = build_docx(body);
+        let ed = DocxEditor::open(&bytes).unwrap();
+        assert_eq!(ed.table_count(), 2);
+        assert_eq!(
+            ed.table_cells(),
+            vec![vec![vec![0]], vec![vec![2, 3]]],
+            "表序号按文档序；中间正文段不进栅格"
+        );
+    }
+
+    #[test]
+    fn table_cells_nested_table_excluded_from_outer_grid() {
+        // 外层表一格内嵌一张内层表：内层表的段落**不进**外层栅格
+        // （猜坐标 = 静默改错格的防线）。
+        let body = "<w:tbl><w:tr><w:tc>\
+<w:p><w:r><w:t>Outer</w:t></w:r></w:p>\
+<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+</w:tc></w:tr></w:tbl>";
+        let bytes = build_docx(body);
+        let ed = DocxEditor::open(&bytes).unwrap();
+        assert_eq!(ed.paragraphs().len(), 2, "外层格段 + 内层格段");
+        assert_eq!(
+            ed.table_cells(),
+            vec![vec![vec![0]]],
+            "外层栅格只收外层格的首段（0）；内层段(1)不进栅格"
+        );
+        assert_eq!(ed.paragraph_text(1), "Inner");
+    }
+
+    #[test]
+    fn table_cells_is_read_only_and_save_stays_identical() {
+        // 查表不得动手术：open → table_cells() → save 字节恒等。
+        let body = "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let bytes = build_docx(body);
+        let ed = DocxEditor::open(&bytes).unwrap();
+        let _ = ed.table_cells();
+        let _ = ed.table_shape(0);
+        let saved = ed.save_to_vec().unwrap();
+        assert_eq!(saved_document_xml(&saved), saved_document_xml(&bytes));
+    }
+
+    #[test]
+    fn table_cells_set_cell_text_keeps_tcpr_and_surrounding_bytes() {
+        // 改一格文字：w:tcPr 原样、另一格字节不变、结构不变（第一版边界）。
+        let body = "<w:p><w:r><w:t>Head</w:t></w:r></w:p>\
+<w:tbl><w:tr>\
+<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+<w:p><w:pPr><w:pStyle w:val=\"Default\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Old</w:t></w:r></w:p></w:tc>\
+<w:tc><w:p><w:r><w:t>Keep</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+        let bytes = build_docx(body);
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        let cells = ed.table_cells();
+        let target = cells[0][0][0];
+        assert_eq!(ed.paragraph_text(target), "Old");
+        ed.set_paragraph_text(target, "New").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        assert!(
+            xml.contains("<w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>"),
+            "w:tcPr 原样保留：{xml}"
+        );
+        assert!(
+            xml.contains("<w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">New</w:t>"),
+            "首 run 的 w:rPr 保留：{xml}"
+        );
+        // 未被编辑的另一格：**原文逐字节**保留（引擎不做任何手术——
+        // 不加 xml:space、不拆 run）。
+        assert!(
+            xml.contains("<w:tc><w:p><w:r><w:t>Keep</w:t></w:r></w:p></w:tc>"),
+            "另一格原文逐字节不变：{xml}"
+        );
+        // 结构不变：表/行/格数一致，重开仍可栅格化。
+        let re = DocxEditor::open(&saved).unwrap();
+        assert_eq!(re.table_cells(), cells);
+        assert_eq!(re.paragraph_text(target), "New");
     }
 }
