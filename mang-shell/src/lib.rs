@@ -7,6 +7,10 @@
 #![allow(dead_code, unused_imports)]
 #![allow(clippy::all)]
 
+/// 文档事件面（#111 订阅模式——buffer 的 revision/pending 依赖它）。
+#[path = "doc_events.rs"]
+pub mod doc_events;
+
 #[path = "editor/mod.rs"]
 pub mod editor;
 

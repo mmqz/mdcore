@@ -25,9 +25,32 @@ use mdc_office_io::io;
 /// 单件结论。
 enum Verdict {
     Editable { sets: usize },
-    Degraded,
+    Degraded(String),
     Unreadable,
     Failed(String),
+}
+
+/// 降级原因拆解（决定后续任务的优先级——见 docs/docx-table-edit-design.md）。
+#[derive(Default)]
+struct DegradeStats {
+    table_only: usize,
+    textbox: usize,
+    engine_gate: usize,
+    other: usize,
+}
+
+impl DegradeStats {
+    fn tally(&mut self, why: &str) {
+        if why.contains("表格") {
+            self.table_only += 1;
+        } else if why.contains("文本框") {
+            self.textbox += 1;
+        } else if why.contains("引擎") {
+            self.engine_gate += 1;
+        } else {
+            self.other += 1;
+        }
+    }
 }
 
 fn corpus_dir() -> Option<PathBuf> {
@@ -68,10 +91,11 @@ fn width_paragraph_count(doc: &DocxDocument) -> usize {
 }
 
 /// 装行模型 + 建桥（与 `docx_doc::load_editable` 同口径）。
-fn mount(bytes: &[u8]) -> Option<(docx_doc::DocxPayload, DocxEnginePort, DocxBridge)> {
+fn mount(bytes: &[u8]) -> Result<(docx_doc::DocxPayload, DocxEnginePort, DocxBridge), String> {
     let opts = io::ReadOptions { compat: true };
-    let doc = mdc_office_io::docx::read_docx_from_bytes_with_options(bytes, &opts).ok()?;
-    let port = DocxEnginePort::open(bytes).ok()?;
+    let doc = mdc_office_io::docx::read_docx_from_bytes_with_options(bytes, &opts)
+        .map_err(|e| format!("宽面读失败：{e}"))?;
+    let port = DocxEnginePort::open(bytes).map_err(|e| format!("引擎门拒：{e}"))?;
     let engine_paras = port.paragraph_count();
     let mut payload = docx_doc::convert_editable(&doc, &port);
     for i in 0..engine_paras {
@@ -82,36 +106,42 @@ fn mount(bytes: &[u8]) -> Option<(docx_doc::DocxPayload, DocxEnginePort, DocxBri
     // → 降级（宽面块模型与 document.xml 扫描口径分歧：文本框嵌套表等）。
     let width = width_paragraph_count(&doc);
     if payload.candidates != engine_paras || width != engine_paras {
-        if std::env::var("CORPUS_DBG").is_ok() {
-            eprintln!(
-                "DBG mismatch: candidates={} width={} engine={engine_paras}",
-                payload.candidates, width
-            );
-        }
-        return None;
+        let tables = payload.props.tables;
+        let textboxes = payload.props.textboxes;
+        let kind = if tables > 0 && textboxes == 0 {
+            format!("段落数对账不一致（表格形态：{tables} 表）")
+        } else if textboxes > 0 && tables == 0 {
+            format!("段落数对账不一致（文本框形态：{textboxes} 个）")
+        } else if tables > 0 && textboxes > 0 {
+            format!("段落数对账不一致（表格 {tables} + 文本框 {textboxes}）")
+        } else {
+            "段落数对账不一致（无表格无文本框）".to_string()
+        };
+        return Err(format!(
+            "{kind}：candidates={} width={} engine={engine_paras}",
+            payload.candidates, width
+        ));
     }
-    let _ = width;
     let mut bridge = DocxBridge::new(
-        payload.blocks.clone()?,
+        payload.blocks.clone().ok_or("无块表")?,
         (0..engine_paras)
             .map(|i| Some(port.paragraph_text(i)))
             .collect(),
     );
     for (p, t) in &payload.projections {
         if *p >= engine_paras {
-            eprintln!("DBG proj key {p} >= engine {engine_paras}");
-            return None;
+            return Err(format!("投影键越界：{p} >= {engine_paras}"));
         }
         bridge.note_projection(*p, t);
     }
     for (p, t) in &payload.fallbacks {
         if *p >= engine_paras {
-            return None;
+            return Err(format!("兜底键越界：{p} >= {engine_paras}"));
         }
         bridge.note_fallback(*p, t);
     }
     bridge.note_cells(payload.cell_paragraphs.clone());
-    Some((payload, port, bridge))
+    Ok((payload, port, bridge))
 }
 
 /// 单件全链：装载 → 零编辑计划 → 改首段 → 落账 → 重开。
@@ -120,8 +150,9 @@ fn one_file(path: &Path) -> Verdict {
         Ok(b) => b,
         Err(_) => return Verdict::Unreadable,
     };
-    let Some((payload, port, bridge)) = mount(&bytes) else {
-        return Verdict::Degraded;
+    let (payload, port, bridge) = match mount(&bytes) {
+        Ok(v) => v,
+        Err(why) => return Verdict::Degraded(why),
     };
     let n = port.paragraph_count();
     let lines: Vec<String> = payload.text.split('\n').map(|s| s.to_string()).collect();
@@ -158,7 +189,7 @@ fn one_file(path: &Path) -> Verdict {
     }
     let mut ed = match DocxEditor::open(&bytes) {
         Ok(e) => e,
-        Err(_) => return Verdict::Degraded,
+        Err(e) => return Verdict::Degraded(format!("引擎门拒：{e}")),
     };
     for (p, t) in &plan.sets {
         if let Err(e) = ed.set_paragraph_text(*p, t) {
@@ -200,6 +231,8 @@ fn corpus_load_roundtrip_and_single_edit() {
     };
     let all = files(&dir);
     let (mut editable, mut degraded, mut unreadable, mut set_total) = (0, 0, 0, 0usize);
+    let mut dstats = DegradeStats::default();
+    let mut degraded_files: Vec<(String, String)> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     for path in &all {
         let name = path
@@ -226,7 +259,11 @@ fn corpus_load_roundtrip_and_single_edit() {
                 editable += 1;
                 set_total += sets;
             }
-            Verdict::Degraded => degraded += 1,
+            Verdict::Degraded(why) => {
+                degraded += 1;
+                dstats.tally(&why);
+                degraded_files.push((name.clone(), why));
+            }
             Verdict::Unreadable => unreadable += 1,
             Verdict::Failed(why) => {
                 editable += 1;
@@ -242,6 +279,13 @@ fn corpus_load_roundtrip_and_single_edit() {
         unreadable,
         set_total
     );
+    eprintln!(
+        "corpus-degrade: 表格形态 {} / 文本框形态 {} / 引擎门拒 {} / 其他 {}",
+        dstats.table_only, dstats.textbox, dstats.engine_gate, dstats.other
+    );
+    for (n, why) in &degraded_files {
+        eprintln!("corpus-degrade-file: {n} — {why}");
+    }
     for f in &failures {
         eprintln!("corpus-fail: {f}");
     }

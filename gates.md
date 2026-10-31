@@ -1391,3 +1391,55 @@ cache_worker 套件连跑 3 次零抖动。README/COMPLIANCE 计数同步 259
 （E 移交项 252→257 为 T2-fix 锁增量落定前口径）。❷（轻微）licenses/
 18→17 计数勘误在 compliance-baseline 分支（F 工作树两处），与本仓
 收口分开提交。
+
+## PDF-i：xref 链完整性防线（2026-10-31，行尾污染事故修复）
+
+**事故**（issue #113 评论链，用户 Windows 实测 main 5 红：pdff2_annotate
+的 eleven_kinds/session_flush/remove_added/remove_external/acrobat_interop，
+征兆 `ReadReport{parsed:0}`——「写入成功但读不回来」）：
+
+- 根因不在 #106 代码（该面自合入起零改动、Linux 全绿）：仓内
+  `fixtures/small.pdf` 是**零 NUL 字节**未压缩 PDF，git 文本启发式判为
+  文本；Windows 默认 `core.autocrlf=true` 检出 LF→CRLF → 全部字节偏移
+  漂移、xref 条目 EOL 形态破坏。仓库无 `.gitattributes`（防线缺位）。
+- 因果链（探针钉定，pdfi_xref_chain 锁 4 可执行复现）：lopdf 装载退化
+  为全文件扫描重建（`xref_start=0`，页仍可读——写路径「一切正常」的
+  隐蔽面）→ 增量写 `new_from_prev` 无 /Prev 可指（lopdf 对重建档刻意
+  省略）→ 产物 xref 只覆盖本轮新对象、目录/页树经链不可达 →
+  `read_annotations` 装载成功但 `get_pages()=0` → 静默 parsed:0。
+
+**交付**（crates/pdf + 仓根，feature `engine-lopdf`）：
+
+- `.gitattributes`（仓根新建）：pdf/png/docx/xlsx/pptx/zip/wasm 等
+  binary 显式标记——任何平台/任何 autocrlf 配置下检出与入库逐位保持
+  （ZIP/PNG 本含 NUL 已被启发式保护，显式标记属纵深防御）。
+- 写入口守卫（Guard A，writer_lopdf `from_bytes_with_limits`）：
+  `doc.xref_start == 0`（扫描重建装载态）→ `Engine` 响亮拒绝。增量
+  语义要求前序 xref 链可信；重建档上增量写必产 /Prev 缺失的链断裂
+  产物。能力边界登记：重建装载档不支持增量标注（全量重写路径未排期）。
+- 读面零页守卫（Guard B，annotate `read_annotations`）：装载成功但
+  页表空 → `Engine`（PDF 规范页数 ≥ 1，零页必为结构异常；「读到 0
+  条」与「没有标注」不可区分正是事故隐身所在）。
+- 产物自检（Guard C，writer_lopdf `save_incremental`）：重载后页树
+  空 → 拒交付（on-error 写器保持保存前形态可重试）。已知触发路径已
+  被 Guard A 入口封死，此为纵深防御（无直接触发测试，登记）。
+- `tests/pdfi_xref_chain.rs`（4 锁）：夹具金丝雀（small.pdf 零 CR +
+  xref_start≠0 + .gitattributes 在位）/ Guard A 拒重建档 + 原件无误伤 /
+  Guard B 拒链断裂档 + 合法零标注档对照 / 事故形态钉定（绕过入口以
+  lopdf 原语复刻旧版行为，产物=无 /Prev + 页树不可达——入口拒绝的
+  正当性证明）。
+
+**门禁**：engine-lopdf **110/110+1 环境项**（+4 新锁；links_corpus_
+real_sweep 红 = test-artifacts/pdf-organize-corpus 语料本机缺失，
+干净 main 同红在档）；双引擎 28 红全数环境性（pypdfium2_raw 库
+`dlsym failed` ≠ pdfium_7881 绑定 ABI——engine_binds 失败于双侧，
+其下游 pdfium 依赖测试任何分支必红；干净 main 失败名单 diff 完全
+一致）；clippy -p mdc-pdf --all-targets 0 警告；本轮文件 fmt 0 diff。
+**预存红账登记（非本轮引入，建议另行收口）**：① #116 的 forms.rs/
+stamp.rs/generate.rs/lib.rs:96/pdfg_forms/pdfh_stamp fmt 未过门（80+
+diff，main 上已红）；② links_corpus 语料缺失时不跳过而是 panic
+（环境合同与 pdff2 的「缺失跳过」惯例不一致）。
+
+**用户机修复指引**（Windows 检出污染工作树）：合并本 PR 后
+`git checkout -f -- crates/pdf/fixtures/`（.gitattributes 生效后不再
+复发）；small.pdf 期望 1099 字节。

@@ -41,6 +41,39 @@
 //!   事件族（PDF-c 视图层落地时定稿）；
 //! - **引擎集成点**（[`engine`]）：`DocumentEngine` trait（PDF-c 绑
 //!   pdfium，non-V8 构建纪律——S1.1 JS 不接 / S1.2 XFA 不启用）。
+//!
+//! # ⚠️ PDF 字典三形态（后来人必读）
+//!
+//! PDF 字典里同一个键的值可能是**三种形态**，读法各不相同：
+//!
+//! | 形态 | 写法 | 读法 |
+//! |---|---|---|
+//! | 名字 | `/ETSI.CAdES.detached` | `Object::Name` → `as_name()` |
+//! | 字符串 | `(text)` 或 `<hex>` | `Object::String` → `as_str()` |
+//! | 间接引用 | `12 0 R` | `Object::Reference` → `as_reference()` 再查对象表 |
+//!
+//! **惰性解包会静默失败**：`as_str()` 对名字返回 `None`、`as_name()` 对
+//! 字符串返回 `None`，两者都**不报错、不 panic**，只是拿到空值。于是
+//! 「结构看着对、实际读出来是空的」——只能靠测试发现。
+//!
+//! ## 已踩过的三个坑（都靠测试发现，不是靠读代码）
+//!
+//! 1. **`/SMask` 必须是间接引用**——写成内联字典时 MuPDF 报
+//!    `invalid key in dict`，且 `images on page: 0`（图根本不渲染）。
+//!    见 [`stamp`]。
+//! 2. **复选框 `/V` 是名字对象**（`/Yes` / `/Off`）——用 `as_str()`
+//!    拿到 `None`，勾选态永远读成 `false`（写回正确、读回错误）。
+//!    见 [`forms`]。
+//! 3. **`/SubFilter` 是名字对象**（`/ETSI.CAdES.detached`）——用
+//!    `as_str()` 拿到空串，签名子过滤器永远报空。见 [`signature`]。
+//!
+//! ## 纪律
+//!
+//! - 读任何字典字段前，先想清楚它**可能**是什么形态；
+//! - 字符串/名字两可的，用 [`forms::dict_text`]（兼容两种形态）；
+//! - 需要引用的（如 `/SMask`、`/Font`），**永远**写成间接引用；
+//! - 新写的字段读者配上「三形态」测试用例——尤其是**名字形态**那个分支，
+//!   它不写测试就一定会漏。
 
 pub mod annotation;
 pub mod cache;
@@ -82,6 +115,18 @@ pub mod ocr;
 // 门面（add/remove/list/save）+ 增量删除面 + 11 kind 模型/写面。
 #[cfg(feature = "engine-lopdf")]
 pub mod annotate;
+// S2-5（issue #116 任务 1）：PDF 表单（AcroForm）读写——域读取/填写/
+// 增量写回/扁平化，中文走 CIDFont 嵌入（复用 generate 的 Type0 面）。
+#[cfg(feature = "engine-lopdf")]
+pub mod forms;
+// S2-6（issue #116 任务 3）：盖章——图片叠加进页面内容流（打印必带，
+// 不是注释），PNG 自带 alpha 走 SMask，零 image crate 依赖。
+#[cfg(feature = "engine-lopdf")]
+pub mod stamp;
+// S2-7（issue #116 任务 2）：数字签名读取/结构验证——手写 DER 解析
+// + CMS SignedData 遍历，零新增依赖；不验证证书链（第一版范围）。
+#[cfg(feature = "engine-lopdf")]
+pub mod signature;
 
 #[cfg(feature = "engine-lopdf")]
 pub use annotate::{read_annotations, PdfAnnotator, ReadReport};

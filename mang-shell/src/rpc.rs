@@ -1,78 +1,97 @@
-//! rpc —— 本机控制通道（#104 任务 2「RPC 桥接准备」）。
+//! rpc —— 本机控制通道（#104 任务 2「RPC 桥接」+ #111 任务 2「RPC 扩展」）。
 //!
-//! ## 定位：Lead 长期设计的第一块地基
+//! ## 定位：Lead 长期设计「AI 操作运行中的 UI，实时反馈」的地基
 //!
-//! Lead 的长期设计是「AI 操作运行中的 UI，实时反馈」。现状 mang-shell
-//! 用自己的 Buffer（不走 mdcore 的 BlockTree/Op），AI 改不了文档、也
-//! 没法共享状态。本模块**不是**完整实现（那要 5-6 周），而是打通链路
-//! 的第一步：让外部进程（AI 客户端 / CLI 工具）能把命令送进运行中的
-//! mang-shell，并在 UI 上实时看到效果。
+//! #109 打通了「请求-响应」链路（6 命令最小版）；#111 在其上扩展：
+//! **订阅模式**——客户端 `subscribe` 后，服务端在每次文档变更（用户
+//! 编辑 / AI 编辑 / 撤销重做）时**主动推送** `doc_changed` 事件，双向
+//! 回显即成：AI 发命令改文档 → 用户界面实时看到；用户手动编辑 →
+//! AI 通过订阅收到通知。两边走同一个事件流（[`crate::doc_events`]）。
 //!
-//! ## 架构（最小可用）
+//! ## 架构（#111：响应与事件同一条出口）
 //!
 //! ```text
 //! 外部客户端（python/nc …）                mang-shell 进程
-//! ─────────────────────                  ──────────────────────────────
-//!   AF_UNIX socket  ──JSON 行──▶ accept 循环 ──▶ async_channel 队列
-//!   （每连接一个后台任务）                        │
-//!                                               ▼
-//!                                    dispatcher（单任务串行）
-//!                                    cx.update → window.update
-//!                                    （主线程走 GPUI 修改 UI）
-//!                                               │
-//!   ◀──JSON 行（响应）── 每连接 oneshot ◀────────┘
+//! ─────────────────────                  ────────────────────────────
+//!   AF_UNIX socket  ──JSON 行──▶ accept 循环 ──▶ Job 队列（带 conn id）
+//!   （每连接一个任务）                        │
+//!                                            ▼
+//!                                 dispatcher（单任务串行，主线程执行）
+//!                                 cx.update → window.update
+//!                                     │                │（编辑 → doc_events
+//!   ◀──JSON 行（响应）─── out 通道 ◀────┘                │  总线 → 事件泵）
+//!   ◀──JSON 行（事件）─── out 通道 ◀── 事件泵（订阅表广播）
 //! ```
 //!
-//! - **传输**：unix domain socket，JSON Lines（一行一 JSON 对象，UTF-8）。
-//!   本机通信——不做加密/认证/网络（#104 明确边界）。
+//! - 每连接一条 `out` 通道（多生产者：dispatcher 写响应 / 事件泵写
+//!   事件；单消费者：connection 任务内 `select` 写 socket）——**响应
+//!   与事件同出口，天然保序**；多客户端各自独立通道互不干扰。
+//! - `select` 读写交替（`futures_lite::future::select`）：读 future 半途
+//!   被事件分支抢先而丢弃是安全的——数据留内核缓冲，下轮照读。
+//! - **传输**：unix domain socket，JSON Lines（一行一 JSON，UTF-8）。
+//!   本机通信——不做加密/认证/网络（#104/#111 明确边界）。
 //! - **端点**：`$XDG_RUNTIME_DIR/mang-shell.sock`，缺省
 //!   `/tmp/mang-shell-$UID.sock`；`--rpc-sock PATH` 显式覆盖（烟雾与
 //!   多实例场景）；`--no-rpc` 关闭。
-//! - **并发**：每连接独立后台任务（收发不互阻）；命令全部经单一
-//!   dispatcher 串行落主线程——GPUI 实体修改只能在主线程，串行化即
-//!   正确性保证（多客户端「同时连、不互扰」，命令天然排队）。
 //! - **退出清理**：`ControlServer` Drop 时删除 socket 文件；异常退出
 //!   的残留由下次启动 [`prepare_socket`] 探活清理（连得上 = 别的实例
 //!   在监听 → 本实例禁用 RPC；连不上 = 陈旧文件 → 删除后重绑）。
 //!
-//! ## 协议（6 命令，#104 原文口径）
+//! ## 协议（#111 后 15 命令 + 事件流）
 //!
-//! 请求（`id` 可省——省略时响应 `id` 为 null；未知字段忽略——前向兼容）：
+//! 请求（`id` 可省——省略时响应 `id` 为 null；未知字段忽略——前向
+//! 兼容）。#104 六命令（open_file / insert_text / replace_selection /
+//! get_state / close_file / switch_tab）之上，#111 任务 2 新增：
 //!
 //! ```json
-//! {"id": 1, "cmd": "open_file",         "path": "/tmp/a.md"}
-//! {"id": 2, "cmd": "insert_text",       "line": 0, "col": 4, "text": "hi"}
-//! {"id": 3, "cmd": "replace_selection", "text": "X"}
-//! {"id": 4, "cmd": "get_state"}
-//! {"id": 5, "cmd": "close_file",        "path": "/tmp/a.md"}
-//! {"id": 6, "cmd": "switch_tab",        "index": 1}
+//! {"id": 7,  "cmd": "set_cursor",     "line": 10, "col": 5}
+//! {"id": 8,  "cmd": "set_selection",  "start": {"line": 0, "col": 1},
+//!                                        "end":   {"line": 0, "col": 5}}
+//! {"id": 9,  "cmd": "get_selection"}
+//! {"id": 10, "cmd": "undo"}
+//! {"id": 11, "cmd": "redo"}
+//! {"id": 12, "cmd": "save"}
+//! {"id": 13, "cmd": "save_as",        "path": "/tmp/b.md"}
+//! {"id": 14, "cmd": "scroll_to",      "line": 42}
+//! {"id": 15, "cmd": "subscribe"}
 //! ```
 //!
-//! 响应（恒一行 JSON）：
+//! 响应（恒一行 JSON；`ok` 分支二选一 `result`/`error`）：
 //!
 //! ```json
 //! {"id": 2, "ok": true,  "result": {"cursor": {"line": 0, "col": 6}, ...}}
 //! {"id": 5, "ok": false, "error": "文档有未保存修改——先保存再关闭"}
 //! ```
 //!
-//! ## 命令语义要点
+//! ## 事件流（订阅后服务端主动推）
 //!
-//! - `insert_text`/`replace_selection`：走与用户键入同一编辑链
-//!   （`Buffer::replace_range` 单点 + undo 一条 + 光标落插入尾 + 滚入
-//!   可视区）——「AI 改一下，用户看到文字出现」的实时反馈即此路径。
-//!   只读态（docx/pdf/xlsx 渲染）拒绝；空 `replace_selection` 无选区
-//!   时为无操作，有选区时为删除选区。
-//! - `close_file`：**脏标签拒绝**（返回错误让客户端先保存）——确认框
-//!   是用户交互面，不适合机器通道（改完不保存就关 = 静默丢数据）。
-//! - `get_state`：标签清单 + 活动文档（路径/光标/选区/字数/脏/只读），
-//!   AI 决策「接下来改哪里」的数据源。
+//! ```json
+//! {"type": "doc_changed", "path": "/tmp/a.md", "revision_before": 41,
+//!  "revision": 42, "source": "user", "changes": [
+//!    {"kind": "replace", "start": {"line": 10, "col": 5},
+//!     "end": {"line": 10, "col": 5}, "text": "hi"}]}
+//! ```
+//!
+//! 语义详见 [`crate::doc_events`]（事件源头与字段口径）；端到端断言
+//! 见 `tests/rpc_client.py`（订阅 / 双向回显 / 多客户端互不干扰）。
+//!
+//! ## 命令语义要点（#111 新面）
+//!
+//! - `set_cursor`/`set_selection`/`scroll_to`/`get_selection`：导航面
+//!   ——只读文档同样可用（浏览场景）；越界 clamp 到文内最近点。
+//! - `undo`/`redo`：与 `Ctrl+Z`/`Ctrl+Y` 同链（多光标批合并）；栈空
+//!   不是错误（`undid`/`redid` = false）。
+//! - `save`：未命名文档拒绝（无路径——引导 `save_as`）；只读渲染态
+//!   拒绝（无保存语义）。`save_as`：绝对化后写盘 + 标签身份迁移。
+//! - `subscribe`：幂等（重复订阅替换旧通道）；断连自动注销（事件泵
+//!   send 失败即移除）。
 //!
 //! ## 验证
 //!
-//! - 单测：协议解析/序列化、端点解析、陈旧 socket 探活、行分帧
-//!   （见文件尾 `mod tests`）。
-//! - 端到端：`rpc_smoke.sh`（Xvfb 启动 + `tests/rpc_client.py` 外部
-//!   客户端六命令全链 + 双客户端并发）。
+//! - 单测：协议解析/序列化、事件行形态、订阅表逻辑（文件尾 mod tests）。
+//! - 端到端：`rpc_smoke.sh`（Xvfb + `tests/rpc_client.py`——15 命令
+//!   全链 + 订阅/双向回显（`--smoke-user-type` 合成用户键入路径）+
+//!   双客户端并发）。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -99,7 +118,7 @@ const ACCEPT_ERROR_LIMIT: u32 = 32;
 // 协议面（纯数据 + 纯函数——单测主战场）
 // ---------------------------------------------------------------------------
 
-/// 控制命令（#104 任务书 6 命令原文口径）。
+/// 控制命令（#104 六命令 + #111 任务 2 八命令 + 订阅）。
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "cmd")]
 pub enum ControlCommand {
@@ -130,6 +149,58 @@ pub enum ControlCommand {
     /// 切换到指定标签（索引 0 基）。
     #[serde(rename = "switch_tab")]
     SwitchTab { index: usize },
+
+    // ---------------- #111 任务 2：8 新命令 + 订阅 ----------------
+    /// 设置光标位置（0 基；越界钳制。只读文档可用——导航面）。
+    #[serde(rename = "set_cursor")]
+    SetCursor { line: usize, col: usize },
+
+    /// 设置选区（两点任意次序，排序后 anchor/cursor；越界钳制）。
+    #[serde(rename = "set_selection")]
+    SetSelection { start: PointWire, end: PointWire },
+
+    /// 获取当前选区（含文本——AI 上下文消费主通道；无选区时 result
+    /// 里 `selection` 为 null）。
+    #[serde(rename = "get_selection")]
+    GetSelection,
+
+    /// 撤销一步手势（同 `Ctrl+Z`——多光标批合并；栈空不是错误）。
+    #[serde(rename = "undo")]
+    Undo,
+
+    /// 重做一步（同 `Ctrl+Y`）。
+    #[serde(rename = "redo")]
+    Redo,
+
+    /// 保存当前文件（未命名/只读拒绝——引导 save_as / 明确无语义）。
+    #[serde(rename = "save")]
+    Save,
+
+    /// 另存为（绝对化后写盘 + 标签身份迁移——路径/display_name 更新）。
+    #[serde(rename = "save_as")]
+    SaveAs { path: String },
+
+    /// 滚动到指定行（纯视口移动——不动光标；只读文档可用）。
+    #[serde(rename = "scroll_to")]
+    ScrollTo { line: usize },
+
+    /// 订阅文档变更事件（后续每次变更服务端主动推 `doc_changed`；
+    /// 幂等；断连自动注销）。
+    #[serde(rename = "subscribe")]
+    Subscribe,
+}
+
+/// 点位线上形态（`{"line": n, "col": n}`——与响应 `point_json` 同构）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+pub struct PointWire {
+    pub line: usize,
+    pub col: usize,
+}
+
+impl PointWire {
+    fn into_point(self) -> Point {
+        Point::new(self.line, self.col)
+    }
 }
 
 impl ControlCommand {
@@ -142,6 +213,15 @@ impl ControlCommand {
             ControlCommand::GetState => "get_state",
             ControlCommand::CloseFile { .. } => "close_file",
             ControlCommand::SwitchTab { .. } => "switch_tab",
+            ControlCommand::SetCursor { .. } => "set_cursor",
+            ControlCommand::SetSelection { .. } => "set_selection",
+            ControlCommand::GetSelection => "get_selection",
+            ControlCommand::Undo => "undo",
+            ControlCommand::Redo => "redo",
+            ControlCommand::Save => "save",
+            ControlCommand::SaveAs { .. } => "save_as",
+            ControlCommand::ScrollTo { .. } => "scroll_to",
+            ControlCommand::Subscribe => "subscribe",
         }
     }
 }
@@ -331,11 +411,50 @@ impl LineAssembler {
 // 服务面
 // ---------------------------------------------------------------------------
 
-/// 一条待执行命令（dispatcher 投递单元；`reply` 为每命令 oneshot）。
+/// 一条待执行命令（dispatcher 投递单元）。
+///
+/// `reply` = 该连接的 out 通道发送端（#111：响应不再 per-command
+/// oneshot——与事件流同一条出口，单 writer 消费保序）；`conn` = 连接
+/// id（`subscribe` 注册订阅的键；断连注销的键）。
 struct Job {
     id: Option<u64>,
+    conn: u64,
     command: ControlCommand,
-    reply: async_channel::Sender<ControlResponse>,
+    reply: async_channel::Sender<String>,
+}
+
+/// 订阅表（conn id → 该连接 out 通道发送端）。
+///
+/// dispatcher（Subscribe 命令时写入）与事件泵（每次文档变更时遍历
+/// 广播）共享；Mutex 短临界区（clone sender + send 都是非阻塞面）。
+/// send 失败（对端已断）即移除——断连自动注销。
+type Subscriptions =
+    std::sync::Mutex<std::collections::HashMap<u64, async_channel::Sender<String>>>;
+
+/// 注册订阅（幂等：同 conn id 重复订阅替换旧通道）。
+fn subscribe_insert(subs: &Subscriptions, conn: u64, out: async_channel::Sender<String>) {
+    subs.lock().expect("订阅表锁中毒").insert(conn, out);
+}
+
+/// 广播一条已序列化的事件行（send 失败即移除订阅——断连自动注销）。
+/// 返回实际送达的订阅者数。
+fn subscribe_broadcast(subs: &Subscriptions, line: &str) -> usize {
+    let mut guard = subs.lock().expect("订阅表锁中毒");
+    let mut delivered = 0;
+    let mut dead: Vec<u64> = Vec::new();
+    for (conn, out) in guard.iter() {
+        // try_send：unbounded 通道发送不阻塞——失败即对端已断。
+        if out.try_send(line.to_string()).is_ok() {
+            delivered += 1;
+        } else {
+            dead.push(*conn);
+        }
+    }
+    for conn in dead {
+        guard.remove(&conn);
+        eprintln!("rpc: 订阅注销（conn {conn} 对端已断）");
+    }
+    delivered
 }
 
 /// 控制服务句柄。存活周期 = 应用全局（GPUI `Global`）——注意 `run`
@@ -356,9 +475,12 @@ impl Drop for ControlServer {
 impl gpui::Global for ControlServer {}
 
 impl ControlServer {
-    /// 启动控制服务：预备 socket → 绑定 → 派生 accept 循环与
-    /// dispatcher（均为 detached 任务，随应用退出消亡）→ **挂应用
-    /// 全局**（存活到 App 退出——见类型文档的 Drop 陷阱）。
+    /// 启动控制服务：预备 socket → 绑定 → 派生 accept 循环、
+    /// dispatcher 与事件泵（均为 detached 任务，随应用退出消亡）→
+    /// **挂应用全局**（存活到 App 退出——见类型文档的 Drop 陷阱）。
+    ///
+    /// #111：成功时初始化 [`crate::doc_events`] 总线并启动事件泵
+    ///（总线接收端 → 序列化 → 订阅表广播）——「订阅模式」的服务端面。
     ///
     /// 失败不致命（返回 `false`，应用照常跑）：端点被占（另一实例）/
     /// 绑定失败/预备失败只损失 RPC 能力，桌面外壳本体不受影响。
@@ -386,8 +508,21 @@ impl ControlServer {
             }
         };
         let (tx, rx) = async_channel::unbounded::<Job>();
+        let subs: Arc<Subscriptions> =
+            Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        // #111：事件总线初始化（单接收端契约）+ 事件泵（detached）。
+        // 失败（已被初始化）只损失事件面——命令面照常。
+        match crate::doc_events::init_bus() {
+            Some(bus_rx) => {
+                let pump_subs = subs.clone();
+                cx.spawn(async move |cx| event_pump(bus_rx, pump_subs, cx).await)
+                    .detach();
+                eprintln!("rpc: 事件泵已启动（订阅模式就绪）");
+            }
+            None => eprintln!("rpc: 事件总线已被占用——订阅模式不可用（命令面照常）"),
+        }
         // WindowHandle 实现 Copy——直传免 clone（clippy::clone_on_copy）。
-        cx.spawn(async move |cx| dispatcher_loop(rx, window, cx).await)
+        cx.spawn(async move |cx| dispatcher_loop(rx, window, subs, cx).await)
             .detach();
         cx.spawn(async move |cx| accept_loop(listener, tx, cx).await)
             .detach();
@@ -400,21 +535,25 @@ impl ControlServer {
 }
 
 /// accept 循环：每连接一个后台任务（收发不互阻——多客户端并发基础）。
+/// #111：每连接分配递增 conn id（订阅键）+ 独立 out 通道（响应与
+/// 事件同出口）。
 async fn accept_loop(listener: UnixListener, tx: async_channel::Sender<Job>, cx: &mut AsyncApp) {
     let live = Arc::new(AtomicUsize::new(0));
+    let next_conn = Arc::new(std::sync::atomic::AtomicU64::new(1));
     let mut errors: u32 = 0;
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
                 errors = 0;
                 let live_now = live.fetch_add(1, Ordering::SeqCst) + 1;
-                eprintln!("rpc: client connected（{live_now} 路）");
+                let conn = next_conn.fetch_add(1, Ordering::SeqCst);
+                eprintln!("rpc: client connected（conn {conn}，{live_now} 路）");
                 let tx = tx.clone();
                 let live = live.clone();
                 let task: Task<()> = cx.background_spawn(async move {
-                    connection_task(stream, tx).await;
+                    connection_task(stream, tx, conn).await;
                     let live_now = live.fetch_sub(1, Ordering::SeqCst) - 1;
-                    eprintln!("rpc: client disconnected（{live_now} 路）");
+                    eprintln!("rpc: client disconnected（conn {conn}，{live_now} 路）");
                 });
                 task.detach();
             }
@@ -433,97 +572,167 @@ async fn accept_loop(listener: UnixListener, tx: async_channel::Sender<Job>, cx:
     }
 }
 
-/// 单连接任务：读行 → 解析 → 投递 dispatcher → 等响应 → 回写。
-async fn connection_task(mut stream: UnixStream, tx: async_channel::Sender<Job>) {
+/// 单连接任务：`race` 交替「读 socket（命令）」与「写 out 通道消费
+///（响应/事件）」。
+///
+/// #111 关键改造（原：读行 → oneshot 等响应 → 回写）：
+/// - 响应不再被读循环等待——dispatcher 执行完直接 send 到本连接的
+///   out 通道（fire-and-forget）；读循环可以连续投递命令。
+/// - 事件泵也向同一 out 通道 send——**响应与事件同一出口、单消费
+///   者写出，天然保序**（async_channel FIFO）。
+/// - `race`（futures-lite 无 `select`——同输出型双 future 竞速替代）
+///   先完成者赢，另一个被 drop：读 future 半途被事件分支抢先而丢弃
+///   是安全的——数据留内核缓冲，下轮照读（out 通道的 recv 半途丢弃
+///   同样安全——async_channel 消息未取走不丢失）。
+async fn connection_task(mut stream: UnixStream, tx: async_channel::Sender<Job>, conn: u64) {
+    /// race 双分支统一输出（futures-lite 无 select/Completed——同型
+    /// 竞速面）。
+    enum Step {
+        Read(std::io::Result<usize>),
+        Out(Result<String, async_channel::RecvError>),
+    }
+    let (out_tx, out_rx) = async_channel::unbounded::<String>();
     let mut asm = LineAssembler::new(MAX_LINE_BYTES);
     let mut chunk = [0u8; 8192];
     loop {
-        match stream.read(&mut chunk).await {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                asm.feed(&chunk[..n]);
-                while let Some(line) = asm.next_line() {
-                    // 排水循环：空行无响应继续；写失败（对端断）即收工。
-                    // 注意不能折叠成 let-chain && 写失败条件——那会把
-                    // 「写成功继续循环」变成「单轮即出」（never_loop）。
-                    let Some(resp) = handle_line(&line, &tx).await else {
-                        continue;
-                    };
-                    if stream.write_all(resp.to_line().as_bytes()).await.is_err() {
+        let read_step = async { Step::Read(stream.read(&mut chunk).await) };
+        let out_step = async { Step::Out(out_rx.recv().await) };
+        match futures_lite::future::race(read_step, out_step).await {
+            Step::Read(read) => match read {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    asm.feed(&chunk[..n]);
+                    while let Some(line) = asm.next_line() {
+                        // 投递不等待响应（响应走 out 通道）；写失败
+                        //（对端断）由后续轮次的事件写出面发现。
+                        handle_line(&line, &tx, &out_tx, conn);
+                    }
+                    if asm.overflowed() {
+                        let resp = ControlResponse::err(
+                            None,
+                            format!("单行超过 {MAX_LINE_BYTES} 字节上限——连接关闭"),
+                        );
+                        let _ = out_tx.send(resp.to_line()).await;
+                        return;
+                    }
+                }
+                Err(_) => break, // 读错（对端异常断）——静默收工
+            },
+            Step::Out(out) => match out {
+                Ok(line) => {
+                    if stream.write_all(line.as_bytes()).await.is_err() {
                         return; // 对端已断——写失败即收工
                     }
                 }
-                if asm.overflowed() {
-                    let resp = ControlResponse::err(
-                        None,
-                        format!("单行超过 {MAX_LINE_BYTES} 字节上限——连接关闭"),
-                    );
-                    let _ = stream.write_all(resp.to_line().as_bytes()).await;
+                Err(_) => {
+                    // out 通道关闭（所有 sender 已 drop）——但本任务还持
+                    // 有 out_tx，不可达；防御早退。
                     return;
                 }
-            }
-            Err(_) => break, // 读错（对端异常断）——静默收工
+            },
         }
     }
     // EOF 尾包：最后一条没带换行的行也处理（宽容 netcat/echo 习惯）。
-    if let Some(line) = asm.take_remainder()
-        && let Some(resp) = handle_line(&line, &tx).await
-    {
-        let _ = stream.write_all(resp.to_line().as_bytes()).await;
+    if let Some(line) = asm.take_remainder() {
+        let (reply_tx, _reply_rx) = async_channel::bounded::<String>(1);
+        handle_line(&line, &tx, &reply_tx, conn);
+    }
+    // EOF 后排水剩余响应（尽力而为——对端可能不再读；写错即止）。
+    while let Ok(line) = out_rx.try_recv() {
+        if stream.write_all(line.as_bytes()).await.is_err() {
+            break;
+        }
     }
 }
 
-/// 单行处理：空行忽略；解析失败回错；成功投递 dispatcher 等 oneshot。
-async fn handle_line(line: &str, tx: &async_channel::Sender<Job>) -> Option<ControlResponse> {
+/// 单行处理：空行忽略；解析失败回错（走 out 通道）；成功投递
+/// dispatcher（不等响应——#111 fire-and-forget）。
+fn handle_line(
+    line: &str,
+    tx: &async_channel::Sender<Job>,
+    out: &async_channel::Sender<String>,
+    conn: u64,
+) {
     let line = line.trim();
     if line.is_empty() {
-        return None;
+        return;
     }
     let (id, parsed) = parse_command(line);
     match parsed {
         Ok(command) => {
-            let (reply_tx, reply_rx) = async_channel::bounded::<ControlResponse>(1);
-            if tx
-                .send(Job {
-                    id,
-                    command,
-                    reply: reply_tx,
-                })
-                .await
-                .is_err()
-            {
-                return Some(ControlResponse::err(
-                    id,
-                    "控制服务已停止（dispatcher 通道关闭）".into(),
-                ));
-            }
-            match reply_rx.recv().await {
-                Ok(resp) => Some(resp),
-                Err(_) => Some(ControlResponse::err(
-                    id,
-                    "命令无响应（应用退出中？）".into(),
-                )),
-            }
+            let _ = tx.try_send(Job {
+                id,
+                conn,
+                command,
+                reply: out.clone(),
+            });
         }
-        Err(err) => Some(ControlResponse::err(id, err)),
+        Err(err) => {
+            let resp = ControlResponse::err(id, err);
+            let _ = out.try_send(resp.to_line());
+        }
+    }
+}
+
+/// #111 事件泵：文档事件总线接收端 → 序列化 JSON 行 → 订阅表广播。
+///（detached 任务，随应用退出消亡；总线接收端 drop 即 publish 面静默
+/// 落空——不影响编辑链路。）
+async fn event_pump(
+    bus: async_channel::Receiver<std::sync::Arc<crate::doc_events::DocEvent>>,
+    subs: Arc<Subscriptions>,
+    _cx: &mut AsyncApp,
+) {
+    while let Ok(event) = bus.recv().await {
+        let mut line = match serde_json::to_string(event.as_ref()) {
+            Ok(s) => s,
+            Err(_) => continue, // 序列化失败只丢这一条（不可达——Value 面恒成功）
+        };
+        line.push('\n');
+        let delivered = subscribe_broadcast(&subs, &line);
+        eprintln!(
+            "rpc: doc-event push（rev {}，{} 订阅者）",
+            event.revision, delivered
+        );
     }
 }
 
 /// dispatcher：单任务串行——命令全部落主线程执行（GPUI 实体修改的
 /// 正确性保证；多客户端命令在此天然排队，互不穿插半执行）。
+///
+/// #111：执行期间置 [`crate::doc_events::mark_rpc_source`]（RAII）——
+/// 编辑命令触发的文档变更事件 `source = "rpc"`；用户键入路径无此标记
+///（`source = "user"`）。响应回写与订阅注册共用 Job.reply。
 async fn dispatcher_loop(
     rx: async_channel::Receiver<Job>,
     window: WindowHandle<ShellApp>,
+    subs: Arc<Subscriptions>,
     cx: &mut AsyncApp,
 ) {
     while let Ok(job) = rx.recv().await {
-        let executed = cx.update(|cx| {
-            window
-                .update(cx, |shell, window, cx| {
-                    execute_command(shell, window, cx, &job.command)
-                })
-                .unwrap_or_else(|err| Err(format!("窗口不可用：{err}")))
-        });
+        // #111 Subscribe 特判：纯通道注册（不碰 GPUI 实体，无需落
+        // 主线程）——把本连接 out 通道挂进订阅表，响应与后续事件同一
+        // 出口。注册即达——幂等（同 conn id 替换旧通道）。
+        if matches!(job.command, ControlCommand::Subscribe) {
+            subscribe_insert(&subs, job.conn, job.reply.clone());
+            eprintln!(
+                "rpc: exec subscribe ok=true（conn {}，现 {} 订阅者）",
+                job.conn,
+                subs.lock().expect("订阅表锁中毒").len()
+            );
+            let resp = ControlResponse::ok(job.id, serde_json::json!({ "subscribed": true }));
+            let _ = job.reply.send(resp.to_line()).await;
+            continue;
+        }
+        let executed = {
+            let _rpc_source = crate::doc_events::mark_rpc_source();
+            cx.update(|cx| {
+                window
+                    .update(cx, |shell, window, cx| {
+                        execute_command(shell, window, cx, &job.command)
+                    })
+                    .unwrap_or_else(|err| Err(format!("窗口不可用：{err}")))
+            })
+        };
         let resp = match executed {
             Ok(result) => {
                 eprintln!("rpc: exec {} ok=true", job.command.name());
@@ -534,7 +743,7 @@ async fn dispatcher_loop(
                 ControlResponse::err(job.id, err)
             }
         };
-        let _ = job.reply.send(resp).await;
+        let _ = job.reply.send(resp.to_line()).await;
     }
 }
 
@@ -561,6 +770,20 @@ fn execute_command(
         ControlCommand::GetState => Ok(state_json(shell, cx)),
         ControlCommand::CloseFile { path } => cmd_close_file(shell, window, cx, path),
         ControlCommand::SwitchTab { index } => cmd_switch_tab(shell, window, cx, *index),
+        // ---------------- #111：导航面（只读文档可用） ----------------
+        ControlCommand::SetCursor { line, col } => cmd_set_cursor(shell, cx, *line, *col),
+        ControlCommand::SetSelection { start, end } => cmd_set_selection(shell, cx, *start, *end),
+        ControlCommand::GetSelection => cmd_get_selection(shell, cx),
+        ControlCommand::ScrollTo { line } => cmd_scroll_to(shell, cx, *line),
+        // ---------------- #111：历史面 ----------------
+        ControlCommand::Undo => cmd_undo(shell, cx),
+        ControlCommand::Redo => cmd_redo(shell, cx),
+        // ---------------- #111：保存面 ----------------
+        ControlCommand::Save => cmd_save(shell, cx),
+        ControlCommand::SaveAs { path } => cmd_save_as(shell, cx, path),
+        // #111 Subscribe 在 dispatcher_loop 内特判（纯通道注册，不经
+        // 主线程）——此分支不可达，但 match 穷尽性要求列出。
+        ControlCommand::Subscribe => unreachable!("subscribe 在 dispatcher 侧特判"),
     }
 }
 
@@ -674,6 +897,180 @@ fn cmd_switch_tab(
     }
     shell.activate_tab(index, window, cx);
     Ok(serde_json::json!({ "active_index": index }))
+}
+
+// ---------------------------------------------------------------------------
+// #111 任务 2 新命令（主线程薄编排——Editor 公开面）
+// ---------------------------------------------------------------------------
+
+fn cmd_set_cursor(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    line: usize,
+    col: usize,
+) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let cursor = editor.update(cx, |ed, cx| ed.move_cursor_to(line, col, cx));
+    Ok(serde_json::json!({ "cursor": point_json(cursor) }))
+}
+
+fn cmd_set_selection(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    start: PointWire,
+    end: PointWire,
+) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let (a, b) = editor.update(cx, |ed, cx| {
+        ed.set_selection_range(start.into_point(), end.into_point(), cx)
+    });
+    Ok(serde_json::json!({
+        "selection": { "start": point_json(a), "end": point_json(b) },
+    }))
+}
+
+fn cmd_get_selection(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let editor = editor.read(cx);
+    let selection = editor.selection_points().map(|(start, end)| {
+        let text = editor.selection_text();
+        let chars = text.chars().count();
+        // 与 get_state 同口径：选区文本带回（截断防爆载荷）。
+        let (text, truncated) = if chars <= SELECTION_TEXT_CAP {
+            (text, false)
+        } else {
+            (text.chars().take(SELECTION_TEXT_CAP).collect(), true)
+        };
+        serde_json::json!({
+            "start": point_json(start),
+            "end": point_json(end),
+            "chars": chars,
+            "text": text,
+            "text_truncated": truncated,
+        })
+    });
+    Ok(serde_json::json!({
+        "path": editor.file_path().map(|p| p.display().to_string()),
+        "revision": editor.revision(),
+        "selection": selection,  // 无选区 = null
+    }))
+}
+
+fn cmd_scroll_to(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    line: usize,
+) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let scrolled = editor.update(cx, |ed, cx| ed.scroll_to_line(line, cx));
+    Ok(serde_json::json!({
+        "scrolled_to": scrolled,
+        "line_count": editor.read(cx).line_count(),
+    }))
+}
+
+fn cmd_undo(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let undid = editor.update(cx, |ed, cx| {
+        let did = ed.undo_edit();
+        cx.notify();
+        did
+    });
+    let editor = editor.read(cx);
+    Ok(serde_json::json!({
+        "undid": undid,
+        "revision": editor.revision(),
+    }))
+}
+
+fn cmd_redo(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let redid = editor.update(cx, |ed, cx| {
+        let did = ed.redo_edit();
+        cx.notify();
+        did
+    });
+    let editor = editor.read(cx);
+    Ok(serde_json::json!({
+        "redid": redid,
+        "revision": editor.revision(),
+    }))
+}
+
+fn cmd_save(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let ed = editor.read(cx);
+    if ed.is_read_only() {
+        return Err("只读文档（渲染态）无保存语义".into());
+    }
+    let Some(path) = ed.file_path().map(|p| p.to_path_buf()) else {
+        return Err("未命名文档无路径——先 save_as 指定目标".into());
+    };
+    // ed（只读借用）在此自然结束——file_path 已拷出，update 可变借用无冲突。
+    if !editor.update(cx, |ed, cx| {
+        let ok = ed.save();
+        cx.notify();
+        ok
+    }) {
+        return Err(format!(
+            "保存失败（{}）——写盘错误（详见应用日志）",
+            path.display()
+        ));
+    }
+    Ok(serde_json::json!({
+        "saved": true,
+        "path": path.display().to_string(),
+        "modified": editor.read(cx).is_modified(),
+    }))
+}
+
+fn cmd_save_as(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    path: &str,
+) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    if editor.read(cx).is_read_only() {
+        return Err("只读文档（渲染态）不可另存".into());
+    }
+    let path = std::path::absolute(Path::new(path)).unwrap_or_else(|_| PathBuf::from(path));
+    // 走 ShellApp::save_active_as 完整链（editor.save_as + TabItem.path
+    // 迁移 + 文件树 active 同步 + notify）——直调 editor.save_as 会漏
+    // tab 身份迁移（tab_index_by_path 按旧路径查找失败——#111 烟雾
+    // 实测踩到）。
+    shell.save_active_as(path.clone(), cx);
+    // 成功判定：标签身份已迁移到新路径（失败路径 save_active_as 早退
+    // 不改 tab path）。
+    match shell.tab_index_by_path(&path) {
+        Some(idx) => Ok(serde_json::json!({
+            "saved": true,
+            "path": path.display().to_string(),
+            "tab_index": idx,
+        })),
+        None => Err(format!(
+            "另存失败（{}）——写盘错误（目录不存在/无权限？）",
+            path.display()
+        )),
+    }
 }
 
 /// 全量状态（get_state 的 result 载荷）。
@@ -898,6 +1295,177 @@ mod tests {
             "close_file"
         );
         assert_eq!(ControlCommand::SwitchTab { index: 0 }.name(), "switch_tab");
+    }
+
+    // ---------------- #111：新命令解析（8 命令 + 订阅） ----------------
+
+    #[test]
+    fn parse_eight_new_commands_roundtrip() {
+        let (id, cmd) = parse_command(r#"{"id":7,"cmd":"set_cursor","line":10,"col":5}"#);
+        assert_eq!(id, Some(7));
+        assert_eq!(cmd, Ok(ControlCommand::SetCursor { line: 10, col: 5 }));
+
+        let (id, cmd) = parse_command(
+            r#"{"id":8,"cmd":"set_selection","start":{"line":0,"col":1},"end":{"line":0,"col":5}}"#,
+        );
+        assert_eq!(id, Some(8));
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::SetSelection {
+                start: PointWire { line: 0, col: 1 },
+                end: PointWire { line: 0, col: 5 },
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":9,"cmd":"get_selection"}"#);
+        assert_eq!(cmd, Ok(ControlCommand::GetSelection));
+
+        let (_, cmd) = parse_command(r#"{"id":10,"cmd":"undo"}"#);
+        assert_eq!(cmd, Ok(ControlCommand::Undo));
+
+        let (_, cmd) = parse_command(r#"{"id":11,"cmd":"redo"}"#);
+        assert_eq!(cmd, Ok(ControlCommand::Redo));
+
+        let (_, cmd) = parse_command(r#"{"id":12,"cmd":"save"}"#);
+        assert_eq!(cmd, Ok(ControlCommand::Save));
+
+        let (_, cmd) = parse_command(r#"{"id":13,"cmd":"save_as","path":"/tmp/b.md"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::SaveAs {
+                path: "/tmp/b.md".into()
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":14,"cmd":"scroll_to","line":42}"#);
+        assert_eq!(cmd, Ok(ControlCommand::ScrollTo { line: 42 }));
+
+        let (id, cmd) = parse_command(r#"{"id":15,"cmd":"subscribe"}"#);
+        assert_eq!(id, Some(15));
+        assert_eq!(cmd, Ok(ControlCommand::Subscribe));
+        assert_eq!(cmd.unwrap().name(), "subscribe");
+    }
+
+    #[test]
+    fn parse_new_commands_field_errors() {
+        // set_cursor 缺 col
+        let (_, cmd) = parse_command(r#"{"cmd":"set_cursor","line":1}"#);
+        assert!(cmd.is_err());
+
+        // set_selection 的点位也接受数组形态（serde struct 的 seq 形式
+        // ——[line, col] 按位置解释；issue 事件示例即数组口径，两种
+        // 写法互通是宽容输入面）。
+        let (_, cmd) =
+            parse_command(r#"{"cmd":"set_selection","start":[0,1],"end":{"line":0,"col":5}}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::SetSelection {
+                start: PointWire { line: 0, col: 1 },
+                end: PointWire { line: 0, col: 5 },
+            }),
+            "数组点位按 [line, col] 位置解释——宽容输入"
+        );
+
+        // save_as 缺 path
+        let (_, cmd) = parse_command(r#"{"cmd":"save_as"}"#);
+        assert!(cmd.is_err());
+
+        // scroll_to 的 line 类型错（字符串）
+        let (_, cmd) = parse_command(r#"{"cmd":"scroll_to","line":"42"}"#);
+        assert!(cmd.is_err());
+    }
+
+    #[test]
+    fn new_command_names_match_wire_tags() {
+        assert_eq!(
+            ControlCommand::SetCursor { line: 0, col: 0 }.name(),
+            "set_cursor"
+        );
+        assert_eq!(
+            ControlCommand::SetSelection {
+                start: PointWire { line: 0, col: 0 },
+                end: PointWire { line: 0, col: 0 },
+            }
+            .name(),
+            "set_selection"
+        );
+        assert_eq!(ControlCommand::GetSelection.name(), "get_selection");
+        assert_eq!(ControlCommand::Undo.name(), "undo");
+        assert_eq!(ControlCommand::Redo.name(), "redo");
+        assert_eq!(ControlCommand::Save.name(), "save");
+        assert_eq!(
+            ControlCommand::SaveAs {
+                path: String::new()
+            }
+            .name(),
+            "save_as"
+        );
+        assert_eq!(ControlCommand::ScrollTo { line: 0 }.name(), "scroll_to");
+    }
+
+    // ---------------- #111：订阅表逻辑 ----------------
+
+    #[test]
+    fn subscribe_insert_is_idempotent_and_broadcast_reaches_all() {
+        let subs: Subscriptions = std::sync::Mutex::new(std::collections::HashMap::new());
+        let (a_tx, a_rx) = async_channel::unbounded::<String>();
+        let (b_tx, b_rx) = async_channel::unbounded::<String>();
+        subscribe_insert(&subs, 1, a_tx);
+        subscribe_insert(&subs, 2, b_tx);
+        // 幂等：同 conn 重新订阅替换旧通道（旧 rx 不再收）
+        let (a2_tx, a2_rx) = async_channel::unbounded::<String>();
+        subscribe_insert(&subs, 1, a2_tx);
+        assert_eq!(subs.lock().unwrap().len(), 2, "同 conn 重复订阅不增条目");
+
+        let delivered = subscribe_broadcast(&subs, "event\n");
+        assert_eq!(delivered, 2, "两路存活订阅均送达");
+        assert!(a_rx.is_empty(), "旧通道被替换——不再投递");
+        assert_eq!(
+            a2_rx.recv_blocking().as_deref(),
+            Ok("event\n"),
+            "重新订阅的新通道收到"
+        );
+        assert_eq!(
+            b_rx.recv_blocking().as_deref(),
+            Ok("event\n"),
+            "未受重订阅影响的另一路照常收到"
+        );
+    }
+
+    #[test]
+    fn subscribe_broadcast_drops_dead_subscribers() {
+        let subs: Subscriptions = std::sync::Mutex::new(std::collections::HashMap::new());
+        let (tx, rx) = async_channel::unbounded::<String>();
+        // 接收端立即 drop——通道已死
+        drop(rx);
+        subscribe_insert(&subs, 7, tx);
+        let delivered = subscribe_broadcast(&subs, "line\n");
+        assert_eq!(delivered, 0, "死通道不计送达");
+        assert!(subs.lock().unwrap().is_empty(), "广播后死订阅被自动移除");
+    }
+
+    #[test]
+    fn doc_event_line_serialization_for_subscribers() {
+        // 事件 → JSON 行（事件泵路径的形态钉定：以 \n 收尾、type 字段名）
+        let ev = crate::doc_events::DocEvent {
+            kind: "doc_changed",
+            path: Some(PathBuf::from("/tmp/a.md")),
+            revision_before: 0,
+            revision: 1,
+            source: "rpc",
+            changes: vec![crate::doc_events::ChangeRecord::precise(
+                "replace",
+                Point::new(0, 0),
+                Point::new(0, 0),
+                "hi".into(),
+            )],
+        };
+        let mut line = serde_json::to_string(&ev).unwrap();
+        line.push('\n');
+        let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(parsed["type"], "doc_changed");
+        assert_eq!(parsed["source"], "rpc");
+        assert_eq!(parsed["changes"][0]["kind"], "replace");
     }
 
     // ---------------- 端点解析 ----------------
