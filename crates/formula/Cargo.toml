@@ -1,0 +1,35 @@
+[package]
+name = "mdc-formula"
+version.workspace = true
+edition = "2021"
+# S3 任务 1（#110）：xlsx 公式计算引擎。
+#
+# 定位（循 mdc-pdf / mdc-office-io 引擎侧先例，三域纪律：对 mdcore
+# 零编译依赖）：公式解析/求值/重算的领域引擎。**公开面引擎类型零
+# 泄漏**（签名只含本 crate 类型——office-io 包装纪律同源）。
+#
+# 引擎选型（#110 调研定谳，2026-10-31，调研记录见 issue #110 评论）：
+# ironcalc_base 0.9.1（MIT OR Apache-2.0，GPL-3.0 兼容）——
+# - 纯计算引擎：无 zip/quick-xml/文件 IO 依赖（xlsx IO 在姊妹 crate
+#   `ironcalc`，不引入——mdcore 的 xlsx 读写已由 office-io 承载）；
+# - 依赖面：11 个 normal 直接依赖全纯 Rust（chrono/chrono-tz/
+#   statrs/bitcode/csv/rand/regex/regex-lite/ryu/serde + wasm 绑定
+#   仅 wasm target），无 C 库、无系统库；
+# - 函数覆盖：~470 函数（#110 必备 36 个全在，含 SUMIF/COUNTIFS
+#   criteria 族、VLOOKUP/INDEX/MATCH 查找族、DATE/YEAR 日期族）；
+# - 语义承载：#CIRC! 循环检测、错误结构化枚举（13 种 Excel 错误码）、
+#   求值深度/栈上限（DoS 防护面，与 mdc-pdf S3 限额纪律同构）；
+# - 版本钉定：pre-1.0（0.9.x），lock 精确到 0.9.1——升版须复跑
+#   全套函数对照测试（tests/functions_vs_excel.rs 是升版守门）。
+description = "Office 域 XLSX 公式计算引擎（S3 任务 1）：ironcalc_base 包装——引擎类型零泄漏公开面 + 求值/重算/依赖提取 + S3 限额同构的求值预算"
+
+[dependencies]
+# 唯一三方依赖：纯计算引擎（见上方选型注释）。
+# mock_time 不启用（默认真实时钟——TODAY/NOW 真语义；确定性测试
+# 用显式日期断言而非冻结时钟）。
+ironcalc_base = "=0.9.1"
+
+[dev-dependencies]
+# 真实 xlsx 验证面（#110 验收：真实财务表公式重算对照）——只读公式
+# 文本与缓存值，版本对齐 office-io 的 calamine 0.36 纪律。
+calamine = "0.36"

@@ -40,7 +40,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::annotation::{
-    clamp_ink_width, AnnotId, Annotation, AnnotationDraft, AnnotationKind, AnnotationPatch,
+    clamp_border, clamp_ink_width, AnnotId, Annotation, AnnotationDraft, AnnotationKind,
+    AnnotationPatch,
 };
 use crate::command::{
     AnnotationFilter, Command, CommandError, Outcome, SearchHit, SearchOptions, TextTarget,
@@ -489,6 +490,26 @@ impl PdfSession {
                 strokes,
                 color,
                 width: clamp_ink_width(width),
+            },
+            // S2-2：形状/线形边框宽同域钳制（与 Ink 同语义——入列归一
+            // 一点，存量面与落盘面同值）。
+            AnnotationKind::Rectangle { rect, border } => AnnotationKind::Rectangle {
+                rect,
+                border: clamp_border(border),
+            },
+            AnnotationKind::Ellipse { rect, border } => AnnotationKind::Ellipse {
+                rect,
+                border: clamp_border(border),
+            },
+            AnnotationKind::Line { from, to, border } => AnnotationKind::Line {
+                from,
+                to,
+                border: clamp_border(border),
+            },
+            AnnotationKind::Arrow { from, to, border } => AnnotationKind::Arrow {
+                from,
+                to,
+                border: clamp_border(border),
             },
             other => other,
         };
