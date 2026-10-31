@@ -21,6 +21,10 @@
 //! - 未知/畸形子型（无 `/Subtype`、载荷缺字段、非有限坐标）**跳过并
 //!   计数**——读面宽容（敌意文档不炸），不静默：`ReadReport` 全量登记
 //!   （S2-1 报告纪律同款）；
+//! - **零页树响亮失败**（2026-10-31 行尾污染事故防线）：装载成功但
+//!   页表为空（目录/页对象经 xref 链不可达——修订链断裂或结构损坏）
+//!   → `Engine` 错误而非静默 parsed:0（PDF 规范页数 ≥ 1，零页必为结构
+//!   异常——「读到 0 条标注」与「没有标注」不可区分是事故隐身所在）；
 //! - id 分配：**文档序单调**（页升序 → /Annots 序），`AnnotId` 从 1 起
 //!   ——与外部对象号解耦（对象号是存储细节，模型身份是会话身份）。
 //!
@@ -102,6 +106,15 @@ pub fn read_annotations(
     let mut out = Vec::new();
     let mut report = ReadReport::default();
     let pages: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    // 零页守卫（事故防线，理由见模块文档）：零页 = 结构异常（链断裂/
+    // 损坏），响亮失败而非静默 parsed:0。
+    if pages.is_empty() {
+        return Err(CommandError::engine(
+            "页树不可达：档装载成功但页表为空（目录/页对象未能经 xref 链解析\
+             ——修订链断裂或结构损坏）。零页档非合法形态（PDF 规范页数 ≥ 1），\
+             拒绝静默返回空标注集",
+        ));
+    }
     let mut next_id: u64 = 1;
     for (page_idx, &page_id) in pages.iter().enumerate() {
         let annots = page_annots(&doc, page_id);

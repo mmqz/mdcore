@@ -1,0 +1,22 @@
+# 二进制与产物形态：禁止一切行尾/编码转换（checkout 与入库双向逐位保持）。
+#
+# 起因（2026-10-31 事故，issue #113 评论链）：fixtures/small.pdf 是零 NUL
+# 字节的未压缩 PDF，git 的文本启发式（前 8000 字节无 NUL 即判文本）将其
+# 视为文本——Windows 默认 core.autocrlf=true 检出时 LF→CRLF，全部字节
+# 偏移漂移、xref 表失效。后果链：lopdf 装载退化为全文件扫描重建
+# （xref_start=0）→ 增量写产物丢失 /Prev 链 → 页树不可达 →
+# read_annotations 静默 parsed:0（pdff2_annotate 5 测试红，「写入成功但
+# 读不回来」）。显式标 binary 后，任何平台/任何 autocrlf 配置下检出与
+# 入库均不触碰这些文件的字节。
+#
+# 注：ZIP 形态（docx/xlsx/pptx）与 PNG 本身含 NUL 字节，git 启发式已判
+# 二进制——此处显式标记属纵深防御（防未来启发式变更/怪形态文件）。
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.docx  binary
+*.xlsx  binary
+*.pptx  binary
+*.zip   binary
+*.wasm  binary

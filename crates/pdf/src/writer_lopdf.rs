@@ -76,14 +76,17 @@ impl LopdfWriter {
     ///   （open 家族入口统一检查——先于解析 / 后于扫描，PDF-e 接线）；
     /// - 解析失败（垃圾字节等）→ `Engine`；
     /// - 加密档（仍加密或曾加密）→ `SecurityDeny`（S5 引擎侧独立防线，
-    ///   先于一切写入——与会话层 S5 判定双防线）。
+    ///   先于一切写入——与会话层 S5 判定双防线）；
+    /// - **xref 链不可信档**（lopdf 以扫描重建装载，`xref_start=0`）→
+    ///   `Engine`（2026-10-31 行尾污染事故防线——见
+    ///   [`LopdfWriter::from_bytes_with_limits`] 内联注释）。
     pub fn from_bytes(pdf: Vec<u8>) -> Result<Self, CommandError> {
         Self::from_bytes_with_limits(pdf, Limits::default())
     }
 
     /// 带限额构造（打开面入口，限额注入形态——测试/宿主同款）：
-    /// S3-L7 输入字节 ❶ → 装载 → S5 加密拒 → S2/S6 扫描 →
-    /// S3-L4 打开预算 ❶。
+    /// S3-L7 输入字节 ❶ → 装载 → S5 加密拒 → **xref 链守卫** →
+    /// S2/S6 扫描 → S3-L4 打开预算 ❶。
     pub fn from_bytes_with_limits(pdf: Vec<u8>, limits: Limits) -> Result<Self, CommandError> {
         // S3-L7 输入层（open 家族入口统一——与 open_scan /
         // PdfiumEngine::open 同款；先于解析：敌意大文档的无界解析面
@@ -98,6 +101,25 @@ impl LopdfWriter {
             return Err(CommandError::SecurityDeny {
                 reason: REASON_ENCRYPTED_WRITE,
             });
+        }
+        // xref 链守卫（2026-10-31 行尾污染事故）：lopdf 对 xref 不可解析
+        // 的档退化为**全文件扫描重建**装载——能读（宽容），但
+        // `Document::xref_start == 0` 标记「无已知 xref 起点」。在其上
+        // 做增量写是静默产毒：`new_from_prev` 无从回指（lopdf 对
+        // xref_start=0 刻意省略 /Prev——写 0 会把链指到文件头），产物
+        // xref 只覆盖本轮新对象，目录/页树经链不可达——严格阅读器打
+        // 不开，宽容阅读器靠再次扫描重建才可见（实测事故形态：
+        // read_annotations 静默 parsed:0，「写入成功但读不回来」）。
+        // 增量语义要求前序 xref 链可信——重建装载档在入口响亮拒绝，
+        // 不静默产出结构损坏的产物。常见成因：二进制 PDF 被行尾转换
+        // 污染（Windows git autocrlf 检出未标 binary 的文件——仓内已
+        // 加 .gitattributes 防复发）或 xref 表真损坏（修复源文件后重试）。
+        if doc.xref_start == 0 {
+            return Err(CommandError::engine(
+                "xref 链不可信：档以扫描重建装载（无已知 xref 起点），增量写产物将丢失 \
+                 /Prev 链导致页树不可达。常见成因：二进制被行尾转换污染（如 Windows \
+                 git autocrlf）或 xref 损坏。请重取未污染原件或修复源文件后重试",
+            ));
         }
         // S2/S6 扫描（装载后——告警/表单探针随写器携带；加密拒在前，
         // 携带的 assessment 恒为非加密态）。
@@ -282,11 +304,25 @@ impl AnnotationWriter for LopdfWriter {
             ));
         }
         let bytes_appended = out.len() as u64 - prefix_bytes;
+        // 产物自检（2026-10-31 行尾污染事故防线）：重载后页树必须可达。
+        // 零页 = 产物 xref 链断裂（目录/页对象解析不到——「写入成功但
+        // 阅读器看不到」的静默产毒形态）。已知的唯一触发路径（前序档
+        // 扫描重建装载 → /Prev 省略）已被 from_bytes 的 xref 链守卫在
+        // 入口拒绝，此检查为纵深防御（兜未来写面回归），拒绝交付而非
+        // 污染基线。on-error 写器状态保持保存前形态（inc 未替换、
+        // pending 仍真）——可修复后重试。
+        let reloaded = Document::load_mem(&out)
+            .map_err(|e| CommandError::engine(format!("产物重载失败：{e}")))?;
+        if reloaded.get_pages().is_empty() {
+            return Err(CommandError::engine(
+                "增量产物自检失败：重载后页树为空（产物 xref 链断裂，页对象经链不可达）\
+                 ——拒绝交付结构损坏产物。该态不应出现（写入口已拒重建装载档），\
+                 如触发请附样张提 issue",
+            ));
+        }
         // 重建：产物 = 新基线（后续 flush 在其上追加下一修订——修订内容
         // 恒为「本轮脏对象」，不重复写已落盘对象）。staged **不清**：
         // AnnotId → ObjectId 映射跨 flush 持久（编辑重写复用同对象号）。
-        let reloaded = Document::load_mem(&out)
-            .map_err(|e| CommandError::engine(format!("产物重载失败：{e}")))?;
         self.inc = IncrementalDocument::create_from(out, reloaded);
         self.pending = false;
         Ok(IncrementalSave {
