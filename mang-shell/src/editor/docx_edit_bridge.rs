@@ -100,6 +100,19 @@ pub enum LineBlock {
         /// 该行删掉后，是否就是同段两行的交接口（回车撤销后仍可归位）。
         join: bool,
     },
+    /// 表格单元格（#115 表格编辑——与 `Para` 平级）。
+    ///
+    /// 回写目标由**侧表**给（[DocxBridge::cell_paragraph]），不在本变体里
+    /// 存段落号：表格在文档序里插行/删行时侧表整体平移，行归属不用重算
+    /// （设计 §4「侧表与正文解耦」）。
+    Cell {
+        /// 表序号（文档序第几个最外层 `w:tbl`）。
+        table: usize,
+        /// 行号（0 基）。
+        row: usize,
+        /// 栅格列号（0 基；合并格的覆盖列指向首格）。
+        col: usize,
+    },
     /// 锁定行（不可编辑；原因见 [`ReadOnlyLine`]）。
     Locked(ReadOnlyLine),
 }
@@ -162,6 +175,14 @@ pub trait DocxPort {
     fn set_text(&mut self, idx: usize, text: &str) -> Result<(), String>;
     /// 落账并产出完整 docx 字节。
     fn save(&self) -> Result<Vec<u8>, String>;
+    /// 表格栅格（**权威坐标**——引擎扫描 `document.xml` 得出，桥侧不推断）。
+    ///
+    /// 表 → 行 → 栅格列 → 段落号；合并格按 OOXML 语义占位（`gridSpan`
+    /// 覆盖列 / `vMerge` 续格指向起始格）。缺省实现返回空表（"无表格
+    /// 能力"的窄面替身——单测`FakePort` 不必重复实现）。
+    fn table_cells(&self) -> Vec<Vec<Vec<usize>>> {
+        Vec::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +214,9 @@ pub fn insert_rows(rows: &mut Vec<LineBlock>, anchor: usize, new_rows: usize, so
             },
             LineBlock::User { join } => LineBlock::User { join },
             LineBlock::Foreign { id, idx } => LineBlock::Foreign { id, idx: idx + k },
+            // 单元格行**不可复制**：单元格不是「插一行」的单位（增删
+            // 行列属后续版本）——插入位置落在格子里时退化为用户行。
+            LineBlock::Cell { .. } => LineBlock::User { join: false },
             LineBlock::Locked(_) => LineBlock::User { join: false },
         })
         .collect();
@@ -245,6 +269,7 @@ pub fn remap_after_edit(
                 idx,
                 cont,
             },
+            // 单元格不是可复制的插入单位（同 insert_rows 口径）。
             Some(other) => other,
             None => LineBlock::User { join: false },
         };
@@ -310,7 +335,9 @@ impl SumAnchor for LineBlock {
             LineBlock::Para { .. } | LineBlock::User { .. } | LineBlock::Foreign { .. } => {
                 Some(self)
             }
-            LineBlock::Locked(_) => None,
+            // 单元格行是**可编辑**的，但它不是段落续接的锚（在格子里敲
+            // Enter 不该把正文段落拉进来）：插入锚退化为用户行。
+            LineBlock::Cell { .. } | LineBlock::Locked(_) => None,
         }
     }
 }
@@ -326,7 +353,8 @@ impl SumAnchor for usize {
                 idx: *idx,
                 cont: false,
             }),
-            LineBlock::Locked(_) => None,
+            // 单元格行不做段落续接锚（同 SumAnchor for LineBlock 口径）。
+            LineBlock::Cell { .. } | LineBlock::Locked(_) => None,
         })
     }
 }
@@ -414,9 +442,39 @@ pub struct DocxBridge {
     pending: Vec<Option<String>>,
     /// 段落原文装配文本（回归测试闸门）。
     orig: Vec<Option<String>>,
-    /// 表格单元格段落号（行模型不出行——**保存时按原文写回**，禁止当成
-    /// 「用户清空」写成空串；表格文字本轮不改）。
+    /// 表格单元格段落号（扁平集合——「哪些段落是单元格」的快速查询；
+    /// 回写目标以 `tables` 侧表为准）。
     cells: Vec<usize>,
+    /// 表格侧表（#115 表格编辑）：表 → 行 → 栅格列 → 段落号。**权威
+    /// 坐标来自引擎**（[`DocxPort::table_cells`]），桥侧不推断——见设计
+    /// 文档 §2 的三类静默错。
+    tables: Vec<TableRef>,
+}
+
+/// 表格侧表条目（与正文行模型解耦：表格增删行列时正文侧零影响）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TableRef {
+    /// 表序号（文档序第几个最外层 `w:tbl`）。
+    pub index: usize,
+    /// 栅格：行 → 列 → 单元格段落号（合并格按 OOXML 语义占位）。
+    pub cells: Vec<Vec<usize>>,
+}
+
+impl TableRef {
+    /// 行数。
+    pub fn rows(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// 最大栅格列数。
+    pub fn cols(&self) -> usize {
+        self.cells.iter().map(|r| r.len()).max().unwrap_or(0)
+    }
+
+    /// 单元格段落号（越界 `None`）。
+    pub fn paragraph(&self, row: usize, col: usize) -> Option<usize> {
+        self.cells.get(row).and_then(|r| r.get(col)).copied()
+    }
 }
 
 impl std::fmt::Debug for DocxBridge {
@@ -440,6 +498,7 @@ impl DocxBridge {
             pending: vec![None; n],
             orig,
             cells: Vec::new(),
+            tables: Vec::new(),
         }
     }
 
@@ -454,6 +513,30 @@ impl DocxBridge {
     /// 登记表格单元格段落号（见字段文档）。
     pub fn note_cells(&mut self, cells: Vec<usize>) {
         self.cells = cells;
+    }
+
+    /// 登记表格侧表（**权威坐标**——由 [`DocxPort::table_cells`] 原样喂入）。
+    pub fn note_tables(&mut self, tables: Vec<TableRef>) {
+        self.tables = tables;
+    }
+
+    /// 侧表（只读）。
+    pub fn tables(&self) -> &[TableRef] {
+        &self.tables
+    }
+
+    /// 单元格 (table, row, col) 的段落号（越界 `None`）。
+    pub fn cell_paragraph(&self, table: usize, row: usize, col: usize) -> Option<usize> {
+        self.tables.get(table).and_then(|t| t.paragraph(row, col))
+    }
+
+    /// 段落号是否落在某个表格单元格里。
+    pub fn is_cell_paragraph(&self, paragraph: usize) -> bool {
+        self.cells.binary_search(&paragraph).is_ok() || self.tables.iter().any(|t| {
+            t.cells
+                .iter()
+                .any(|r| r.iter().any(|p| *p == paragraph))
+        })
     }
 
     /// 登记「回写兜底投影」（段内行去掉列表标记/缩进后的正文文本）。
@@ -550,6 +633,12 @@ impl DocxBridge {
                     }
                     _ => dropped += 1,
                 },
+                // 单元格行：回写目标 = 侧表里的权威段落号。纯删除时
+                // 行仍在（占位空串），由下面「清空 ≠ 删段」的闸门拦下。
+                LineBlock::Cell { table, row, col } => match self.cell_paragraph(table, row, col) {
+                    Some(p) if p < n && p < slots.len() => push_slot(&mut slots[p], 0, text),
+                    _ => dropped += 1,
+                },
                 LineBlock::Locked(_) => {}
             }
         }
@@ -568,6 +657,12 @@ impl DocxBridge {
             let as_body = body_join(&texts);
             let model_same = self.proj[p].as_deref() == Some(as_model.as_str());
             let body_same = self.fallback[p].as_deref() == Some(as_body.as_str());
+            // 表格单元格的**第 0 段**闸门：单元格行在行模型里显示的是
+            // 原文（空格压成单空格、\t 展开等近似），用户没动它时
+            // as_body 与原文不等——若直接写回就会把没碰过的格子改坏。
+            // 口径与「正文段落投影近似」一致：只要与**原文装配文本**逐字
+            // 相同就零 set（下面那条分支已覆盖），故此处只需保证单元格
+            // 的投影/兜底登记**与行文本同口径**（由 docx_doc 负责）。
             if model_same || body_same {
                 // 未动（或只动了标记/缩进这类行模型装饰）——不写。
                 unchanged += 1;
@@ -619,7 +714,12 @@ impl DocxBridge {
         let docx_lines = self
             .rows
             .iter()
-            .filter(|b| matches!(b, LineBlock::Para { .. } | LineBlock::User { .. }))
+            .filter(|b| {
+                matches!(
+                    b,
+                    LineBlock::Para { .. } | LineBlock::User { .. } | LineBlock::Cell { .. }
+                )
+            })
             .count();
         let touched = (0..self.proj.len()).filter(|&p| self.touched(p)).count();
         let engine_pending = self.pending.iter().filter(|p| p.is_some()).count();
@@ -651,6 +751,9 @@ fn nearest_paragraph(rows: &[LineBlock], i: usize) -> Option<(usize, usize)> {
                 id: (paragraph, idx),
                 ..
             } => return Some((paragraph, idx)),
+            // 单元格行是**边界**：在表格里敲出的用户行不得把上方/下方
+            // 正文段落拉进来改写（否则改表格会静默改正文）。
+            LineBlock::Cell { .. } => return None,
             LineBlock::User { .. } | LineBlock::Locked(_) => {}
         }
     }
@@ -840,6 +943,7 @@ fn reshape_rows(rows: &mut Vec<LineBlock>, want: usize, near: Option<(usize, usi
                 idx: i,
                 cont: true,
             },
+            LineBlock::Cell { .. } | LineBlock::Locked(_) => LineBlock::User { join: false },
             other => other,
         };
         rows.insert(idx.min(rows.len()), row);
@@ -931,7 +1035,8 @@ mod tests {
                 LineBlock::Foreign { id: (p, i), .. } => {
                     per.entry(*p).or_default().push((*i, (*text).to_string()));
                 }
-                LineBlock::User { .. } | LineBlock::Locked(_) => {}
+                // 单元格行由测试自己 note_tables（见桥的 tables 侧表）。
+                LineBlock::User { .. } | LineBlock::Cell { .. } | LineBlock::Locked(_) => {}
             }
         }
         for (p, mut cells) in per {
@@ -1155,5 +1260,158 @@ mod tests {
             split_projection(false, "  正文"),
             ("  正文".to_string(), String::new())
         );
+    }
+
+    // ------------------------------------------------------------------
+    // #115 表格编辑：LineBlock::Cell + 侧表回写
+    // ------------------------------------------------------------------
+
+    /// 带侧表的桥：段落 0 是正文，段落 1..=4 是 2×2 表格的四个格。
+    fn table_bridge() -> DocxBridge {
+        let rows = [
+            (para(0, 0), "正文"),
+            (
+                LineBlock::Cell {
+                    table: 0,
+                    row: 0,
+                    col: 0,
+                },
+                "A1",
+            ),
+            (
+                LineBlock::Cell {
+                    table: 0,
+                    row: 0,
+                    col: 1,
+                },
+                "B1",
+            ),
+            (
+                LineBlock::Cell {
+                    table: 0,
+                    row: 1,
+                    col: 0,
+                },
+                "A2",
+            ),
+            (
+                LineBlock::Cell {
+                    table: 0,
+                    row: 1,
+                    col: 1,
+                },
+                "B2",
+            ),
+        ];
+        let orig = vec!["正文", "A1", "B1", "A2", "B2"];
+        let mut b = bridge(&rows, orig);
+        b.note_tables(vec![TableRef {
+            index: 0,
+            cells: vec![vec![1, 2], vec![3, 4]],
+        }]);
+        b
+    }
+
+    #[test]
+    fn cell_rows_are_editable_and_write_their_own_paragraph() {
+        let b = table_bridge();
+        // 未编辑 → 零 set（单元格投影 = 引擎装配文本）。
+        let base = texts(&["正文", "A1", "B1", "A2", "B2"]);
+        assert!(b.compute(&base).sets.is_empty(), "未编辑的格子零 set");
+        // 改第 2 行第 1 列（段落 3）。
+        let wb = b.compute(&texts(&["正文", "A1", "B1", "A2改", "B2"]));
+        assert_eq!(wb.sets, vec![(3, "A2改".to_string())], "只写目标格");
+    }
+
+    #[test]
+    fn empty_cell_can_be_filled() {
+        let rows = [(para(0, 0), "正文"), (LineBlock::Cell { table: 0, row: 0, col: 0 }, "")];
+        let mut b = bridge(&rows, vec!["正文", ""]);
+        b.note_tables(vec![TableRef {
+            index: 0,
+            cells: vec![vec![1]],
+        }]);
+        let wb = b.compute(&texts(&["正文", "填空"]));
+        assert_eq!(wb.sets, vec![(1, "填空".to_string())]);
+    }
+
+    #[test]
+    fn editing_a_cell_never_touches_neighbouring_body_paragraph() {
+        let b = table_bridge();
+        let wb = b.compute(&texts(&["正文", "A1", "B1改", "A2", "B2"]));
+        assert_eq!(wb.sets, vec![(2, "B1改".to_string())], "只改格子，正文段零接触");
+        assert!(
+            !wb.sets.iter().any(|(p, _)| *p == 0),
+            "正文段不得被牵连：{:?}",
+            wb.sets
+        );
+    }
+
+    #[test]
+    fn cell_rows_refuse_edits_via_locked_only_not_cell() {
+        // 单元格行是**可编辑**的（不是 Locked）；只读表格形态用 TableRow。
+        let mut b = bridge(
+            &[(para(0, 0), "正文"), (locked(ReadOnlyLine::TableRow), "a | b")],
+            vec!["正文"],
+        );
+        let err = b.before_edit(Coalesce {
+            start: (1, 0),
+            end: (1, 0),
+            inserted_lines: 0,
+        });
+        assert!(err.is_err(), "只读表格行拒改");
+        // 可编辑单元格行放行。
+        let b2 = table_bridge();
+        assert!(
+            b2.before_edit(Coalesce {
+                start: (1, 0),
+                end: (1, 0),
+                inserted_lines: 0,
+            })
+            .is_ok(),
+            "可编辑单元格放行"
+        );
+    }
+
+    #[test]
+    fn cell_paragraph_is_authoritative_not_inferred() {
+        // 侧表说格 (0,1) 是段落 2——即使行序上它排在第 2 行位置，也写 2。
+        let b = table_bridge();
+        assert_eq!(b.cell_paragraph(0, 0, 0), Some(1));
+        assert_eq!(b.cell_paragraph(0, 0, 1), Some(2));
+        assert_eq!(b.cell_paragraph(0, 1, 0), Some(3));
+        assert_eq!(b.cell_paragraph(0, 1, 1), Some(4));
+        assert_eq!(b.cell_paragraph(1, 0, 0), None, "越界表 = None（不 panic）");
+    }
+
+    #[test]
+    fn cell_without_side_table_is_dropped_not_written() {
+        // 侧表缺席（引擎没给栅格）→ 该 Cell 行无权威坐标，计入 dropped，
+        // **绝不**猜一个段落号去写。
+        let b = bridge(&[(LineBlock::Cell { table: 0, row: 0, col: 0 }, "X")], vec!["X"]);
+        let wb = b.compute(&texts(&["X改"]));
+        assert!(wb.sets.is_empty(), "无侧表 → 不写：{:?}", wb.sets);
+        assert_eq!(wb.dropped, 1);
+    }
+
+    #[test]
+    fn cell_is_boundary_for_user_row_join() {
+        // 在表格行之后敲出的用户行不得被并进上方正文段落。
+        let mut rows = vec![para(0, 0), LineBlock::Cell { table: 0, row: 0, col: 0 }];
+        remap_after_edit(&mut rows, (2, 0), (2, 0), 1, false);
+        assert_eq!(rows.len(), 3);
+        assert!(
+            !matches!(rows[2], LineBlock::Para { paragraph: 0, .. }),
+            "用户行不得承接正文段：{:?}",
+            rows[2]
+        );
+    }
+
+    #[test]
+    fn cell_rows_count_as_editable_in_stats() {
+        let b = table_bridge();
+        let s = b.stats(5);
+        assert_eq!(s.docx_lines, 5, "正文 1 + 格 4 都是可编辑行");
+        assert_eq!(s.readonly_lines, 0);
     }
 }

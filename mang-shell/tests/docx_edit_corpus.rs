@@ -74,20 +74,44 @@ fn files(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// 宽面文档序段落总数（含表格单元格/文本框内段落——与引擎 w:p 同口径）。
-fn width_paragraph_count(doc: &DocxDocument) -> usize {
-    fn walk(blocks: &[mdc_office_io::docx::Block]) -> usize {
+///
+/// **表格部分用引擎权威栅格**（`DocxEditor::table_cells()` 的去重段落号）：
+/// 宽面 `TableData::rows` 是栅格展开形（`gridSpan`/`vMerge` 覆盖列重复
+/// 补列），格数 ≠ 引擎 `w:p` 数——拿展开格数去对账就是设计文档 §1 说的
+/// 「两个扫描器对第 N 段的定义不同」。`tables == None` 时退回宽面计数。
+fn width_paragraph_count(
+    doc: &DocxDocument,
+    tables: Option<&[Vec<Vec<usize>>]>,
+) -> usize {
+    fn walk(
+        blocks: &[mdc_office_io::docx::Block],
+        tables: Option<&[Vec<Vec<usize>>]>,
+        cursor: &mut usize,
+    ) -> usize {
         blocks
             .iter()
             .map(|b| match b {
                 mdc_office_io::docx::Block::Paragraph(_) => 1,
                 mdc_office_io::docx::Block::Table(t) => {
-                    t.rows.iter().map(|r| r.len()).sum::<usize>()
+                    let idx = *cursor;
+                    *cursor += 1;
+                    let fenced = tables
+                        .and_then(|ts| ts.get(idx))
+                        .map(|g| {
+                            let mut seen: Vec<usize> = g.iter().flatten().copied().collect();
+                            seen.sort_unstable();
+                            seen.dedup();
+                            seen.len()
+                        })
+                        .unwrap_or_else(|| t.rows.iter().map(|r| r.len()).sum::<usize>());
+                    fenced.max(t.rows.len())
                 }
-                mdc_office_io::docx::Block::TextBox(tb) => walk(&tb.blocks),
+                mdc_office_io::docx::Block::TextBox(tb) => walk(&tb.blocks, tables, cursor),
             })
             .sum()
     }
-    walk(&doc.blocks)
+    let mut cursor = 0usize;
+    walk(&doc.blocks, tables, &mut cursor)
 }
 
 /// 装行模型 + 建桥（与 `docx_doc::load_editable` 同口径）。
@@ -104,7 +128,11 @@ fn mount(bytes: &[u8]) -> Result<(docx_doc::DocxPayload, DocxEnginePort, DocxBri
     }
     // 三面对账：宽面文档序段落数 = 行模型候选数 = 引擎 w:p 数。任一不等
     // → 降级（宽面块模型与 document.xml 扫描口径分歧：文本框嵌套表等）。
-    let width = width_paragraph_count(&doc);
+    // 表格部分用引擎权威栅格数（见 width_paragraph_count 文档）。
+    let engine_tables = mdc_office_io::docx_edit::DocxEditor::open(bytes)
+        .map(|e| e.table_cells())
+        .unwrap_or_default();
+    let width = width_paragraph_count(&doc, Some(&engine_tables));
     if payload.candidates != engine_paras || width != engine_paras {
         let tables = payload.props.tables;
         let textboxes = payload.props.textboxes;

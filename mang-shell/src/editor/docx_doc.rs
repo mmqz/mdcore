@@ -68,7 +68,7 @@ use mdc_office_io::docx::{self, Block, ListKind, read_docx_from_bytes_with_optio
 use mdc_office_io::docx_edit::{DocxEditor, ParagraphRef};
 use mdc_office_io::io;
 
-use super::docx_edit_bridge::{DocxBridge, DocxPort, LineBlock, ReadOnlyLine};
+use super::docx_edit_bridge::{DocxBridge, DocxPort, LineBlock, ReadOnlyLine, TableRef};
 use super::highlight::TokenKind;
 
 // NB：#115 起表格网格不入行流（表格只读），下列列宽/截断/补齐工具仅
@@ -142,8 +142,11 @@ pub struct DocxPayload {
     pub fallbacks: HashMap<usize, String>,
     /// #115：候选段落数（宽面文档序段落总数——与窄面 w:p 数对账用）。
     pub candidates: usize,
-    /// #115：表格单元格段落号（行模型不出行——保存时按原文写回，禁止变成空串）。
+    /// #115：表格单元格段落号（扁平集合——「哪些段落是单元格」）。
     pub cell_paragraphs: Vec<usize>,
+    /// #115 表格编辑：侧表（表 → 行 → 栅格列 → 段落号）。权威坐标来自
+    /// 引擎 `table_cells()`；只读装载为空。
+    pub tables: Vec<TableRef>,
     /// #115：可编辑装载的降级说明（`Some` = 本文件实际是只读态）。
     pub notice: Option<String>,
 }
@@ -230,8 +233,10 @@ pub fn load_editable(path: &Path) -> Result<EditablePayload, String> {
     let unrepresentable = (0..engine_paras)
         .filter(|i| !payload.projections.contains_key(i))
         .count();
-    // 宽面文档序段落总数（含表格/文本框内段落）必须与引擎 w:p 数一致。
-    let width_paragraphs = width_paragraph_total(&doc.blocks);
+    // 宽面文档序段落总数（含表格/文本框内段落）：表格部分**以引擎栅格
+    // 权威坐标为准**（宽面栅格是展开形，与 w:tc 数不等——见
+    // [`ConvertCtx::push_table`]），文本框仍按宽面块模型数。
+    let width_paragraphs = width_paragraph_total_engine(&doc.blocks, &payload.tables);
     if width_paragraphs != engine_paras {
         let mut fallback = convert(&doc);
         fallback.source = Some(bytes);
@@ -285,6 +290,7 @@ pub fn load_editable(path: &Path) -> Result<EditablePayload, String> {
         bridge.note_fallback(*p, text);
     }
     bridge.note_cells(payload.cell_paragraphs.clone());
+    bridge.note_tables(payload.tables.clone());
     let mut payload = payload;
     payload.source = Some(bytes);
     Ok(EditablePayload {
@@ -304,6 +310,44 @@ fn width_paragraph_total(blocks: &[Block]) -> usize {
             Block::TextBox(tb) => width_paragraph_total(&tb.blocks),
         })
         .sum()
+}
+
+/// 宽面文档序段落总数（**表格部分用引擎权威栅格**）。
+///
+/// 宽面 `TableData::rows` 是栅格展开形（`gridSpan`/`vMerge` 覆盖列重复
+/// 补列），格数 ≠ 引擎 `w:p` 数。故表格按引擎栅格的**去重段落号**计
+/// （一个 `w:tc` 一个首段），文本框仍按宽面块模型（第一版只读、透传）。
+///
+/// `tables` 与 `blocks` 里 `Block::Table` 的出现顺序一一对应（文档序）；
+/// 表数不足时该表退回宽面计数（降级只读，不静默）。
+fn width_paragraph_total_engine(blocks: &[Block], tables: &[TableRef]) -> usize {
+    fn walk(blocks: &[Block], tables: &[TableRef], cursor: &mut usize) -> usize {
+        blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(_) => 1,
+                Block::Table(t) => {
+                    let idx = *cursor;
+                    *cursor += 1;
+                    match tables.get(idx) {
+                        Some(tref) => {
+                            let mut seen: Vec<usize> =
+                                tref.cells.iter().flatten().copied().collect();
+                            seen.sort_unstable();
+                            seen.dedup();
+                            seen.len().max(t.rows.len())
+                        }
+                        // 引擎没有这张表（嵌套表/异常）：按宽面计数兜底，
+                        // 让对账自己去判定降级。
+                        None => t.rows.iter().map(|r| r.len()).sum::<usize>(),
+                    }
+                }
+                Block::TextBox(tb) => walk(&tb.blocks, tables, cursor),
+            })
+            .sum()
+    }
+    let mut cursor = 0usize;
+    walk(blocks, tables, &mut cursor)
 }
 
 /// 引擎窄面实现（薄包装 `mdc_office_io::docx_edit::DocxEditor`）。
@@ -362,6 +406,10 @@ impl DocxPort for DocxEnginePort {
     fn save(&self) -> Result<Vec<u8>, String> {
         self.editor.save_to_vec().map_err(|e| e.to_string())
     }
+
+    fn table_cells(&self) -> Vec<Vec<Vec<usize>>> {
+        self.editor.table_cells()
+    }
 }
 
 /// #115：可编辑行模型（**真实引擎面**——从字节起走完整链：宽面块序 +
@@ -413,6 +461,8 @@ fn convert_inner(doc: &docx::DocxDocument, port: Option<&dyn DocxPort>) -> DocxP
     let mut ctx = ConvertCtx {
         port,
         engine_paras: port.map(|p| p.paragraph_count()).unwrap_or(0),
+        // 引擎权威栅格（#115 表格编辑）——一次取，转换期只读。
+        engine_tables: port.map(|p| p.table_cells()).unwrap_or_default(),
         ..ConvertCtx::default()
     };
     for block in &doc.blocks {
@@ -461,6 +511,18 @@ fn convert_inner(doc: &docx::DocxDocument, port: Option<&dyn DocxPort>) -> DocxP
     } else {
         Vec::new()
     };
+    out.tables = if editable {
+        ctx.engine_tables
+            .iter()
+            .enumerate()
+            .map(|(index, cells)| TableRef {
+                index,
+                cells: cells.clone(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     out.headings = ctx.headings;
     out
 }
@@ -491,6 +553,11 @@ struct ConvertCtx<'a> {
     cell_paragraphs: Vec<usize>,
     /// #115：未入行流但仍是 w:p 的段落数（表格单元格）——段落序对账用。
     aux_paragraphs: usize,
+    /// #115 表格编辑：引擎权威栅格（表 → 行 → 栅格列 → 段落号），
+    /// 建 ctx 时一次性取（`DocxPort::table_cells`）。
+    engine_tables: Vec<Vec<Vec<usize>>>,
+    /// 已处理的表数（表序号游标——与 `engine_tables` 对位）。
+    tables_seen: usize,
     empty_paragraphs: usize,
 }
 
@@ -519,6 +586,15 @@ impl ConvertCtx<'_> {
                 }
                 Block::TextBox(nested) => self.skip_textbox(nested),
             }
+        }
+    }
+
+    /// 单元格段落的**行文本**（引擎装配文本——与回写口径逐字一致，
+    /// 故未编辑时 `compute` 判定「未动」→ 零 set）。
+    fn cell_text(&self, para: usize) -> String {
+        match self.port {
+            Some(port) if para < self.engine_paras => port.paragraph_text(para),
+            _ => String::new(),
         }
     }
 
@@ -723,29 +799,79 @@ impl ConvertCtx<'_> {
         self.fallback.insert(para, fallback_text);
     }
 
-    /// 表格（#115：**只计属性、不出行**）。
+    /// 表格（#115 表格编辑：每个可编辑单元格**一行**）。
     ///
-    /// 行模型的表格网格（`a | b`、分隔线、尾空行）是**凭空生成**的装饰行：
-    /// 既不能逐字回写，也无法与 `w:p` 一一对应。表格单元格本身也是段落
-    /// （引擎会各自回写），若把网格放进编辑面，保存时就会拿网格文本去比对
-    /// 单元格段落 → 误判「改过」→ 表格被改坏。
+    /// ## 走法
     ///
-    /// 所以第一版：表格**整表以原文透传**（不改表格文字），行模型里不占行；
-    /// 单元格段落照常入段落序（仅用于对账 + 回写闸门）。表格视觉呈现退化为
-    /// 「属性面板/末尾清单行计数 + 正文连续」——登记为第一版边界。
+    /// 引擎 [`DocxPort::table_cells`] 给出权威栅格（表 → 行 → 栅格列 →
+    /// 段落号）。每个**栅格行**先还原成「原生格列表」（`native_cells`：
+    /// 去掉 `gridSpan` 覆盖列 / `vMerge` 续格产生的相邻重复号）：
+    ///
+    /// - **可编辑行**：原生格数 == 宽面该行格数（该行无横向扩展）→
+    ///   每个原生格出一行 `LineBlock::Cell`，段落号取引擎坐标，行文本取
+    ///   **引擎装配文本**（与回写口径逐字一致 → 未编辑零 set）；
+    /// - **只读行**：引擎无该表 / 该行有 `gridSpan` 扩展 / 该格段落不是
+    ///   单元格首段 → 出一行 `Locked(TableRow)`（显示宽面文本，拒改）。
+    ///
+    /// ## 为什么宽度要对账
+    ///
+    /// 宽面 `TableData::rows` 是**栅格展开形**（`gridSpan` 覆盖列重复补
+    /// 列），而引擎一个 `w:tc` 一个段落。所以「第 i 列 ↔ 第 i 个 tc」
+    /// **不成立**；只有该行没有横向扩展时两者才一一对应。有扩展就只读
+    /// ——第一版不做合并单元格拆分（设计 §6 风险最高项）。
+    ///
+    /// ## 段落序
+    ///
+    /// 宽面栅格格数 ≠ 引擎段落数（扩展行多算），故段落游标**以引擎栅格
+    /// 为准**（`max(段落号)+1`）；无引擎栅格时按「每格一段」兜底。
     fn push_table(&mut self, t: &docx::TableData, out: &mut DocxPayload) {
         out.props.tables += 1;
         out.props.table_rows += t.rows.len();
-        // 表格单元格 = 段落（引擎 w:p 同口径）——计入段落序对账；每个单元格
-        // 段落按文档序登记「空投影」（行模型不出行 → 回写计划里不出现 →
-        // 引擎保持原文；不作为「未表示」缺口）。
-        for row in &t.rows {
-            for _cell in row {
-                let para = self.next_para;
-                self.next_para += 1;
-                self.proj.insert(para, String::new());
-                self.fallback.insert(para, String::new());
-                self.cell_paragraphs.push(para);
+        let table_index = self.tables_seen;
+        self.tables_seen += 1;
+        // 引擎栅格（权威坐标）；`None` = 本表不可栅格化（整表只读）。
+        let grid = self.engine_tables.get(table_index).cloned();
+        // 段落游标以引擎栅格为准（扩展格多出来的段落也在栅格里）。
+        if let Some(g) = &grid {
+            if let Some(hi) = g.iter().flatten().copied().max() {
+                self.next_para = self.next_para.max(hi + 1);
+            }
+        }
+        for (ri, row) in t.rows.iter().enumerate() {
+            let grid_row: Vec<usize> = grid
+                .as_ref()
+                .and_then(|g| g.get(ri))
+                .cloned()
+                .unwrap_or_default();
+            // 该行是否**无横向扩展**：栅格列数 == 原生格数。有扩展
+            // （gridSpan）的行不能「第 i 列 <-> 第 i 格」，整行只读——
+            // 第一版不做合并单元格拆分（设计 §6 风险最高项）。
+            let n_native = native_cells(&grid_row).len();
+            let has_span = !grid_row.is_empty() && grid_row.len() != n_native;
+            let editable = !grid_row.is_empty() && !has_span;
+            // 可编辑行逐格遍历原生格；只读行按宽面栅格文本显示（看得见
+            // 的边界好过沉默的空白）。
+            let n_cells = if editable { n_native } else { row.len() };
+            for ci in 0..n_cells {
+                if editable {
+                    let para = grid_row[ci];
+                    self.cell_paragraphs.push(para);
+                    let text = self.cell_text(para);
+                    self.push_line(
+                        text.clone(),
+                        Vec::new(),
+                        LineBlock::Cell {
+                            table: table_index,
+                            row: ri,
+                            col: ci,
+                        },
+                    );
+                    self.proj.insert(para, text.clone());
+                    self.fallback.insert(para, text);
+                } else {
+                    let text = row.get(ci).cloned().unwrap_or_default();
+                    self.push_line(text.replace('\n', " "), Vec::new(), LineBlock::Locked(ReadOnlyLine::TableRow));
+                }
             }
         }
         self.aux_paragraphs += t.rows.iter().map(|r| r.len()).sum::<usize>();
@@ -802,6 +928,23 @@ impl ConvertCtx<'_> {
             );
         }
     }
+}
+
+/// 栅格行 → **原生格**段落号列表（去掉 `gridSpan` 覆盖列与 `vMerge`
+/// 续格产生的**相邻重复号**）。
+///
+/// 引擎 `table_cells()` 的栅格列是「Word 显示格」，合并区的每一列都指向
+/// 同一个段落号；这里把连续重复折叠成一项，得到「一个 `w:tc` 一项」的
+/// 原生格序列——与宽面 `TableData::rows` 的行宽只有在**无横向扩展**时才
+/// 对齐（对齐才可编辑，见 [`ConvertCtx::push_table`]）。
+fn native_cells(grid_row: &[usize]) -> Vec<usize> {
+    let mut out: Vec<usize> = Vec::with_capacity(grid_row.len());
+    for p in grid_row {
+        if out.last() != Some(p) {
+            out.push(*p);
+        }
+    }
+    out
 }
 
 /// East Asian 显示宽度（CJK/全角 = 2 cell，其余 1——Sarasa Mono SC
