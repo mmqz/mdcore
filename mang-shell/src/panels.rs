@@ -18,14 +18,39 @@ use crate::editor::Editor;
 use crate::file_tree::FileTree;
 use crate::git_panel::GitPanel;
 
-/// 左栏宽度（px）。
+/// 左栏缺省宽度（px）——G4 起实际宽度是 ShellApp 状态（可拖拽，
+/// settings `panel_widths` 键持久化；域 [`LEFT_PANEL_MIN`]-[`LEFT_PANEL_MAX`]）。
 pub const LEFT_PANEL_WIDTH: Pixels = px(260.);
-/// 右栏宽度（px）。
+/// 右栏缺省宽度（px）。
 pub const RIGHT_PANEL_WIDTH: Pixels = px(280.);
+/// G4：左栏拖拽域（px）。
+pub const LEFT_PANEL_MIN: Pixels = px(150.);
+pub const LEFT_PANEL_MAX: Pixels = px(500.);
+/// G4：右栏拖拽域（px）。
+pub const RIGHT_PANEL_MIN: Pixels = px(150.);
+pub const RIGHT_PANEL_MAX: Pixels = px(600.);
+/// G4：面板边缘拖拽热区宽（px）。
+pub const PANEL_RESIZE_HOTZONE: Pixels = px(4.);
 /// 面板主内边距（px，Lead：主要区域 12-16px）。
 const PANEL_PADDING: Pixels = px(12.);
 /// 面板头部下缘留白（px）。
 const HEADER_MARGIN: Pixels = px(8.);
+
+/// G4：步进位移 → 宽度增量（左栏右移增宽 / 右栏左移增宽——纯函数，
+/// 单测锚点）。
+pub fn width_delta(left: bool, dx: f32) -> f32 {
+    if left { dx } else { -dx }
+}
+
+/// G4：宽度域钳制（左栏 [150,500] / 右栏 [150,600]）。
+pub fn clamp_panel_width(left: bool, width: f32) -> f32 {
+    let (min, max) = if left {
+        (f32::from(LEFT_PANEL_MIN), f32::from(LEFT_PANEL_MAX))
+    } else {
+        (f32::from(RIGHT_PANEL_MIN), f32::from(RIGHT_PANEL_MAX))
+    };
+    width.clamp(min, max)
+}
 
 /// 左栏：工作区文件树（F2——真实目录懒加载/虚拟化，占剩余高度）+
 /// 首组「打开的文档」+ docx/pdf「文档结构」树。
@@ -34,6 +59,7 @@ pub fn left_panel(
     workspace: Option<&Entity<FileTree>>,
     git_panel: Option<&Entity<GitPanel>>,
     git_view: bool,
+    width: Pixels,
     cx: &App,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
@@ -57,7 +83,7 @@ pub fn left_panel(
     };
     v_flex()
         .id("left-panel")
-        .w(LEFT_PANEL_WIDTH)
+        .w(width)
         .flex_none()
         .h_full()
         .min_w_0()
@@ -159,7 +185,7 @@ fn heading_tree(
 
 /// 右栏：属性 / 来源（md 态：文件名/字数联动；docx 态：引擎实测
 /// 属性面——批 3；pdf 态：页/字符/书签/扫描件——批 4）。
-pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
+pub fn right_panel(editor: Option<&Entity<Editor>>, width: Pixels, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     let (name, chars, modified, mode, engine) = match editor {
         Some(ed) => {
@@ -280,7 +306,7 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
     };
     v_flex()
         .id("right-panel")
-        .w(RIGHT_PANEL_WIDTH)
+        .w(width)
         .flex_none()
         .h_full()
         .min_w_0()
@@ -402,4 +428,44 @@ fn property_row(key: &str, value: &str) -> impl IntoElement {
                 .color(ui::Color::Muted),
         )
         .child(Label::new(value).size(LabelSize::Small))
+}
+
+// =============================================================================
+// G4 面板拖拽——纯函数面专项单测
+// =============================================================================
+
+#[cfg(test)]
+mod g4_resize_tests {
+    use super::*;
+
+    #[test]
+    fn width_delta_sign_by_side() {
+        assert_eq!(width_delta(true, 40.), 40., "左栏右移增宽");
+        assert_eq!(width_delta(false, 40.), -40., "右栏右移减宽（左移才增）");
+        assert_eq!(width_delta(false, -60.), 60., "右栏左移增宽");
+    }
+
+    #[test]
+    fn clamp_left_panel_domain_150_to_500() {
+        assert_eq!(clamp_panel_width(true, 260.), 260., "域内原值");
+        assert_eq!(clamp_panel_width(true, 100.), 150., "低于下限钳到 150");
+        assert_eq!(clamp_panel_width(true, 999.), 500., "高于上限钳到 500");
+        assert_eq!(clamp_panel_width(true, 150.), 150., "边界含端");
+        assert_eq!(clamp_panel_width(true, 500.), 500.);
+    }
+
+    #[test]
+    fn clamp_right_panel_domain_150_to_600() {
+        assert_eq!(clamp_panel_width(false, 280.), 280.);
+        assert_eq!(clamp_panel_width(false, 100.), 150.);
+        assert_eq!(clamp_panel_width(false, 700.), 600., "右栏上限 600");
+        assert_eq!(clamp_panel_width(false, 600.), 600.);
+    }
+
+    #[test]
+    fn hotzone_is_4px_and_defaults_unchanged() {
+        assert_eq!(f32::from(PANEL_RESIZE_HOTZONE), 4.);
+        assert_eq!(f32::from(LEFT_PANEL_WIDTH), 260., "缺省宽不变（G4 零漂移）");
+        assert_eq!(f32::from(RIGHT_PANEL_WIDTH), 280.);
+    }
 }

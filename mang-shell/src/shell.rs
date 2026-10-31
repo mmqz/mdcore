@@ -5,8 +5,9 @@
 //! │ 标题栏 36px（自绘：拖拽 + 窗口控制 + 文档名）    │
 //! ├────┬─────────┬──────────────────┬────────────┤
 //! │图标│ 左栏     │ 编辑区           │ 右栏        │
-//! │条  │ 260px   │ Editor / 空态     │ 280px      │
-//! │52px│ 文件树   │ (#68 md 编辑面)  │ 属性/来源   │
+//! │条  │ 缺省260  │ Editor / 空态     │ 缺省280     │
+//! │52px│ (150-500)│ (#68 md 编辑面)  │ (150-600)  │
+//! │    │ 可拖拽   │                  │ 可拖拽      │
 //! ├────┴─────────┴──────────────────┴────────────┤
 //! │ 状态栏 24px（文件 / 修改标记 / 行,列 / 字数）    │
 //! └──────────────────────────────────────────────┘
@@ -24,7 +25,11 @@ use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
-use gpui::{Context, Entity, FocusHandle, KeyDownEvent, PathPromptOptions, Render, Window, px};
+use gpui::{
+    Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent, Entity, FocusHandle, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseUpEvent, PathPromptOptions, Pixels, Render, Window, canvas,
+    px,
+};
 use theme::Theme;
 use ui::prelude::*;
 
@@ -57,6 +62,38 @@ enum ConfirmAction {
 }
 
 /// F4：确认框状态。
+/// G4：面板拖拽侧（左栏/右栏——resize 手柄归属）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PanelSide {
+    Left,
+    Right,
+}
+
+/// G4：面板 resize 手柄的 drag 载荷类型（`on_drag` / `on_drag_move`
+/// 配对标识；GPUI 按【类型】路由 drag 会话——侧别由监听器闭包捕获，
+/// 载荷本身不携带数据）。
+#[derive(Clone, Copy)]
+struct PanelResizeDrag;
+
+/// G4：面板拖拽会话态（mousedown 落点起 → drag_move 步进 → mouseup
+/// 收尾落盘）。
+#[derive(Clone, Copy, Debug)]
+struct PanelDragState {
+    side: PanelSide,
+    /// 上一步的窗口 x（步进位移基准）。
+    last_x: f32,
+}
+
+/// G4：resize 手柄跟随视图（`on_drag` 契约需要一个 Render 实体——
+/// 空渲染不可见；与 editor::DragGhost 同模式）。
+struct PanelDragGhost;
+
+impl Render for PanelDragGhost {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().id("panel-drag-ghost").size_0()
+    }
+}
+
 struct ConfirmState {
     message: String,
     detail: String,
@@ -68,6 +105,12 @@ struct ConfirmState {
 pub struct ShellApp {
     left_open: bool,
     right_open: bool,
+    /// G4：左右栏宽度（拖拽热区调整；settings `panel_widths` 持久化，
+    /// 缺省 [`panels::LEFT_PANEL_WIDTH`] / [`panels::RIGHT_PANEL_WIDTH`]）。
+    left_width: Pixels,
+    right_width: Pixels,
+    /// G4：面板 resize 拖拽会话（`None` = 非拖拽中）。
+    panel_drag: Option<PanelDragState>,
     /// F3：标签集（每标签 = 一个打开文档）；`active` 指向当前标签
     ///（空集 = 空态）。原 `Option<Entity<Editor>>` 单例面由此取代。
     tabs: Vec<TabItem>,
@@ -238,6 +281,15 @@ impl ShellApp {
         let mut this = Self {
             left_open: true,
             right_open: true,
+            // G4：面板宽度记忆恢复（无记忆 = 缺省宽；手改配置越界时
+            // 载入即钳制到拖拽域——不信任磁盘值）。
+            left_width: crate::settings::load_panel_widths()
+                .map(|(l, _)| px(panels::clamp_panel_width(true, l)))
+                .unwrap_or(panels::LEFT_PANEL_WIDTH),
+            right_width: crate::settings::load_panel_widths()
+                .map(|(_, r)| px(panels::clamp_panel_width(false, r)))
+                .unwrap_or(panels::RIGHT_PANEL_WIDTH),
+            panel_drag: None,
             tabs,
             active: 0,
             workspace,
@@ -299,6 +351,91 @@ impl ShellApp {
     /// F7：git 面板实体（烟雾钩子/内部访问）。
     pub fn git_panel(&self) -> Option<Entity<GitPanel>> {
         self.git_panel.clone()
+    }
+
+    // ------------------------------------------------------------------
+    // G4：面板宽度拖拽（边缘 4px 热区；col-resize 光标；域钳制；
+    // settings 持久化）
+    // ------------------------------------------------------------------
+
+    /// G4：手柄 mousedown——落点入会话态（`last_x` 为步进位移基准）。
+    fn begin_panel_drag(&mut self, side: PanelSide, x: f32) {
+        self.panel_drag = Some(PanelDragState { side, last_x: x });
+    }
+
+    /// G4：手柄 drag_move——步进位移按侧别换算宽度（左栏右移增宽 /
+    /// 右栏左移增宽），域钳制后重绘。选区/文本不受影响：drag 会话
+    /// 捕获全部 move 事件（payload 异于编辑器拖选——不同 drag 通道，
+    /// 编辑器 mousedown 未发生，无选区可言）。
+    fn dispatch_panel_resize(
+        &mut self,
+        side: PanelSide,
+        event: &DragMoveEvent<PanelResizeDrag>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.panel_drag.as_mut() else {
+            return;
+        };
+        if state.side != side {
+            return;
+        }
+        let now_x = f32::from(event.event.position.x);
+        let dx = now_x - state.last_x;
+        state.last_x = now_x;
+        let is_left = side == PanelSide::Left;
+        let current = if is_left {
+            f32::from(self.left_width)
+        } else {
+            f32::from(self.right_width)
+        };
+        let clamped =
+            panels::clamp_panel_width(is_left, current + panels::width_delta(is_left, dx));
+        if is_left {
+            self.left_width = px(clamped);
+        } else {
+            self.right_width = px(clamped);
+        }
+        cx.notify();
+    }
+
+    /// G4：拖拽收尾（窗口级 mouseup——任意位置抬起；与 editor 同模式
+    /// 每帧注册）。宽度落 settings（持久化）+ 证据行；非拖拽中为空操作。
+    fn finish_panel_drag(&mut self, cx: &mut Context<Self>) {
+        if self.panel_drag.take().is_none() {
+            return;
+        }
+        let (left, right) = (f32::from(self.left_width), f32::from(self.right_width));
+        crate::settings::save_panel_widths(left, right);
+        eprintln!("panel-resize: left {left} right {right} (persist)");
+        cx.notify();
+    }
+
+    /// G4：手柄元素（边缘 4px 热区——col-resize 光标 + 拖拽会话）。
+    fn panel_resize_handle(&self, side: PanelSide, cx: &Context<Self>) -> impl IntoElement {
+        let hover_bg = cx.theme().colors().element_hover;
+        div()
+            .id(SharedString::from(match side {
+                PanelSide::Left => "panel-resize-left",
+                PanelSide::Right => "panel-resize-right",
+            }))
+            .w(panels::PANEL_RESIZE_HOTZONE)
+            .h_full()
+            .flex_none()
+            .cursor(CursorStyle::ResizeColumn)
+            .hover(|el| el.bg(hover_bg))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                    this.begin_panel_drag(side, f32::from(event.position.x));
+                    cx.notify();
+                }),
+            )
+            .on_drag(PanelResizeDrag, |_, _, _, cx| cx.new(|_| PanelDragGhost))
+            .on_drag_move::<PanelResizeDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<PanelResizeDrag>, _window, cx| {
+                    this.dispatch_panel_resize(side, event, cx);
+                },
+            ))
     }
 
     /// F7：打开只读文本标签（diff 视图 / 提交清单——Editor 只读态：
@@ -722,6 +859,10 @@ impl Render for ShellApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
         let title = self.title_with(cx);
+        // G4：面板拖拽收尾监听用的实体句柄（canvas paint 闭包捕获——
+        // on_mouse_event 只能在 paint 期调用，render 期直调会 panic，
+        // 与 editor 的 ime-hook canvas 同模式接线）。
+        let shell_entity = cx.entity().clone();
         v_flex()
             .id("shell-root")
             .size_full()
@@ -872,12 +1013,22 @@ impl Render for ShellApp {
                             self.workspace.as_ref(),
                             self.git_panel.as_ref(),
                             self.git_view,
+                            // G4：可拖拽宽度（域钳制 + settings 持久化）
+                            self.left_width,
                             cx,
                         ))
+                        // G4：左栏右缘 4px 拖拽热区
+                        .child(self.panel_resize_handle(PanelSide::Left, cx))
                     })
                     .child(editor_area(self, cx))
                     .when(self.right_open, |el| {
-                        el.child(panels::right_panel(self.editor().cloned().as_ref(), cx))
+                        // G4：右栏左缘 4px 拖拽热区
+                        el.child(self.panel_resize_handle(PanelSide::Right, cx))
+                            .child(panels::right_panel(
+                                self.editor().cloned().as_ref(),
+                                self.right_width,
+                                cx,
+                            ))
                     }),
             )
             // F1：提示横幅（状态栏上方一条——有消息时才渲染）。
@@ -897,6 +1048,38 @@ impl Render for ShellApp {
                     .map(|tree| tree.read(cx).root().to_path_buf()),
                 cx,
             ))
+            // G4：面板拖拽收尾钩（窗口级 mouseup——canvas paint 期每帧
+            // 注册，与 editor end_drag 同模式；非拖拽中为空操作）。
+            .child(
+                div()
+                    .id("panel-mouseup-hook")
+                    .absolute()
+                    .size_0()
+                    .child(canvas(
+                        move |bounds: Bounds<Pixels>, _window, _cx| bounds,
+                        move |_bounds, _t, window: &mut Window, _cx| {
+                            window.on_mouse_event(
+                                move |_: &MouseUpEvent, phase: DispatchPhase, _window, cx| {
+                                    if phase == DispatchPhase::Bubble {
+                                        // #89 坑3 变体：drag 会话的 mouseup 派发在
+                                        // drag 源（shell）的 update 内——直接再
+                                        // update 即重入 panic；延迟到下一事件
+                                        // 拍收尾（落盘 + 证据行）。
+                                        let shell = shell_entity.clone();
+                                        cx.spawn(async move |cx| {
+                                            cx.update(|cx| {
+                                                shell.update(cx, |shell, cx| {
+                                                    shell.finish_panel_drag(cx)
+                                                })
+                                            });
+                                        })
+                                        .detach();
+                                    }
+                                },
+                            );
+                        },
+                    )),
+            )
     }
 }
 
