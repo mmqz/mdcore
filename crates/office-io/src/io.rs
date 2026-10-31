@@ -863,7 +863,7 @@ pub const DURATION_REPLAY_FORMAT: &str = "[h]:mm:ss";
 /// 1904 → 1900 纪元换算（写面引擎恒 1900 纪元——rust_xlsxwriter 包装
 /// 无 1904 开关；1462 = 两纪元天数差，与 calamine
 /// EXCEL_1900_1904_DIFF 同值）：历法日期保持，序列数换算。
-fn epoch_to_1900(serial: f64, is_1904: bool) -> f64 {
+pub(crate) fn epoch_to_1900(serial: f64, is_1904: bool) -> f64 {
     if is_1904 {
         serial + 1462.0
     } else {
