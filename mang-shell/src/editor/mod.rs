@@ -47,6 +47,7 @@
 //! - IME 候选框定位 `bounds_for_range` 返回 `None`（精化登记阶段 7）
 
 pub mod buffer;
+pub mod commands;
 pub mod display_map; // r42 阶段 B（#68）：buffer <-> 显示行列映射（软换行 + 折叠）
 pub mod docx_doc;
 pub mod find_bar;
@@ -64,6 +65,8 @@ use std::rc::Rc;
 use display_map::DisplayMap;
 // r42 阶段 C：多光标 + 列选择（编辑器层；Buffer 单光标契约不变）。
 use multi_cursor::{Cursors, Move as MultiMove};
+// r42 阶段 E：命令系统。
+use commands::Cmd;
 
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
@@ -101,6 +104,14 @@ struct MouseDrag {
 /// 拖选 drag 载荷类型（`on_drag` / `on_drag_move` 配对标识；值本身无语义）。
 #[derive(Clone, Copy)]
 struct EditorDrag;
+
+/// r42 阶段 E：命令面板状态。
+#[derive(Clone, Debug)]
+struct PaletteState {
+    query: String,
+    selected: usize,
+    items: Vec<Cmd>,
+}
 
 /// 拖选跟随视图（`on_drag` 契约需要一个 Render 实体——空渲染不可见）。
 struct DragGhost;
@@ -159,6 +170,8 @@ pub struct Editor {
     /// Buffer 单光标同步，多光标态以主光标同步进 Buffer——状态栏/
     /// 保存/IME 走 Buffer 面即主光标）。
     cursors: Cursors,
+    /// r42 阶段 E：命令面板状态（`None` = 关闭；Ctrl+Shift+P 开）。
+    palette: Option<PaletteState>,
     /// IME 预编辑段（全文 UTF16 偏移区间）。
     marked: Option<Range<usize>>,
     /// 本帧可见行 bounds（行内 canvas prepaint 记录——鼠标 hit-test 行
@@ -203,6 +216,7 @@ impl Editor {
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -241,6 +255,7 @@ impl Editor {
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -278,6 +293,7 @@ impl Editor {
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -392,6 +408,97 @@ impl Editor {
         self.scroll.scroll_to_item(row, ScrollStrategy::Top);
     }
 
+    /// r42 阶段 E：命令执行（面板与键位双入口的统一分派）。
+    fn exec_command(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
+        match cmd {
+            Cmd::MoveLeft => self.do_move(MultiMove::Left, false, false),
+            Cmd::MoveRight => self.do_move(MultiMove::Right, false, false),
+            Cmd::MoveUp => self.do_move(MultiMove::Up, false, false),
+            Cmd::MoveDown => self.do_move(MultiMove::Down, false, false),
+            Cmd::WordLeft => self.do_move(MultiMove::WordLeft, true, false),
+            Cmd::WordRight => self.do_move(MultiMove::WordRight, true, false),
+            Cmd::MoveHome => self.do_move(MultiMove::Home, false, false),
+            Cmd::MoveEnd => self.do_move(MultiMove::End, false, false),
+            Cmd::DocStart => self.do_move(MultiMove::DocStart, false, false),
+            Cmd::DocEnd => self.do_move(MultiMove::DocEnd, false, false),
+            Cmd::ToggleFold => {
+                let line = self.buffer.cursor().line;
+                self.toggle_fold_at(line);
+            }
+            Cmd::OpenFind => self.open_find(window, cx),
+            Cmd::Save => {
+                self.save();
+            }
+            Cmd::SelectAll => self.buffer.select_all(),
+            Cmd::Undo => {
+                let n = self.cursors.take_undo_batch();
+                for _ in 0..n.max(1) {
+                    if !self.buffer.undo() {
+                        break;
+                    }
+                }
+                self.sync_cursors_from_buffer();
+            }
+            Cmd::Redo => {
+                self.buffer.redo();
+                self.sync_cursors_from_buffer();
+            }
+        }
+        cx.notify();
+    }
+
+    /// r42 阶段 E：命令面板键处理（面板打开时优先拦截）。
+    /// 返回 true = 已消费（dispatch_key 早退）。
+    fn handle_palette_key(
+        &mut self,
+        ks: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(pal) = self.palette.as_mut() else {
+            return false;
+        };
+        let ctrl = ks.modifiers.control || ks.modifiers.platform;
+        let key = ks.key.to_lowercase();
+        match key.as_str() {
+            "escape" => {
+                self.palette = None;
+            }
+            "up" => pal.selected = pal.selected.saturating_sub(1),
+            "down" => {
+                if !pal.items.is_empty() {
+                    pal.selected = (pal.selected + 1).min(pal.items.len() - 1);
+                }
+            }
+            "enter" => {
+                let cmd = pal.items.get(pal.selected).copied();
+                self.palette = None;
+                if let Some(c) = cmd {
+                    self.exec_command(c, window, cx);
+                }
+            }
+            "backspace" => {
+                pal.query.pop();
+                pal.items = commands::search(&pal.query);
+                pal.selected = 0;
+            }
+            _ => {
+                // 可打印字符入查询；其余 ctrl 组合忽略
+                if !ctrl
+                    && !ks.modifiers.alt
+                    && let Some(c) = &ks.key_char
+                    && !c.is_empty()
+                    && c.chars().all(|ch| !ch.is_control())
+                {
+                    pal.query.push_str(c);
+                    pal.items = commands::search(&pal.query);
+                    pal.selected = 0;
+                }
+            }
+        }
+        true
+    }
+
     /// 折叠 toggle（r42 阶段 D：Alt+F 与 gutter 指示物共用）——
     /// 已折叠/命中折叠区 → 展开；在围栏块内 → 折叠整块。
     fn toggle_fold_at(&mut self, line: usize) {
@@ -494,6 +601,26 @@ impl Editor {
         let ctrl = ks.modifiers.control || ks.modifiers.platform;
         let shift = ks.modifiers.shift;
         let key = ks.key.to_lowercase();
+
+        // r42 阶段 E：Ctrl+Shift+P 开/关命令面板（toggle）。
+        if ctrl && shift && key == "p" {
+            self.palette = if self.palette.is_none() {
+                Some(PaletteState {
+                    query: String::new(),
+                    selected: 0,
+                    items: commands::search(""),
+                })
+            } else {
+                None
+            };
+            cx.notify();
+            return;
+        }
+        // 面板打开时：其余键位全部归面板（含 ctrl 组合——面板态屏蔽编辑键）。
+        if self.palette.is_some() && self.handle_palette_key(&event.keystroke, window, cx) {
+            cx.notify();
+            return;
+        }
 
         // 只读门禁（批 3）：浏览类命令放行（移动/选区/全选/复制/查找），
         // 变更类整段拒绝（输入/删除/回车/Tab/剪切/粘贴/撤销/重做/保存）
@@ -1303,6 +1430,63 @@ impl Editor {
                     });
                 },
             )))
+            // r42 阶段 E：命令面板浮层（Ctrl+Shift+P；编辑区顶部居中）。
+            .when_some(self.palette.clone(), |el, pal| {
+                let colors = cx.theme().colors().clone();
+                el.child(
+                    div()
+                        .id("command-palette")
+                        .absolute()
+                        .top(px(8.))
+                        .left(px(80.))
+                        .w(px(420.))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.background)
+                        .shadow_md()
+                        .p_3()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .text_size(px(13.))
+                        .child(
+                            div()
+                                .id("palette-query")
+                                .flex()
+                                .gap_1()
+                                .text_color(colors.text)
+                                .child(div().text_color(colors.text_accent).child("> "))
+                                .child(div().child(format!("{}▏", pal.query))),
+                        )
+                        .child(div().id("palette-list").flex().flex_col().children(
+                            pal.items.iter().take(8).enumerate().map(|(i, c)| {
+                                let sel = i == pal.selected;
+                                div()
+                                    .id(SharedString::from(format!("palette-item-{i}")))
+                                    .flex()
+                                    .justify_between()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .when(sel, |e| e.bg(colors.element_hover))
+                                    .child(div().text_color(colors.text).child(c.title()))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(colors.text_muted)
+                                            .child(c.default_key().unwrap_or("")),
+                                    )
+                            }),
+                        ))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(colors.text_muted)
+                                .child("↑↓ 选择 · Enter 执行 · Esc 关闭"),
+                        ),
+                )
+            })
             .when(!focused, |el| {
                 // 未聚焦时提示层（点击任意处聚焦）
                 el.child(
