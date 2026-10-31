@@ -2130,14 +2130,35 @@ impl CanvasRenderer for RasterRenderer {
                 }
             }
             Shape::Rect { rect, style } => {
-                let p0 = px(Point::new(rect.x, rect.y));
-                let p1 = px(Point::new(rect.x + rect.w, rect.y + rect.h));
-                if let Some(fill) = style.fill {
-                    raster_rect_fill(&mut self.bmp, p0, p1, fill);
-                }
-                if let Some(st) = style.stroke {
-                    if st.width > 0.0 && st.color.a > 0 {
-                        raster_rect_stroke(&mut self.bmp, p0, p1, st.width * k * 0.5, st.color);
+                // 轴对齐快路径只在**无旋转**时成立。旋转过的矩形四个角不再
+                // 共轴，用轴对齐矩形去画会退化成一条线（本站踩过：旋转 45 度
+                // 的方块被画成一根竖线）。
+                let rotated = !m.is_identity() && m.b != 0.0;
+                if rotated {
+                    let quad = [
+                        px(Point::new(rect.x, rect.y)),
+                        px(Point::new(rect.x + rect.w, rect.y)),
+                        px(Point::new(rect.x + rect.w, rect.y + rect.h)),
+                        px(Point::new(rect.x, rect.y + rect.h)),
+                    ];
+                    if let Some(fill) = style.fill {
+                        raster_polygons_nonzero(&mut self.bmp, &[quad.to_vec()], fill);
+                    }
+                    if let Some(st) = style.stroke {
+                        if st.width > 0.0 && st.color.a > 0 {
+                            raster_polyline(&mut self.bmp, &quad, true, st.width * k * 0.5, st.color);
+                        }
+                    }
+                } else {
+                    let p0 = px(Point::new(rect.x, rect.y));
+                    let p1 = px(Point::new(rect.x + rect.w, rect.y + rect.h));
+                    if let Some(fill) = style.fill {
+                        raster_rect_fill(&mut self.bmp, p0, p1, fill);
+                    }
+                    if let Some(st) = style.stroke {
+                        if st.width > 0.0 && st.color.a > 0 {
+                            raster_rect_stroke(&mut self.bmp, p0, p1, st.width * k * 0.5, st.color);
+                        }
                     }
                 }
             }
@@ -2174,6 +2195,10 @@ impl CanvasRenderer for RasterRenderer {
                 }
             }
             Shape::Text { pos, text, style } => {
+                // 诚实登记：光栅后端不做字形（不加载系统字体、不做 hinting）。
+                // 这里画一个**带描边的空白框**而不是实心块——实心块会让人误
+                // 以为「文字已经渲染了只是颜色不对」，空框一眼就能看出是占位。
+                // 要真字形请走 SVG（浏览器渲染）。
                 if text.is_empty() || style.size <= 0.0 || style.color.a == 0 {
                     return;
                 }
@@ -2182,7 +2207,17 @@ impl CanvasRenderer for RasterRenderer {
                 let anchor = px(*pos);
                 let x0 = anchor.0 - w * style.anchor.offset_factor();
                 let y0 = anchor.1 - size * 0.8;
-                raster_rect_fill(&mut self.bmp, (x0, y0), (x0 + w, y0 + size), style.color);
+                let (x1, y1) = (x0 + w, y0 + size);
+                let hw = (size * 0.03).clamp(0.2, 0.5);
+                raster_rect_stroke(&mut self.bmp, (x0, y0), (x1, y1), hw, style.color);
+                // 中间一条基线：让占位框看得出"这是一行字"。
+                raster_line(
+                    &mut self.bmp,
+                    (x0, y0 + size * 0.72),
+                    (x1, y0 + size * 0.72),
+                    hw * 0.6,
+                    style.color,
+                );
             }
             Shape::Image { rect, .. } => {
                 let p0 = px(Point::new(rect.x, rect.y));
