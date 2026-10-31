@@ -177,11 +177,13 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
                 match ed.doc_kind() {
                     "pdf" => "只读（pdf 文本层 → 行模型）".to_string(),
                     "docx" => "只读（docx 块序 → 行模型）".to_string(),
+                    "xlsx" => "只读（xlsx 读面 → 行模型）".to_string(),
                     _ => "源文本（md）".to_string(),
                 },
                 match ed.doc_kind() {
                     "pdf" => "mdc-pdf（pdfium chromium/8086 non-V8）".to_string(),
                     "docx" => "mdc-office-io（docx-rs）".to_string(),
+                    "xlsx" => "mdc-office-io（calamine）".to_string(),
                     _ => "mdcore 0.1.0".to_string(),
                 },
             )
@@ -250,6 +252,32 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
             .unwrap_or_default(),
         None => vec![],
     };
+    // xlsx 实测属性面（G6）。
+    let xlsx_rows: Vec<(String, String)> = match editor {
+        Some(ed) => ed
+            .read(cx)
+            .xlsx_props()
+            .map(|p| {
+                vec![
+                    ("工作表".into(), format!("{}", p.sheets)),
+                    ("非空数据格".into(), format!("{}", p.cells)),
+                    ("公式格".into(), format!("{}（缓存值入行流）", p.formulas)),
+                    ("合并范围".into(), format!("{}", p.merges)),
+                    ("超链接".into(), format!("{}（计数入属性）", p.hyperlinks)),
+                    ("兼容警告".into(), format!("{}", p.warnings)),
+                    (
+                        "渲染护栏".into(),
+                        if p.truncated_sheets > 0 {
+                            format!("{} 表超限截断（非静默）", p.truncated_sheets)
+                        } else {
+                            "未触发".to_string()
+                        },
+                    ),
+                ]
+            })
+            .unwrap_or_default(),
+        None => vec![],
+    };
     v_flex()
         .id("right-panel")
         .w(RIGHT_PANEL_WIDTH)
@@ -277,6 +305,11 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElemen
             property_row_owned(k, v)
         }))
         .children(pdf_rows.iter().map(|(k, v)| {
+            let k = k.clone();
+            let v = v.clone();
+            property_row_owned(k, v)
+        }))
+        .children(xlsx_rows.iter().map(|(k, v)| {
             let k = k.clone();
             let v = v.clone();
             property_row_owned(k, v)
