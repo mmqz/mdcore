@@ -27,6 +27,15 @@
 //! 不支持面与数据损失在 [`docx`] 模块文档逐项登记；**不做渲染
 //! 语义**（布局/分页/字体度量面外）。
 //!
+//! ## DOCX 外科手术式编辑（[`docx_edit`]，#79 T1——2026-10-31）
+//!
+//! 已有 docx 的**文本编辑**面：解压 → 定位 `word/document.xml` 段落
+//! （`w:p`）→ 只改目标段落文本节点（`w:t`）→ 其余 XML 原样 → 重打包
+//! （非目标部件 `raw_copy_file` 逐字节透传）。**不走块模型重建**
+//! （会丢样式——xlsx FIDELITY v2 §4 定谳）；七坑映射/文本约定/落账
+//! 模型见 [`docx_edit`] 模块文档；保真矩阵 = docs/docx-fidelity-matrix.md
+//! + tests/docx_roundtrip_matrix.rs（T2 同批）。
+//!
 //! ## 读路径门结构（[`io::read_book`]）
 //!
 //! 1. **门 1 声明值预扫**（[`io::prescan`]）：条目数 / 单条目尺寸 /
@@ -85,6 +94,7 @@
 //! 版本）触发该策略 §5 复核纪律。
 
 pub mod docx;
+pub mod docx_edit;
 pub mod io;
 pub mod rebuild;
 pub mod write;
