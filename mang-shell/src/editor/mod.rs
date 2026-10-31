@@ -588,6 +588,12 @@ impl Editor {
         self.buffer.char_count()
     }
 
+    /// 文档版本号（#111 订阅模式——RPC get_selection/undo/redo 的结果
+    /// 载荷，客户端检测事件乱序/丢失的基准）。
+    pub fn revision(&self) -> u64 {
+        self.buffer.revision()
+    }
+
     /// 只读标记（状态栏「只读」——docx 渲染面）。
     pub fn is_read_only(&self) -> bool {
         self.read_only
@@ -733,6 +739,92 @@ impl Editor {
         Some((had_selection, self.buffer.cursor()))
     }
 
+    // ------------------------------------------------------------------
+    // RPC 桥扩展面（#111 任务 2「RPC 扩展」）：撤销/重做统一入口 +
+    // 光标/选区/滚动的程序化控制——键位面板与机器通道同一路径。
+    // ------------------------------------------------------------------
+
+    /// 撤销一步手势（多光标批合并 undo——同 `Ctrl+Z`；RPC `Undo` 同此）。
+    /// 返回是否发生撤销。#111 顺手修陈旧缓存缺陷：撤销后 now 走
+    /// `after_edit`（查找匹配/围栏高亮/断点缓存同步刷新）。
+    pub fn undo_edit(&mut self) -> bool {
+        let n = self.cursors.take_undo_batch();
+        let mut did = false;
+        for _ in 0..n.max(1) {
+            if !self.buffer.undo() {
+                break;
+            }
+            did = true;
+        }
+        self.sync_cursors_from_buffer();
+        if did {
+            self.after_edit();
+        }
+        did
+    }
+
+    /// 重做一步（同 `Ctrl+Y`；RPC `Redo` 同此）。返回是否发生重做。
+    pub fn redo_edit(&mut self) -> bool {
+        let did = self.buffer.redo();
+        self.sync_cursors_from_buffer();
+        if did {
+            self.after_edit();
+        }
+        did
+    }
+
+    /// 移动光标到指定行列（0 基；越界 clamp 到文内最近点；不碰选区锚
+    /// ——选区被清）。只读文档同样可用（浏览跳转）。滚入可视区。
+    pub fn move_cursor_to(&mut self, line: usize, col: usize, cx: &mut Context<Self>) -> Point {
+        self.buffer.set_cursor(Point::new(line, col));
+        self.sync_cursors_from_buffer();
+        let line = self.buffer.cursor().line;
+        let row = self
+            .display_map
+            .line_row(&self.buffer, line)
+            .unwrap_or(line);
+        self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
+        cx.notify();
+        self.buffer.cursor()
+    }
+
+    /// 设置选区（RPC `SetSelection`——任意次序两点，排序后 anchor/cursor；
+    /// 越界 clamp）。滚入选区尾。只读文档同样可用（程序化选中浏览）。
+    pub fn set_selection_range(
+        &mut self,
+        start: Point,
+        end: Point,
+        cx: &mut Context<Self>,
+    ) -> (Point, Point) {
+        let (a, b) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        self.buffer.set_selection(a, b);
+        self.sync_cursors_from_buffer();
+        let row = self
+            .display_map
+            .line_row(&self.buffer, b.line)
+            .unwrap_or(b.line);
+        self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
+        cx.notify();
+        (a, b)
+    }
+
+    /// 滚动到指定行（RPC `ScrollTo`——不动光标、不改选区，纯视口移动；
+    /// 只读文档可用——渲染态浏览场景）。越界 clamp 到末行。
+    pub fn scroll_to_line(&mut self, line: usize, cx: &mut Context<Self>) -> usize {
+        let line = line.min(self.buffer.line_count().saturating_sub(1));
+        let row = self
+            .display_map
+            .line_row(&self.buffer, line)
+            .unwrap_or(line);
+        self.scroll.scroll_to_item(row, ScrollStrategy::Top);
+        cx.notify();
+        line
+    }
+
     /// r42 阶段 E：命令执行（面板与键位双入口的统一分派）。
     fn exec_command(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
         match cmd {
@@ -767,17 +859,10 @@ impl Editor {
             }
             Cmd::SelectAll => self.buffer.select_all(),
             Cmd::Undo => {
-                let n = self.cursors.take_undo_batch();
-                for _ in 0..n.max(1) {
-                    if !self.buffer.undo() {
-                        break;
-                    }
-                }
-                self.sync_cursors_from_buffer();
+                self.undo_edit();
             }
             Cmd::Redo => {
-                self.buffer.redo();
-                self.sync_cursors_from_buffer();
+                self.redo_edit();
             }
         }
         cx.notify();
@@ -1489,6 +1574,9 @@ impl Editor {
     }
 
     /// 编辑命令后的公共收尾：缓存刷新 + 光标行滚入可视区。
+    /// #111：末尾收割待发变更（take_pending 非空才发）——所有编辑路径
+    ///（用户键入/IME/查找替换/RPC/撤销重做）的文档变更事件单点；
+    /// 纯光标移动类调用（查找跳转）pending 为空自然不发。
     fn after_edit(&mut self) {
         self.refresh_caches();
         let line = self.buffer.cursor().line;
@@ -1498,6 +1586,28 @@ impl Editor {
             .line_row(&self.buffer, line)
             .unwrap_or(line);
         self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
+        self.publish_doc_event();
+    }
+
+    /// #111 订阅模式：收割 Buffer 待发变更并发布事件（一次收尾一条；
+    /// 多步事务合并——revision_before..revision 跨度）。无变更即不发。
+    fn publish_doc_event(&mut self) {
+        let (changes, base) = self.buffer.take_pending();
+        if changes.is_empty() {
+            return;
+        }
+        crate::doc_events::publish(crate::doc_events::DocEvent {
+            kind: "doc_changed",
+            path: self.file_path.as_ref().map(|p| p.to_path_buf()),
+            revision_before: base.unwrap_or(0),
+            revision: self.buffer.revision(),
+            source: if crate::doc_events::is_rpc_source() {
+                "rpc"
+            } else {
+                "user"
+            },
+            changes,
+        });
     }
 
     /// 行样式源分派：docx/pdf/xlsx 只读态取预计算 span，md 态走围栏感知

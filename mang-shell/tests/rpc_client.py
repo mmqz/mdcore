@@ -22,12 +22,20 @@
   2. 烟雾序列（rpc_smoke.sh 消费——六命令全链断言 + 双客户端并发）::
 
        ./rpc_client.py SOCK --smoke FILE1 FILE2
+
+  3. #111 扩展序列（rpc_smoke.sh 消费——15 命令面 + 订阅推送 +
+     双向回显 + 多客户端订阅互不干扰；应用需以 --smoke-user-type
+     启动——本序列断言 source=user 的用户键入事件。FILE2 为干净
+     战场——--smoke 对 FILE1 的编辑会污染 undo 栈/版本）::
+
+       ./rpc_client.py SOCK --smoke2 FILE1 FILE2
 """
 
 import json
 import os
 import socket
 import sys
+import time
 import threading
 
 TIMEOUT = 5.0
@@ -181,6 +189,280 @@ def run_smoke(sock, file1, file2):
     print(f"rpc-smoke: client sequence passed（{total} 命令全链，双客户端并发互不阻塞）")
 
 
+
+# ---------------------------------------------------------------------------
+# #111 任务 2「RPC 扩展」：长连接订阅客户端 + 15 命令全链 + 事件断言
+# ---------------------------------------------------------------------------
+
+
+class SubClient:
+    """长连接订阅客户端（响应与事件同 socket 混流——reader 线程分派）。
+
+    响应（含 "id"/"ok"）入 pending 队列供 `send` 消费；
+    事件（"type" == "doc_changed"）入 events 列表供断言消费。
+    """
+
+    def __init__(self, sock_path, timeout=30.0):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        # recv 超时只是 reader 周期性醒来的节拍（超时 continue）——
+        # 不能用命令面的 5s：订阅静默期可能远长于此。
+        self.sock.settimeout(timeout)
+        try:
+            self.sock.connect(sock_path)
+        except OSError as e:
+            raise RuntimeError(f"订阅连接失败（{sock_path}）：{e}") from e
+        self.buf = b""
+        self.events = []
+        self.responses = []
+        self.lock = threading.Lock()
+        self.alive = True
+        self.reader = threading.Thread(target=self._read_loop, daemon=True)
+        self.reader.start()
+
+    def _read_loop(self):
+        while self.alive:
+            try:
+                chunk = self.sock.recv(65536)
+            except socket.timeout:
+                continue  # 订阅长连接：静默期正常——继续等（不是死）
+            except OSError:
+                break  # 真错（对端断/本端关）才退出
+            self.buf += chunk
+            while b"\n" in self.buf:
+                line, _, self.buf = self.buf.partition(b"\n")
+                if not line.strip():
+                    continue
+                try:
+                    msg = json.loads(line.decode("utf-8"))
+                except ValueError:
+                    continue
+                with self.lock:
+                    if msg.get("type") == "doc_changed":
+                        self.events.append(msg)
+                    else:
+                        self.responses.append(msg)
+
+    def _recv_response(self, want_id, timeout=TIMEOUT):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self.lock:
+                for i, resp in enumerate(self.responses):
+                    if resp.get("id") == want_id:
+                        del self.responses[i]
+                        return resp
+            time.sleep(0.02)
+        raise RuntimeError(f"响应超时（id={want_id}）——可能与应用退出竞态")
+
+    def send(self, payload):
+        """发命令并等该 id 的响应（事件被 reader 旁路到 events）。"""
+        self.sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+        return self._recv_response(payload.get("id"))
+
+    def wait_event(self, pred, timeout=TIMEOUT):
+        """等首条满足 pred 的事件（doc_changed）；超时返回 None。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self.lock:
+                for ev in self.events:
+                    if pred(ev):
+                        return ev
+            time.sleep(0.02)
+        return None
+
+    def event_count(self):
+        with self.lock:
+            return len(self.events)
+
+    def close(self):
+        self.alive = False
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def run_smoke2(sock, file1, file2):
+    """#111 扩展序列：8 新命令全链 + 订阅推送 + 双向回显 + 多客户端订阅。
+
+    rpc_smoke.sh 消费（应用以 --smoke-user-type 启动——6s 后合成用户键入，
+    本序列在 6s 前完成 subscribe、6-7.3s 收 user 事件）。
+
+    主战场取 FILE2：--smoke 序列对 FILE1 的编辑（insert/replace/并发）
+    会污染 undo 栈与版本号——FILE2 在 --smoke 末尾被 close，重开即
+    干净态（rev 0 / undo 栈空 / 未置脏），全部断言基于它。
+    """
+    file1 = os.path.abspath(file1)
+    file2 = os.path.abspath(file2)
+    n = 0
+
+    def cmd(payload):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is True, f"命令失败：{payload} -> {resp}"
+        return resp["result"]
+
+    def cmd_err(payload, needle):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is False, f"应失败却成功：{payload} -> {resp}"
+        assert needle in resp.get("error", ""), f"错误应含 {needle!r}：{resp}"
+        return resp
+
+    # ---- 0. 订阅客户端 A 先上线（后续所有编辑它都要收到）----
+    sub_a = SubClient(sock)
+    r = sub_a.send({"id": 1000, "cmd": "subscribe"})
+    assert r.get("ok") is True and r["result"]["subscribed"] is True, r
+    n += 1
+
+    # ---- 0.5 干净战场：FILE2 重开（--smoke 已 close 它——rev 0 栈空）----
+    r = cmd({"id": 900, "cmd": "open_file", "path": file2})
+    assert r["already_open"] is False, r
+    r = cmd({"id": 901, "cmd": "get_state"})
+    assert r["active"]["path"] == file2, r
+    assert r["active"]["modified"] is False, "干净战场前提"
+    assert r["active"]["char_count"] > 10, r  # mouse_smoke.md 有内容
+
+    # ---- 1. set_cursor：跳到 (1,0)；越界 clamp 到末行 ----
+    r = cmd({"id": 1, "cmd": "set_cursor", "line": 1, "col": 0})
+    assert r["cursor"]["line"] == 1, r
+    r = cmd({"id": 2, "cmd": "set_cursor", "line": 9999, "col": 0})
+    state = send(sock, {"id": 3, "cmd": "get_state"})["result"]
+    n += 1
+    assert r["cursor"]["line"] == state["active"]["line_count"] - 1, (
+        f"越界应 clamp 末行：{r} vs {state}"
+    )
+
+    # ---- 2. set_selection + get_selection：选区排序 + 文本回带 ----
+    r = cmd({"id": 4, "cmd": "set_selection",
+             "start": {"line": 0, "col": 4}, "end": {"line": 0, "col": 0}})
+    assert r["selection"]["start"] == {"line": 0, "col": 0}, "逆序两点应排序"
+    r = cmd({"id": 5, "cmd": "get_selection"})
+    assert r["selection"]["start"] == {"line": 0, "col": 0}, r
+    assert r["selection"]["chars"] == 4, r
+
+    # ---- 3. undo/redo：无编辑时栈空不是错误 ----
+    r = cmd({"id": 6, "cmd": "undo"})
+    undo_empty_rev = r["revision"]
+
+    # ---- 4. insert → 订阅事件（source=rpc，自己改的也回显）----
+    r = cmd({"id": 7, "cmd": "insert_text", "line": 0, "col": 0, "text": "RPC"})
+    insert_rev = send(sock, {"id": 8, "cmd": "get_selection"})["result"]["revision"]
+    n += 1
+    ev = sub_a.wait_event(
+        lambda e: e.get("source") == "rpc"
+        and any(c.get("text") == "RPC" for c in e.get("changes", []))
+    )
+    assert ev is not None, "订阅端应收 insert_text 的 doc_changed（source=rpc）"
+    assert ev["revision"] == insert_rev, f"事件版本应达当前：{ev}"
+    assert ev["path"].endswith(file2.split("/")[-1]), ev
+    assert ev["revision_before"] == insert_rev - 1, (
+        f"revision_before 应为变更前版本：{ev}"
+    )
+
+    # ---- 5. undo：事件 kind=undo + 版本继续递增（按 revision 精确匹配
+    #      本次 undo 的事件——队列里可能有历史 undo 事件）----
+    r = cmd({"id": 9, "cmd": "undo"})
+    assert r["undid"] is True, r
+    undo_rev = r["revision"]
+    ev = sub_a.wait_event(
+        lambda e: e.get("revision") == undo_rev
+        and e.get("changes")
+        and e["changes"][0].get("kind") == "undo"
+    )
+    assert ev is not None, "订阅端应收本次 undo 的事件"
+    assert ev["revision_before"] == insert_rev, (
+        f"undo 事件基线应为撤销前版本 {insert_rev}：{ev}"
+    )
+    assert undo_rev > insert_rev, "undo 也是变更——版本递增"
+
+    # ---- 6. redo：事件 kind=redo（同按 revision 匹配）----
+    r = cmd({"id": 10, "cmd": "redo"})
+    assert r["redid"] is True, r
+    redo_rev = r["revision"]
+    ev = sub_a.wait_event(
+        lambda e: e.get("revision") == redo_rev
+        and e.get("changes")
+        and e["changes"][0].get("kind") == "redo"
+    )
+    assert ev is not None, "订阅端应收 redo 事件"
+    assert ev["revision_before"] == undo_rev, f"redo 基线：{ev}"
+
+    # ---- 7. save：脏 → 保存 → 干净（modified false）----
+    r = cmd({"id": 11, "cmd": "save"})
+    assert r["saved"] is True and r["modified"] is False, r
+
+    # ---- 8. save_as：另存新名 → tab 身份迁移 ----
+    saved_as = "/tmp/mang-rpc-smoke-saveas.md"
+    r = cmd({"id": 12, "cmd": "save_as", "path": saved_as})
+    assert r["saved"] is True and r["tab_index"] is not None, r
+    # 身份迁移实测：按新路径能找到（close 不再报「标签未找到」）
+    r = cmd({"id": 902, "cmd": "close_file", "path": saved_as})
+    assert r["tabs_remaining"] >= 1, r  # file1 还开着
+
+    # ---- 9. scroll_to：越界 clamp 末行 ----
+    r = cmd({"id": 13, "cmd": "scroll_to", "line": 9999})
+    assert r["scrolled_to"] == r["line_count"] - 1, r
+
+    # ---- 10. 错误面：坏命令 / save 后干净态 close 走正常 ----
+    cmd_err({"id": 14, "cmd": "bogus_cmd"}, "bogus_cmd")
+
+    # ---- 11. 多客户端订阅互不干扰：B 上线同订 → 一处编辑两路都收 ----
+    sub_b = SubClient(sock)
+    r = sub_b.send({"id": 2000, "cmd": "subscribe"})
+    assert r.get("ok") is True, r
+    n += 1
+    r = cmd({"id": 16, "cmd": "insert_text", "line": 0, "col": 0, "text": "双路"})
+    ev_a = sub_a.wait_event(
+        lambda e: e.get("source") == "rpc"
+        and any(c.get("text") == "双路" for c in e.get("changes", []))
+    )
+    ev_b = sub_b.wait_event(
+        lambda e: e.get("source") == "rpc"
+        and any(c.get("text") == "双路" for c in e.get("changes", []))
+    )
+    assert ev_a is not None and ev_b is not None, "两路订阅均应收到同一事件"
+    assert ev_a["revision"] == ev_b["revision"], "两路事件版本一致"
+
+    # ---- 12. 双向回显·用户侧：等 --smoke-user-type 的 6s 合成键入 ----
+    #（应用侧 6.0s 首键、每键 60ms、15 字 + enter ≈ 6.95s 收尾；从 subscribe
+    # 起等 8s 稳定覆盖。用户事件逐键一条——断言「至少一条 source=user 且
+    # 文本为键入片段」。）
+    # 逐字符键入：每键一条事件（text = 单字符）——匹配方向是
+    # 「事件 text 是键入串的字符」，不是「键入串含事件 text」。
+    typed = "user typed this"
+    user_ev = sub_a.wait_event(
+        lambda e: e.get("source") == "user"
+        and any(c.get("text") and c["text"] in typed for c in e.get("changes", [])),
+        timeout=9.0,
+    )
+    if user_ev is None:
+        # 调试面：dump 事件源分布（失败诊断——不应出现在 PASS 输出）
+        with sub_a.lock:
+            sources = [e.get("source") for e in sub_a.events]
+            sample = sub_a.events[-3:]
+        raise AssertionError(
+            f"订阅端应收用户键入的 doc_changed（source=user）——"
+            f"双向回显的用户侧；实际事件源分布 {sources}；末 3 条 {sample}"
+        )
+    assert user_ev["revision_before"] < user_ev["revision"], user_ev
+
+    # ---- 13. 断连自动注销：关掉 A 后事件泵广播不炸（B 照常收）----
+    sub_a.close()
+    r = cmd({"id": 17, "cmd": "insert_text", "line": 0, "col": 0, "text": "afterA"})
+    ev = sub_b.wait_event(
+        lambda e: any(c.get("text") == "afterA" for c in e.get("changes", []))
+    )
+    assert ev is not None, "A 断连后 B 应照常收到（互不干扰 + 自动注销不炸泵）"
+    sub_b.close()
+
+    print(
+        f"rpc-smoke2: client sequence passed"
+        f"（{n} 命令 + 15 命令面全链 + 订阅/双向回显/多客户端/断连注销）"
+    )
+
+
 def main():
     args = sys.argv[1:]
     if len(args) < 2:
@@ -198,6 +480,19 @@ def main():
             sys.exit(1)
         except RuntimeError as e:
             print(f"rpc-smoke: FAIL —— {e}", file=sys.stderr)
+            sys.exit(3)
+        return
+    if rest[0] == "--smoke2":
+        if len(rest) != 3:
+            print("用法：rpc_client.py SOCK --smoke2 FILE1 FILE2", file=sys.stderr)
+            sys.exit(2)
+        try:
+            run_smoke2(sock, rest[1], rest[2])
+        except AssertionError as e:
+            print(f"rpc-smoke2: FAIL —— {e}", file=sys.stderr)
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f"rpc-smoke2: FAIL —— {e}", file=sys.stderr)
             sys.exit(3)
         return
     payload = build_payload(rest)

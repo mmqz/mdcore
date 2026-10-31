@@ -50,7 +50,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use text as zed_text;
 
 /// 文本坐标：`line` 从 0 起，`col` 为行内 **char** 索引。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+/// #111：`Serialize` derive（doc_events 事件载荷直出 `{"line":n,"col":n}`
+/// ——与 RPC 响应的 point_json 同构，字段名直出无 rename）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct Point {
     pub line: usize,
     pub col: usize,
@@ -204,6 +206,19 @@ pub struct Buffer {
     /// 修改判定 = 当前深度 != 保存点深度——undo 到底即回初始态（redo
     /// 栈非空不代表内容偏离初始）。
     saved_depth: usize,
+    /// 文档版本号（#111 订阅模式）：每次变更事务 +1（replace_range /
+    /// replace_batch / undo / redo——`mark_saved` 不算变更）。事件消费方
+    /// 靠它检测乱序与丢事件。初始 0。
+    revision: u64,
+    /// 待发变更记录（#111 订阅模式）：每次变更事务 push，Editor 收尾
+    ///（`after_edit`/undo/redo 路径）经 [`Buffer::take_pending`] 一次性
+    /// 收割组装事件——纯光标移动类收尾时 pending 为空即不发事件。
+    /// Clone 快照不带 pending（克隆体不是事件源）。
+    pending: Vec<crate::doc_events::ChangeRecord>,
+    /// pending 首条入队时的版本基线（一次收尾可能合并多步事务——
+    /// 如一次 undo 手势 N 步；事件携带 base..current 跨度让消费方
+    /// 判定中间是否有未见过的版本跳变）。
+    pending_base: Option<u64>,
 }
 
 impl Clone for Buffer {
@@ -219,6 +234,9 @@ impl Clone for Buffer {
             undo_stack: self.undo_stack.clone(),
             redo_stack: self.redo_stack.clone(),
             saved_depth: self.saved_depth,
+            revision: self.revision,
+            pending: Vec::new(),
+            pending_base: None,
         }
     }
 }
@@ -265,6 +283,9 @@ impl Buffer {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             saved_depth: 0,
+            revision: 0,
+            pending: Vec::new(),
+            pending_base: None,
         }
     }
 
@@ -370,8 +391,23 @@ impl Buffer {
     /// 光标落在新插入文本末尾；清选区与列粘性；清 redo 栈。
     pub fn replace_range(&mut self, start: Point, end: Point, text: &str) {
         let Range { start, end } = self.ordered_range(start..end);
+        // no-op 短路（#111）：空域 + 空文本 = 无内容变化——不落 undo
+        // 记录、不计版本、不发事件（防无意义事件流 + undo 栈噪音）。
+        if start == end && text.is_empty() {
+            return;
+        }
         let old_text = self.range_text(&(start..end));
         let cursor = self.apply_core(start, end, text);
+        // #111 订阅模式：precise 记录（end = 变更前被替换域终点；
+        // start == end 即纯插入）。note 在版本递增**前**——基线 =
+        // 变更前版本（revision_before 语义）。
+        self.note_change(crate::doc_events::ChangeRecord::precise(
+            "replace",
+            start,
+            end,
+            text.to_string(),
+        ));
+        self.revision += 1;
         self.undo_stack.push(Undoable::Single(Edit {
             start,
             end_del: end,
@@ -405,9 +441,21 @@ impl Buffer {
         // 先行换算：old_text 捕获 + 双坐标域（原始/应用后）一次算定。
         let mut records: Vec<BatchEdit> = Vec::with_capacity(ordered.len());
         let mut rope_edits: Vec<(Range<usize>, String)> = Vec::with_capacity(ordered.len());
+        // #111：pending 预留容量（千处批量 = 千条记录——避免均摊扩容
+        // 的重复分配；perf 线 <100ms 贴线环境下的微优化）。
+        self.pending.reserve(ordered.len());
         let mut shift: i64 = 0; // 前序子编辑的净字节位移
+        // #111 订阅模式：每点位一条 precise 记录（start/end = 变更前
+        // 域，坐标在文档未动时先行换算——恒有效），随 records 同循环
+        // 构建避免二次迭代（一次事务版本只 +1 在事务尾）。
         for (start, end, new_text) in ordered {
             let old_text = self.range_text(&(start..end));
+            self.note_change(crate::doc_events::ChangeRecord::precise(
+                "replace",
+                start,
+                end,
+                new_text.clone(),
+            ));
             let z_start = self.point_to_zoffset(start);
             let z_end_del = self.point_to_zoffset(end);
             let applied_start = (z_start as i64 + shift) as usize;
@@ -429,6 +477,8 @@ impl Buffer {
             });
         }
         let n = records.len();
+        // #111：一次批量事务版本只 +1（点位级记录已在构建循环内入队）。
+        self.revision += 1;
         // 单事务批量应用（O(批) 次坐标换算 + 1 次事务——非 1000 次事务）。
         let _ops = self.inner.edit(rope_edits);
         // 光标：批尾占位尾（字节 offset → 当前列；Point 直算在多行替换
@@ -516,10 +566,18 @@ impl Buffer {
         let Some(entry) = self.undo_stack.pop() else {
             return false;
         };
+        // #111：版本递增挪到 note 之后——note 首条定格基线 = 撤销前版本。
         match entry {
             Undoable::Single(edit) => {
                 // 逆方向：把 new_text 的当前占位换回 old_text。
                 let end_new = self.end_after_insert(&edit.start, &edit.new_text);
+                // #111：单条撤销可精确记录（撤销前域 = new_text 占位域）。
+                self.note_change(crate::doc_events::ChangeRecord::precise(
+                    "undo",
+                    edit.start,
+                    end_new,
+                    edit.old_text.clone(),
+                ));
                 self.apply_core(edit.start, end_new, &edit.old_text);
                 // redo 方向的 Edit：old_text 恢复后的占位范围即 end_del。
                 self.redo_stack.push(Undoable::Single(Edit {
@@ -538,11 +596,16 @@ impl Buffer {
                     .map(|r| (r.z_applied.0..r.z_applied.1, r.old_text.clone()))
                     .collect();
                 let _ops = self.inner.edit(rope_edits);
+                // #111：批量撤销的占位域是「应用后字节坐标」，撤销后
+                // 文档已回原始态——逐点换算会错位，给粗粒度记录
+                //（客户端 get_state 拉全量）。
+                self.note_change(crate::doc_events::ChangeRecord::coarse("undo"));
                 // 批量撤销光标落批首（文档已回原始态——原始 Point 有效）。
                 self.cursor = records.first().map(|r| r.start).unwrap_or(self.cursor);
                 self.redo_stack.push(Undoable::Batch(records));
             }
         }
+        self.revision += 1;
         self.anchor = None;
         self.desired_col = None;
         self.clamp_cursor();
@@ -554,10 +617,18 @@ impl Buffer {
         let Some(entry) = self.redo_stack.pop() else {
             return false;
         };
+        // #111：版本递增挪到 note 之后（同 undo 的基线语义）。
         match entry {
             Undoable::Single(edit) => {
                 // 重放方向：[start, end_del) 的 old_text 换成 new_text。
                 let new_cursor = self.end_after_insert(&edit.start, &edit.new_text);
+                // #111：单条重做可精确记录（重放前域 = end_del 旧文本域）。
+                self.note_change(crate::doc_events::ChangeRecord::precise(
+                    "redo",
+                    edit.start,
+                    edit.end_del,
+                    edit.new_text.clone(),
+                ));
                 self.apply_core(edit.start, edit.end_del, &edit.new_text);
                 self.undo_stack.push(Undoable::Single(edit));
                 self.cursor = new_cursor;
@@ -575,12 +646,38 @@ impl Buffer {
                 let tail_end = records.last().map(|r| r.z_applied.1).unwrap_or(0);
                 self.cursor = self.zoffset_to_point(tail_end);
                 self.undo_stack.push(Undoable::Batch(records));
+                // #111：批量重做同样给粗粒度记录（同 undo 批量的坐标
+                // 错位理由）。
+                self.note_change(crate::doc_events::ChangeRecord::coarse("redo"));
             }
         }
+        self.revision += 1;
         self.anchor = None;
         self.desired_col = None;
         self.clamp_cursor();
         true
+    }
+
+    /// 文档版本号（#111 订阅模式——事件流的顺序/丢失判定位）。
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// 待发记录入队（首次入队时定格版本基线 `pending_base`——多次事务
+    /// 合并一次收尾时事件携带 base..current 跨度，消费方据此判跳变）。
+    fn note_change(&mut self, rec: crate::doc_events::ChangeRecord) {
+        if self.pending_base.is_none() {
+            self.pending_base = Some(self.revision);
+        }
+        self.pending.push(rec);
+    }
+
+    /// 收割待发变更（#111 订阅模式——Editor 编辑收尾单点调用）。
+    /// 返回 `(记录列表, 版本基线)`；空记录 = 本次收尾无内容变更
+    ///（纯光标移动），不组装事件；基线 = 首条记录入队时的版本号
+    ///（无变更时 None）。
+    pub fn take_pending(&mut self) -> (Vec<crate::doc_events::ChangeRecord>, Option<u64>) {
+        (std::mem::take(&mut self.pending), self.pending_base.take())
     }
 
     /// 最近一条 undo 记录的子编辑数（G1 查找替换烟雾/日志面：一次
@@ -1677,7 +1774,7 @@ mod g1_find_replace_tests {
         let undo_elapsed = t.elapsed();
         println!("perf(千处批量撤销) = {undo_elapsed:?}");
         assert_eq!(b.to_plain_text(), lines.join("\n"));
-// G3 缩进单位——专项单测
+        // G3 缩进单位——专项单测
     }
 }
 
@@ -1716,5 +1813,150 @@ mod g3_indent_tests {
         // 混合前导（空格+Tab+空格 均计入，直到第一个非空白）
         let m = Buffer::from_plain_text("  \t mixed");
         assert_eq!(m.leading_indent_len(0), 4, "2 空格 + 1 Tab + 1 空格");
+    }
+}
+
+/// #111 订阅模式：revision / pending_changes / 事件记录形态。
+#[cfg(test)]
+mod rpc_extend_tests {
+    use super::*;
+
+    fn p(line: usize, col: usize) -> Point {
+        Point::new(line, col)
+    }
+
+    #[test]
+    fn revision_increments_per_transaction_and_marks_saved_free() {
+        let mut b = Buffer::from_plain_text("hello");
+        assert_eq!(b.revision(), 0, "初始版本 0");
+        b.insert("x"); // 事务 1
+        assert_eq!(b.revision(), 1);
+        b.replace_range(p(0, 0), p(0, 1), "H"); // 事务 2
+        assert_eq!(b.revision(), 2);
+        b.mark_saved();
+        assert_eq!(b.revision(), 2, "mark_saved 不是内容变更——版本不动");
+        assert!(b.undo());
+        assert_eq!(b.revision(), 3, "undo 也是变更事务");
+        assert!(b.redo());
+        assert_eq!(b.revision(), 4, "redo 同理");
+        assert!(b.undo(), "redo 后 undo 栈仍有 insert 那条记录");
+        assert_eq!(b.revision(), 5);
+        assert!(b.undo(), "insert 也能撤");
+        assert_eq!(b.revision(), 6);
+        assert!(!b.undo(), "栈真空了");
+        assert_eq!(b.revision(), 6, "空撤销不动版本");
+    }
+
+    #[test]
+    fn noop_replace_is_short_circuited() {
+        let mut b = Buffer::from_plain_text("abc");
+        b.replace_range(p(0, 1), p(0, 1), "");
+        assert_eq!(b.revision(), 0, "空域+空文本 = 无变更");
+        assert!(b.take_pending().0.is_empty(), "无待发记录");
+        assert!(!b.undo(), "no-op 不落 undo 记录");
+        // 反例：空文本 + 有域 = 删除（真变更）
+        b.replace_range(p(0, 0), p(0, 1), "");
+        assert_eq!(b.revision(), 1);
+        assert_eq!(b.to_plain_text(), "bc");
+    }
+
+    #[test]
+    fn pending_records_replace_precisely() {
+        let mut b = Buffer::from_plain_text("one\ntwo");
+        b.replace_range(p(0, 1), p(0, 2), "X"); // "one"→"oXe"
+        let (pending, _) = b.take_pending();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "replace");
+        assert_eq!(pending[0].start, Some(p(0, 1)));
+        assert_eq!(pending[0].end, Some(p(0, 2)), "end = 变更前被替换域终点");
+        assert_eq!(pending[0].text, Some("X".into()));
+        // drain 后清空（不重复发）
+        assert!(b.take_pending().0.is_empty());
+    }
+
+    #[test]
+    fn pending_records_undo_redo_single_precisely() {
+        let mut b = Buffer::from_plain_text("abc");
+        b.set_cursor(p(0, 3));
+        b.insert("def"); // [0,3)-[0,3) 插 "def"
+        let _ = b.take_pending();
+
+        assert!(b.undo());
+        let (pending, _) = b.take_pending();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "undo");
+        assert_eq!(pending[0].start, Some(p(0, 3)));
+        assert_eq!(
+            pending[0].end,
+            Some(p(0, 6)),
+            "撤销前域 = new_text 占位域 [0,3)-[0,6)"
+        );
+        assert_eq!(pending[0].text, Some("".into()), "undo 恢复为删除该插入");
+
+        assert!(b.redo());
+        let (pending, _) = b.take_pending();
+        assert_eq!(pending[0].kind, "redo");
+        assert_eq!(pending[0].start, Some(p(0, 3)));
+        assert_eq!(
+            pending[0].end,
+            Some(p(0, 3)),
+            "重放前域 = end_del（纯插入）"
+        );
+        assert_eq!(pending[0].text, Some("def".into()));
+    }
+
+    #[test]
+    fn pending_records_batch_replace_and_coarse_undo() {
+        let mut b = Buffer::from_plain_text("aXbXc");
+        // 两个点位一次批量事务（find-replace 全部替换路径）
+        b.replace_batch(vec![
+            (p(0, 1), p(0, 2), "Y".into()),
+            (p(0, 3), p(0, 4), "Y".into()),
+        ]);
+        assert_eq!(b.revision(), 1, "一次批量事务只 +1");
+        let (pending, _) = b.take_pending();
+        assert_eq!(pending.len(), 2, "每点位一条记录");
+        assert!(pending.iter().all(|r| r.kind == "replace"));
+        assert_eq!(pending[0].start, Some(p(0, 1)));
+        assert_eq!(pending[1].start, Some(p(0, 3)));
+
+        // 批量撤销：粗粒度（kind-only）
+        assert!(b.undo());
+        let (pending, _) = b.take_pending();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "undo");
+        assert!(pending[0].start.is_none(), "批量撤销 start 不可精确——省略");
+        assert!(pending[0].text.is_none());
+        assert_eq!(b.to_plain_text(), "aXbXc");
+    }
+
+    #[test]
+    fn pending_records_base_revision_for_span() {
+        let mut b = Buffer::from_plain_text("a b c ");
+        // 一次手势多步（模拟 undo 批量前的连续编辑）
+        b.insert("x");
+        b.insert("y");
+        let (records, base) = b.take_pending();
+        assert_eq!(records.len(), 2, "两步合并一次收尾");
+        assert_eq!(base, Some(0), "基线 = 首条入队时版本");
+        assert_eq!(b.revision(), 2, "当前版本已 +2");
+
+        // 无变更收尾：空记录 + None 基线
+        let (records, base) = b.take_pending();
+        assert!(records.is_empty());
+        assert_eq!(base, None);
+    }
+
+    #[test]
+    fn clone_drops_pending_but_keeps_revision() {
+        let mut b = Buffer::from_plain_text("abc");
+        b.insert("d");
+        let snapshot = b.clone();
+        assert_eq!(snapshot.revision(), 1, "版本随快照");
+        let mut snapshot = snapshot;
+        assert!(
+            snapshot.take_pending().0.is_empty(),
+            "克隆体不是事件源——不带待发记录"
+        );
     }
 }
