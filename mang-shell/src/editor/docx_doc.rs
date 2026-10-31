@@ -361,6 +361,9 @@ pub fn readonly_allows(key: &str, ctrl: bool) -> bool {
         // F6：Ctrl+=/-/0 字号缩放与 Ctrl+T 系主题键是视图命令非编辑
         //——只读态（docx/pdf）同样可缩放/切主题。
         "=" | "+" | "-" | "0" | "t" => ctrl,
+        // G2：Ctrl+G 跳转到行是导航命令非编辑——只读态（docx/pdf）
+        // 同样可用（光标定位 + 滚动到可见区，无文本变更）。
+        "g" => ctrl,
         _ => false,
     }
 }
@@ -544,6 +547,8 @@ mod tests {
         assert!(readonly_allows("a", true), "Ctrl+A 全选放行");
         assert!(readonly_allows("c", true), "Ctrl+C 复制放行");
         assert!(readonly_allows("f", true), "Ctrl+F 查找放行");
+        assert!(readonly_allows("g", true), "G2：Ctrl+G 跳行放行（导航类）");
+        assert!(!readonly_allows("g", false), "无 Ctrl 的 g 不放行");
         assert!(
             readonly_allows("tab", true),
             "F3：Ctrl+Tab 标签循环导航放行"
