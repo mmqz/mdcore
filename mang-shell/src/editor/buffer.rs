@@ -62,6 +62,53 @@ impl Point {
     }
 }
 
+/// G3：缩进单位（可配置——settings `indent_unit` 键："2" / "4" / "tab"）。
+/// 缺省 `Spaces4`（与既有 Tab 键插 4 空格语义逐位一致——行为零漂移）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum IndentUnit {
+    #[default]
+    Spaces4,
+    Spaces2,
+    Tab,
+}
+
+impl IndentUnit {
+    /// 单位文本（插入物）。
+    pub fn as_text(self) -> &'static str {
+        match self {
+            IndentUnit::Spaces4 => "    ",
+            IndentUnit::Spaces2 => "  ",
+            IndentUnit::Tab => "\t",
+        }
+    }
+
+    /// settings 键值解析（未知值归缺省 Spaces4——与主题模式归一同口径）。
+    pub fn from_setting(key: &str) -> Self {
+        match key {
+            "2" => IndentUnit::Spaces2,
+            "tab" => IndentUnit::Tab,
+            _ => IndentUnit::Spaces4,
+        }
+    }
+
+    /// settings 序列化键值（缺省也写回——往返一致）。
+    pub fn setting_key(self) -> &'static str {
+        match self {
+            IndentUnit::Spaces4 => "4",
+            IndentUnit::Spaces2 => "2",
+            IndentUnit::Tab => "tab",
+        }
+    }
+
+    /// 反缩进的 Tab 渲染宽度近似（Tab 单位删前导空格时的折算宽度）。
+    pub fn tab_width_approx(self) -> usize {
+        match self {
+            IndentUnit::Spaces4 | IndentUnit::Tab => 4,
+            IndentUnit::Spaces2 => 2,
+        }
+    }
+}
+
 /// 一次可逆编辑（四元组）：
 /// - redo 方向：`[start, end_del)` 的 `old_text` 替换为 `new_text`
 /// - undo 方向：`new_text` 在 `start` 处的当前占位（由 `end_after_insert`
@@ -759,6 +806,14 @@ impl Buffer {
         if self.cursor.col > len {
             self.cursor.col = len;
         }
+    }
+
+    /// G3：行首既有缩进宽度（char 计——前导空格与 Tab 均按 1 char）。
+    pub fn leading_indent_len(&self, line: usize) -> usize {
+        self.line(line)
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .count()
     }
 
     // ---------------------------------------------------------------------------
@@ -1622,5 +1677,44 @@ mod g1_find_replace_tests {
         let undo_elapsed = t.elapsed();
         println!("perf(千处批量撤销) = {undo_elapsed:?}");
         assert_eq!(b.to_plain_text(), lines.join("\n"));
+// G3 缩进单位——专项单测
+    }
+}
+
+// =============================================================================
+// =============================================================================
+
+#[cfg(test)]
+mod g3_indent_tests {
+    use super::*;
+
+    #[test]
+    fn indent_unit_setting_roundtrip() {
+        for unit in [IndentUnit::Spaces4, IndentUnit::Spaces2, IndentUnit::Tab] {
+            let key = unit.setting_key();
+            assert_eq!(IndentUnit::from_setting(key), unit, "键值往返一致");
+        }
+        // 未知值归缺省（4 空格——与主题模式归一同口径）
+        assert_eq!(IndentUnit::from_setting("bogus"), IndentUnit::Spaces4);
+        assert_eq!(IndentUnit::default(), IndentUnit::Spaces4);
+    }
+
+    #[test]
+    fn indent_unit_texts() {
+        assert_eq!(IndentUnit::Spaces4.as_text(), "    ");
+        assert_eq!(IndentUnit::Spaces2.as_text(), "  ");
+        assert_eq!(IndentUnit::Tab.as_text(), "\t");
+    }
+
+    #[test]
+    fn leading_indent_counts_spaces_and_tabs() {
+        let b = Buffer::from_plain_text("    indented\n  two\n\ttabbed\nnone");
+        assert_eq!(b.leading_indent_len(0), 4);
+        assert_eq!(b.leading_indent_len(1), 2);
+        assert_eq!(b.leading_indent_len(2), 1, "Tab 按 1 char 计");
+        assert_eq!(b.leading_indent_len(3), 0);
+        // 混合前导（空格+Tab+空格 均计入，直到第一个非空白）
+        let m = Buffer::from_plain_text("  \t mixed");
+        assert_eq!(m.leading_indent_len(0), 4, "2 空格 + 1 Tab + 1 空格");
     }
 }

@@ -81,7 +81,7 @@ use theme::ThemeColors;
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
-use buffer::{Buffer, Point};
+use buffer::{Buffer, IndentUnit, Point};
 use docx_doc::{DocxPayload, DocxProps, HeadingEntry};
 use find_bar::{FindKeyOutcome, FindState};
 use highlight::TokenKind;
@@ -188,6 +188,44 @@ const TEXT_PADDING: Pixels = px(8.);
 /// PageUp/PageDown 步进（行，近似一屏）。
 const PAGE_LINES: usize = 20;
 
+/// G3：`line` 的缩进编辑（行首插入单位文本）——`(start, end, 插入文本)`。
+fn indent_line_edit(line: usize, unit: IndentUnit) -> (Point, Point, String) {
+    (
+        Point::new(line, 0),
+        Point::new(line, 0),
+        unit.as_text().to_string(),
+    )
+}
+
+/// G3：`line` 的反缩进编辑（删行首既有缩进 ≤ 一个单位）——无可删 None。
+///
+/// 删除量口径：行首首字符为 `\t` → 删 1 char（Tab 单位语义）；否则删
+/// `min(前导空白数, 单位宽度)`（Tab 单位按渲染宽度折算 4——`tab_width_
+/// approx`；空格单位删各自宽度）。
+fn outdent_line_edit(
+    buffer: &Buffer,
+    line: usize,
+    unit: IndentUnit,
+) -> Option<(Point, Point, String)> {
+    let text = buffer.line(line);
+    let first = text.chars().next()?;
+    let take = if first == '\t' {
+        1
+    } else {
+        let lead = buffer.leading_indent_len(line);
+        let width = match unit {
+            IndentUnit::Tab => unit.tab_width_approx(),
+            IndentUnit::Spaces2 => 2,
+            IndentUnit::Spaces4 => 4,
+        };
+        lead.min(width)
+    };
+    if take == 0 {
+        return None;
+    }
+    Some((Point::new(line, 0), Point::new(line, take), String::new()))
+}
+
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -244,6 +282,9 @@ pub struct Editor {
     /// F6：正文字号（px，8-32 域——Ctrl+=/-/0 缩放；hit-test 测宽与
     /// 渲染同源，缩放后光标/鼠标命中不漂移）。
     font_size: Pixels,
+    /// G3：缩进单位（Tab/Shift+Tab 消费——settings `indent_unit` 键；
+    /// 缺省 Spaces4 与既有 Tab 插 4 空格语义一致）。
+    indent_unit: IndentUnit,
     /// docx 转换产物（行模型 + 标题树 + 属性；`None` = 非 docx 态）。
     docx: Option<DocxPayload>,
     /// pdf 转换产物（批 4：行模型 + 书签树 + 页表；`None` = 非 pdf 态）。
@@ -284,6 +325,11 @@ impl Editor {
             file_path: path,
             display_name: SharedString::from(display_name),
             font_size: DEFAULT_FONT_SIZE,
+            indent_unit: IndentUnit::from_setting(
+                crate::settings::load_indent_unit()
+                    .as_deref()
+                    .unwrap_or("4"),
+            ),
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
@@ -326,6 +372,11 @@ impl Editor {
             file_path: Some(path),
             display_name: SharedString::from(display_name),
             font_size: DEFAULT_FONT_SIZE,
+            indent_unit: IndentUnit::from_setting(
+                crate::settings::load_indent_unit()
+                    .as_deref()
+                    .unwrap_or("4"),
+            ),
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
@@ -370,6 +421,11 @@ impl Editor {
             file_path: Some(path),
             display_name: SharedString::from(display_name),
             font_size: DEFAULT_FONT_SIZE,
+            indent_unit: IndentUnit::from_setting(
+                crate::settings::load_indent_unit()
+                    .as_deref()
+                    .unwrap_or("4"),
+            ),
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
@@ -419,6 +475,11 @@ impl Editor {
             find: None,
             find_saved: FindState::default(),
             goto: None,
+            indent_unit: IndentUnit::from_setting(
+                crate::settings::load_indent_unit()
+                    .as_deref()
+                    .unwrap_or("4"),
+            ),
             scroll: UniformListScrollHandle::new(),
             // xlsx 无围栏语义——fence 恒 false（同 docx 态口径，
             // refresh_caches 在 xlsx 模式下跳过 md 逐行推进）。
@@ -1016,9 +1077,9 @@ impl Editor {
                 self.after_edit();
             }
             "tab" if !ctrl => {
-                // F3：带 Ctrl 的 Tab（Ctrl+Tab 标签切换）不消费——冒泡
-                // 至 shell 级键钩子（多标签循环）。
-                self.tab_multi();
+                // G3：Tab 缩进 / Shift+Tab 反缩进（F3 口径保留：带 Ctrl
+                // 的 Tab 是标签切换——不消费，冒泡 shell 级键钩子）。
+                self.indent_key(shift);
                 self.after_edit();
             }
             "escape" => {
@@ -1208,15 +1269,102 @@ impl Editor {
         }
     }
 
-    /// 多光标 Tab。
-    fn tab_multi(&mut self) {
-        if self.cursors.is_multiple() {
-            self.cursors.insert_all(&mut self.buffer, "    ");
-            self.sync_buffer_from_cursors_primary();
-        } else {
-            self.buffer.tab();
-            self.sync_cursors_from_buffer();
+    /// G3：Tab / Shift+Tab——缩进 / 反缩进（替代既有 tab_multi 的
+    /// "一律插 4 空格"；无选区 Tab 仍是光标处插单位——既有行为保留，
+    /// 单位文本改为可配置）。
+    ///
+    /// - 每光标独立判定：有选区 → 覆盖行段入缩进集；裸光标 Tab →
+    ///   光标处插单位（多光标走 `insert_all` 既有批语义）；裸光标
+    ///   Shift+Tab → 当前行入缩进集。
+    /// - 行缩进/反缩进：全行去重后**一次手势批应用**（文档序尾→头
+    ///   逐行 `replace_range` + `add_undo_batch` 登记——Ctrl+Z 一键
+    ///   连撤整批）；与裸光标插入路径同手势时批点数累加。
+    /// - 光标/选区列按各行的编辑位移平移（缩进 +n / 反缩进 -k，
+    ///   列下限 0）。
+    fn indent_key(&mut self, shift: bool) {
+        let unit = self.indent_unit;
+        // ① 收集：行集（去重）+ 裸光标 Tab 插入点（多光标批）。
+        let mut lines: Vec<usize> = Vec::new();
+        let mut bare_insert = false;
+        for (a, h) in self.cursors.entries() {
+            let (start, end) = if a <= h { (*a, *h) } else { (*h, *a) };
+            if start != end {
+                lines.extend(start.line..=end.line);
+            } else if shift {
+                lines.push(end.line);
+            } else {
+                bare_insert = true;
+            }
         }
+        lines.sort_unstable();
+        lines.dedup();
+        // ② 裸光标 Tab：光标处插单位（多光标 insert_all 既有批路径；
+        //    单光标 Buffer.insert——与旧 tab_multi 行为一致）。
+        if bare_insert && !shift {
+            if self.cursors.is_multiple() {
+                self.cursors.insert_all(&mut self.buffer, unit.as_text());
+            } else {
+                self.buffer.insert(unit.as_text());
+                self.sync_cursors_from_buffer();
+            }
+        }
+        // ③ 行缩进/反缩进批：尾→头应用（先行编辑不动后续行坐标）；
+        //    位移表驱动光标修正。
+        if !lines.is_empty() {
+            let mut edits: Vec<(Point, Point, String)> = Vec::with_capacity(lines.len());
+            let mut deltas: std::collections::HashMap<usize, i64> =
+                std::collections::HashMap::new();
+            for &line in lines.iter().rev() {
+                let (start, end, text) = if shift {
+                    match outdent_line_edit(&self.buffer, line, unit) {
+                        Some(e) => e,
+                        None => continue, // 无可删缩进的行跳过（不静默失败——计数如实）
+                    }
+                } else {
+                    indent_line_edit(line, unit)
+                };
+                deltas.insert(
+                    line,
+                    if shift {
+                        -(start.col as i64 - end.col as i64).abs()
+                    } else {
+                        text.chars().count() as i64
+                    },
+                );
+                edits.push((start, end, text));
+            }
+            if !edits.is_empty() {
+                for (start, end, text) in &edits {
+                    self.buffer.replace_range(*start, *end, text);
+                }
+                // 一手势批登记（含 ② 的插入条数——add_undo_batch 累加）。
+                self.cursors.add_undo_batch(edits.len());
+                // 光标/选区列按行位移平移。
+                self.cursors
+                    .shift_cols_by_line(|line| deltas.get(&line).copied().unwrap_or(0));
+                self.sync_buffer_from_cursors_primary();
+                // 证据行（烟雾断言通道；outdent 的删量因行而异不展开）。
+                if shift {
+                    eprintln!(
+                        "outdent: {} lines (unit={})",
+                        edits.len(),
+                        unit.setting_key()
+                    );
+                } else {
+                    eprintln!(
+                        "indent: {} lines (unit={})",
+                        edits.len(),
+                        unit.setting_key()
+                    );
+                }
+            }
+        }
+    }
+
+    /// G3：缩进单位设置（运行时换单位——为后续设置 UI 预留；构造期
+    /// 从 settings 读入）。
+    pub fn set_indent_unit(&mut self, unit: IndentUnit) {
+        self.indent_unit = unit;
     }
 
     /// 多光标退格。
@@ -2959,6 +3107,66 @@ mod tests {
         assert_eq!(bad, "非数字——请输入行号");
         let zero = goto_hint("0", 100);
         assert_eq!(zero, "行号从 1 起");
+    }
+
+    // ---------------- G3：缩进/反缩进（纯函数面） ----------------
+
+    #[test]
+    fn indent_line_edit_inserts_unit_at_line_start() {
+        let e = indent_line_edit(7, IndentUnit::Spaces2);
+        assert_eq!(e, (p(7, 0), p(7, 0), "  ".to_string()));
+        let e4 = indent_line_edit(0, IndentUnit::Spaces4);
+        assert_eq!(e4.2, "    ");
+        let et = indent_line_edit(3, IndentUnit::Tab);
+        assert_eq!(et.2, "\t");
+    }
+
+    #[test]
+    fn outdent_line_edit_partial_and_full_removal() {
+        let b = Buffer::from_plain_text("  two\n    four\nnone");
+        // 前导 2，单位 4 → 删 min(2,4)=2
+        assert_eq!(
+            outdent_line_edit(&b, 0, IndentUnit::Spaces4),
+            Some((p(0, 0), p(0, 2), String::new()))
+        );
+        // 前导 4，单位 4 → 删 4
+        assert_eq!(
+            outdent_line_edit(&b, 1, IndentUnit::Spaces4),
+            Some((p(1, 0), p(1, 4), String::new()))
+        );
+        // 无前导 → None（不产生空编辑）
+        assert_eq!(outdent_line_edit(&b, 2, IndentUnit::Spaces4), None);
+    }
+
+    #[test]
+    fn outdent_line_edit_prefers_leading_tab_char() {
+        let b = Buffer::from_plain_text("\tcode");
+        // Tab 单位：删 1 个 \t 字符
+        assert_eq!(
+            outdent_line_edit(&b, 0, IndentUnit::Tab),
+            Some((p(0, 0), p(0, 1), String::new()))
+        );
+        // Spaces2 单位：行首是 \t → 仍删 1 char（Tab 字符优先——单位
+        // 不改变 Tab 字符的删除粒度）
+        assert_eq!(
+            outdent_line_edit(&b, 0, IndentUnit::Spaces2),
+            Some((p(0, 0), p(0, 1), String::new()))
+        );
+    }
+
+    #[test]
+    fn outdent_line_edit_tab_unit_folds_spaces_by_width() {
+        let b = Buffer::from_plain_text("      six");
+        // 前导 6 空格，Tab 单位折算宽 4 → 删 4（留 2——渐进对齐语义）
+        assert_eq!(
+            outdent_line_edit(&b, 0, IndentUnit::Tab),
+            Some((p(0, 0), p(0, 4), String::new()))
+        );
+        // Spaces2 单位 → 删 2
+        assert_eq!(
+            outdent_line_edit(&b, 0, IndentUnit::Spaces2),
+            Some((p(0, 0), p(0, 2), String::new()))
+        );
     }
 
     #[test]
