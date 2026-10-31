@@ -101,6 +101,11 @@ fn main() {
     // F7：git 面板烟雾（--smoke-git-diff——与 --smoke-workspace 组合：
     // 4.5s 打开首个改动的 diff 只读标签；断言 git: 证据行 + diff: 标签）。
     let smoke_git_diff = args.iter().any(|a| a == "--smoke-git-diff");
+    // G1：查找替换烟雾（--smoke-find-replace——与启动 FILE 组合：3.5s
+    // 合成 Ctrl+H 开替换条 → 输入 query/替换文本 → Tab 切行 →
+    // Ctrl+Alt+Enter 全部替换 → Esc 关条 → Ctrl+Z 一次整批撤销；
+    // 断言 find-replace: 三条证据行 + quit reached）。
+    let smoke_find_replace = args.iter().any(|a| a == "--smoke-find-replace");
     // F6：主题循环烟雾（--smoke-theme-cycle——3.5s 合成 Ctrl+T；
     // 断言 theme: 证据行 + settings.json theme 键 + 全窗重绘不崩）。
     let smoke_theme_cycle = args.iter().any(|a| a == "--smoke-theme-cycle");
@@ -353,6 +358,63 @@ fn main() {
                 .detach();
             }
 
+            // G1：查找替换烟雾（--smoke-find-replace——与启动 FILE 组合）。
+            // 序列（全部经完整键派发管线）：
+            //   3.5s Ctrl+H 开替换条（断言 "find-replace: bar open"）
+            //   4.2s 输入 query "mang" → 4.8s Tab 切替换行 → 输入 "MANG"
+            //   5.8s Ctrl+Alt+Enter 全部替换（断言 "replace-all N matches"）
+            //   6.6s Esc 关条（焦点回编辑区——Ctrl+Z 需达编辑器分发）
+            //   7.2s Ctrl+Z 一次整批撤销（断言 "undo batch N edits"）
+            if smoke_find_replace {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "h", true, false, None).await;
+                    // query：mang（virtual 键走 key_char 通道——IME 语义同路径）
+                    for ch in "mang".chars() {
+                        dispatch_key(
+                            &handle,
+                            cx,
+                            80,
+                            "virtual",
+                            false,
+                            false,
+                            Some(ch.to_string().as_str()),
+                        )
+                        .await;
+                    }
+                    dispatch_key(&handle, cx, 400, "tab", false, false, None).await;
+                    // 替换文本：MANG（shift + key_char 大写直输）
+                    for ch in "MANG".chars() {
+                        dispatch_key(
+                            &handle,
+                            cx,
+                            80,
+                            "virtual",
+                            false,
+                            true,
+                            Some(ch.to_string().as_str()),
+                        )
+                        .await;
+                    }
+                    // Ctrl+Alt+Enter 全部替换
+                    dispatch_key_mods(
+                        &handle,
+                        cx,
+                        700,
+                        "enter",
+                        true,
+                        true,
+                        false,
+                        None,
+                    )
+                    .await;
+                    dispatch_key(&handle, cx, 800, "escape", false, false, None).await;
+                    dispatch_key(&handle, cx, 600, "z", true, false, None).await;
+                    eprintln!("find-replace: script done (ctrl+h → query → tab → repl → ctrl+alt+enter → esc → ctrl+z)");
+                })
+                .detach();
+            }
+
             if let Some(sec) = smoke_sec {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -411,6 +473,47 @@ async fn dispatch_key(
     });
     if let Err(err) = &result {
         eprintln!("dispatch_key({key}): update_window 失败: {err}");
+    }
+}
+
+/// G1：[`dispatch_key`] 的全修饰键变体（Ctrl+Alt+Enter 三修饰组合——
+/// 查找替换烟雾的"全部替换"合成事件；派发口径与 [`dispatch_key`] 一致：
+/// update_window 闭包 + `Window::dispatch_event` 完整管线）。
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_key_mods(
+    window: &gpui::WindowHandle<shell::ShellApp>,
+    cx: &mut gpui::AsyncApp,
+    delay_ms: u64,
+    key: &str,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    key_char: Option<&str>,
+) {
+    use gpui::{KeyDownEvent, Keystroke, Modifiers, PlatformInput};
+    cx.background_executor()
+        .timer(Duration::from_millis(delay_ms))
+        .await;
+    let event = PlatformInput::KeyDown(KeyDownEvent {
+        keystroke: Keystroke {
+            modifiers: Modifiers {
+                control: ctrl,
+                alt,
+                shift,
+                ..Default::default()
+            },
+            key: key.to_string(),
+            key_char: key_char.map(|c| c.to_string()),
+        },
+        is_held: false,
+        prefer_character_input: false,
+    });
+    let any_handle: gpui::AnyWindowHandle = window.clone().into();
+    let result = cx.update_window(any_handle, |_, window, cx| {
+        window.dispatch_event(event, cx);
+    });
+    if let Err(err) = &result {
+        eprintln!("dispatch_key_mods({key}): update_window 失败: {err}");
     }
 }
 
