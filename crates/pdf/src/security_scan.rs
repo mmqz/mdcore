@@ -333,7 +333,10 @@ fn text_value(object: &Object) -> Option<String> {
 /// PDF 文本串解码（探针可读面）：UTF-16BE BOM → UTF-16 解码（代理对
 /// 拼合，lossy 替换非法单元）；否则 PDFDocEncoding 近似——ASCII 段
 /// 精确，高位按 latin-1 映射（探针语义的损失式回退，在档）。
-fn decode_pdf_text(bytes: &[u8]) -> String {
+///
+/// `pub(crate)`：S2-3 links/layers 读取面复用（crate 内单一实现纪律
+/// ——零复制粘贴）。
+pub(crate) fn decode_pdf_text(bytes: &[u8]) -> String {
     if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         let mut units = Vec::with_capacity(bytes.len() / 2);
         let mut i = 2;
