@@ -595,6 +595,25 @@ fn choice_options(doc: &Document, id: ObjectId) -> Vec<String> {
         .collect()
 }
 
+/// 读字典里的「文本值」——**兼容字符串与名字两种形态**。
+///
+/// PDF 字典同一个键可能是 `(文本)` / `<hex>`（字符串）或 `/名字`（名字），
+/// 用 `as_str()` 读名字只会静默拿到 `None`。本函数两种都认（名字去前导 `/`），
+/// 是 crate 文档「字典三形态」纪律的落点——有它之后这类坑不可能再犯。
+///
+/// 用法：
+/// ```ignore
+/// let sub = dict_text(&sig_dict, b"SubFilter");   // "/ETSI.CAdES.detached" -> Some("ETSI.CAdES.detached")
+/// let why = dict_text(&sig_dict, b"Reason");      // "(投标文件签署)"      -> Some("投标文件签署")
+/// ```
+pub fn dict_text(d: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
+    match d.get(key).ok()? {
+        Object::String(s, _) => Some(decode_pdf_string(s)),
+        Object::Name(n) => Some(String::from_utf8_lossy(n).into_owned()),
+        _ => None,
+    }
+}
+
 /// PDF 文本串解码：UTF-16BE（带 BOM）/ UTF-8 / PDFDocEncoding（近似 Latin-1）。
 pub(crate) fn decode_pdf_string(raw: &[u8]) -> String {
     if raw.starts_with(&[0xFE, 0xFF]) {
@@ -1246,6 +1265,24 @@ fn attach_font(doc: &mut Document, page_id: ObjectId, font: Object) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dict_text_reads_both_string_and_name() {
+        // 这就是「字典三形态」的回归锁：两种形态都必须读到值
+        let mut d = lopdf::Dictionary::new();
+        d.set("NameForm", Object::Name(b"ETSI.CAdES.detached".to_vec()));
+        d.set(
+            "StringForm",
+            Object::String(b"plain text".to_vec(), lopdf::StringFormat::Literal),
+        );
+        assert_eq!(
+            dict_text(&d, b"NameForm").as_deref(),
+            Some("ETSI.CAdES.detached"),
+            "名字形态必须可读（as_str 在这里会拿到 None）"
+        );
+        assert_eq!(dict_text(&d, b"StringForm").as_deref(), Some("plain text"));
+        assert_eq!(dict_text(&d, b"Missing"), None);
+    }
 
     #[test]
     fn pdf_string_roundtrip_utf16() {
