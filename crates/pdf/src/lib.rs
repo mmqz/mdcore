@@ -68,7 +68,13 @@ pub mod generate;
 // 合并/拆分 + 书签/链接/表单域联动重映射 + 丢失面显式登记）。
 #[cfg(feature = "engine-lopdf")]
 pub mod organize;
+// S2-2（#103 任务 2）：标注写回扩展——外部标注读取 + PdfAnnotator
+// 门面（add/remove/list/save）+ 增量删除面 + 11 kind 模型/写面。
+#[cfg(feature = "engine-lopdf")]
+pub mod annotate;
 
+#[cfg(feature = "engine-lopdf")]
+pub use annotate::{read_annotations, PdfAnnotator, ReadReport};
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
 pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
