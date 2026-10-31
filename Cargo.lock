@@ -1824,6 +1824,7 @@ dependencies = [
  "calamine",
  "docx-rs",
  "flate2",
+ "mdc-formula",
  "quick-xml",
  "rust_xlsxwriter",
  "serde_json",

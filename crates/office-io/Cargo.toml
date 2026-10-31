@@ -51,6 +51,14 @@ quick-xml = "0.41"
 # 上游已合入下游 fork 功能线（FORK_CHANGES.md）——锁版本 + 破坏性
 # 变更先跑读侧往返测试（tests/docx_roundtrip.rs 即此纪律的常驻化）。
 docx-rs = { version = "0.4", default-features = false }
+# S3 任务 1（issue #113）：重算接入——rebuild 面公式引擎依赖。
+# mdc-formula = workspace 内 path 依赖（#112 引入：ironcalc_base 0.9.1
+# 包装，MIT OR Apache-2.0——调研定谳在 issue #110 评论在档）。零 lock
+# 增量（mdc-formula 及其闭包已在 workspace Cargo.lock——office-io 与
+# mdcore-wasm 的既有边均不受影响）。wasm32 面：ironcalc_base 依赖
+# js-sys（wasm 原生面）+ chrono/csv/regex 族（均 wasm32 兼容）——
+# mdcore-wasm 传递编译由 wasm32 check 门验证。
+mdc-formula = { path = "../formula" }
 
 # ---------------------------------------------------------------------------
 # t19（2026-10-14）：rust_xlsxwriter 依赖边目标分裂 + "wasm" 特性——
