@@ -47,6 +47,7 @@ mod panels;
 mod settings;
 mod shell;
 mod status_bar;
+mod tab_bar;
 mod title_bar;
 
 use document::OpenOutcome;
@@ -70,12 +71,18 @@ fn main() {
         .position(|a| a == "--smoke-sec")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok());
-    // F1：替换管线烟雾钩子（--smoke-open FILE2）。
-    let smoke_open = args
+    // F1/F3：标签烟雾钩子（--smoke-open FILE——可多次：每次追加一个
+    // 标签，与 Ctrl+O 对话框回调同走 ShellApp::open_document）。
+    let smoke_opens: Vec<String> = args
         .iter()
-        .position(|a| a == "--smoke-open")
-        .and_then(|i| args.get(i + 1))
-        .cloned();
+        .enumerate()
+        .filter(|(_, a)| *a == "--smoke-open")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+    // F3：标签键位烟雾（--smoke-tab-keys——与 --smoke-open 组合：开窗
+    // 3.5s 合成 Ctrl+Tab 循环 + 4.5s 合成 Ctrl+W 关闭，经完整键派发
+    // 管线断言 tabs 证据行）。
+    let smoke_tab_keys = args.iter().any(|a| a == "--smoke-tab-keys");
     // F2：工作区烟雾钩子（--smoke-workspace DIR）。
     let smoke_workspace = args
         .iter()
@@ -97,7 +104,13 @@ fn main() {
             let flag_value_positions: Vec<usize> =
                 ["--smoke-sec", "--smoke-open", "--smoke-workspace"]
                     .iter()
-                    .filter_map(|flag| args.iter().position(|a| a == flag).map(|pos| pos + 1))
+                    .flat_map(|flag| {
+                        args.iter()
+                            .enumerate()
+                            .filter(|(_, a)| a == flag)
+                            .map(|(i, _)| i + 1)
+                            .collect::<Vec<_>>()
+                    })
                     .collect();
             let file_arg = args
                 .iter()
@@ -176,21 +189,28 @@ fn main() {
                 }
             }
 
-            // F1：替换管线烟雾——开窗 2.5s 后把 FILE2 换入编辑区
-            // （与 Ctrl+O 对话框回调同走 ShellApp::open_document；
-            // 断言通道 = stderr "open: <路径>" + docx/pdf 证据行 +
-            // "smoke: quit reached"）。
-            if let Some(extra) = smoke_open {
+            // F1/F3：标签烟雾——开窗 2.5s 起依次打开各 FILE（每个追加
+            // 一标签；与 Ctrl+O 对话框回调同走 open_document）；可选
+            // 3.5s 合成 Ctrl+Tab 循环 + 4.5s 合成 Ctrl+W 关闭（--smoke-
+            // tab-keys——完整键派发管线，断言 tabs 证据行）。
+            if !smoke_opens.is_empty() {
                 let handle = window_handle.clone();
+                let keys = smoke_tab_keys;
                 cx.spawn(async move |cx| {
                     cx.background_executor()
                         .timer(Duration::from_millis(2500))
                         .await;
                     let _ = cx.update(|cx| {
                         handle.update(cx, |shell, window, cx| {
-                            shell.open_document(std::path::PathBuf::from(extra), window, cx);
+                            for file in &smoke_opens {
+                                shell.open_document(std::path::PathBuf::from(file), window, cx);
+                            }
                         })
                     });
+                    if keys {
+                        dispatch_key(&handle, cx, 1000, "tab", true, false).await;
+                        dispatch_key(&handle, cx, 1000, "w", true, false).await;
+                    }
                 })
                 .detach();
             }
@@ -229,14 +249,58 @@ fn main() {
 }
 
 // ---------------------------------------------------------------------------
+// F3：标签键位烟雾辅助（合成 KeyDown——与鼠标烟雾同经
+// Window::dispatch_event 完整派发管线）。
+// ---------------------------------------------------------------------------
+
+/// 延时 `delay_ms` 后向窗口派发一键（`ctrl`/`shift` 修饰）。键事件走
+/// 与真实输入同路径的派发链（焦点路由 + 冒泡）——shell 级钩子/
+/// 编辑器分派均真实触达。
+async fn dispatch_key(
+    window: &gpui::WindowHandle<shell::ShellApp>,
+    cx: &mut gpui::AsyncApp,
+    delay_ms: u64,
+    key: &str,
+    ctrl: bool,
+    shift: bool,
+) {
+    use gpui::{KeyDownEvent, Keystroke, Modifiers, PlatformInput};
+    cx.background_executor()
+        .timer(Duration::from_millis(delay_ms))
+        .await;
+    let event = PlatformInput::KeyDown(KeyDownEvent {
+        keystroke: Keystroke {
+            modifiers: Modifiers {
+                control: ctrl,
+                shift,
+                ..Default::default()
+            },
+            key: key.to_string(),
+            key_char: None,
+        },
+        is_held: false,
+        prefer_character_input: false,
+    });
+    // update_window（闭包拿 AnyView 而非根视图实体——官方窗口事件派发
+    // 口径，window.rs 测试同款）：不包根视图 update，shell 级监听器
+    //（cx.listener）不重入。此前用 window.update 会包住 ShellApp
+    // 实体更新——键事件再触发其监听器即「already being updated」panic。
+    let any_handle: gpui::AnyWindowHandle = window.clone().into();
+    let _ = cx.update_window(any_handle, |_, window, cx| {
+        window.dispatch_event(event, cx);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // 批 2：鼠标烟雾脚本（--smoke-mouse）
 // ---------------------------------------------------------------------------
 
 /// 合成鼠标事件序列驱动完整派发管线（`Window::dispatch_event`——hitbox
 /// 路由/拖拽状态机与真实事件同路径，仅平台翻译层除外）。
 ///
-/// 坐标为窗口坐标（1280×800 烟雾窗；编辑区 x∈[312,1000]、y∈[36,776]，
-/// 正文原点 x≈372）。命中结果由 Editor `mouse_log` 输出到 stdout——
+/// 坐标为窗口坐标（1280×800 烟雾窗；编辑区 x∈[312,1000]、
+/// y∈[66,776]（F3 标签栏 30px 后——标题栏 36 + 标签栏 30 起），
+/// 正文原点 x≈372。命中结果由 Editor `mouse_log` 输出到 stdout——
 /// 脚本不假设精确行号（截图 + 日志双通道断言）。
 ///
 /// 序列（总约 5s，配 --smoke-sec ≥ 7）：
@@ -299,20 +363,21 @@ async fn run_mouse_script(window: &gpui::WindowHandle<shell::ShellApp>, cx: &mut
         let _ = cx.update(|cx| window.update(cx, |_, window, cx| window.dispatch_event(ev, cx)));
     }
 
-    // 1) 单击定位（首步 2.5s 吸收启动滞后：进程启动→首帧 ~1.2s）
-    step(window, cx, 2500, click(500., 100., 1)).await;
-    step(window, cx, 300, up_at(500., 100.)).await;
+    // 1) 单击定位（首步 2.5s 吸收启动滞后：进程启动→首帧 ~1.2s；
+    //    F3 后 y+30——标签栏 30px 下移编辑区，保持同一行目标）。
+    step(window, cx, 2500, click(500., 130., 1)).await;
+    step(window, cx, 300, up_at(500., 130.)).await;
     // 2) 拖选（约 6 行；阶段间隔 2s——截图稳定窗）
-    step(window, cx, 2000, click(500., 100., 1)).await;
-    step(window, cx, 300, move_to(500., 170.)).await;
-    step(window, cx, 300, move_to(500., 240.)).await;
-    step(window, cx, 400, up_at(500., 240.)).await;
+    step(window, cx, 2000, click(500., 130., 1)).await;
+    step(window, cx, 300, move_to(500., 200.)).await;
+    step(window, cx, 300, move_to(500., 270.)).await;
+    step(window, cx, 400, up_at(500., 270.)).await;
     // 3) 双击选词
-    step(window, cx, 2000, click(500., 100., 2)).await;
-    step(window, cx, 300, up_at(500., 100.)).await;
+    step(window, cx, 2000, click(500., 130., 2)).await;
+    step(window, cx, 300, up_at(500., 130.)).await;
     // 4) 三击选行
-    step(window, cx, 2000, click(500., 100., 3)).await;
-    step(window, cx, 300, up_at(500., 100.)).await;
+    step(window, cx, 2000, click(500., 130., 3)).await;
+    step(window, cx, 300, up_at(500., 130.)).await;
     // 5) 滚轮滚动（向下）
     step(window, cx, 2100, scroll(600., 400.)).await;
     // 6) 出界拖拽：拖到窗口底缘之下（y=830 > 窗高 800）——渐进式 clamp

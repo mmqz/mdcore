@@ -355,6 +355,9 @@ pub fn readonly_allows(key: &str, ctrl: bool) -> bool {
             true
         }
         "a" | "c" | "f" => ctrl,
+        // F3：Ctrl+Tab 标签循环是导航组合非编辑命令——只读态放行
+        //（冒泡至 shell）；无 Ctrl 的 Tab 是缩进编辑——拒绝如故。
+        "tab" => ctrl,
         _ => false,
     }
 }
@@ -538,6 +541,10 @@ mod tests {
         assert!(readonly_allows("a", true), "Ctrl+A 全选放行");
         assert!(readonly_allows("c", true), "Ctrl+C 复制放行");
         assert!(readonly_allows("f", true), "Ctrl+F 查找放行");
+        assert!(
+            readonly_allows("tab", true),
+            "F3：Ctrl+Tab 标签循环导航放行"
+        );
         // 变更面拒绝。
         assert!(!readonly_allows("enter", false));
         assert!(!readonly_allows("backspace", false));

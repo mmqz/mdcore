@@ -58,7 +58,7 @@ pub mod pdf_doc;
 
 use std::cell::RefCell;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 // r42 阶段 B：显示映射（软换行 + 折叠）。
@@ -321,6 +321,11 @@ impl Editor {
     /// 修改标记（状态栏「●」）。
     pub fn is_modified(&self) -> bool {
         self.buffer.is_modified()
+    }
+
+    /// 文档路径（F3 标签身份——`None` = 未命名草稿）。
+    pub fn file_path(&self) -> Option<&Path> {
+        self.file_path.as_deref()
     }
 
     /// 光标位置标签（状态栏「行, 列」——1 基显示）。
@@ -672,7 +677,9 @@ impl Editor {
                 self.delete_forward_multi();
                 self.after_edit();
             }
-            "tab" => {
+            "tab" if !ctrl => {
+                // F3：带 Ctrl 的 Tab（Ctrl+Tab 标签切换）不消费——冒泡
+                // 至 shell 级键钩子（多标签循环）。
                 self.tab_multi();
                 self.after_edit();
             }

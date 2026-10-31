@@ -31,6 +31,7 @@ use crate::editor::Editor;
 use crate::file_tree::FileTree;
 use crate::panels;
 use crate::status_bar;
+use crate::tab_bar::{self, TabItem};
 use crate::title_bar;
 
 /// Ctrl+K 和弦窗口（第二键有效期；过期自动作废——惰性判定无需定时器）。
@@ -39,7 +40,10 @@ const CHORD_WINDOW: Duration = Duration::from_secs(2);
 pub struct ShellApp {
     left_open: bool,
     right_open: bool,
-    editor: Option<Entity<Editor>>,
+    /// F3：标签集（每标签 = 一个打开文档）；`active` 指向当前标签
+    ///（空集 = 空态）。原 `Option<Entity<Editor>>` 单例面由此取代。
+    tabs: Vec<TabItem>,
+    active: usize,
     /// F2：工作区文件树（打开文件夹后呈现；记忆落盘随 settings）。
     workspace: Option<Entity<FileTree>>,
     /// F2：Ctrl+K 和弦待续期（None = 无和弦进行中）。
@@ -99,7 +103,7 @@ impl NoticeBoard {
 }
 
 impl ShellApp {
-    /// `editor`：成功打开的文档编辑器（`None` = 空态）；`workspace`：
+    /// `editor`：成功打开的启动文档（`None` = 空态）；`workspace`：
     /// 启动恢复的工作区根（F2 记忆——`None` = 无记忆/不存在）。
     pub fn new(
         editor: Option<Entity<Editor>>,
@@ -115,14 +119,32 @@ impl ShellApp {
             let shell = cx.entity().downgrade();
             cx.new(|_| FileTree::new(root, shell))
         });
+        // F3：启动文档 → 首个标签（未命名草稿取合成身份——CLI 无参
+        // 不构造实体，实际不可达；防御完整）。
+        let tabs = editor
+            .map(|editor| {
+                let path = editor
+                    .read(cx)
+                    .file_path()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("未命名"));
+                vec![TabItem { path, editor }]
+            })
+            .unwrap_or_default();
         Self {
             left_open: true,
             right_open: true,
-            editor,
+            tabs,
+            active: 0,
             workspace,
             chord_until: None,
             notice_board: NoticeBoard::default(),
         }
+    }
+
+    /// 当前标签的编辑器（无标签 = 空态 None）。
+    pub fn editor(&self) -> Option<&Entity<Editor>> {
+        self.tabs.get(self.active).map(|tab| &tab.editor)
     }
 
     /// 折叠/展开左栏（文件树）。图标条 `act-file-tree` 触发。
@@ -137,17 +159,32 @@ impl ShellApp {
         cx.notify();
     }
 
-    /// F1：打开文件替换当前编辑区（Ctrl+O 对话框 / 文件树点击 / 最近
-    /// 列表共用通道）。成功→换入新实体 + 聚焦 + 文件树高亮；失败/
-    /// 不支持→提示横幅（不白屏不崩溃）。
+    /// F1/F3：打开文件（Ctrl+O 对话框 / 文件树点击 / 最近列表共用
+    /// 通道）。已开 → 激活既有标签（不重复开）；新文件 → 追加标签并
+    /// 激活 + 聚焦 + 文件树高亮；失败/不支持→提示横幅（不白屏不崩溃）。
     pub fn open_document(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // F3：标签身份用绝对路径（CLI 相对入参 vs 对话框绝对入参不歧义）。
+        let path = std::path::absolute(&path).unwrap_or(path);
         eprintln!("open: {}", path.display());
+        // F3：同一文件已开 → 激活既有标签。
+        if let Some(idx) = self.tabs.iter().position(|tab| tab.path == path) {
+            self.activate_tab(idx, window, cx);
+            return;
+        }
         match document::open_editor(&path, cx) {
             OpenOutcome::Opened(editor) => {
-                // 聚焦新编辑器（旧实体的焦点句柄随替换失效）。
                 let focus = editor.read(cx).focus_handle().clone();
-                self.editor = Some(editor);
+                self.tabs.push(TabItem {
+                    path: path.clone(),
+                    editor,
+                });
+                self.active = self.tabs.len() - 1;
                 self.notice_board.clear();
+                eprintln!(
+                    "tabs: open → {} 开（active {}）",
+                    self.tabs.len(),
+                    self.active
+                );
                 // F2：文件树高亮同步（工作区打开时）。
                 if let Some(tree) = &self.workspace {
                     tree.update(cx, |tree, cx| {
@@ -169,6 +206,57 @@ impl ShellApp {
                 );
             }
         }
+    }
+
+    /// F3：激活标签（点击标签 / 重复打开既有文件 / 循环切换落地）。
+    pub fn activate_tab(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        self.active = idx;
+        let focus = tab.editor.read(cx).focus_handle().clone();
+        cx.notify();
+        window.focus(&focus, cx);
+    }
+
+    /// F3：关闭当前标签（Ctrl+W）——切邻位（右邻优先，末位回左；
+    /// 关唯一标签 → 空态）。
+    pub fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let old_len = self.tabs.len();
+        if old_len == 0 {
+            return;
+        }
+        self.tabs.remove(self.active);
+        self.active = tab_bar::active_after_close(old_len, self.active);
+        eprintln!(
+            "tabs: close → {} 开（active {}）",
+            self.tabs.len(),
+            self.active
+        );
+        // 焦点跟到新活动标签（空态无焦点面）。
+        if let Some(tab) = self.tabs.get(self.active) {
+            let focus = tab.editor.read(cx).focus_handle().clone();
+            cx.notify();
+            window.focus(&focus, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// F3：循环切换标签（Ctrl+Tab 下一 / Ctrl+Shift+Tab 上一；
+    /// wrap；单标签无操作）。
+    pub fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let next = tab_bar::cycle_active(self.tabs.len(), self.active, forward);
+        if next == self.active {
+            return;
+        }
+        eprintln!(
+            "tabs: cycle → active {}/{}（{}）",
+            next + 1,
+            self.tabs.len(),
+            if forward { "下一" } else { "上一" }
+        );
+        self.activate_tab(next, window, cx);
     }
 
     /// F2：打开文件夹作为工作区（Ctrl+K Ctrl+O 和弦 / 启动记忆恢复
@@ -273,7 +361,7 @@ impl ShellApp {
 impl ShellApp {
     /// 标题栏文案：`mang — 文件名`（无文档仅 `mang`）。
     fn title_with(&self, cx: &gpui::App) -> String {
-        match &self.editor {
+        match self.editor() {
             Some(ed) => format!("mang — {}", ed.read(cx).display_name()),
             None => "mang".to_string(),
         }
@@ -290,12 +378,14 @@ impl Render for ShellApp {
             .bg(colors.background)
             .text_color(colors.text)
             .font_family("Noto Sans SC")
-            // F1/F2：shell 级键钩子。空态（无编辑区焦点）时键事件派发
-            // 到 root 节点；编辑态编辑器不消费的组合冒泡至此（dispatch_key
-            // 对未知 ctrl 组合零处理零拦截）。
+            // F1/F2/F3：shell 级键钩子。空态（无编辑区焦点）时键事件
+            // 派发到 root 节点；编辑态编辑器不消费的组合冒泡至此
+            // （dispatch_key 对未知 ctrl 组合零处理零拦截；tab 键臂
+            // F3 起带 !ctrl 守卫、只读门禁放行 tab+ctrl）。
             //
-            // 命令集：Ctrl+O（F1 文件打开）；Ctrl+K Ctrl+O 和弦（F2 打开
-            // 文件夹工作区——2s 窗口内有效，过期/其它键作废）。
+            // 命令集：Ctrl+O（F1 文件打开）；Ctrl+K Ctrl+O 和弦（F2
+            // 打开文件夹工作区——2s 窗口）；Ctrl+W（F3 关标签）；
+            // Ctrl+Tab / Ctrl+Shift+Tab（F3 循环切换）。
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let ks = &event.keystroke;
                 let ctrl = ks.modifiers.control || ks.modifiers.platform;
@@ -318,12 +408,35 @@ impl Render for ShellApp {
                 }
                 this.chord_until = None;
 
+                // F3：Ctrl+Tab / Ctrl+Shift+Tab 循环切换标签。
+                if ctrl && !ks.modifiers.alt && ks.key == "tab" {
+                    this.cycle_tab(!ks.modifiers.shift, window, cx);
+                    return;
+                }
+                // F3：Ctrl+W 关闭当前标签。
+                if plain_ctrl && ks.key.eq_ignore_ascii_case("w") {
+                    this.close_active_tab(window, cx);
+                    return;
+                }
                 // F1：Ctrl+O 文件打开。
                 if plain_ctrl && ks.key.eq_ignore_ascii_case("o") {
                     this.prompt_open_file(window, cx);
                 }
             }))
             .child(title_bar::title_bar(&title, cx))
+            // F3：标签栏（有标签才渲染；标题栏与主体之间）。
+            .when(!self.tabs.is_empty(), |el| {
+                let ws_root = self
+                    .workspace
+                    .as_ref()
+                    .map(|tree| tree.read(cx).root().to_path_buf());
+                el.child(tab_bar::tab_bar(
+                    &self.tabs,
+                    self.active,
+                    ws_root.as_deref(),
+                    cx,
+                ))
+            })
             .child(
                 h_flex()
                     .id("shell-body")
@@ -336,14 +449,14 @@ impl Render for ShellApp {
                     ))
                     .when(self.left_open, |el| {
                         el.child(panels::left_panel(
-                            self.editor.as_ref(),
+                            self.editor(),
                             self.workspace.as_ref(),
                             cx,
                         ))
                     })
                     .child(editor_area(self, cx))
                     .when(self.right_open, |el| {
-                        el.child(panels::right_panel(self.editor.as_ref(), cx))
+                        el.child(panels::right_panel(self.editor().cloned().as_ref(), cx))
                     }),
             )
             // F1：提示横幅（状态栏上方一条——有消息时才渲染）。
@@ -352,7 +465,7 @@ impl Render for ShellApp {
                 None => el,
             })
             .child(status_bar::status_bar(
-                self.editor.as_ref(),
+                self.editor().cloned().as_ref(),
                 self.workspace
                     .as_ref()
                     .map(|tree| tree.read(cx).root().to_path_buf()),
@@ -383,10 +496,10 @@ fn notice_bar(message: &str, colors: &theme::ThemeColors) -> impl IntoElement {
         )
 }
 
-/// 编辑区：有文档 → `Editor` 实体；无文档 / 打开失败 → 引导空态。
+/// 编辑区：当前标签的 `Editor` 实体；无标签 → 引导空态。
 fn editor_area(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
-    match &shell.editor {
+    match shell.editor() {
         Some(editor) => editor.clone().into_any_element(),
         None => v_flex()
             .id("editor-area-empty")
@@ -400,7 +513,7 @@ fn editor_area(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> impl IntoEle
             .child(ui::Headline::new("mang").size(ui::HeadlineSize::Large))
             .child(
                 ui::Label::new(
-                    "打开 .md 可编辑；.docx/.pdf 只读渲染——Ctrl+O 或 mang-shell FILE（工作区/多标签随 F2/F3 接线）",
+                    "打开 .md 可编辑；.docx/.pdf 只读渲染——Ctrl+O 打开文件 / Ctrl+K Ctrl+O 打开文件夹（多标签已接线：Ctrl+Tab 切换）",
                 )
                 .color(ui::Color::Muted),
             )
