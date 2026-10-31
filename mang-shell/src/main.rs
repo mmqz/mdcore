@@ -124,6 +124,10 @@ fn main() {
         .cloned();
     // 批 2：鼠标烟雾脚本（需与 --smoke-sec + FILE 组合）。
     let smoke_mouse = args.iter().any(|a| a == "--smoke-mouse");
+    // G5：语法高亮烟雾（--smoke-syntax-hl——与启动 FILE 组合：3.5s 经
+    // 真实渲染分派路径探针取证；断言 syntax-hl: 证据行——围栏语言态
+    // [rust] + kw/str 命中 span + script done）。
+    let smoke_syntax_hl = args.iter().any(|a| a == "--smoke-syntax-hl");
 
     application()
         .with_assets(assets::Assets)
@@ -415,6 +419,19 @@ fn main() {
                 .detach();
             }
 
+            // G5：语法高亮烟雾——3.5s 后经真实渲染分派路径探针取证
+            //（ShellApp → 活动编辑器 → line_tokens 同源；不合成键——
+            // 高亮是渲染态，证据直接来自真实应用态缓存与扫描器）。
+            if smoke_syntax_hl {
+                // WindowHandle 实现 Copy——直传免 clone（clippy::clone_on_copy；
+                // 既有 spawn 块的 .clone() 形态为 main 基线遗留，不在本 PR 清理）。
+                let handle = window_handle;
+                cx.spawn(async move |cx| {
+                    run_syntax_hl_probe(&handle, cx).await;
+                })
+                .detach();
+            }
+
             if let Some(sec) = smoke_sec {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -427,6 +444,39 @@ fn main() {
         });
 
     println!("smoke: quit reached");
+}
+
+// ---------------------------------------------------------------------------
+// G5：语法高亮烟雾（--smoke-syntax-hl）
+// ---------------------------------------------------------------------------
+
+/// 经真实应用态取证：读活动编辑器的 G5 证据行（围栏语言态 + 代码 token
+/// 命中 span——探针内部走 render_lines 同源的 `line_tokens` 分派），
+/// 全量 eprintln 后打 script done 证据行（gate summary 断言）。
+async fn run_syntax_hl_probe(
+    window: &gpui::WindowHandle<shell::ShellApp>,
+    cx: &mut gpui::AsyncApp,
+) {
+    cx.background_executor()
+        .timer(Duration::from_millis(3500))
+        .await;
+    let evidence: Vec<String> = cx.update(|cx| {
+        window
+            .update(cx, |shell, _window, cx| {
+                shell
+                    .editor()
+                    .map(|ed| ed.read(cx).syntax_hl_evidence())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    });
+    for line in &evidence {
+        eprintln!("{line}");
+    }
+    eprintln!(
+        "syntax-hl: script done ({} evidence lines via render path)",
+        evidence.len()
+    );
 }
 
 // ---------------------------------------------------------------------------

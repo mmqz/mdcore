@@ -1,8 +1,9 @@
-//! Markdown 行级语法高亮（#68 阶段 1.3）。
+//! Markdown 行级语法高亮（#68 阶段 1.3；G5 扩围到围栏语言代码）。
 //!
-//! 纯函数、零 gpui 依赖：`highlight_line(line, fence_at_start)` 输入一行
-//! 文本与「该行行首是否处于代码围栏内」，输出行内 token 区间（**char
-//! 索引**，与 `Buffer` 的 col 语义对齐）与「该行行尾的围栏状态」。
+//! 纯函数、零 gpui 依赖：`highlight_line_ex(line, fence)` 输入一行
+//! 文本与 [`FenceState`]（行首围栏态——含语言标注），输出行内 token
+//! 区间（**char 索引**，与 `Buffer` 的 col 语义对齐）与「该行行尾的
+//! 围栏状态」。
 //! 颜色映射（`TokenKind` → `HighlightStyle`）由视图层完成——本模块
 //! 只做结构识别，便于单测钉定。
 //!
@@ -43,6 +44,112 @@ pub enum TokenKind {
     FenceLang,
     /// 链接整段（`[text](url)`）。
     Link,
+    /// G5：代码关键字（rust/python/js——词表见 [`CodeLang::keywords`]）。
+    Keyword,
+    /// G5：代码字符串字面量（成对引号段，含定界符）。
+    Str,
+    /// G5：代码行注释（`//` / `#` 至行尾）。
+    Comment,
+    /// G5：代码数字字面量（数字起头 token）。
+    Number,
+}
+
+/// G5：围栏语言（最小集——rust/python/js；未标注 / 未识别语言 =
+/// `CodeBlock(None)` 维持既有整行 BlockCode 底色语义）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeLang {
+    Rust,
+    Python,
+    Js,
+}
+
+impl CodeLang {
+    /// fence info string → 语言（大小写不敏感；别名集——py/python、
+    /// js/javascript/ts）。未知标注 None（无语言块口径）。
+    pub fn parse(tag: &str) -> Option<CodeLang> {
+        match tag.trim().to_lowercase().as_str() {
+            "rust" | "rs" => Some(CodeLang::Rust),
+            "python" | "py" => Some(CodeLang::Python),
+            "js" | "javascript" | "ts" => Some(CodeLang::Js),
+            _ => None,
+        }
+    }
+
+    /// 关键字表（无 tree-sitter——词表扫描 + 词边界判定即「正则版」
+    /// 口径的最小实现）。
+    pub fn keywords(self) -> &'static [&'static str] {
+        match self {
+            CodeLang::Rust => &[
+                "fn", "let", "mut", "const", "if", "else", "match", "loop", "while", "for", "in",
+                "return", "struct", "enum", "impl", "trait", "pub", "use", "mod", "crate", "self",
+                "Self", "where", "async", "await", "move", "dyn", "ref", "true", "false", "as",
+                "break", "continue", "type", "unsafe",
+            ],
+            CodeLang::Python => &[
+                "def", "class", "if", "elif", "else", "for", "while", "in", "return", "import",
+                "from", "as", "with", "try", "except", "finally", "raise", "lambda", "pass",
+                "break", "continue", "global", "nonlocal", "yield", "assert", "del", "not", "and",
+                "or", "is", "None", "True", "False",
+            ],
+            CodeLang::Js => &[
+                "function",
+                "const",
+                "let",
+                "var",
+                "if",
+                "else",
+                "for",
+                "while",
+                "return",
+                "class",
+                "extends",
+                "new",
+                "this",
+                "typeof",
+                "instanceof",
+                "import",
+                "from",
+                "export",
+                "default",
+                "async",
+                "await",
+                "yield",
+                "try",
+                "catch",
+                "finally",
+                "throw",
+                "switch",
+                "case",
+                "break",
+                "continue",
+                "delete",
+                "in",
+                "of",
+                "null",
+                "undefined",
+                "true",
+                "false",
+            ],
+        }
+    }
+
+    /// 行注释前缀（rust/js `//`、python `#`）。
+    fn line_comment_prefix(self) -> &'static str {
+        match self {
+            CodeLang::Python => "#",
+            CodeLang::Rust | CodeLang::Js => "//",
+        }
+    }
+}
+
+/// G5：围栏行态（查找条外/内——比 bool 携带语言标记）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FenceState {
+    /// 行首处于围栏外。
+    Outside,
+    /// 行首处于围栏内（`Some(lang)` = 有语言标注的块——正文行按语言
+    /// 扫描；`None` = 未标注/未识别语言——维持整行 BlockCode）。
+    CodeBlock(Option<CodeLang>),
 }
 
 /// 单行高亮结果。
@@ -81,6 +188,108 @@ fn fence_marker(line: &str) -> Option<(usize, char)> {
     } else {
         None
     }
+}
+
+/// G5：围栏开行的语言标注（`fence_marker` 已识别围栏形态的前提下，
+/// 取标记后的 info string 首词解析；非围栏行 None）。
+pub fn fence_lang_of(line: &str) -> Option<CodeLang> {
+    let (_, fence_ch) = fence_marker(line)?;
+    // info string = 围栏标记后的段（```rust 的 `rust`）；首词为语言
+    //（逗号/空格后的附加 info 忽略）。
+    let rest: String = line
+        .chars()
+        .skip_while(|c| c.is_whitespace())
+        .skip_while(|c| *c == fence_ch)
+        .collect();
+    let tag = rest
+        .trim()
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .next()?;
+    if tag.is_empty() {
+        return None;
+    }
+    CodeLang::parse(tag)
+}
+
+/// G5：一行代码的粗高亮（无 tree-sitter——**单趟左到右扫描器**，
+/// 按起位裁决：注释 → 字符串 → 关键字/数字，先到先占；char 索引区间）。
+/// 未标注语言 `None` → 整行 BlockCode（既有语义零漂移）。
+///
+/// 起位裁决（与真实词法器同构）——多类扫描不分优先级批次，
+/// 只看谁在更左的位置开始：
+///   - `let u = "http://a";` → 引号起位在 `//` 之前 → 整段字符串
+///     （串内 `//` 不误报注释）
+///   - `# "引号" 在注释里` → `#` 起位更早 → 注释至行尾
+///     （注释内引号不误报字符串）
+fn highlight_code_line(runs: &mut RunCollector, chars: &[char], lang: Option<CodeLang>) {
+    let len = chars.len();
+    let Some(lang) = lang else {
+        runs.try_insert(0..len, TokenKind::BlockCode);
+        return;
+    };
+    let prefix: Vec<char> = lang.line_comment_prefix().chars().collect();
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut i = 0;
+    while i < len {
+        // ① 行注释前缀命中 → 至行尾，本行扫描结束。
+        if chars[i..].starts_with(&prefix[..]) {
+            runs.try_insert(i..len, TokenKind::Comment);
+            break;
+        }
+        // ② 字符串：成对引号段（"..." / '...'——转义 `\` 跳过；
+        // 未闭合不高亮——防 Rust 生命周期 `'a` 之类的单引号噪声）。
+        let c = chars[i];
+        if c == '"' || c == '\'' {
+            if let Some(close) = find_close_quote(chars, i + 1, c)
+                && runs.try_insert(i..close + 1, TokenKind::Str)
+            {
+                i = close + 1;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        // ③ 词首：数字起头吞 [字母数字|.|_]（`3.14`/`0x1F` 单段）；
+        // 否则按词字符取最大词 → 精确匹配关键字表（大小写敏感）。
+        if (i == 0 || !word(chars[i - 1])) && word(c) {
+            let start = i;
+            let kind = if c.is_ascii_digit() {
+                while i < len && (word(chars[i]) || chars[i] == '.') {
+                    i += 1;
+                }
+                TokenKind::Number
+            } else {
+                while i < len && word(chars[i]) {
+                    i += 1;
+                }
+                let tok: String = chars[start..i].iter().collect();
+                if lang.keywords().contains(&tok.as_str()) {
+                    TokenKind::Keyword
+                } else {
+                    continue; // 非关键字的普通词：不高亮，扫描点已推进
+                }
+            };
+            runs.try_insert(start..i, kind);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+/// 从 `from` 起找配对引号（转义跳过；未闭合 None——防单引号噪声）。
+fn find_close_quote(chars: &[char], from: usize, quote: char) -> Option<usize> {
+    let mut i = from;
+    while i < chars.len() {
+        if chars[i] == '\\' {
+            i += 2; // 转义字符整体跳过
+            continue;
+        }
+        if chars[i] == quote {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// 列表标记宽度（`- ` / `* ` / `+ ` / `N. `）——非列表行返回 0。
@@ -236,22 +445,27 @@ fn scan_inline(runs: &mut RunCollector, chars: &[char], from: usize) {
     }
 }
 
-/// 高亮一行。
+/// G5：高亮一行（携带围栏语言态——唯一入口）。
 ///
-/// - `line`：行文本（无换行符）
-/// - `fence_at_start`：该行行首是否处于代码围栏内
-///
-/// 返回 token 区间（char 索引）与行尾围栏状态。
-pub fn highlight_line(line: &str, fence_at_start: bool) -> LineHighlight {
+/// - 围栏内 + 无语言标注 → 整行 BlockCode（既有语义零漂移）
+/// - 围栏内 + 有语言标注 → [`highlight_code_line`] 代码扫描
+///   （关键字/字符串/注释/数字；行是围栏形态仍视为闭合）
+/// - 围栏外 → 既有 md 行级/行内语义不变
+pub fn highlight_line_ex(line: &str, fence: FenceState) -> LineHighlight {
     let chars: Vec<char> = line.chars().collect();
     let len = chars.len();
     let mut runs = RunCollector::default();
 
     // ---- 围栏态优先 ----
-    if fence_at_start {
-        // 围栏内：整行 BlockCode；若本行是围栏形态则视为闭合。
+    if let FenceState::CodeBlock(lang) = fence {
+        // 围栏内；若本行是围栏形态则视为闭合。
         let closes = fence_marker(line).is_some();
-        runs.try_insert(0..len, TokenKind::BlockCode);
+        // 闭围栏形态行：整行 BlockCode 底色（与无语言块同视觉——闭栏
+        // 标记不是代码内容，代码扫描对它恒产出空 run）。
+        if closes {
+            runs.try_insert(0..len, TokenKind::BlockCode);
+        }
+        highlight_code_line(&mut runs, &chars, lang);
         return LineHighlight {
             runs: runs.sorted(),
             fence_at_end: !closes,
@@ -326,9 +540,18 @@ pub fn highlight_line(line: &str, fence_at_start: bool) -> LineHighlight {
 mod tests {
     use super::*;
 
-    /// 快捷：某行的 token 区间列表（char 索引）。
+    /// 快捷：某行的 token 区间列表（char 索引）。bool 围栏口径 →
+    /// 无语言标注态（legacy 测试语义零漂移）。
     fn tokens(line: &str, fence: bool) -> Vec<(Range<usize>, TokenKind)> {
-        highlight_line(line, fence).runs
+        highlight_line_ex(
+            line,
+            if fence {
+                FenceState::CodeBlock(None)
+            } else {
+                FenceState::Outside
+            },
+        )
+        .runs
     }
 
     // ---------------- 标题 ----------------
@@ -454,7 +677,7 @@ mod tests {
 
     #[test]
     fn fence_open_with_lang() {
-        let h = highlight_line("```rust", false);
+        let h = highlight_line_ex("```rust", FenceState::Outside);
         assert!(h.fence_at_end, "开围栏后进入 fence 态");
         assert!(h.runs.contains(&(0..3, TokenKind::BlockCode)), "``` 标记段");
         assert!(
@@ -465,35 +688,35 @@ mod tests {
 
     #[test]
     fn fence_body_and_close() {
-        let h = highlight_line("let x = 1;", true);
+        let h = highlight_line_ex("let x = 1;", FenceState::CodeBlock(None));
         assert!(h.fence_at_end, "普通内容行不闭合");
         assert!(
             h.runs.contains(&(0..10, TokenKind::BlockCode)),
             "let x = 1; 共 10 字符"
         );
 
-        let h = highlight_line("```", true);
+        let h = highlight_line_ex("```", FenceState::CodeBlock(None));
         assert!(!h.fence_at_end, "围栏形态行闭合");
         assert!(h.runs.contains(&(0..3, TokenKind::BlockCode)));
 
         // ~~~ 围栏同理。
-        let h = highlight_line("~~~", true);
+        let h = highlight_line_ex("~~~", FenceState::CodeBlock(None));
         assert!(!h.fence_at_end);
     }
 
     #[test]
     fn fence_state_flows_through_lines() {
         // 模拟三行序列：开 → 内容 → 闭。
-        let l0 = highlight_line("```md", false);
+        let l0 = highlight_line_ex("```md", FenceState::Outside);
         assert!(l0.fence_at_end);
-        let l1 = highlight_line("**不在围栏外语义下高亮**", l0.fence_at_end);
+        let l1 = highlight_line_ex("**不在围栏外语义下高亮**", FenceState::CodeBlock(None));
         assert!(l1.fence_at_end);
         assert_eq!(
             l1.runs,
             vec![(0..14, TokenKind::BlockCode)],
             "围栏内整行代码底色，不进行内扫描"
         );
-        let l2 = highlight_line("```", l1.fence_at_end);
+        let l2 = highlight_line_ex("```", FenceState::CodeBlock(None));
         assert!(!l2.fence_at_end);
     }
 
@@ -528,5 +751,219 @@ mod tests {
         // \*a\*：转义星号不构成斜体。
         let t = tokens("\\*a\\*", false);
         assert!(t.iter().all(|(_, k)| *k != TokenKind::Italic));
+    }
+}
+
+// =============================================================================
+// G5 语法高亮扩展——专项单测（语言解析 / 代码扫描 / 围栏态推进）
+// =============================================================================
+
+#[cfg(test)]
+mod g5_code_hl_tests {
+    use super::*;
+
+    fn code(line: &str, lang: CodeLang) -> Vec<(Range<usize>, TokenKind)> {
+        highlight_line_ex(line, FenceState::CodeBlock(Some(lang))).runs
+    }
+
+    // ---------------- 语言标注解析 ----------------
+
+    #[test]
+    fn fence_lang_parse_aliases_case_insensitive() {
+        assert_eq!(fence_lang_of("```rust"), Some(CodeLang::Rust));
+        assert_eq!(fence_lang_of("```RS"), Some(CodeLang::Rust), "大写别名");
+        assert_eq!(fence_lang_of("~~~python"), Some(CodeLang::Python));
+        assert_eq!(fence_lang_of("```py"), Some(CodeLang::Python));
+        assert_eq!(fence_lang_of("```js"), Some(CodeLang::Js));
+        assert_eq!(fence_lang_of("```JavaScript"), Some(CodeLang::Js));
+        assert_eq!(
+            fence_lang_of("```ts"),
+            Some(CodeLang::Js),
+            "ts 归 JS 扫描器"
+        );
+        // 无标注 / 未知语言 / 非 fence 行 → None
+        assert_eq!(fence_lang_of("```"), None);
+        assert_eq!(fence_lang_of("```text"), None, "未识别语言走无语言口径");
+        assert_eq!(fence_lang_of("普通行"), None);
+        // 附加 info（逗号/空格后）忽略
+        assert_eq!(fence_lang_of("```rust,ignore"), Some(CodeLang::Rust));
+        assert_eq!(fence_lang_of("```rust ignore"), Some(CodeLang::Rust));
+    }
+
+    // ---------------- Rust 行 ----------------
+
+    #[test]
+    fn rust_keywords_numbers_comments() {
+        let t = code("let count = 42; // 三个", CodeLang::Rust);
+        assert!(t.contains(&(0..3, TokenKind::Keyword)), "let 关键字：{t:?}");
+        assert!(
+            !t.iter()
+                .any(|(r, k)| *k == TokenKind::Keyword && r.start == 4),
+            "count 非关键字"
+        );
+        assert!(t.contains(&(12..14, TokenKind::Number)), "42 数字：{t:?}");
+        assert!(
+            t.contains(&(16..21, TokenKind::Comment)),
+            "// 至行尾：{t:?}"
+        );
+    }
+
+    #[test]
+    fn rust_string_with_escape() {
+        let t = code(r#"let s = "he\"llo";"#, CodeLang::Rust);
+        assert!(
+            t.contains(&(8..17, TokenKind::Str)),
+            "转义引号不提前闭合（开 8 / 闭 16）：{t:?}"
+        );
+    }
+
+    #[test]
+    fn rust_word_boundary_not_substring() {
+        // "fn" 不命中 "fnord" 内部（词边界）
+        let t = code("fnord fn", CodeLang::Rust);
+        let kw_hits: Vec<_> = t.iter().filter(|(_, k)| *k == TokenKind::Keyword).collect();
+        assert_eq!(kw_hits.len(), 1, "仅独立 fn 命中：{t:?}");
+        assert!(t.contains(&(6..8, TokenKind::Keyword)));
+    }
+
+    // ---------------- Python / JS 行 ----------------
+
+    #[test]
+    fn python_comment_hash_and_keywords() {
+        let t = code("def main(): # 注释", CodeLang::Python);
+        assert!(t.contains(&(0..3, TokenKind::Keyword)), "def：{t:?}");
+        assert!(t.contains(&(12..16, TokenKind::Comment)), "# 至行尾：{t:?}");
+        // python 不认 // 注释
+        let t2 = code("x = 1 // 2", CodeLang::Python);
+        assert!(
+            !t2.iter().any(|(_, k)| *k == TokenKind::Comment),
+            "python 无 // 注释：{t2:?}"
+        );
+    }
+
+    #[test]
+    fn js_keywords_and_number_with_dot() {
+        let t = code("const x = 3.14;", CodeLang::Js);
+        assert!(t.contains(&(0..5, TokenKind::Keyword)), "const：{t:?}");
+        assert!(
+            t.contains(&(10..14, TokenKind::Number)),
+            "3.14 含小数点：{t:?}"
+        );
+    }
+
+    // ---------------- 优先级与无语言口径 ----------------
+
+    #[test]
+    fn comment_wins_over_string_inside_it() {
+        // 注释里的引号不串字符串高亮
+        let t = code(r#"// "not a string""#, CodeLang::Rust);
+        assert!(
+            !t.iter().any(|(_, k)| *k == TokenKind::Str),
+            "注释段整体单 token：{t:?}"
+        );
+        assert!(t.contains(&(0..17, TokenKind::Comment)));
+    }
+
+    #[test]
+    fn keyword_inside_string_not_highlighted() {
+        let t = code(r#""let if while""#, CodeLang::Rust);
+        assert!(
+            !t.iter().any(|(_, k)| *k == TokenKind::Keyword),
+            "字符串内关键字不误报：{t:?}"
+        );
+        assert!(t.contains(&(0..14, TokenKind::Str)));
+    }
+
+    #[test]
+    fn untagged_fence_keeps_blockcode_semantics() {
+        // 无语言标注：整行 BlockCode（既有语义零漂移）
+        let h = highlight_line_ex("plain text here", FenceState::CodeBlock(None));
+        assert_eq!(h.runs, vec![(0..15, TokenKind::BlockCode)]);
+        assert!(h.fence_at_end, "体行不闭合");
+        let h2 = highlight_line_ex("```", FenceState::CodeBlock(None));
+        assert!(!h2.fence_at_end, "围栏形态行闭合");
+    }
+
+    #[test]
+    fn fence_state_flow_with_lang_across_lines() {
+        // 开（带语言）→ 体行（语言扫描）→ 闭：fence 态 + 语言态推进
+        let open = highlight_line_ex("```rust", FenceState::Outside);
+        assert!(open.fence_at_end);
+        let body = highlight_line_ex(
+            "let x = 1;",
+            FenceState::CodeBlock(fence_lang_of("```rust")),
+        );
+        assert!(body.fence_at_end);
+        assert!(
+            body.runs.contains(&(0..3, TokenKind::Keyword)),
+            "let：{:?}",
+            body.runs
+        );
+        let close = highlight_line_ex("```", FenceState::CodeBlock(Some(CodeLang::Rust)));
+        assert!(!close.fence_at_end);
+    }
+
+    #[test]
+    fn cjk_chars_counted_as_char_indices() {
+        // 中文注释与字符串按 char 计列（与 Buffer col 语义对齐）
+        let t = code("// 中文注释", CodeLang::Rust);
+        assert_eq!(t, vec![(0..7, TokenKind::Comment)], "2 标记+空格+4 汉字");
+        let t2 = code(r#""你好""#, CodeLang::Rust);
+        assert_eq!(t2, vec![(0..4, TokenKind::Str)], "2 引号 + 2 汉字");
+    }
+
+    // ---------------- 单趟扫描器：起位裁决 ----------------
+
+    #[test]
+    fn double_slash_inside_string_not_comment() {
+        // 引号起位在 `//` 之前 → 整段字符串（URL/正则里的 // 不误报注释）
+        let t = code(r#"let u = "http://a";"#, CodeLang::Rust);
+        assert!(
+            !t.iter().any(|(_, k)| *k == TokenKind::Comment),
+            "串内 // 不当注释：{t:?}"
+        );
+        assert!(t.contains(&(8..18, TokenKind::Str)), "整段字符串：{t:?}");
+    }
+
+    #[test]
+    fn quote_inside_comment_not_string() {
+        // `#` 起位更早 → 注释至行尾（注释内引号不误报字符串）
+        let t = code(r#"s = 'x' # "引号" 在注释里"#, CodeLang::Python);
+        assert!(t.contains(&(4..7, TokenKind::Str)), "真字符串仍命中：{t:?}");
+        let cmt = t
+            .iter()
+            .find(|(_, k)| *k == TokenKind::Comment)
+            .expect("存在注释段");
+        assert!(cmt.0.start < 11, "注释从 # 起至行尾：{t:?}");
+        assert!(
+            !t.iter().any(|(r, k)| *k == TokenKind::Str && r.start > 7),
+            "注释内引号不串高亮：{t:?}"
+        );
+    }
+
+    #[test]
+    fn unclosed_single_quote_no_noise() {
+        // Rust 生命周期 `'a` 未闭合 → 不高亮（防单引号噪声）
+        let t = code(r#"&'a str"#, CodeLang::Rust);
+        assert!(
+            !t.iter().any(|(_, k)| *k == TokenKind::Str),
+            "未闭合引号不高亮：{t:?}"
+        );
+    }
+
+    #[test]
+    fn closing_fence_line_keeps_blockcode_background() {
+        // 带语言块的闭围栏行：整行 BlockCode（与无语言块同视觉）
+        let h = highlight_line_ex("```", FenceState::CodeBlock(Some(CodeLang::Rust)));
+        assert_eq!(h.runs, vec![(0..3, TokenKind::BlockCode)]);
+        assert!(!h.fence_at_end);
+        // 体行（非围栏形态）不受影响：仍走代码扫描
+        let body = highlight_line_ex("fn f() {}", FenceState::CodeBlock(Some(CodeLang::Rust)));
+        assert!(
+            !body.runs.iter().any(|(_, k)| *k == TokenKind::BlockCode),
+            "体行无整行底色：{:?}",
+            body.runs
+        );
+        assert!(body.runs.contains(&(0..2, TokenKind::Keyword)));
     }
 }
