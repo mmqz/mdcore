@@ -68,6 +68,12 @@ pub mod generate;
 // 合并/拆分 + 书签/链接/表单域联动重映射 + 丢失面显式登记）。
 #[cfg(feature = "engine-lopdf")]
 pub mod organize;
+// S2-3（#103 任务 3）：链接跳转读取——/Link 标注 → 目标页/URI/登记面。
+#[cfg(feature = "engine-lopdf")]
+pub mod links;
+// S2-3（#103 任务 3）：图层（OCG）读取 + 默认可见性持久化开关。
+#[cfg(feature = "engine-lopdf")]
+pub mod layers;
 // S2-2（#103 任务 2）：标注写回扩展——外部标注读取 + PdfAnnotator
 // 门面（add/remove/list/save）+ 增量删除面 + 11 kind 模型/写面。
 #[cfg(feature = "engine-lopdf")]
