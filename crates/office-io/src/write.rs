@@ -282,8 +282,9 @@ pub struct CellStyle {
     pub align: Align,
 }
 
-/// 样式模型 → 引擎 Format（私有翻译面——引擎类型不出公开签名）。
-fn style_to_format(style: &CellStyle) -> rust_xlsxwriter::Format {
+/// 样式模型 → 引擎 Format（条件格式 dxf 面与单元格样式面共用——
+/// pub(crate)：xlsx_condfmt 翻译面同源单点；引擎类型不出公开签名）。
+pub(crate) fn style_to_format(style: &CellStyle) -> rust_xlsxwriter::Format {
     let mut fmt = rust_xlsxwriter::Format::new();
     if style.bold {
         fmt = fmt.set_bold();
@@ -634,6 +635,18 @@ impl SheetWriter<'_> {
             self.write(row, col, value.clone(), None)?;
         }
         Ok(())
+    }
+
+    /// 条件格式（issue #113 任务 2——翻译面 [`crate::xlsx_condfmt`]，
+    /// 引擎类型零泄漏）。`range` A1 记法 `"A1:C10"` / 单格 / `$`
+    /// 前缀容忍；形态与能力边界见 [`crate::xlsx_condfmt`] 模块文档。
+    pub fn add_cond_format(
+        &mut self,
+        range: &str,
+        cf: crate::xlsx_condfmt::CondFormat,
+    ) -> Result<(), WriteError> {
+        let (r0, c0, r1, c1) = crate::xlsx_condfmt::parse_range(range)?;
+        crate::xlsx_condfmt::apply(self.ws, r0, c0, r1, c1, &cf)
     }
 
     /// 合并范围（左上格写 `text` 值 + 可选样式；引擎语义 = 范围内
