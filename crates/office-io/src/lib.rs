@@ -96,6 +96,7 @@
 pub mod docx;
 pub mod docx_edit;
 pub mod io;
+pub mod numbering;
 pub mod rebuild;
 pub mod style;
 pub mod write;
