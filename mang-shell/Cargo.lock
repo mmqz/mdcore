@@ -3056,11 +3056,15 @@ name = "mang-shell"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
+ "async-net",
+ "futures-lite",
  "gpui",
  "gpui_platform",
  "lopdf",
  "mdc-office-io",
  "mdc-pdf",
+ "serde",
  "serde_json",
  "text",
  "theme",

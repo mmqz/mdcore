@@ -558,6 +558,36 @@ impl Editor {
         format!("{} 字符{}", self.buffer.char_count(), cursors)
     }
 
+    // ------------------------------------------------------------------
+    // RPC 桥状态面（#104 任务 2）：结构化 getter——状态栏标签是格式化
+    // 字符串，机器通道（get_state）要的是数值坐标。
+    // ------------------------------------------------------------------
+
+    /// 光标点（0 基 buffer 坐标——控制面结构化数据）。
+    pub fn cursor_point(&self) -> Point {
+        self.buffer.cursor()
+    }
+
+    /// 选区两点（排序后 start..end；无选区 `None`）。
+    pub fn selection_points(&self) -> Option<(Point, Point)> {
+        self.buffer.selection().map(|r| (r.start, r.end))
+    }
+
+    /// 选区文本（无选区空串）。
+    pub fn selection_text(&self) -> String {
+        self.buffer.selection_text()
+    }
+
+    /// 行数。
+    pub fn line_count(&self) -> usize {
+        self.buffer.line_count()
+    }
+
+    /// 全文字符数。
+    pub fn char_count(&self) -> usize {
+        self.buffer.char_count()
+    }
+
     /// 只读标记（状态栏「只读」——docx 渲染面）。
     pub fn is_read_only(&self) -> bool {
         self.read_only
@@ -642,6 +672,65 @@ impl Editor {
             .line_row(&self.buffer, line)
             .unwrap_or(line);
         self.scroll.scroll_to_item(row, ScrollStrategy::Top);
+    }
+
+    // ------------------------------------------------------------------
+    // RPC 桥编辑面（#104 任务 2）：外部控制通道的文本变更入口——与
+    // 用户键入同链（Buffer::replace_range 单点 + undo 一条 + after_edit
+    // 收尾），「AI 改，用户实时看到」即此路径。只读态拒（None）。
+    // ------------------------------------------------------------------
+
+    /// 在指定行列插入文本（`line`/`col` 0 基；越界由 Buffer 钳制到文内
+    /// 最近点）。空文本 = 无操作（不落 undo 记录、不置脏）。返回插入
+    /// 后光标点（= 插入文本末尾）；只读态 `None`。
+    pub fn insert_text_at(
+        &mut self,
+        line: usize,
+        col: usize,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Point> {
+        if self.read_only {
+            return None;
+        }
+        if text.is_empty() {
+            return Some(self.buffer.cursor());
+        }
+        let p = Point::new(line, col);
+        self.buffer.replace_range(p, p, text);
+        self.sync_cursors_from_buffer();
+        self.after_edit();
+        cx.notify();
+        Some(self.buffer.cursor())
+    }
+
+    /// 替换当前选区（无选区 = 光标处插入；空文本 + 有选区 = 删除选
+    /// 区；空文本 + 无选区 = 无操作）。返回 `(是否有选区, 新光标)`；
+    /// 只读态 `None`。
+    pub fn replace_selection_text(
+        &mut self,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<(bool, Point)> {
+        if self.read_only {
+            return None;
+        }
+        let selection = self.buffer.selection();
+        let had_selection = selection.is_some();
+        match selection {
+            Some(range) => self.buffer.replace_range(range.start, range.end, text),
+            None => {
+                if text.is_empty() {
+                    return Some((false, self.buffer.cursor()));
+                }
+                let c = self.buffer.cursor();
+                self.buffer.replace_range(c, c, text);
+            }
+        }
+        self.sync_cursors_from_buffer();
+        self.after_edit();
+        cx.notify();
+        Some((had_selection, self.buffer.cursor()))
     }
 
     /// r42 阶段 E：命令执行（面板与键位双入口的统一分派）。

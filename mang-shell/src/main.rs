@@ -46,6 +46,8 @@ mod file_tree;
 mod git_panel;
 mod panels;
 mod recent;
+#[cfg(unix)]
+mod rpc;
 mod settings;
 mod shell;
 mod status_bar;
@@ -140,6 +142,15 @@ fn main() {
     // 真实渲染分派路径探针取证；断言 syntax-hl: 证据行——围栏语言态
     // [rust] + kw/str 命中 span + script done）。
     let smoke_syntax_hl = args.iter().any(|a| a == "--smoke-syntax-hl");
+    // #104 任务 2：RPC 控制通道旗标（--rpc-sock PATH 覆盖端点；
+    // --no-rpc 显式关闭。默认开——端点 $XDG_RUNTIME_DIR/mang-shell.sock
+    // 缺省 /tmp/mang-shell-$UID.sock，见 rpc::resolve_socket_path）。
+    let rpc_sock: Option<String> = args
+        .iter()
+        .position(|a| a == "--rpc-sock")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let rpc_disabled = args.iter().any(|a| a == "--no-rpc");
 
     application()
         .with_assets(assets::Assets)
@@ -155,6 +166,7 @@ fn main() {
                 "--smoke-open",
                 "--smoke-workspace",
                 "--smoke-save-as",
+                "--rpc-sock",
             ]
             .iter()
             .flat_map(|flag| {
@@ -227,6 +239,28 @@ fn main() {
                     std::process::exit(70);
                 }
             };
+
+            // #104 任务 2：本机控制通道启动（默认开；失败降级不致命——
+            // 端点被占/绑定失败只损失 RPC 能力，桌面本体照常）。服务
+            // 句柄挂 GPUI 应用全局（run 闭包返回后事件循环才开跑，
+            // 局部绑定会在 setup 尾被 Drop 把 socket 立即解除链接）；
+            // App 退出时 Drop 清 socket 文件，异常退出残留由下次启动
+            // 探活清理。
+            #[cfg(unix)]
+            if rpc_disabled {
+                eprintln!("rpc: disabled by --no-rpc");
+            } else {
+                // WindowHandle 实现 Copy——直传免 clone（后续烟雾块仍可用）。
+                rpc::ControlServer::start(
+                    rpc::resolve_socket_path(rpc_sock.as_deref()),
+                    window_handle,
+                    cx,
+                );
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (&rpc_sock, rpc_disabled);
+            }
 
             // 批 2：鼠标烟雾脚本（Editor 日志开启 + 合成事件序列驱动）。
             if smoke_mouse {
