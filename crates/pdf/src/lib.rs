@@ -74,7 +74,13 @@ pub mod links;
 // S2-3（#103 任务 3）：图层（OCG）读取 + 默认可见性持久化开关。
 #[cfg(feature = "engine-lopdf")]
 pub mod layers;
+// S2-2（#103 任务 2）：标注写回扩展——外部标注读取 + PdfAnnotator
+// 门面（add/remove/list/save）+ 增量删除面 + 11 kind 模型/写面。
+#[cfg(feature = "engine-lopdf")]
+pub mod annotate;
 
+#[cfg(feature = "engine-lopdf")]
+pub use annotate::{read_annotations, PdfAnnotator, ReadReport};
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
 pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};

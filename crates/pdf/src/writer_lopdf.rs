@@ -41,7 +41,7 @@ use lopdf::{
     dictionary, encode_utf16_be, Dictionary, Document, IncrementalDocument, Object, ObjectId,
 };
 
-use crate::annotation::{AnnotId, Annotation, AnnotationKind, Point, Quad, Rect, Rgb};
+use crate::annotation::{AnnotId, Annotation, AnnotationKind, Border, Point, Quad, Rect, Rgb};
 use crate::command::CommandError;
 use crate::page::PageIndex;
 use crate::security::{Limits, OpenAssessment, REASON_ENCRYPTED_WRITE};
@@ -371,6 +371,79 @@ fn annot_object(annot: &Annotation) -> Result<Dictionary, CommandError> {
                 },
             );
         }
+        // ===== S2-2 七新子型（issue #103 任务 2——全标准子型零私有扩展）=====
+        AnnotationKind::Underline { quads, color } => {
+            if quads.is_empty() {
+                return Err(CommandError::engine("Underline 载荷不健全：空四边形列表"));
+            }
+            dict.set("Subtype", Object::Name(b"Underline".to_vec()));
+            dict.set("Rect", rect_array(&quad_envelope(quads)?));
+            let mut points = Vec::with_capacity(quads.len() * 8);
+            for quad in quads {
+                push_quad_points(&mut points, quad)?;
+            }
+            dict.set("QuadPoints", Object::Array(points));
+            dict.set("C", color_array(color));
+        }
+        AnnotationKind::StrikeOut { quads, color } => {
+            if quads.is_empty() {
+                return Err(CommandError::engine("StrikeOut 载荷不健全：空四边形列表"));
+            }
+            dict.set("Subtype", Object::Name(b"StrikeOut".to_vec()));
+            dict.set("Rect", rect_array(&quad_envelope(quads)?));
+            let mut points = Vec::with_capacity(quads.len() * 8);
+            for quad in quads {
+                push_quad_points(&mut points, quad)?;
+            }
+            dict.set("QuadPoints", Object::Array(points));
+            dict.set("C", color_array(color));
+        }
+        AnnotationKind::Rectangle { rect, border } => {
+            dict.set("Subtype", Object::Name(b"Square".to_vec()));
+            dict.set("Rect", rect_array(rect));
+            dict.set("C", color_array(&border.color));
+            dict.set("BS", border_dict(border));
+        }
+        AnnotationKind::Ellipse { rect, border } => {
+            dict.set("Subtype", Object::Name(b"Circle".to_vec()));
+            dict.set("Rect", rect_array(rect));
+            dict.set("C", color_array(&border.color));
+            dict.set("BS", border_dict(border));
+        }
+        AnnotationKind::Line { from, to, border } => {
+            check_finite(from)?;
+            check_finite(to)?;
+            dict.set("Subtype", Object::Name(b"Line".to_vec()));
+            dict.set("Rect", rect_array(&line_envelope(from, to)?));
+            dict.set("L", line_array(from, to));
+            dict.set("C", color_array(&border.color));
+            dict.set("BS", border_dict(border));
+        }
+        AnnotationKind::Arrow { from, to, border } => {
+            // PDF 无原生 /Arrow 子型——标准 /Line + /LE 终止符（零私有扩展
+            // 的通行做法；Acrobat/Edge 渲染带箭头端）。
+            check_finite(from)?;
+            check_finite(to)?;
+            dict.set("Subtype", Object::Name(b"Line".to_vec()));
+            dict.set("Rect", rect_array(&line_envelope(from, to)?));
+            dict.set("L", line_array(from, to));
+            dict.set("C", color_array(&border.color));
+            dict.set("BS", border_dict(border));
+            dict.set(
+                "LE",
+                Object::Array(vec![
+                    Object::Name(b"None".to_vec()),
+                    Object::Name(b"ClosedArrow".to_vec()),
+                ]),
+            );
+        }
+        AnnotationKind::Stamp { rect, text } => {
+            dict.set("Subtype", Object::Name(b"Stamp".to_vec()));
+            dict.set("Rect", rect_array(rect));
+            dict.set("Contents", text_string(text));
+            // 标准图章名（/Name /Approved 等）映射 v0 不做——阅读器回退按
+            // /Contents 显示（登记：docs/pdf-annotate.md）。
+        }
     }
     // 公共字段：/T origin 编码（Acrobat 作者栏可读）+ /M 值时钟日期串 +
     // /F bit 2（print——无此位标注默认不打印；spike 探针 3 同款）。
@@ -453,6 +526,30 @@ fn check_finite(p: &Point) -> Result<(), CommandError> {
     }
 }
 
+/// 边框字典（/BS /W 宽 + /S /S 实线——形状/线形共用；#45 同族语义）。
+fn border_dict(border: &Border) -> Object {
+    Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Border".to_vec()),
+        "W" => Object::Real(border.width),
+        "S" => Object::Name(b"S".to_vec()),
+    })
+}
+
+/// 线端点对 → /L [x1 y1 x2 y2]。
+fn line_array(from: &Point, to: &Point) -> Object {
+    Object::Array(vec![
+        Object::Real(from.x),
+        Object::Real(from.y),
+        Object::Real(to.x),
+        Object::Real(to.y),
+    ])
+}
+
+/// 线端点包络 → /Rect（min/max 恒有序）。
+fn line_envelope(from: &Point, to: &Point) -> Result<Rect, CommandError> {
+    envelope([from, to].into_iter())
+}
+
 /// sRGB → /C [r g b]（0-1 归一）。
 fn color_array(color: &Rgb) -> Object {
     Object::Array(vec![
@@ -475,6 +572,23 @@ fn text_string(s: &str) -> Object {
     }
 }
 
+/// PDF 文本串解码（S2-2 读取面）：UTF-16BE（BOM FE FF）→ String；
+/// 否则 PDFDocEncoding 近似（ASCII 子集直读）。写面 [`text_string`]
+/// 的可逆对应。
+pub fn decode_pdf_text(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let mut units = Vec::with_capacity((bytes.len() - 2) / 2);
+        let mut i = 2;
+        while i + 1 < bytes.len() {
+            units.push(u16::from_be_bytes([bytes[i], bytes[i + 1]]));
+            i += 2;
+        }
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).to_string()
+    }
+}
+
 /// 引用去重追加（同对象已在 /Annots → 跳过：编辑重写路径不产生重复
 /// 引用；Acrobat 对重复引用宽容，但干净数据面从源头不做重复）。
 fn push_if_absent(arr: &mut Vec<Object>, id: ObjectId) {
@@ -483,5 +597,94 @@ fn push_if_absent(arr: &mut Vec<Object>, id: ObjectId) {
         .any(|o| matches!(o.as_reference(), Ok(found) if found == id))
     {
         arr.push(Object::Reference(id));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S2-2 删除面（annotate.rs PdfAnnotator 消费——摘引用 + null 重定义）
+// ---------------------------------------------------------------------------
+
+impl LopdfWriter {
+    /// staged 对象号（AnnotId → 本会话写入对象——删除面消费：会话
+    /// 新增标注的摘除定位）。
+    pub(crate) fn staged_object_id(&self, id: AnnotId) -> Option<ObjectId> {
+        self.staged.get(&id).copied()
+    }
+
+    /// 删除标注（增量语义）：页对象克隆入新修订 → /Annots 数组过滤掉
+    /// 该引用 → 标注对象 null 重定义（spec 7.5.10：后修订 null = 逻辑
+    /// 删除）。产物前缀逐位保持不变（既有语义锁不破）——对象字节仍在
+    /// 前修订（增量语义物理事实），引用图上已死，阅读器不再显示。
+    pub(crate) fn remove_annotation(
+        &mut self,
+        page: PageIndex,
+        annot_obj: ObjectId,
+    ) -> Result<(), CommandError> {
+        // 页对象 id（1 基换算——write_annotation 的 page_object_id 私有
+        // 面同款逻辑[增量文档视图差异：remove 须在 prev 视图取页表]）。
+        let key = page
+            .0
+            .checked_add(1)
+            .ok_or(CommandError::InvalidPage(page))?;
+        let page_id = self
+            .inc
+            .get_prev_documents()
+            .get_pages()
+            .get(&key)
+            .copied()
+            .ok_or(CommandError::InvalidPage(page))?;
+        // 页对象入新修订（幂等克隆）。
+        self.inc
+            .opt_clone_object_to_new_document(page_id)
+            .map_err(|e| CommandError::engine(format!("页对象克隆失败：{e}")))?;
+        // /Annots 三形态过滤（缺省=无删面幂等 / 直接数组 / 间接引用——
+        // mount_on_page 同构）。
+        let arr_id: Option<ObjectId> = {
+            let p = self
+                .inc
+                .new_document
+                .get_object(page_id)
+                .map_err(|e| CommandError::engine(format!("页对象读取失败：{e}")))?
+                .as_dict()
+                .map_err(|e| CommandError::engine(format!("页对象非字典：{e}")))?;
+            match p.get(b"Annots") {
+                Ok(Object::Reference(id)) => Some(*id),
+                Ok(Object::Array(_)) => None,
+                _ => return Ok(()),
+            }
+        };
+        match arr_id {
+            Some(id) => {
+                self.inc
+                    .opt_clone_object_to_new_document(id)
+                    .map_err(|e| CommandError::engine(format!("/Annots 数组克隆失败：{e}")))?;
+                let arr = self
+                    .inc
+                    .new_document
+                    .get_object_mut(id)
+                    .map_err(|e| CommandError::engine(format!("/Annots 数组读取失败：{e}")))?
+                    .as_array_mut()
+                    .map_err(|e| CommandError::engine(format!("/Annots 非数组：{e}")))?;
+                arr.retain(|o| !matches!(o, Object::Reference(r) if *r == annot_obj));
+            }
+            None => {
+                let p = self
+                    .inc
+                    .new_document
+                    .get_object_mut(page_id)
+                    .map_err(|e| CommandError::engine(format!("页对象读取失败：{e}")))?
+                    .as_dict_mut()
+                    .map_err(|e| CommandError::engine(format!("页对象非字典：{e}")))?;
+                if let Ok(Object::Array(arr)) = p.get_mut(b"Annots") {
+                    arr.retain(|o| !matches!(o, Object::Reference(r) if *r == annot_obj));
+                }
+            }
+        }
+        // 标注对象 null 重定义（新修订显式 null 覆盖前修订定义——spec
+        // 7.5.10 逻辑删除；staged 同号对象同样置 null）。
+        self.inc.new_document.set_object(annot_obj, Object::Null);
+        // 零脏短路戳破（remove 也是待保存内容）。
+        self.pending = true;
+        Ok(())
     }
 }

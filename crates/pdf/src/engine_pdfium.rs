@@ -126,7 +126,8 @@ impl PdfiumEngine {
 
     /// 进程级 pdfium 单例引用（**交叉读面**：测试/宿主在同一绑定
     /// 纪律下复用单例打开其他文档——pdfium 进程级单实例，禁止二次
-    /// 绑定；S2-3 交叉测试消费）。
+    /// 绑定；S2-2 互通 / S2-3 交叉测试消费）。绑定失败 = `Engine`（与
+    /// [`PdfiumEngine::open`] 同定位序合同）。
     pub fn shared_handle() -> Result<&'static pdfium_render::prelude::Pdfium, CommandError> {
         shared_pdfium()
     }
