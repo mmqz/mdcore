@@ -49,6 +49,7 @@ mod settings;
 mod shell;
 mod status_bar;
 mod tab_bar;
+mod theme_switch;
 mod title_bar;
 
 use document::OpenOutcome;
@@ -96,6 +97,16 @@ fn main() {
         .position(|a| a == "--smoke-save-as")
         .and_then(|i| args.get(i + 1))
         .cloned();
+    // F6：主题循环烟雾（--smoke-theme-cycle——3.5s 合成 Ctrl+T；
+    // 断言 theme: 证据行 + settings.json theme 键 + 全窗重绘不崩）。
+    let smoke_theme_cycle = args.iter().any(|a| a == "--smoke-theme-cycle");
+    // F6：字号烟雾（--smoke-zoom N——3.5s 设字号 N[8-32]；断言
+    /// font-size: 证据行 + settings.json font_size 键）。
+    let smoke_zoom = args
+        .iter()
+        .position(|a| a == "--smoke-zoom")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<f32>().ok());
     // F2：工作区烟雾钩子（--smoke-workspace DIR）。
     let smoke_workspace = args
         .iter()
@@ -245,6 +256,31 @@ fn main() {
                     let _ = cx.update(|cx| {
                         handle.update(cx, |shell, _window, cx| {
                             shell.open_workspace(std::path::PathBuf::from(dir), cx);
+                        })
+                    });
+                })
+                .detach();
+            }
+
+            // F6：主题循环烟雾（完整键派发管线）。
+            if smoke_theme_cycle {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "t", true, false, None).await;
+                })
+                .detach();
+            }
+
+            // F6：字号烟雾（与键位同走 apply_font_size）。
+            if let Some(size) = smoke_zoom {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(3500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, _window, cx| {
+                            shell.apply_font_size(gpui::px(size), cx);
                         })
                     });
                 })

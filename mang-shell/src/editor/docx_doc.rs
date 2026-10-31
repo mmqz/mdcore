@@ -358,6 +358,9 @@ pub fn readonly_allows(key: &str, ctrl: bool) -> bool {
         // F3：Ctrl+Tab 标签循环是导航组合非编辑命令——只读态放行
         //（冒泡至 shell）；无 Ctrl 的 Tab 是缩进编辑——拒绝如故。
         "tab" => ctrl,
+        // F6：Ctrl+=/-/0 字号缩放与 Ctrl+T 系主题键是视图命令非编辑
+        //——只读态（docx/pdf）同样可缩放/切主题。
+        "=" | "+" | "-" | "0" | "t" => ctrl,
         _ => false,
     }
 }

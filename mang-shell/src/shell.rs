@@ -22,7 +22,10 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Entity, FocusHandle, KeyDownEvent, PathPromptOptions, Render, Window};
+use std::sync::Arc;
+
+use gpui::{Context, Entity, FocusHandle, KeyDownEvent, PathPromptOptions, Render, Window, px};
+use theme::Theme;
 use ui::prelude::*;
 
 use crate::activity_bar;
@@ -33,6 +36,7 @@ use crate::panels;
 use crate::recent::RecentStore;
 use crate::status_bar;
 use crate::tab_bar::{self, TabItem};
+use crate::theme_switch;
 use crate::title_bar;
 
 /// Ctrl+K 和弦窗口（第二键有效期；过期自动作废——惰性判定无需定时器）。
@@ -81,6 +85,14 @@ pub struct ShellApp {
     root_focus: FocusHandle,
     /// F5：最近打开（文件 20 / 工作区 10——空态引导页呈现 + 写穿透落盘）。
     recent: RecentStore,
+    /// F6：主题模式（system/light/dark——Ctrl+Alt+T 循环；持久化）。
+    theme_mode: &'static str,
+    /// F6：主题蓝本（启动时的全局主题 = One Dark——浅色派生与切回的
+    /// 基准；运行期不追改）。
+    base_theme: Arc<Theme>,
+    /// F6：编辑器字号（px，8-32——Ctrl+=/-/0 缩放；应用到全部标签；
+    /// 持久化）。
+    font_size: f32,
     /// F1：提示横幅（打开失败 / 类型不支持 / 对话框不可用等面向用户消息）。
     notice_board: NoticeBoard,
 }
@@ -175,6 +187,11 @@ impl ShellApp {
         for tab in &tabs {
             recent.record_file(&tab.path);
         }
+        // F6：主题模式（settings 记忆 → 应用）+ 蓝本捕获 + 字号。
+        let base_theme = theme::GlobalTheme::theme(cx).clone();
+        let theme_mode = theme_switch::parse_mode(crate::settings::load_theme_mode().as_deref());
+        theme_switch::apply_mode(theme_mode, &base_theme, cx);
+        let font_size = crate::settings::load_font_size().unwrap_or(15.);
         if !recent.recent_files().is_empty() || !recent.recent_workspaces().is_empty() {
             eprintln!(
                 "recent: {} 文件 / {} 工作区",
@@ -213,7 +230,7 @@ impl ShellApp {
                 false
             });
         }
-        let this = Self {
+        let mut this = Self {
             left_open: true,
             right_open: true,
             tabs,
@@ -224,6 +241,9 @@ impl ShellApp {
             confirm_focus,
             root_focus,
             recent,
+            theme_mode,
+            base_theme,
+            font_size,
             notice_board: NoticeBoard::default(),
         };
         // 初始焦点：有文档 → 编辑器（键入/编辑即时可用）；空态 →
@@ -236,6 +256,8 @@ impl ShellApp {
             }
             None => window.focus(&root_focus_for_init, cx),
         }
+        // F6：记忆字号应用到启动标签。
+        this.apply_font_size(px(this.font_size), cx);
         this
     }
 
@@ -476,6 +498,31 @@ impl ShellApp {
         .detach();
     }
 
+    /// F6：循环主题（Ctrl+T——system → light → dark → system；
+    /// 应用 + 持久化 + 通知）。
+    pub fn cycle_theme(&mut self, cx: &mut Context<Self>) {
+        let next = theme_switch::next_mode(self.theme_mode);
+        self.theme_mode = next;
+        theme_switch::apply_mode(next, &self.base_theme, cx);
+        crate::settings::save_theme_mode(next);
+        eprintln!("theme: {}（{next}）", theme_switch::mode_label(next));
+        cx.notify();
+    }
+
+    /// F6：设置编辑器字号（应用到全部标签 + 持久化；域外 clamp 由
+    /// Editor 收口）。
+    pub fn apply_font_size(&mut self, size: gpui::Pixels, cx: &mut Context<Self>) {
+        let size_f32 = size.as_f32().clamp(8., 32.);
+        self.font_size = size_f32;
+        eprintln!("font-size: {size_f32}px");
+        for tab in &self.tabs {
+            tab.editor
+                .update(cx, |ed, cx| ed.set_font_size(px(size_f32), cx));
+        }
+        crate::settings::save_font_size(size_f32);
+        cx.notify();
+    }
+
     /// F3：循环切换标签（Ctrl+Tab 下一 / Ctrl+Shift+Tab 上一；
     /// wrap；单标签无操作）。
     pub fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -697,6 +744,27 @@ impl Render for ShellApp {
                     && ks.key.eq_ignore_ascii_case("s")
                 {
                     this.prompt_save_as(window, cx);
+                    return;
+                }
+                // F6：Ctrl+= / Ctrl++ 放大、Ctrl+- 缩小、Ctrl+0 重置
+                //（shift 兼容——"+" 多为 shift+= 产生）。
+                if ctrl && !ks.modifiers.alt && (ks.key == "=" || ks.key == "+") {
+                    let next = this.font_size + 1.;
+                    this.apply_font_size(px(next), cx);
+                    return;
+                }
+                if ctrl && !ks.modifiers.alt && ks.key == "-" {
+                    let next = this.font_size - 1.;
+                    this.apply_font_size(px(next), cx);
+                    return;
+                }
+                if plain_ctrl && ks.key == "0" {
+                    this.apply_font_size(px(15.), cx);
+                    return;
+                }
+                // F6：Ctrl+T 循环主题（system → light → dark → system）。
+                if plain_ctrl && ks.key.eq_ignore_ascii_case("t") {
+                    this.cycle_theme(cx);
                     return;
                 }
                 // F1：Ctrl+O 文件打开。

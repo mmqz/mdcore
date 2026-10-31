@@ -131,10 +131,11 @@ impl Render for DragGhost {
 
 /// 编辑器字体：Sarasa Mono SC（CJK 等宽——中英混排对齐 + 光标定位稳定）。
 const EDITOR_FONT: &str = "Sarasa Mono SC";
-/// 正文字号（px）。
-const FONT_SIZE: Pixels = px(15.);
-/// 行高（px，uniform_list 等高行基准）。
-const LINE_HEIGHT: Pixels = px(24.);
+/// 正文字号缺省（px）——F6 起实际字号是 Editor 实例状态
+///（[`Editor::font_size`]，Ctrl+=/-/0 缩放），此处仅构造缺省。
+const DEFAULT_FONT_SIZE: Pixels = px(15.);
+/// 行高比（字号 × 1.6——缺省 15→24 与既有基准恒等）。
+const LINE_HEIGHT_RATIO: f32 = 1.6;
 /// 行号 gutter 宽（px，容纳 5 位数 + 右缘留白）。
 const GUTTER_WIDTH: Pixels = px(52.);
 /// 正文左内边距（px）。
@@ -187,6 +188,9 @@ pub struct Editor {
     mouse_log: bool,
     /// 只读模式（批 3：docx 渲染面——变更类命令整段拒绝；批 4 复用同门）。
     read_only: bool,
+    /// F6：正文字号（px，8-32 域——Ctrl+=/-/0 缩放；hit-test 测宽与
+    /// 渲染同源，缩放后光标/鼠标命中不漂移）。
+    font_size: Pixels,
     /// docx 转换产物（行模型 + 标题树 + 属性；`None` = 非 docx 态）。
     docx: Option<DocxPayload>,
     /// pdf 转换产物（批 4：行模型 + 书签树 + 页表；`None` = 非 pdf 态）。
@@ -208,6 +212,7 @@ impl Editor {
             buffer,
             file_path: path,
             display_name: SharedString::from(display_name),
+            font_size: DEFAULT_FONT_SIZE,
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
@@ -245,6 +250,7 @@ impl Editor {
             buffer,
             file_path: Some(path),
             display_name: SharedString::from(display_name),
+            font_size: DEFAULT_FONT_SIZE,
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
@@ -284,6 +290,7 @@ impl Editor {
             buffer,
             file_path: Some(path),
             display_name: SharedString::from(display_name),
+            font_size: DEFAULT_FONT_SIZE,
             focus: cx.focus_handle(),
             find_focus: cx.focus_handle(),
             find: None,
@@ -321,6 +328,24 @@ impl Editor {
     /// 修改标记（状态栏「●」）。
     pub fn is_modified(&self) -> bool {
         self.buffer.is_modified()
+    }
+
+    /// F6：行高（字号 × 1.6——uniform_list 等高行基准）。
+    pub fn line_height(&self) -> Pixels {
+        self.font_size * LINE_HEIGHT_RATIO
+    }
+
+    /// F6：设置字号（8-32 域 clamp；断点失效——软换行按新字宽重算；
+    /// 渲染/hit-test 同源零漂移）。返回是否实际变更。
+    pub fn set_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) -> bool {
+        let clamped = px(size.as_f32().clamp(8., 32.));
+        if (clamped - self.font_size).as_f32().abs() < f32::EPSILON {
+            return false;
+        }
+        self.font_size = clamped;
+        self.display_map.reset_wraps();
+        cx.notify();
+        true
     }
 
     /// 文档路径（F3 标签身份——`None` = 未命名草稿）。
@@ -1304,7 +1329,7 @@ impl Editor {
         if line.is_empty() {
             return 0;
         }
-        let style = editor_hit_text_style();
+        let style = editor_hit_text_style(self.font_size);
         let font_size = style.font_size.to_pixels(window.rem_size());
         let run = style.to_run(line.len());
         let shaped = window
@@ -1738,7 +1763,7 @@ impl Editor {
 
                 div()
                     .id(SharedString::from(format!("line-{row}")))
-                    .h(LINE_HEIGHT)
+                    .h(self.line_height())
                     .w_full()
                     .flex()
                     .items_center()
@@ -1795,8 +1820,8 @@ impl Editor {
                             .pl(TEXT_PADDING)
                             .min_w_0()
                             .flex_1()
-                            .text_size(FONT_SIZE)
-                            .line_height(LINE_HEIGHT)
+                            .text_size(self.font_size)
+                            .line_height(self.line_height())
                             .font_family(EDITOR_FONT)
                             .text_color(colors.text)
                             .child(StyledText::new(line_text).with_highlights(runs)),
@@ -1809,7 +1834,7 @@ impl Editor {
                                 .left(caret_x)
                                 .top(px(2.))
                                 .w(px(2.))
-                                .h(LINE_HEIGHT - px(4.))
+                                .h(self.line_height() - px(4.))
                                 .bg(colors.text),
                         )
                     })
@@ -1951,14 +1976,14 @@ impl Editor {
 
 /// 编辑器正文 TextStyle 基座（字体面——hit-test shaping 与渲染共用；
 /// 颜色不影响字形位置，hit-test 用占位色）。
-fn editor_hit_text_style() -> TextStyle {
+fn editor_hit_text_style(font_size: Pixels) -> TextStyle {
     TextStyle {
         color: gpui::black(),
         font_family: EDITOR_FONT.into(),
         font_features: Default::default(),
         font_fallbacks: None,
-        font_size: FONT_SIZE.into(),
-        line_height: LINE_HEIGHT.into(),
+        font_size: font_size.into(),
+        line_height: (font_size * LINE_HEIGHT_RATIO).into(),
         font_weight: FontWeight::default(),
         font_style: FontStyle::default(),
         background_color: None,
@@ -1975,7 +2000,7 @@ fn editor_hit_text_style() -> TextStyle {
 fn editor_text_style(colors: &ThemeColors) -> TextStyle {
     TextStyle {
         color: colors.text,
-        ..editor_hit_text_style()
+        ..editor_hit_text_style(DEFAULT_FONT_SIZE)
     }
 }
 

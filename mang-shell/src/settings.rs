@@ -62,6 +62,39 @@ pub fn remembered_workspace() -> Option<PathBuf> {
     remembered_workspace_in(&dir)
 }
 
+/// F6：主题模式读写（`theme` 键："system"/"light"/"dark"——未知值由
+/// [`crate::theme_switch::parse_mode`] 归一到 system）。
+pub fn save_theme_mode(mode: &str) {
+    if let Some(dir) = config_dir() {
+        let mut value = load_from(&dir);
+        value["theme"] = serde_json::Value::String(mode.to_string());
+        save_to(&dir, &value);
+    }
+}
+
+pub fn load_theme_mode() -> Option<String> {
+    let dir = config_dir()?;
+    load_from(&dir)
+        .get("theme")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// F6：编辑器字号读写（`font_size` 键——pt 数；8-32 域外由消费方
+/// clamp）。
+pub fn save_font_size(size: f32) {
+    if let Some(dir) = config_dir() {
+        let mut value = load_from(&dir);
+        value["font_size"] = serde_json::Value::from(size);
+        save_to(&dir, &value);
+    }
+}
+
+pub fn load_font_size() -> Option<f32> {
+    let dir = config_dir()?;
+    load_from(&dir).get("font_size")?.as_f64().map(|v| v as f32)
+}
+
 fn remember_workspace_in(dir: &Path, root: &Path) {
     let mut value = load_from(dir);
     value["workspace"] = serde_json::Value::String(root.to_string_lossy().into_owned());
@@ -164,6 +197,23 @@ mod tests {
         let value = load_from(&dir);
         assert_eq!(value["theme"].as_str(), Some("dark"), "既有键保留");
         assert_eq!(value["workspace"].as_str(), Some("/new"), "新值生效");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// F6：主题/字号键往返 + 与既有键共存。
+    #[test]
+    fn theme_and_font_size_roundtrip() {
+        let dir = temp_config("f6");
+        remember_workspace_in(&dir, Path::new("/ws"));
+        let mut value = load_from(&dir);
+        value["theme"] = serde_json::Value::String("light".into());
+        value["font_size"] = serde_json::Value::from(18.0f32);
+        save_to(&dir, &value);
+
+        let value = load_from(&dir);
+        assert_eq!(value["theme"].as_str(), Some("light"));
+        assert_eq!(value["font_size"].as_f64(), Some(18.0));
+        assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
