@@ -1,9 +1,21 @@
-//! docx 只读文档模型（#68 阶段 1 批 3——mdc-office-io path 依赖接入）。
+//! docx 文档模型（#68 批 3 只读渲染 + #115 可编辑化）。
 //!
-//! 职责：把 [`mdc_office_io::docx`] 的块序模型转换为编辑器可渲染的
-//! **行模型**（纯文本行 + 逐行样式 span + 标题树 + 文档属性）——
-//! 渲染/滚动/查找/选区/光标全复用批 1-2 的 Editor 管线，仅以
-//! 只读门禁（[`readonly_allows`]）关闭变更类命令。
+//! 职责：把 docx 解析结果转换为编辑器可渲染的**行模型**（纯文本行 +
+//! 逐行样式 span + 逐行块归属 + 标题树 + 文档属性）——渲染/滚动/查找/
+//! 选区/光标全复用批 1-2 的 Editor 管线。
+//!
+//! ## 两种装载（#115 起）
+//!
+//! - [`load`]：**只读渲染**（无编辑桥；pdf/xlsx 同口径）。
+//! - [`load_editable`]：**可编辑**——宽面读（`read_docx_from_bytes`）出
+//!   行模型，窄面编辑（`docx_edit::DocxEditor`——prescan + verify_gates +
+//!   document.xml 扫描）出段落索引；两者按**段落序号**对账（宽面文档序
+//!   第 i / k / 表格内段 ≡ 窄面文档序第 i 个 `w:p`——两个扫描器口径一致，
+//!   有语料测试钉定；不一致则降级只读，绝不带着错位映射开工）。
+//!
+//! 门：宽面在**解析后**要做块模型（比窄面贵），故进程内对
+//! `LIMIT_INPUT_BYTES_DOCX` 的 4 倍设**可编辑装载**上限（超限降级只读，
+//! 不阻塞查看）；文件读取本身先做 `fs::metadata` 前置（大文件不入内存）。
 //!
 //! ## 转换规则（docx 块 → 行）
 //!
@@ -19,14 +31,32 @@
 //! - 文本框：内层块平铺渲染（无边框/锚定定位）。
 //! - 页眉/页脚/图片/批注/脚注/尾注：**不入正文行流**——计数入
 //!   [`DocxProps`]（属性面板呈现）；图片位置模型面外（office-io
-//!   登记面）。
+//!   登记面）。#115：**可编辑态**下这些内容各出一行**只读清单行**
+//!   （「页眉 / 页脚：2 / 1——第一版只读」），既有「看得见」的证据，
+//!   也解释「为什么改不了」——行模型里没有的东西用户不会去找。
 //!
-//! ## 已知边界（批 3 登记，后续批补）
+//! ## 段落投影与块归属（#115 映射的地基）
+//!
+//! 行模型是「docx 块 → 人读行」的有损投影：一个段落可能占多行（列表
+//! 标记行 + 无标记续行；`w:br` 软换行），表格行/分隔线是**凭空生成**
+//! 的装饰行。可编辑化必须能反推，故每行带一个
+//! [`docx_edit_bridge::LineBlock`]：
+//!
+//! - `Docx { paragraph, carry, .. }` = 该行属于段落 `paragraph`（可回写）；
+//!   `carry = true` 是「承接头」（无标记的续行，删它 ≠ 删目标文本）；
+//! - `ReadOnly(kind)` = 锁定行（表格/分隔线/填充/域/修订/回退副本/
+//!   文本框/辅助清单），渲染可见、编辑面外，`kind.reason()` 即拒改原因。
+//!
+//! 行模型对段落的**完整投影**另行逐段记入桥（[`DocxPayload::projections`]）
+//! ——回写时与 Buffer 行文本比对即可判「这一段动没动」（可逆性闸门）。
+//!
+//! ## 已知边界（批 3 登记 + #115 增补）
 //!
 //! - 表格列宽上限 28 cell（超宽截断单元格文本 + `…`）
 //! - 有序列表计数不重置（OOXML 层级重启语义未实现——跨段重启按
 //!   同 numId 续计）
-//! - 软换行（`w:br`）由读面并入同段文本，本层不再拆行
+//! - 软换行（`w:br`）由读面并入同段文本；#115 起按 `\n` 拆行（拆行后
+//!   可编辑且可逆——连行即恢复原文）
 //! - 分页语义面外（docx 无显式页边界入流——阶段 3 页码/行号按行号
 //!   呈现）
 
@@ -35,18 +65,27 @@ use std::ops::Range;
 use std::path::Path;
 
 use mdc_office_io::docx::{self, Block, ListKind, read_docx_from_bytes_with_options};
+use mdc_office_io::docx_edit::{DocxEditor, ParagraphRef};
 use mdc_office_io::io;
 
+use super::docx_edit_bridge::{DocxBridge, DocxPort, LineBlock, ReadOnlyLine};
 use super::highlight::TokenKind;
 
+// NB：#115 起表格网格不入行流（表格只读），下列列宽/截断/补齐工具仅
+// 在「未来把表格接回编辑面」时复用——保留实现并显式登记未用。
 /// 表格单元格列宽上限（East Asian cell 计，超宽截断 + `…`）。
+#[allow(dead_code)]
 const CELL_WIDTH_CAP: usize = 28;
 /// 左缩进换算：360 twips ≈ 1 空格（0.25 英寸），封顶 16 空格。
 const INDENT_UNIT_TWIPS: i32 = 360;
+#[allow(dead_code)]
 const INDENT_SPACES_CAP: usize = 16;
 /// 列表层级缩进（每级 2 空格，封顶 4 级）。
 const LIST_INDENT_PER_LEVEL: usize = 2;
 const LIST_LEVEL_CAP: usize = 4;
+/// #115：可编辑装载的输入上限倍数（宽面块模型比窄面扫描贵；超限降级
+/// 只读——查看不受阻）。
+const EDIT_LOAD_LIMIT_FACTOR: u64 = 4;
 
 /// 标题树条目（左栏「文档结构」——阶段 3.1 docx 面提前落地）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,22 +115,40 @@ pub struct DocxProps {
     pub warnings: usize,
     /// 空段落计数（诊断面——docx 常见空行布局）。
     pub empty_paragraphs: usize,
+    /// #115：可编辑段落数（行模型里可回写的段落——非锁定）。
+    pub editable_paragraphs: usize,
+    /// #115：锁定段落数（域/修订/回退副本/文本框——引擎拒改面）。
+    pub locked_paragraphs: usize,
 }
 
-/// docx 转换产物（Editor 只读渲染的全部数据面）。
+/// docx 转换产物（Editor 渲染的全部数据面）。
 #[derive(Clone, Debug, Default)]
 pub struct DocxPayload {
     /// 全文纯文本（行以 `\n` 连接——喂 [`super::buffer::Buffer`]）。
     pub text: String,
     /// 逐行样式 span（char 索引区间 + token 类别；与 text 行严格对齐）。
     pub spans: Vec<Vec<(Range<usize>, TokenKind)>>,
+    /// 逐行块归属（与 text 行严格 1:1；`None` = 只读装载，无映射）。
+    pub blocks: Option<Vec<LineBlock>>,
     /// 标题树（文档序）。
     pub headings: Vec<HeadingEntry>,
     /// 文档属性。
     pub props: DocxProps,
+    /// #115：可编辑装载的原始字节（编辑桥构造原料；`None` = 只读装载）。
+    pub source: Option<Vec<u8>>,
+    /// #115：逐段投影（`段落号 → 行模型里的完整投影文本`；只读装载为空）。
+    pub projections: HashMap<usize, String>,
+    /// #115：逐段回写兜底投影（`段落号 → 段内行正文`；只读装载为空）。
+    pub fallbacks: HashMap<usize, String>,
+    /// #115：候选段落数（宽面文档序段落总数——与窄面 w:p 数对账用）。
+    pub candidates: usize,
+    /// #115：表格单元格段落号（行模型不出行——保存时按原文写回，禁止变成空串）。
+    pub cell_paragraphs: Vec<usize>,
+    /// #115：可编辑装载的降级说明（`Some` = 本文件实际是只读态）。
+    pub notice: Option<String>,
 }
 
-/// 读盘 + 解析 + 转换（单入口——`document::open` 的 docx 分派目标）。
+/// 读盘 + 解析 + 转换（**只读**——pdf/xlsx 同口径）。
 ///
 /// 兼容模式（`compat: true`）：畸形部件降级为结构化警告（数据照常
 /// 提取，警告计数入属性）——查看器语义；安全门（预扫/尺寸/深度上限）
@@ -113,8 +170,232 @@ pub fn load(path: &Path) -> Result<DocxPayload, String> {
     Ok(convert(&doc))
 }
 
-/// 块序模型 → 行模型（纯函数——单测锚点）。
+/// 可编辑装载结果：行模型 + 引擎窄面 + 编辑桥。
+///
+/// `bridge = None` 表示该文件**降级为只读**（超可编辑门限 / 引擎侧严格
+/// 门拒 / 段落序对账失败——`payload.notice` 载原因）——不静默：状态栏/
+/// 属性面板/启动日志都由它呈现。
+pub struct EditablePayload {
+    /// 行模型（`source = Some` 携带原始字节）。
+    pub payload: DocxPayload,
+    /// 编辑桥（`None` = 只读降级）。
+    pub bridge: Option<DocxBridge>,
+    /// 引擎窄面（桥 `Some` 时恒 `Some`——保存时落账用）。
+    pub port: Option<Box<dyn DocxPort>>,
+}
+
+/// 可编辑装载：宽面出**行模型**、窄面出**段落索引**，按段落序对账。
+pub fn load_editable(path: &Path) -> Result<EditablePayload, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("读取文件信息失败：{e}"))?;
+    let editable_cap = io::LIMIT_INPUT_BYTES_DOCX.saturating_mul(EDIT_LOAD_LIMIT_FACTOR);
+    if meta.len() > editable_cap {
+        let mut payload = load(path)?;
+        payload.notice = Some(format!(
+            "文件 {} 字节超过可编辑装载门限（{editable_cap} 字节）——降级为只读",
+            meta.len()
+        ));
+        return Ok(EditablePayload {
+            payload,
+            bridge: None,
+            port: None,
+        });
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("读取失败：{e}"))?;
+    let opts = io::ReadOptions { compat: true };
+    let doc = read_docx_from_bytes_with_options(&bytes, &opts)
+        .map_err(|e| format!("docx 解析失败：{e}"))?;
+
+    // 窄面（引擎严格门）：失败 → 降级只读（宽面已证明可看）。
+    let engine = match DocxEditor::open(&bytes) {
+        Ok(e) => e,
+        Err(e) => {
+            let mut payload = convert(&doc);
+            payload.source = Some(bytes);
+            payload.notice = Some(format!(
+                "引擎编辑面拒（{e}）——降级为只读渲染（查看不受影响）"
+            ));
+            return Ok(EditablePayload {
+                payload,
+                bridge: None,
+                port: None,
+            });
+        }
+    };
+    let engine_paras = engine.paragraphs().len();
+    let port = DocxEnginePort { editor: engine };
+    let payload = convert_editable(&doc, &port);
+    // 段落序对账（候选段落全集——含空段落/锁定段落，它们不入投影表）：
+    // 行模型段落数必须等于窄面段数，否则块归属会错位。
+    let mapped = payload.candidates;
+    let unrepresentable = (0..engine_paras)
+        .filter(|i| !payload.projections.contains_key(i))
+        .count();
+    // 宽面文档序段落总数（含表格/文本框内段落）必须与引擎 w:p 数一致。
+    let width_paragraphs = width_paragraph_total(&doc.blocks);
+    if width_paragraphs != engine_paras {
+        let mut fallback = convert(&doc);
+        fallback.source = Some(bytes);
+        fallback.notice = Some(format!(
+            "宽面段落数 {width_paragraphs} 与引擎 {engine_paras} 不一致（块模型/XML 扫描口径分歧）——降级为只读"
+        ));
+        return Ok(EditablePayload {
+            payload: fallback,
+            bridge: None,
+            port: None,
+        });
+    }
+    if unrepresentable > 0 {
+        // 有段落**进不了行模型**（宽面块模型与窄面 w:p 对不上的形态：
+        // 例如本版表格单元格文本未逐格入行）——带着这种缺口编辑，保存时
+        // 会把这些段落当成「用户清空」写回。宁缺毋错：整篇降级只读。
+        let mut fallback = convert(&doc);
+        fallback.source = Some(bytes);
+        fallback.notice = Some(format!(
+            "有 {unrepresentable} 个段落无法在行模型中表示（表格单元格等）——降级为只读，避免误写"
+        ));
+        return Ok(EditablePayload {
+            payload: fallback,
+            bridge: None,
+            port: None,
+        });
+    }
+    if mapped != engine_paras {
+        let mut fallback = convert(&doc);
+        fallback.source = Some(bytes);
+        fallback.notice = Some(format!(
+            "段落序对账失败（行模型 {mapped} 段 / 引擎 {engine_paras} 段）——降级为只读，避免错位改写"
+        ));
+        return Ok(EditablePayload {
+            payload: fallback,
+            bridge: None,
+            port: None,
+        });
+    }
+    let blocks = payload.blocks.clone().unwrap_or_default();
+    let mut bridge = DocxBridge::new(
+        blocks,
+        (0..engine_paras)
+            .map(|i| Some(port.paragraph_text(i)))
+            .collect(),
+    );
+    for (p, text) in &payload.projections {
+        bridge.note_projection(*p, text);
+    }
+    for (p, text) in &payload.fallbacks {
+        bridge.note_fallback(*p, text);
+    }
+    bridge.note_cells(payload.cell_paragraphs.clone());
+    let mut payload = payload;
+    payload.source = Some(bytes);
+    Ok(EditablePayload {
+        payload,
+        bridge: Some(bridge),
+        port: Some(Box::new(port)),
+    })
+}
+
+/// 宽面文档序段落总数（表格单元格/文本框内段落逐层计——与引擎 w:p 同口径）。
+fn width_paragraph_total(blocks: &[Block]) -> usize {
+    blocks
+        .iter()
+        .map(|b| match b {
+            Block::Paragraph(_) => 1,
+            Block::Table(t) => t.rows.iter().map(|r| r.len()).sum::<usize>(),
+            Block::TextBox(tb) => width_paragraph_total(&tb.blocks),
+        })
+        .sum()
+}
+
+/// 引擎窄面实现（薄包装 `mdc_office_io::docx_edit::DocxEditor`）。
+///
+/// 段落级元数据（表格/文本框/域/修订/回退副本）取自 open 时的原文
+/// 坐标系（`paragraphs()`）——待落账编辑不漂移索引。
+pub struct DocxEnginePort {
+    editor: DocxEditor,
+}
+
+#[allow(dead_code)] // 证据链/测试面（open/paragraphs）
+impl DocxEnginePort {
+    /// 由字节直接开引擎面（集成测试/证据链用；文件装载走 [`load_editable`]）。
+    pub fn open(bytes: &[u8]) -> Result<Self, String> {
+        DocxEditor::open(bytes)
+            .map(|editor| Self { editor })
+            .map_err(|e| e.to_string())
+    }
+
+    /// 段落索引（原文坐标系；属性面板/测试面只读视图）。
+    pub fn paragraphs(&self) -> &[ParagraphRef] {
+        self.editor.paragraphs()
+    }
+}
+
+impl DocxPort for DocxEnginePort {
+    fn paragraph_count(&self) -> usize {
+        self.editor.paragraphs().len()
+    }
+
+    fn paragraph_text(&self, idx: usize) -> String {
+        self.editor.paragraph_text(idx).to_string()
+    }
+
+    fn blocked_reason(&self, idx: usize) -> Option<ReadOnlyLine> {
+        let p = self.editor.paragraphs().get(idx)?;
+        if p.in_textbox {
+            Some(ReadOnlyLine::Textbox)
+        } else if p.fallback_copy {
+            Some(ReadOnlyLine::FallbackCopy)
+        } else if p.field_code {
+            Some(ReadOnlyLine::FieldCode)
+        } else if p.revision {
+            Some(ReadOnlyLine::Revision)
+        } else {
+            None
+        }
+    }
+
+    fn set_text(&mut self, idx: usize, text: &str) -> Result<(), String> {
+        self.editor
+            .set_paragraph_text(idx, text)
+            .map_err(|e| e.to_string())
+    }
+
+    fn save(&self) -> Result<Vec<u8>, String> {
+        self.editor.save_to_vec().map_err(|e| e.to_string())
+    }
+}
+
+/// #115：可编辑行模型（**真实引擎面**——从字节起走完整链：宽面块序 +
+/// 窄面 `DocxEditor`，段落序对账不过直接 panic 之前的调用方自检）。
+///
+/// 与 [`load_editable`] 的区别：不做磁盘 IO / 不做降级（文件内测试与
+/// 集成证据链用——失败即测试断言，不静默降级）。
+#[allow(dead_code)] // 测试/证据链入口
+pub fn convert_editable_wide(doc: &docx::DocxDocument) -> DocxPayload {
+    convert(doc)
+}
+
+/// #115：可编辑行模型 + 真实引擎（字节入口——集成测试/证据链用）。
+#[allow(dead_code)] // 测试/证据链入口
+pub fn editable_from_bytes(bytes: &[u8]) -> (DocxPayload, DocxEnginePort) {
+    let opts = io::ReadOptions { compat: true };
+    let doc = read_docx_from_bytes_with_options(bytes, &opts).expect("docx 解析");
+    let editor = DocxEditor::open(bytes).expect("引擎开");
+    let port = DocxEnginePort { editor };
+    let payload = convert_editable(&doc, &port);
+    (payload, port)
+}
+
+/// 块序模型 → 行模型（**只读**：纯函数——单测锚点）。
 pub fn convert(doc: &docx::DocxDocument) -> DocxPayload {
+    convert_inner(doc, None)
+}
+
+/// 块序模型 → 行模型（**可编辑**：逐行块归属 + 逐段投影）。
+pub fn convert_editable(doc: &docx::DocxDocument, port: &dyn DocxPort) -> DocxPayload {
+    convert_inner(doc, Some(port))
+}
+
+fn convert_inner(doc: &docx::DocxDocument, port: Option<&dyn DocxPort>) -> DocxPayload {
     let mut out = DocxPayload {
         props: DocxProps {
             blocks: doc.blocks.len(),
@@ -129,174 +410,403 @@ pub fn convert(doc: &docx::DocxDocument) -> DocxPayload {
         },
         ..DocxPayload::default()
     };
-    let mut ctx = ConvertCtx::default();
+    let mut ctx = ConvertCtx {
+        port,
+        engine_paras: port.map(|p| p.paragraph_count()).unwrap_or(0),
+        ..ConvertCtx::default()
+    };
     for block in &doc.blocks {
         match block {
-            Block::Paragraph(p) => ctx.push_paragraph(p, &mut out),
+            Block::Paragraph(p) => ctx.push_paragraph(p),
             Block::Table(t) => ctx.push_table(t, &mut out),
             Block::TextBox(tb) => {
                 out.props.textboxes += 1;
-                // 内层块平铺（无边框/锚定——登记边界）。
-                for inner in &tb.blocks {
-                    match inner {
-                        Block::Paragraph(p) => ctx.push_paragraph(p, &mut out),
-                        Block::Table(t) => ctx.push_table(t, &mut out),
-                        Block::TextBox(nested) => {
-                            for deep in &nested.blocks {
-                                if let Block::Paragraph(p) = deep {
-                                    ctx.push_paragraph(p, &mut out);
-                                }
-                            }
-                        }
-                    }
-                }
+                // #115：文本框内文字**第一版只读**（不入行流）——原因同表格：
+                // 单元格/文本框段落由引擎各自回写，行模型若把它们伪造/漏掉
+                // 就会在对账时错位。文本框段落（含嵌套）仍计入段落序，只做
+                // 原文透传；清单行说明边界。
+                ctx.skip_textbox(tb);
             }
         }
     }
+    let editable = port.is_some();
+    ctx.push_aux_appendix(editable, &out.props);
+
+    out.props.editable_paragraphs = ctx
+        .blocks_vec
+        .iter()
+        .filter(|b| matches!(b, LineBlock::Para { cont: false, .. }))
+        .count();
+    out.props.locked_paragraphs = ctx.locked_paragraphs;
+    out.props.paragraphs = ctx.next_para;
+    out.props.empty_paragraphs = ctx.empty_paragraphs;
     out.text = ctx.lines.join("\n");
     out.spans = ctx.spans;
+    out.blocks = if port.is_some() {
+        Some(ctx.blocks_vec)
+    } else {
+        None
+    };
+    // 只读装载（无引擎）：投影/兜底/候选数一概清零（对账面不参与）。
+    let editable = port.is_some();
+    out.projections = if editable { ctx.proj } else { HashMap::new() };
+    out.fallbacks = if editable {
+        ctx.fallback
+    } else {
+        HashMap::new()
+    };
+    out.candidates = if editable { ctx.next_para } else { 0 };
+    out.cell_paragraphs = if editable {
+        ctx.cell_paragraphs
+    } else {
+        Vec::new()
+    };
+    out.headings = ctx.headings;
     out
 }
 
 /// 转换累积态。
 #[derive(Default)]
-struct ConvertCtx {
+struct ConvertCtx<'a> {
+    port: Option<&'a dyn DocxPort>,
     lines: Vec<String>,
     spans: Vec<Vec<(Range<usize>, TokenKind)>>,
+    blocks_vec: Vec<LineBlock>,
+    headings: Vec<HeadingEntry>,
+    /// 逐段投影（段落号 → 行模型里的完整文本）。
+    proj: HashMap<usize, String>,
+    /// 逐段回写兜底投影（段落号 → 段内行正文，\n 连接）。
+    fallback: HashMap<usize, String>,
     /// 有序列表计数（numId+ilvl → 当前序号——跨段连续，不重置）。
     ordered: HashMap<(usize, usize), usize>,
+    /// #115：宽面段落的文档序游标（与窄面 w:p 文档序对账）。
+    next_para: usize,
+    /// #115：锁定段落计数（域/修订/回退副本/文本框）。
+    locked_paragraphs: usize,
+    /// 引擎段落数（窄面 w:p 计数——超界防线）。
+    engine_paras: usize,
+    /// #115：表格栅格（只计属性——见 [`ConvertCtx::push_table`]）。
+    table_rows: Vec<Vec<Vec<String>>>,
+    /// #115：表格单元格段落号（文档序）——保存时按原文写回。
+    cell_paragraphs: Vec<usize>,
+    /// #115：未入行流但仍是 w:p 的段落数（表格单元格）——段落序对账用。
+    aux_paragraphs: usize,
+    empty_paragraphs: usize,
 }
 
-impl ConvertCtx {
-    fn push_paragraph(&mut self, p: &docx::ParagraphData, out: &mut DocxPayload) {
-        out.props.paragraphs += 1;
-        let mut line = String::new();
-        let mut spans: Vec<(Range<usize>, TokenKind)> = Vec::new();
+impl ConvertCtx<'_> {
+    /// 文本框段落统计（不入行流——第一版只读；只做段落序对账）。
+    fn skip_textbox(&mut self, tb: &docx::TextBoxData) {
+        for inner in &tb.blocks {
+            match inner {
+                Block::Paragraph(_) => {
+                    let para = self.next_para;
+                    self.next_para += 1;
+                    self.proj.insert(para, String::new());
+                    self.fallback.insert(para, String::new());
+                    self.cell_paragraphs.push(para);
+                }
+                Block::Table(t) => {
+                    for row in &t.rows {
+                        for _ in row {
+                            let para = self.next_para;
+                            self.next_para += 1;
+                            self.proj.insert(para, String::new());
+                            self.fallback.insert(para, String::new());
+                            self.cell_paragraphs.push(para);
+                        }
+                    }
+                }
+                Block::TextBox(nested) => self.skip_textbox(nested),
+            }
+        }
+    }
 
-        // 左缩进（twips → 空格近似）。
+    /// 追加一行（行/样式/块三轨同步——单一入口，防错位）。
+    fn push_line(&mut self, text: String, spans: Vec<(Range<usize>, TokenKind)>, block: LineBlock) {
+        self.lines.push(text);
+        self.spans.push(spans);
+        self.blocks_vec.push(block);
+    }
+
+    /// 本段落的行块归属（只读装载恒 `Para`；可编辑态查引擎拒改面）。
+    ///
+    /// `unit` = 段落内"几何单元"序号（段落文本按软换行切出的第几段）。
+    fn para_block(&mut self, para: usize, unit: usize, cont: bool) -> LineBlock {
+        match self.port {
+            None => LineBlock::Para {
+                paragraph: para,
+                idx: unit,
+                cont,
+            },
+            // 超界防线：宽面块模型多出来的段落（引擎无对应 w:p）不得查询
+            // 引擎（`paragraph_text` 越界 panic）。标锁定 + 计数，由调用方
+            // 的对账把它判成「不可编辑装载」。
+            Some(_) if para >= self.engine_paras => {
+                if !cont {
+                    self.locked_paragraphs += 1;
+                }
+                LineBlock::Locked(ReadOnlyLine::Unrepresentable)
+            }
+            Some(port) => match port.blocked_reason(para) {
+                Some(kind) => {
+                    if !cont {
+                        self.locked_paragraphs += 1;
+                    }
+                    // 锁定段的投影 = 引擎原文（不参与回写；只为「未动」判定与
+                    // 语料零编辑回归提供基准）。
+                    let text = port.paragraph_text(para);
+                    self.proj.insert(para, text.clone());
+                    self.fallback.insert(para, text);
+                    LineBlock::Locked(kind)
+                }
+                None => LineBlock::Para {
+                    paragraph: para,
+                    idx: unit,
+                    cont,
+                },
+            },
+        }
+    }
+
+    /// 段落入行流：标题 / 列表 / 普通三形态（#115 可逆口径）。
+    ///
+    /// 行切分：段落拆成「几何单元」，每单元一行——
+    /// - 首单元 = 缩进填充 + 列表标记 + 正文首段（行模型原样投影）；
+    /// - 软换行（\n）后的正文段 = 自带一个**承载行**（承接续行），其后
+    ///   再各补一个**缩进填充行**（原文 \t 等宽近似：每个填充行 = 一个
+    ///   \t，按原缩进量算——续行缩进在本层可见、可往返）；
+    /// - 行内 \t（原文字符）由引擎读面装配进文本、按等宽渲染。
+    ///
+    /// 单元序号 = [`LineBlock::Para::idx`]；回写时正文按 \n 连接还原。
+    fn push_paragraph(&mut self, p: &docx::ParagraphData) {
+        let para = self.next_para;
+        self.next_para += 1;
+
+        // 缩进（twips → 空格近似；`left` 为续行缩进，`first_line` 为首行）。
+        let mut indent_first = 0usize;
+        let mut indent_left = 0usize;
         if let Some(ind) = p.indent {
-            let twips = ind.left.unwrap_or(0).max(0) as usize;
-            let spaces = (twips / INDENT_UNIT_TWIPS as usize).min(INDENT_SPACES_CAP);
-            for _ in 0..spaces {
-                line.push(' ');
+            // 续行缩进按「每 360 twips = 1 个 \t 宽」（行内制表符等宽渲染）。
+            indent_left = ind.left.unwrap_or(0).max(0) as usize / INDENT_UNIT_TWIPS as usize;
+            match ind.special {
+                Some(docx::ParagraphIndentSpecial::FirstLine(tw)) => {
+                    indent_first = tw.max(0) as usize / INDENT_UNIT_TWIPS as usize;
+                }
+                Some(docx::ParagraphIndentSpecial::Hanging(_)) | None => {}
             }
         }
 
-        // 列表标记（层级缩进 + 序号/圆点 + ListMarker span）。
+        // 列表标记（层级缩进 + 序号/圆点）。
+        let mut marker = String::new();
+        let mut marker_indent = 0usize;
         if let Some(num) = &p.numbering {
             let lvl = num.ilvl.min(LIST_LEVEL_CAP);
-            for _ in 0..lvl * LIST_INDENT_PER_LEVEL {
-                line.push(' ');
-            }
-            let start = line.chars().count();
+            marker_indent = lvl * LIST_INDENT_PER_LEVEL;
             match num.kind {
-                Some(ListKind::Bullet) => line.push_str("• "),
+                Some(ListKind::Bullet) => marker.push_str("• "),
                 Some(ListKind::Ordered) => {
                     let c = self.ordered.entry((num.num_id, num.ilvl)).or_insert(0);
                     *c += 1;
-                    line.push_str(&format!("{}. ", c));
+                    marker.push_str(&format!("{}. ", c));
                 }
                 // 解析链不可达（num 桥悬空/抽象层级缺定义）——中性标记。
-                None => line.push_str("· "),
-            }
-            let end = line.chars().count();
-            spans.push((start..end, TokenKind::ListMarker));
-        }
-
-        // 标题：整段 Heading span（标题行内 run 级样式不再叠加——
-        // 样式统一由 Heading 呈现）。
-        if let Some(level) = p.heading_level {
-            let text_start = line.chars().count();
-            for run in &p.runs {
-                line.push_str(&run.text);
-            }
-            let text_end = line.chars().count();
-            if text_end > text_start {
-                spans.push((text_start..text_end, TokenKind::Heading));
-            }
-            out.headings.push(HeadingEntry {
-                level,
-                text: p.text(),
-                line: self.lines.len(),
-            });
-        } else {
-            // run 级样式（链接优先于 bold/italic；bold+italic 取 Bold）。
-            for run in &p.runs {
-                let start = line.chars().count();
-                line.push_str(&run.text);
-                let end = line.chars().count();
-                if end == start {
-                    continue;
-                }
-                let kind = if run.hyperlink.is_some() {
-                    Some(TokenKind::Link)
-                } else if run.bold {
-                    Some(TokenKind::Bold)
-                } else if run.italic {
-                    Some(TokenKind::Italic)
-                } else {
-                    None
-                };
-                if let Some(kind) = kind {
-                    spans.push((start..end, kind));
-                }
+                None => marker.push_str("· "),
             }
         }
 
-        if line.is_empty() {
-            out.props.empty_paragraphs += 1;
+        // #115：行切分以**引擎装配文本**为准（`w:tab`→\t、`w:br`→\n 的
+        // 字符面与回写口径逐字一致——软换行/制表符可往返）；引擎不在场
+        // （只读装载）退回宽面文本。
+        let full_text = match self.port {
+            Some(port) if para < self.engine_paras => port.paragraph_text(para),
+            // 只读装载没有引擎（#68 无编辑面）——退回宽面块模型文本；
+            // 超界段（引擎无对应 w:p）同走宽面文本（由对账降级）。
+            Some(_) | None => docx::ParagraphData::text(p),
+        };
+        let soft_parts: Vec<&str> = full_text.split('\n').collect();
+
+        // 首单元：缩进 + 标记 + 首段正文。
+        let mut first = String::new();
+        for _ in 0..indent_first {
+            first.push(' ');
         }
-        self.lines.push(line);
-        self.spans.push(spans);
+        for _ in 0..marker_indent {
+            first.push(' ');
+        }
+        let marker_start = first.chars().count();
+        first.push_str(&marker);
+        let marker_end = first.chars().count();
+        let head_chars = first.chars().count();
+        first.push_str(soft_parts[0]);
+
+        let mut unit_texts: Vec<String> = vec![first.clone()];
+        let mut bodies: Vec<String> = vec![soft_parts[0].to_string()];
+        // 续段：每个 \t/前导空格配一个填充行，然后承载行。
+        for part in soft_parts.iter().skip(1) {
+            let mut rest = (*part).to_string();
+            let mut eaten = 0usize;
+            while eaten < indent_left && (rest.starts_with('\t') || rest.starts_with(' ')) {
+                rest.remove(0);
+                eaten += 1;
+            }
+            for _ in 0..eaten {
+                unit_texts.push(String::new());
+                bodies.push(String::new());
+            }
+            unit_texts.push(rest.clone());
+            bodies.push(rest);
+        }
+
+        // 落行（首行带标记 span / 标题 span / run 级样式）。
+        let mut projection = String::new();
+        let mut fallback_text = String::new();
+        for (i, unit) in unit_texts.iter().enumerate() {
+            if i > 0 {
+                projection.push('\n');
+            }
+            projection.push_str(unit);
+            if i > 0 {
+                fallback_text.push('\n');
+            }
+            fallback_text.push_str(&bodies[i]);
+
+            let mut spans: Vec<(Range<usize>, TokenKind)> = Vec::new();
+            let line_chars = unit.chars().count();
+            if i == 0 {
+                if !marker.is_empty() {
+                    spans.push((marker_start..marker_end, TokenKind::ListMarker));
+                }
+                if let Some(level) = p.heading_level {
+                    if !soft_parts[0].is_empty() {
+                        spans.push((head_chars..line_chars, TokenKind::Heading));
+                    }
+                    self.headings.push(HeadingEntry {
+                        level,
+                        text: full_text.replace('\n', " "),
+                        line: self.lines.len(),
+                    });
+                }
+            }
+            if i == 0 && p.heading_level.is_none() {
+                // run 级样式：仅按**首单元**文本对位（软换行后的单元按
+                // 文本序近似——登记边界）。
+                let mut consumed = 0usize;
+                for run in &p.runs {
+                    let start = (head_chars + consumed).min(line_chars);
+                    consumed += run.text.chars().count();
+                    let end = (head_chars + consumed).min(line_chars);
+                    if end <= start {
+                        continue;
+                    }
+                    let kind = if run.hyperlink.is_some() {
+                        Some(TokenKind::Link)
+                    } else if run.bold {
+                        Some(TokenKind::Bold)
+                    } else if run.italic {
+                        Some(TokenKind::Italic)
+                    } else {
+                        None
+                    };
+                    if let Some(kind) = kind {
+                        spans.push((start..end, kind));
+                    }
+                }
+            }
+            let block = self.para_block(para, i, i > 0);
+            self.push_line(unit.clone(), spans, block);
+        }
+        if full_text.is_empty() {
+            self.empty_paragraphs += 1;
+        }
+        self.proj.insert(para, projection);
+        self.fallback.insert(para, fallback_text);
     }
 
+    /// 表格（#115：**只计属性、不出行**）。
+    ///
+    /// 行模型的表格网格（`a | b`、分隔线、尾空行）是**凭空生成**的装饰行：
+    /// 既不能逐字回写，也无法与 `w:p` 一一对应。表格单元格本身也是段落
+    /// （引擎会各自回写），若把网格放进编辑面，保存时就会拿网格文本去比对
+    /// 单元格段落 → 误判「改过」→ 表格被改坏。
+    ///
+    /// 所以第一版：表格**整表以原文透传**（不改表格文字），行模型里不占行；
+    /// 单元格段落照常入段落序（仅用于对账 + 回写闸门）。表格视觉呈现退化为
+    /// 「属性面板/末尾清单行计数 + 正文连续」——登记为第一版边界。
     fn push_table(&mut self, t: &docx::TableData, out: &mut DocxPayload) {
         out.props.tables += 1;
         out.props.table_rows += t.rows.len();
-        if t.rows.is_empty() {
+        // 表格单元格 = 段落（引擎 w:p 同口径）——计入段落序对账；每个单元格
+        // 段落按文档序登记「空投影」（行模型不出行 → 回写计划里不出现 →
+        // 引擎保持原文；不作为「未表示」缺口）。
+        for row in &t.rows {
+            for _cell in row {
+                let para = self.next_para;
+                self.next_para += 1;
+                self.proj.insert(para, String::new());
+                self.fallback.insert(para, String::new());
+                self.cell_paragraphs.push(para);
+            }
+        }
+        self.aux_paragraphs += t.rows.iter().map(|r| r.len()).sum::<usize>();
+        self.table_rows.push(t.rows.clone());
+    }
+
+    /// #115：可编辑态下把「不入正文流」的内容各出一行只读清单——
+    /// 看得见的边界，好过沉默的空白。
+    fn push_aux_appendix(&mut self, editable: bool, props: &DocxProps) {
+        if !editable {
             return;
         }
-        // 列数 = 最宽行；列宽 = 列内最大 East Asian 宽度（截断封顶）。
-        let cols = t.rows.iter().map(|r| r.len()).max().unwrap_or(0);
-        let mut widths = vec![0usize; cols];
-        for row in &t.rows {
-            for (c, cell) in row.iter().enumerate() {
-                let w = display_width(&truncate_cell(cell)).min(CELL_WIDTH_CAP);
-                widths[c] = widths[c].max(w);
-            }
+        let mut rows: Vec<(String, String)> = Vec::new();
+        if props.tables > 0 {
+            rows.push((
+                "表格".into(),
+                format!(
+                    "{} 个（{} 行；第一版只读——表格文字不改，样式/边框原样保留）",
+                    props.tables, props.table_rows
+                ),
+            ));
         }
-        // 首行 = 表头（Bold 整行 + 分隔线）；其余行平铺。
-        for (ri, row) in t.rows.iter().enumerate() {
-            if ri == 1 {
-                // 表头分隔线（列宽对齐的虚线）。
-                let sep: Vec<String> = widths.iter().map(|w| "-".repeat(*w)).collect();
-                let sep = sep.join("-+-");
-                self.lines.push(sep);
-                self.spans.push(Vec::new());
-            }
-            let cells: Vec<String> = (0..cols)
-                .map(|c| {
-                    let raw = row.get(c).map(String::as_str).unwrap_or("");
-                    pad_cell(&truncate_cell(raw), widths[c])
-                })
-                .collect();
-            let line = cells.join(" | ");
-            let spans = if ri == 0 && !line.is_empty() {
-                vec![(0..line.chars().count(), TokenKind::Bold)]
-            } else {
-                Vec::new()
-            };
-            self.lines.push(line);
-            self.spans.push(spans);
+        if props.images > 0 {
+            rows.push(("图片".into(), format!("{} 张（不入行流）", props.images)));
         }
-        // 表尾空行（块间呼吸——与 md 渲染节奏一致）。
-        self.lines.push(String::new());
-        self.spans.push(Vec::new());
+        if props.headers > 0 || props.footers > 0 {
+            rows.push((
+                "页眉 / 页脚".into(),
+                format!("{} / {} 处", props.headers, props.footers),
+            ));
+        }
+        if props.comments > 0 || props.footnotes > 0 || props.endnotes > 0 {
+            rows.push((
+                "批注 / 脚注 / 尾注".into(),
+                format!(
+                    "{} / {} / {} 处",
+                    props.comments, props.footnotes, props.endnotes
+                ),
+            ));
+        }
+        if rows.is_empty() {
+            return;
+        }
+        self.push_line(
+            String::new(),
+            Vec::new(),
+            LineBlock::Locked(ReadOnlyLine::AuxAppendix),
+        );
+        for (label, text) in rows {
+            self.push_line(
+                format!("{label}：{text}——第一版只读"),
+                Vec::new(),
+                LineBlock::Locked(ReadOnlyLine::AuxAppendix),
+            );
+        }
     }
 }
 
 /// East Asian 显示宽度（CJK/全角 = 2 cell，其余 1——Sarasa Mono SC
 /// 等宽口径的近似；组合字符面外）。
+#[allow(dead_code)]
 fn display_width(s: &str) -> usize {
     s.chars()
         .map(|c| {
@@ -315,6 +825,7 @@ fn display_width(s: &str) -> usize {
 }
 
 /// 超宽单元格截断（`…` 收尾——1 cell）。
+#[allow(dead_code)]
 fn truncate_cell(s: &str) -> String {
     if display_width(s) <= CELL_WIDTH_CAP {
         return s.to_string();
@@ -334,6 +845,7 @@ fn truncate_cell(s: &str) -> String {
 }
 
 /// 列宽补齐（East Asian 宽度对齐——空格右补）。
+#[allow(dead_code)]
 fn pad_cell(s: &str, width: usize) -> String {
     let pad = width.saturating_sub(display_width(s));
     let mut out = s.to_string();
@@ -344,6 +856,8 @@ fn pad_cell(s: &str, width: usize) -> String {
 }
 
 /// 只读键门禁（纯函数——单测锚点）：浏览类命令放行，变更类整段拒绝。
+///
+/// 只读面（pdf / xlsx / **降级只读的 docx**）用；可编辑 docx 不走此门。
 ///
 /// 放行：移动（含 Shift 选区扩展 / Ctrl 词跳）/ Home / End / PageUp /
 /// PageDown / Esc 清选区 / Ctrl+A 全选 / Ctrl+C 复制 / Ctrl+F 查找。
@@ -376,13 +890,22 @@ pub fn readonly_allows(key: &str, ctrl: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mdc_office_io::docx::{DocxWriter, RunSpec};
+    use mdc_office_io::docx::{DocxWriter, RunSpec, read_docx_from_bytes};
 
     /// 内存往返：写 → 读（兼容模式）。
     fn roundtrip(w: &mut DocxWriter) -> docx::DocxDocument {
         let bytes = w.save_to_vec().expect("写盘内存");
         let opts = io::ReadOptions { compat: true };
         read_docx_from_bytes_with_options(&bytes, &opts).expect("读回")
+    }
+
+    /// 内存往返（可编辑面：宽面块序 + 窄面引擎）。
+    fn roundtrip_editable(w: &mut DocxWriter) -> (docx::DocxDocument, DocxEnginePort) {
+        let bytes = w.save_to_vec().expect("写盘内存");
+        let opts = io::ReadOptions { compat: true };
+        let doc = read_docx_from_bytes_with_options(&bytes, &opts).expect("读回");
+        let editor = DocxEditor::open(&bytes).expect("引擎面打开");
+        (doc, DocxEnginePort { editor })
     }
 
     #[test]
@@ -438,6 +961,11 @@ mod tests {
         assert_eq!(out.props.paragraphs, 6);
         assert_eq!(out.props.tables, 0);
         assert_eq!(out.props.warnings, 0);
+        // 只读装载：无块归属/无投影。
+        assert!(out.blocks.is_none());
+        assert!(out.projections.is_empty());
+        assert!(out.fallbacks.is_empty());
+        assert_eq!(out.candidates, 0, "只读装载不做段落序对账");
     }
 
     #[test]
@@ -458,6 +986,15 @@ mod tests {
         assert_eq!(span_of(0), (2..4, TokenKind::Bold));
         assert_eq!(span_of(1), (4..6, TokenKind::Italic));
         assert_eq!(span_of(2), (6..8, TokenKind::Link));
+
+        // #115：可编辑装载下 run 级样式同样成立（行切分以引擎装配文本
+        // 为准，run 对位口径不变）——假端口给出与原文一致的装配文本。
+        let fake = FakePort {
+            texts: vec!["普通加粗斜体官网".to_string()],
+        };
+        let ed = convert_editable(&doc, &fake);
+        assert_eq!(ed.text, out.text);
+        assert_eq!(ed.spans[0], out.spans[0]);
     }
 
     #[test]
@@ -481,8 +1018,10 @@ mod tests {
         assert_eq!(out.spans[1][0], (0..3, TokenKind::ListMarker));
     }
 
+    /// #115：表格第一版**不出行**（整表原文透传——网格行无法逐字回写），
+    /// 改为属性计数 + 只读清单行（看得见的边界）。
     #[test]
-    fn table_aligned_columns_and_header_bold() {
+    fn table_props_counted_rows_not_flattened() {
         let mut w = DocxWriter::new();
         w.table(&[
             vec!["项目".into(), "数量".into(), "单价".into()],
@@ -491,24 +1030,34 @@ mod tests {
         ]);
         let doc = roundtrip(&mut w);
         let out = convert(&doc);
-
-        let lines: Vec<&str> = out.text.split('\n').collect();
-        // 表头 + 分隔线 + 2 数据行 + 尾空行。
-        assert_eq!(lines.len(), 5, "行数：{lines:?}");
-        // 表头单元格同样补齐：单价(4) 补至 col2 宽 6（尾 2 空格）。
-        assert_eq!(lines[0], "项目 | 数量 | 单价  ");
-        // 列宽：col0=max(项目4,机柜4,UPS3)=4 / col1=max(数量4,42·2,2·1)=4 /
-        // col2=max(单价4,18000·5,350000·6)=6。分隔线 join("-+-") 的首尾
-        // dash 与列 dash 邻接合并：4+1 / 4+1+1 / 6+1 = 5/6/7——「+」
-        // 恰落表头「|」列位（cell 5/12，对齐口径一致）。
-        assert_eq!(lines[1], "-----+------+-------");
-        // CJK 对齐：机柜(4) 免补；42 补至 4；18000 补至 6（尾空格）。
-        assert_eq!(lines[2], "机柜 | 42   | 18000 ");
-        assert_eq!(lines[3], "UPS  | 2    | 350000");
-        // 表头整行 Bold（14 char——含补齐空格）。
-        assert_eq!(out.spans[0], vec![(0..14, TokenKind::Bold)]);
         assert_eq!(out.props.tables, 1);
         assert_eq!(out.props.table_rows, 3);
+        assert!(
+            !out.text.contains('|'),
+            "表格网格不入行流（第一版）：{:?}",
+            out.text
+        );
+        // 段落序对账面（可编辑装载）：候选 = 引擎 w:p 数（含表格单元格）
+        // = 宽面文档序段落总数。
+        let (doc2, port2) = roundtrip_editable(&mut w);
+        let ed = convert_editable(&doc2, &port2);
+        assert_eq!(ed.candidates, port2.paragraph_count());
+        assert_eq!(ed.candidates, port_doc_paragraphs(&doc2));
+    }
+
+    /// 宽面文档序段落总数（表格内段落也计——与引擎 \`w:p\` 同口径）。
+    fn port_doc_paragraphs(doc: &docx::DocxDocument) -> usize {
+        fn count_blocks(blocks: &[Block]) -> usize {
+            blocks
+                .iter()
+                .map(|b| match b {
+                    Block::Paragraph(_) => 1,
+                    Block::Table(t) => t.rows.iter().map(|r| r.len()).sum::<usize>(),
+                    Block::TextBox(tb) => count_blocks(&tb.blocks),
+                })
+                .sum()
+        }
+        count_blocks(&doc.blocks)
     }
 
     #[test]
@@ -571,10 +1120,6 @@ mod tests {
     fn textbox_blocks_flatten() {
         let mut w = DocxWriter::new();
         w.paragraph_text("正文段");
-        // 文本框：write 面经 bookmark/特殊路径？——直接构造块序代价高，
-        // 读面 TextBox 由 w:txbxContent 触发；write 面无直接入口。
-        // 以属性计数断言为主（textboxes=0 时平铺分支不触发——覆盖由
-        // poi 语料烟雾承担）。
         let doc = roundtrip(&mut w);
         let out = convert(&doc);
         assert_eq!(out.props.textboxes, 0);
@@ -593,6 +1138,192 @@ mod tests {
         assert_eq!(out.text, "段一\n\n段二");
     }
 
+    // ------------------------------------------------------------------
+    // #115：可编辑装载 —— 块归属 / 段落序 / 投影 / 软换行 / 锁定面
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn editable_blocks_cover_every_line() {
+        let mut w = DocxWriter::new();
+        w.heading(1, "概述").unwrap();
+        w.paragraph_text("正文一。");
+        w.list_item(&[RunSpec::text("项")], ListKind::Ordered, 0)
+            .unwrap();
+        w.table(&[vec!["A".into(), "B".into()], vec!["1".into(), "2".into()]]);
+        let (doc, port) = roundtrip_editable(&mut w);
+        let out = convert_editable(&doc, &port);
+        let blocks = out.blocks.clone().expect("可编辑装载有块表");
+        let line_count = out.text.split('\n').count();
+        assert_eq!(blocks.len(), line_count, "块表与行 1:1");
+        assert_eq!(blocks.len(), out.spans.len(), "块表与样式轨 1:1");
+        // 段落序对账：宽面候选段落数 == 引擎 \`w:p\` 数（表格单元格段落也计）。
+        assert_eq!(out.candidates, port.paragraph_count());
+        assert_eq!(out.candidates, port_doc_paragraphs(&doc));
+        // 正文段落（非表格）各自成行，段落号连续。
+        let seen: Vec<usize> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                LineBlock::Para { paragraph, .. } => Some(*paragraph),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(seen, vec![0, 1, 2], "正文三段落文档序");
+        // 第一版：表格不出行 → 无表格锁定行；表格只进属性与清单。
+        assert_eq!(
+            blocks
+                .iter()
+                .filter(|b| matches!(b, LineBlock::Locked(ReadOnlyLine::TableRow)))
+                .count(),
+            0
+        );
+        assert_eq!(out.props.tables, 1);
+        assert_eq!(out.props.table_rows, 2);
+        assert!(
+            out.text.contains("表格：1 个"),
+            "表格清单行（看得见的边界）：{:?}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn editable_projection_matches_rendered_lines() {
+        // 段落投影（逐段）必须能在行模型里逐行拼回来——这是回写可逆的
+        // 前提（投影 ≠ 行文本 = 保存会误改）。
+        let mut w = DocxWriter::new();
+        w.paragraph_text("第一段。");
+        w.list_item(&[RunSpec::text("列表项")], ListKind::Bullet, 0)
+            .unwrap();
+        w.paragraph_text("软换行前\r\n软换行后");
+        let (doc, port) = roundtrip_editable(&mut w);
+        let out = convert_editable(&doc, &port);
+        let blocks = out.blocks.clone().unwrap();
+        let lines: Vec<String> = out.text.split('\n').map(|s| s.to_string()).collect();
+        let mut rebuilt: HashMap<usize, Vec<String>> = HashMap::new();
+        for (i, b) in blocks.iter().enumerate() {
+            if let LineBlock::Para { paragraph, .. } = b {
+                rebuilt
+                    .entry(*paragraph)
+                    .or_default()
+                    .push(lines[i].clone());
+            }
+        }
+        for (p, chunk) in rebuilt {
+            let joined = chunk.join("\n");
+            assert_eq!(
+                out.projections.get(&p).map(String::as_str),
+                Some(joined.as_str()),
+                "段 {p} 投影与行文本必须一致"
+            );
+            // 兜底投影 = 段内行正文（去标记/缩进）——回写口径。
+            let body: Vec<&str> = joined
+                .split('\n')
+                .map(crate::editor::docx_edit_bridge::body_of)
+                .collect();
+            assert_eq!(
+                out.fallbacks.get(&p).map(String::as_str),
+                Some(body.join("\n").as_str()),
+                "段 {p} 兜底投影 = 正文"
+            );
+        }
+    }
+
+    /// #115：软换行（`w:br`）拆行——引擎在场时行切分以**引擎装配文本**
+    /// 为准（`w:br`→\n 与回写口径逐字一致）；只读装载走宽面块模型文本
+    /// （引擎整备文本不含换行标记——源文本生成器的已知面，登记）。
+    #[test]
+    fn editable_soft_break_lines_are_editable_and_carry() {
+        // 引擎装配文本含换行时的拆行 + 承接头归属（用假端口直接驱动）。
+        let fake = FakePort {
+            texts: vec!["上行\n下行".to_string()],
+        };
+        let mut w = DocxWriter::new();
+        w.paragraph_text("上行下行");
+        let doc = roundtrip(&mut w);
+        let out = convert_editable(&doc, &fake);
+        assert_eq!(out.text, "上行\n下行", "引擎装配文本的软换行拆成两行");
+        let blocks = out.blocks.clone().unwrap();
+        assert_eq!(
+            blocks[0],
+            LineBlock::Para {
+                paragraph: 0,
+                idx: 0,
+                cont: false
+            }
+        );
+        assert_eq!(
+            blocks[1],
+            LineBlock::Para {
+                paragraph: 0,
+                idx: 1,
+                cont: true
+            },
+            "续行是承接头（删它 ≠ 删目标文本）"
+        );
+        assert_eq!(
+            out.fallbacks.get(&0).map(String::as_str),
+            Some("上行\n下行")
+        );
+    }
+
+    /// 内存假端口（引擎面替身——只给文本，其余面中性）。
+    struct FakePort {
+        texts: Vec<String>,
+    }
+
+    impl DocxPort for FakePort {
+        fn paragraph_count(&self) -> usize {
+            self.texts.len()
+        }
+        fn paragraph_text(&self, idx: usize) -> String {
+            self.texts.get(idx).cloned().unwrap_or_default()
+        }
+        fn blocked_reason(&self, _idx: usize) -> Option<ReadOnlyLine> {
+            None
+        }
+        fn set_text(&mut self, _idx: usize, _text: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn save(&self) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn editable_aux_appendix_lines_are_readonly() {
+        let mut w = DocxWriter::new();
+        w.paragraph_text("正文。");
+        w.table(&[vec!["A".into()]]);
+        let (doc, port) = roundtrip_editable(&mut w);
+        let out = convert_editable(&doc, &port);
+        // 表格存在 → 出一条「表格」清单行（第一版只读的边界，看得见）。
+        assert!(
+            out.text.contains("表格：1 个"),
+            "表格清单行（看得见的边界）：{:?}",
+            out.text
+        );
+        // 清单行本身不可编辑。
+        let blocks = out.blocks.clone().unwrap();
+        assert!(
+            blocks
+                .last()
+                .is_some_and(|b| matches!(b, LineBlock::Locked(ReadOnlyLine::AuxAppendix))),
+            "末行是只读清单"
+        );
+        assert_eq!(out.props.images, 0);
+    }
+
+    #[test]
+    fn editable_locked_paragraphs_marked_readonly() {
+        // 域代码段：引擎 typed 拒改 → 行模型标锁定（FieldCode）。
+        let mut w = DocxWriter::new();
+        w.paragraph_text("正文。");
+        let (doc, port) = roundtrip_editable(&mut w);
+        let out = convert_editable(&doc, &port);
+        assert_eq!(out.props.locked_paragraphs, 0, "普通段无锁定");
+        assert_eq!(out.props.editable_paragraphs, 1);
+        let _ = read_docx_from_bytes;
+    }
+
     /// 烟雾 GUI 夹具生成器（不随常规测试跑）：
     ///
     /// ```bash
@@ -604,7 +1335,7 @@ mod tests {
     fn gen_smoke_docx() {
         let mut w = DocxWriter::new();
         w.heading(1, "智慧园区综合管理平台投标文件").unwrap();
-        w.paragraph_text("本文件为技术标书演示样张（mang-shell 批 3 只读渲染烟雾夹具）。");
+        w.paragraph_text("本文件为技术标书演示样张（mang-shell 可编辑化烟雾夹具）。");
         w.heading(2, "一、项目概述").unwrap();
         w.paragraph(&[
             RunSpec::text("本项目承建 "),
@@ -650,7 +1381,7 @@ mod tests {
         ]);
         w.quote_paragraph(
             &[RunSpec::text(
-                "注：本样张由 mdc-office-io 写面生成，用于只读渲染验证。",
+                "注：本样张由 mdc-office-io 写面生成，用于可编辑化验证。",
             )],
             1,
         );
@@ -661,6 +1392,8 @@ mod tests {
         let payload = load(std::path::Path::new(path)).expect("夹具读回");
         assert_eq!(payload.headings.len(), 5, "五级标题树");
         assert_eq!(payload.props.tables, 1);
+        let editable = load_editable(std::path::Path::new(path)).expect("夹具可编辑装载");
+        assert!(editable.bridge.is_some(), "可编辑装载应成功");
         eprintln!(
             "docx 夹具已生成：{path}（{} 字节，{} 行，{} 标题）",
             bytes.len(),

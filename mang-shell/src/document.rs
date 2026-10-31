@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use gpui::{App, AppContext, Entity};
 
 use crate::editor::Editor;
-use crate::editor::docx_doc::{self, DocxPayload};
+use crate::editor::docx_doc::{self, DocxPayload, EditablePayload};
 use crate::editor::pdf_doc::{self, PdfPayload};
 use crate::editor::xlsx_doc::{self, XlsxPayload};
 
@@ -28,6 +28,12 @@ pub enum OpenedDocument {
     EditableText { path: PathBuf, content: String },
     /// docx 只读渲染（批 3）：mdc-office-io 解析 + 行模型转换产物。
     ReadOnlyDocx { path: PathBuf, payload: DocxPayload },
+    /// #115：docx **可编辑**装载（行模型 + 编辑桥 + 引擎窄面；桥 `None`
+    /// 时编辑器自动降级只读——原因在 `payload.notice`）。
+    EditableDocx {
+        path: PathBuf,
+        item: EditablePayload,
+    },
     /// pdf 只读渲染（批 4）：mdc-pdf 文本层/书签抽取 + 行模型转换产物。
     ReadOnlyPdf { path: PathBuf, payload: PdfPayload },
     /// xlsx 只读渲染（G6）：office-io 读面 + 行模型转换产物。
@@ -55,12 +61,12 @@ pub fn open(path: &Path) -> OpenedDocument {
                 message: err.to_string(),
             },
         },
-        // 批 3：docx 只读渲染（兼容模式——安全门恒严，畸形部件降级
-        // 为警告入属性面）。
-        "docx" => match docx_doc::load(path) {
-            Ok(payload) => OpenedDocument::ReadOnlyDocx {
+        // #115：docx 可编辑装载（宽面行模型 + 窄面引擎，段落序对账；
+        // 对账/门限/严格门任一不过 → 载荷自带 notice 并降级只读）。
+        "docx" => match docx_doc::load_editable(path) {
+            Ok(item) => OpenedDocument::EditableDocx {
                 path: path.to_path_buf(),
-                payload,
+                item,
             },
             Err(message) => OpenedDocument::OpenError {
                 path: path.to_path_buf(),
@@ -118,6 +124,31 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
     match open(path) {
         OpenedDocument::EditableText { path, content } => {
             OpenOutcome::Opened(cx.new(|cx| Editor::new(Some(path), content, cx)))
+        }
+        // #115：可编辑 docx——启动日志一行（属性面 + 编辑面 + 降级原因）。
+        OpenedDocument::EditableDocx { path, item } => {
+            let payload = &item.payload;
+            let mode = if item.bridge.is_some() {
+                "可编辑"
+            } else {
+                "只读（降级）"
+            };
+            eprintln!(
+                "docx: {} 段（可编辑 {} / 锁定 {}）/ {} 表（{} 行）/ {} 标题 / {} 图片 / {} 警告（{mode}，{}）",
+                payload.props.paragraphs,
+                payload.props.editable_paragraphs,
+                payload.props.locked_paragraphs,
+                payload.props.tables,
+                payload.props.table_rows,
+                payload.headings.len(),
+                payload.props.images,
+                payload.props.warnings,
+                path.display()
+            );
+            if let Some(notice) = &payload.notice {
+                eprintln!("docx: 降级说明——{notice}（{}）", path.display());
+            }
+            OpenOutcome::Opened(cx.new(|cx| Editor::new_docx_editable(path, item, cx)))
         }
         // 批 3 证据通道：启动日志一行（属性面 + 只读标记）。
         OpenedDocument::ReadOnlyDocx { path, payload } => {
