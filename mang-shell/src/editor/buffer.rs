@@ -85,17 +85,9 @@ fn char_to_byte(s: &str, col: usize) -> usize {
     s.char_indices().nth(col).map(|(b, _)| b).unwrap_or(s.len())
 }
 
-/// 字节偏移 → char 索引（越界 clamp 到末尾；`byte` 不落在 char 边界时
-/// 向下取所属 char 的索引）。
-fn byte_to_char(s: &str, byte: usize) -> usize {
-    let mut acc = 0;
-    for (b, _) in s.char_indices() {
-        if b >= byte {
-            return acc;
-        }
-        acc += 1;
-    }
-    acc
+/// [`char_to_byte`] 的模块内公开转发（display_map 的段文本切片消费）。
+pub(crate) fn char_to_byte_pub(s: &str, col: usize) -> usize {
+    char_to_byte(s, col)
 }
 
 /// 外壳 BufferId 序列（本地无协同——id 唯一性只为 text 层语义完整；
@@ -431,6 +423,12 @@ impl Buffer {
             let last = text.rsplit('\n').next().unwrap_or("");
             Point::new(start.line + newlines, last.chars().count())
         }
+    }
+
+    /// [`Buffer::end_after_insert`] 的模块内公开转发（multi_cursor 的
+    /// 多点插入尾部定位消费——同一公式保证与 Buffer 光标语义一致）。
+    pub(crate) fn end_after_insert_pub(&self, start: &Point, text: &str) -> Point {
+        self.end_after_insert(start, text)
     }
 
     // ---------------------------------------------------------------------------
@@ -1190,12 +1188,16 @@ fn perf_rope_edit_find_2m_chars() {
     use std::time::Instant;
     // 10 万行 × ~20 字/行 ≈ 200 万字符（4 倍于 50 万字红线规格）
     let text: String = {
-        let lines: Vec<String> =
-            (0..100_000).map(|i| format!("第{i}行内容padding")).collect();
+        let lines: Vec<String> = (0..100_000)
+            .map(|i| format!("第{i}行内容padding"))
+            .collect();
         lines.join("\n")
     };
     let expect_chars = text.chars().count();
-    assert!(expect_chars > 1_500_000, "压力规格 ≥150 万字符，实际 {expect_chars}");
+    assert!(
+        expect_chars > 1_500_000,
+        "压力规格 ≥150 万字符，实际 {expect_chars}"
+    );
 
     // ① 构造（红线 <2s——4 倍规格下仍须达标）
     let t0 = Instant::now();
@@ -1251,11 +1253,27 @@ fn perf_rope_edit_find_2m_chars() {
     println!("  构造      = {:>10.1?}  (红线 <2s)", t_build);
     println!("  insert    = p50 {p50:?} / p99 {p99:?} / max {t_edit_max:?}  (红线 p99 <50ms)");
     println!("  undo      = p99 {undo_p99:?}  (红线 <50ms)");
-    println!("  find      = {:>10.1?}  hits={} (红线 <1s)", t_find, hits.len());
+    println!(
+        "  find      = {:>10.1?}  hits={} (红线 <1s)",
+        t_find,
+        hits.len()
+    );
     println!("  深点导航  = {:>10.1?}", t_nav);
     println!("  序列化    = {:>10.1?}", t_ser);
-    assert!(t_build < std::time::Duration::from_secs(2), "构造超红线：{t_build:?}");
-    assert!(p99 < std::time::Duration::from_millis(50), "insert p99 超红线：{p99:?}");
-    assert!(undo_p99 < std::time::Duration::from_millis(50), "undo p99 超红线：{undo_p99:?}");
-    assert!(t_find < std::time::Duration::from_secs(1), "查找超红线：{t_find:?}");
+    assert!(
+        t_build < std::time::Duration::from_secs(2),
+        "构造超红线：{t_build:?}"
+    );
+    assert!(
+        p99 < std::time::Duration::from_millis(50),
+        "insert p99 超红线：{p99:?}"
+    );
+    assert!(
+        undo_p99 < std::time::Duration::from_millis(50),
+        "undo p99 超红线：{undo_p99:?}"
+    );
+    assert!(
+        t_find < std::time::Duration::from_secs(1),
+        "查找超红线：{t_find:?}"
+    );
 }

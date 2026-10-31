@@ -47,16 +47,26 @@
 //! - IME 候选框定位 `bounds_for_range` 返回 `None`（精化登记阶段 7）
 
 pub mod buffer;
+pub mod commands;
+pub mod display_map; // r42 阶段 B（#68）：buffer <-> 显示行列映射（软换行 + 折叠）
 pub mod docx_doc;
 pub mod find_bar;
 pub mod highlight;
 pub mod mouse;
+pub mod multi_cursor; // r42 阶段 C（#68）：多光标 + 列选择（编辑器层；Buffer 单光标契约不变）
 pub mod pdf_doc;
 
 use std::cell::RefCell;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
+
+// r42 阶段 B：显示映射（软换行 + 折叠）。
+use display_map::DisplayMap;
+// r42 阶段 C：多光标 + 列选择（编辑器层；Buffer 单光标契约不变）。
+use multi_cursor::{Cursors, Move as MultiMove};
+// r42 阶段 E：命令系统。
+use commands::Cmd;
 
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
@@ -87,11 +97,21 @@ struct MouseDrag {
     anchor: Point,
     /// 扩展粒度（单击=字符级；双击=词边界；三击=行边界）。
     kind: ClickKind,
+    /// r42 阶段 C：Alt+拖列选择（矩形构造——drag_head 不适用）。
+    column: bool,
 }
 
 /// 拖选 drag 载荷类型（`on_drag` / `on_drag_move` 配对标识；值本身无语义）。
 #[derive(Clone, Copy)]
 struct EditorDrag;
+
+/// r42 阶段 E：命令面板状态。
+#[derive(Clone, Debug)]
+struct PaletteState {
+    query: String,
+    selected: usize,
+    items: Vec<Cmd>,
+}
 
 /// 拖选跟随视图（`on_drag` 契约需要一个 Render 实体——空渲染不可见）。
 struct DragGhost;
@@ -141,6 +161,17 @@ pub struct Editor {
     scroll: UniformListScrollHandle,
     /// 每行行首的代码围栏状态缓存（文档变更时重算）。
     fence_cache: Vec<bool>,
+    /// r42 阶段 B：buffer <-> 显示行列映射（软换行 + 折叠）。
+    /// 断点回填基准宽 = 上一帧行 bounds 宽（RefCell——render_lines 里
+    /// 在 row_bounds clear 前采样）。
+    display_map: DisplayMap,
+    last_text_width: RefCell<Option<Pixels>>,
+    /// r42 阶段 C：多光标 + 列选择（编辑器层选区状态；常态与
+    /// Buffer 单光标同步，多光标态以主光标同步进 Buffer——状态栏/
+    /// 保存/IME 走 Buffer 面即主光标）。
+    cursors: Cursors,
+    /// r42 阶段 E：命令面板状态（`None` = 关闭；Ctrl+Shift+P 开）。
+    palette: Option<PaletteState>,
     /// IME 预编辑段（全文 UTF16 偏移区间）。
     marked: Option<Range<usize>>,
     /// 本帧可见行 bounds（行内 canvas prepaint 记录——鼠标 hit-test 行
@@ -182,6 +213,10 @@ impl Editor {
             find: None,
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -217,6 +252,10 @@ impl Editor {
             // docx 无围栏语义——fence 恒 false（refresh_caches 在 docx
             // 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -251,6 +290,10 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
             fence_cache: vec![false; line_count],
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -286,9 +329,14 @@ impl Editor {
         format!("{}, {}", c.line + 1, c.col + 1)
     }
 
-    /// 字数标签（状态栏——char 计数，CJK 逐字）。
+    /// 字数标签（状态栏——char 计数，CJK 逐字；r42 阶段 C：多光标计数）。
     pub fn char_label(&self) -> String {
-        format!("{} 字符", self.buffer.char_count())
+        let cursors = if self.cursors.len() > 1 {
+            format!(" · {} 光标", self.cursors.len())
+        } else {
+            String::new()
+        };
+        format!("{} 字符{}", self.buffer.char_count(), cursors)
     }
 
     /// 只读标记（状态栏「只读」——docx 渲染面）。
@@ -352,7 +400,136 @@ impl Editor {
     pub fn jump_to_line(&mut self, line: usize) {
         let line = line.min(self.buffer.line_count().saturating_sub(1));
         self.buffer.set_cursor(Point::new(line, 0));
-        self.scroll.scroll_to_item(line, ScrollStrategy::Top);
+        // r42：buffer 行 → 显示行（软换行后光标行占多个显示行——滚到行首段）
+        let row = self
+            .display_map
+            .line_row(&self.buffer, line)
+            .unwrap_or(line);
+        self.scroll.scroll_to_item(row, ScrollStrategy::Top);
+    }
+
+    /// r42 阶段 E：命令执行（面板与键位双入口的统一分派）。
+    fn exec_command(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
+        match cmd {
+            Cmd::MoveLeft => self.do_move(MultiMove::Left, false, false),
+            Cmd::MoveRight => self.do_move(MultiMove::Right, false, false),
+            Cmd::MoveUp => self.do_move(MultiMove::Up, false, false),
+            Cmd::MoveDown => self.do_move(MultiMove::Down, false, false),
+            Cmd::WordLeft => self.do_move(MultiMove::WordLeft, true, false),
+            Cmd::WordRight => self.do_move(MultiMove::WordRight, true, false),
+            Cmd::MoveHome => self.do_move(MultiMove::Home, false, false),
+            Cmd::MoveEnd => self.do_move(MultiMove::End, false, false),
+            Cmd::DocStart => self.do_move(MultiMove::DocStart, false, false),
+            Cmd::DocEnd => self.do_move(MultiMove::DocEnd, false, false),
+            Cmd::ToggleFold => {
+                let line = self.buffer.cursor().line;
+                self.toggle_fold_at(line);
+            }
+            Cmd::OpenFind => self.open_find(window, cx),
+            Cmd::Save => {
+                self.save();
+            }
+            Cmd::SelectAll => self.buffer.select_all(),
+            Cmd::Undo => {
+                let n = self.cursors.take_undo_batch();
+                for _ in 0..n.max(1) {
+                    if !self.buffer.undo() {
+                        break;
+                    }
+                }
+                self.sync_cursors_from_buffer();
+            }
+            Cmd::Redo => {
+                self.buffer.redo();
+                self.sync_cursors_from_buffer();
+            }
+        }
+        cx.notify();
+    }
+
+    /// r42 阶段 E：命令面板键处理（面板打开时优先拦截）。
+    /// 返回 true = 已消费（dispatch_key 早退）。
+    fn handle_palette_key(
+        &mut self,
+        ks: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(pal) = self.palette.as_mut() else {
+            return false;
+        };
+        let ctrl = ks.modifiers.control || ks.modifiers.platform;
+        let key = ks.key.to_lowercase();
+        match key.as_str() {
+            "escape" => {
+                self.palette = None;
+            }
+            "up" => pal.selected = pal.selected.saturating_sub(1),
+            "down" => {
+                if !pal.items.is_empty() {
+                    pal.selected = (pal.selected + 1).min(pal.items.len() - 1);
+                }
+            }
+            "enter" => {
+                let cmd = pal.items.get(pal.selected).copied();
+                self.palette = None;
+                if let Some(c) = cmd {
+                    self.exec_command(c, window, cx);
+                }
+            }
+            "backspace" => {
+                pal.query.pop();
+                pal.items = commands::search(&pal.query);
+                pal.selected = 0;
+            }
+            _ => {
+                // 可打印字符入查询；其余 ctrl 组合忽略
+                if !ctrl
+                    && !ks.modifiers.alt
+                    && let Some(c) = &ks.key_char
+                    && !c.is_empty()
+                    && c.chars().all(|ch| !ch.is_control())
+                {
+                    pal.query.push_str(c);
+                    pal.items = commands::search(&pal.query);
+                    pal.selected = 0;
+                }
+            }
+        }
+        true
+    }
+
+    /// 折叠 toggle（r42 阶段 D：Alt+F 与 gutter 指示物共用）——
+    /// 已折叠/命中折叠区 → 展开；在围栏块内 → 折叠整块。
+    fn toggle_fold_at(&mut self, line: usize) {
+        let folded = self.display_map.fold_containing(line).is_some()
+            || self.display_map.fold_head_at(line).is_some();
+        if folded {
+            self.display_map.unfold_at(line);
+        } else if let Some((s, e)) = self.fence_span_at(line) {
+            self.display_map
+                .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0));
+        }
+    }
+
+    /// 光标行所属围栏块的整行区间（含 ``` 开行/闭行）；不在围栏内 → None。
+    /// fence_cache[i] = 行 i 行首处于围栏内部（``` 开行/闭行行首均 false）。
+    fn fence_span_at(&self, line: usize) -> Option<(usize, usize)> {
+        let inside = |i: usize| self.fence_cache.get(i).copied().unwrap_or(false);
+        if !inside(line) {
+            return None;
+        }
+        // 连续 true 段边界：a..b = 围栏内部（含闭 ``` 行）；开 ``` 行 = a-1
+        let mut a = line;
+        while a > 0 && inside(a - 1) {
+            a -= 1;
+        }
+        let mut b = line;
+        while inside(b + 1) {
+            b += 1;
+        }
+        // 折叠区间 [a-1, b+1)：开 ``` 行起、闭行后第一行止（end 行可见）
+        Some((a.saturating_sub(1), b + 1))
     }
 
     /// 保存（Ctrl+S）：同步写盘 + 清修改标记。未命名文档无路径——
@@ -381,8 +558,11 @@ impl Editor {
         }
     }
 
-    /// 文档变更后的缓存刷新（fence 状态 + 查找匹配）。
+    /// 文档变更后的缓存刷新（fence 状态 + 查找匹配 + 断点失效）。
     fn refresh_caches(&mut self) {
+        // r42 阶段 B：编辑后断点全部失效（被编辑行的断点需重算；
+        // 下一帧对可见行重新回填）。
+        self.display_map.reset_wraps();
         // fence：逐行推进（md 模式；docx 只读态无围栏语义且免大文档
         // 逐行 md 高亮的无效开销——fence_cache 构造时恒 false）。
         if self.docx.is_none() {
@@ -422,6 +602,26 @@ impl Editor {
         let shift = ks.modifiers.shift;
         let key = ks.key.to_lowercase();
 
+        // r42 阶段 E：Ctrl+Shift+P 开/关命令面板（toggle）。
+        if ctrl && shift && key == "p" {
+            self.palette = if self.palette.is_none() {
+                Some(PaletteState {
+                    query: String::new(),
+                    selected: 0,
+                    items: commands::search(""),
+                })
+            } else {
+                None
+            };
+            cx.notify();
+            return;
+        }
+        // 面板打开时：其余键位全部归面板（含 ctrl 组合——面板态屏蔽编辑键）。
+        if self.palette.is_some() && self.handle_palette_key(&event.keystroke, window, cx) {
+            cx.notify();
+            return;
+        }
+
         // 只读门禁（批 3）：浏览类命令放行（移动/选区/全选/复制/查找），
         // 变更类整段拒绝（输入/删除/回车/Tab/剪切/粘贴/撤销/重做/保存）
         // ——纯函数面单测钉定（docx_doc::readonly_allows）。
@@ -431,54 +631,60 @@ impl Editor {
         }
 
         match key.as_str() {
-            "left" => {
-                if ctrl {
-                    self.buffer.move_word_left(shift);
-                } else {
-                    self.buffer.move_left(shift);
-                }
-            }
-            "right" => {
-                if ctrl {
-                    self.buffer.move_word_right(shift);
-                } else {
-                    self.buffer.move_right(shift);
-                }
-            }
-            "up" => self.buffer.move_up(shift),
-            "down" => self.buffer.move_down(shift),
+            // r42 阶段 C：移动统一入口 do_move（多光标同向分派）
+            "left" => self.do_move(MultiMove::Left, ctrl, shift),
+            "right" => self.do_move(MultiMove::Right, ctrl, shift),
+            "up" => self.do_move(MultiMove::Up, ctrl, shift),
+            "down" => self.do_move(MultiMove::Down, ctrl, shift),
             "home" => {
                 if ctrl {
-                    self.buffer.move_doc_start(shift);
+                    self.do_move(MultiMove::DocStart, ctrl, shift);
                 } else {
-                    self.buffer.move_home(shift);
+                    self.do_move(MultiMove::Home, ctrl, shift);
                 }
             }
             "end" => {
                 if ctrl {
-                    self.buffer.move_doc_end(shift);
+                    self.do_move(MultiMove::DocEnd, ctrl, shift);
                 } else {
-                    self.buffer.move_end(shift);
+                    self.do_move(MultiMove::End, ctrl, shift);
                 }
             }
             "pageup" => {
                 for _ in 0..PAGE_LINES {
-                    self.buffer.move_up(shift);
+                    self.do_move(MultiMove::Up, false, shift);
                 }
             }
             "pagedown" => {
                 for _ in 0..PAGE_LINES {
-                    self.buffer.move_down(shift);
+                    self.do_move(MultiMove::Down, false, shift);
                 }
             }
-            "enter" => self.buffer.newline(),
-            "backspace" => self.buffer.backspace(),
-            "delete" => self.buffer.delete_forward(),
-            "tab" => self.buffer.tab(),
+            "enter" => {
+                self.newline_multi();
+                self.after_edit();
+            }
+            "backspace" => {
+                self.backspace_multi();
+                self.after_edit();
+            }
+            "delete" => {
+                self.delete_forward_multi();
+                self.after_edit();
+            }
+            "tab" => {
+                self.tab_multi();
+                self.after_edit();
+            }
             "escape" => {
-                if self.buffer.selection().is_some() {
+                // r42 阶段 C：多光标优先收拢（主光标头）
+                if self.cursors.is_multiple() {
+                    self.cursors.collapse_to_primary();
+                    self.sync_buffer_from_cursors_primary();
+                } else if self.buffer.selection().is_some() {
                     let head = self.buffer.cursor();
                     self.buffer.set_cursor(head);
+                    self.sync_cursors_from_buffer();
                 }
             }
             "a" if ctrl => self.buffer.select_all(),
@@ -501,10 +707,36 @@ impl Editor {
                 self.buffer.redo();
             }
             "z" if ctrl => {
-                self.buffer.undo();
+                // r42 阶段 C：批撤销（多点编辑一次撤整批）
+                let n = self.cursors.take_undo_batch();
+                if n > 1 {
+                    for _ in 0..n {
+                        if !self.buffer.undo() {
+                            break;
+                        }
+                    }
+                    self.sync_cursors_from_buffer();
+                } else {
+                    self.buffer.undo();
+                    self.sync_cursors_from_buffer();
+                }
             }
             "y" if ctrl => {
                 self.buffer.redo();
+                self.sync_cursors_from_buffer();
+            }
+            "d" if ctrl => {
+                // r42 阶段 C：Ctrl+D 加同词光标（文档序下一个完整词匹配；
+                // 词源=主选区文本或主光标头处词）
+                if let Some(c2) = Cursors::add_next_word_match(&self.buffer, &self.cursors) {
+                    self.cursors = c2;
+                    self.sync_buffer_from_cursors_primary();
+                }
+            }
+            "f" if ks.modifiers.alt => {
+                // r42 阶段 B/D：围栏块折叠 toggle（与 gutter 指示物共用）。
+                let line = self.buffer.cursor().line;
+                self.toggle_fold_at(line);
             }
             "f" if ctrl => self.open_find(window, cx),
             "s" if ctrl => {
@@ -520,7 +752,8 @@ impl Editor {
                     && !c.is_empty()
                     && c.chars().all(|ch| !ch.is_control())
                 {
-                    self.buffer.insert(c);
+                    // r42 阶段 C：多光标多点插入
+                    self.insert_text_multi(c);
                 }
             }
         }
@@ -528,11 +761,150 @@ impl Editor {
         cx.notify();
     }
 
+    // ------------------------------------------------------------------
+    // r42 阶段 C：光标同步协议 + 编辑分流
+    // ------------------------------------------------------------------
+
+    /// 单光路径后同步（多光标态保持——列选择拖拽进行中不覆盖）。
+    fn sync_cursors_from_buffer_if_single(&mut self) {
+        if !self.cursors.is_multiple() {
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// Buffer → Cursors 同步（单光路径后调用——清多光标态）。
+    fn sync_cursors_from_buffer(&mut self) {
+        let c = self.buffer.cursor();
+        let a = self.buffer.selection().map(|s| s.start);
+        let sels = match a {
+            Some(a) => vec![(a, c)],
+            None => vec![(c, c)],
+        };
+        self.cursors = Cursors::from_single_sel(sels[0].0, sels[0].1);
+    }
+
+    /// Cursors 主光标 → Buffer（多光标编辑/移动后；状态栏/IME/保存走
+    /// Buffer 面即主光标）。
+    fn sync_buffer_from_cursors_primary(&mut self) {
+        let (a, h) = self.cursors.primary();
+        if a != h {
+            self.buffer.set_selection(a, h);
+        } else {
+            self.buffer.set_cursor(h);
+        }
+    }
+
+    /// 移动命令统一入口（r42 阶段 C）：多光标态同向分派；常态含
+    /// 词跳/粘性列全语义。doc home/end 同向到文档边界。
+    fn do_move(&mut self, dir: MultiMove, ctrl: bool, shift: bool) {
+        if self.cursors.is_multiple() {
+            // 多光标：词跳暂同向字符级（阶段 D selection 模块精化，登记）
+            self.move_multi(dir, shift);
+            return;
+        }
+        let extend = shift;
+        match dir {
+            MultiMove::Left => {
+                if ctrl {
+                    self.do_move(MultiMove::WordLeft, false, extend);
+                    return;
+                }
+                self.buffer.move_left(extend);
+            }
+            MultiMove::Right => {
+                if ctrl {
+                    self.do_move(MultiMove::WordRight, false, extend);
+                    return;
+                }
+                self.buffer.move_right(extend);
+            }
+            MultiMove::WordLeft => self.buffer.move_word_left(extend),
+            MultiMove::WordRight => self.buffer.move_word_right(extend),
+            MultiMove::Up => self.buffer.move_up(extend),
+            MultiMove::Down => self.buffer.move_down(extend),
+            MultiMove::Home => self.buffer.move_home(extend),
+            MultiMove::End => self.buffer.move_end(extend),
+            MultiMove::DocStart => self.buffer.move_doc_start(extend),
+            MultiMove::DocEnd => self.buffer.move_doc_end(extend),
+        }
+        self.sync_cursors_from_buffer();
+    }
+
+    /// 多光标插入（常态走 Buffer 单点路径）。
+    fn insert_text_multi(&mut self, text: &str) {
+        if self.cursors.is_multiple() {
+            self.cursors.insert_all(&mut self.buffer, text);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.insert(text);
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标换行（单光态走 Buffer 语义 API——newline/tab 的生产消费面）。
+    fn newline_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.insert_all(&mut self.buffer, "\n");
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.newline();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标 Tab。
+    fn tab_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.insert_all(&mut self.buffer, "    ");
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.tab();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标退格。
+    fn backspace_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.backspace_all(&mut self.buffer);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.backspace();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标前删。
+    fn delete_forward_multi(&mut self) {
+        if self.cursors.is_multiple() {
+            self.cursors.delete_all(&mut self.buffer);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.buffer.delete_forward();
+            self.sync_cursors_from_buffer();
+        }
+    }
+
+    /// 多光标同向移动（常态走 Buffer 原路径——含词跳/粘性列全语义）。
+    fn move_multi(&mut self, dir: MultiMove, extend: bool) {
+        if self.cursors.is_multiple() {
+            self.cursors.move_all(&self.buffer, dir, extend);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            self.sync_cursors_from_buffer(); // 常态下由调用方走 buffer 路径
+        }
+    }
+
     /// 编辑命令后的公共收尾：缓存刷新 + 光标行滚入可视区。
     fn after_edit(&mut self) {
         self.refresh_caches();
         let line = self.buffer.cursor().line;
-        self.scroll.scroll_to_item(line, ScrollStrategy::Nearest);
+        // r42：buffer 行 → 显示行（段首行）
+        let row = self
+            .display_map
+            .line_row(&self.buffer, line)
+            .unwrap_or(line);
+        self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
     }
 
     /// 行样式源分派：docx/pdf 只读态取预计算 span，md 态走围栏感知高亮。
@@ -627,6 +999,8 @@ impl Editor {
         window.focus(&self.focus, cx);
         let hit = self.hit_test(event.position, window);
         let kind = mouse::click_kind(event.click_count);
+        // r42 阶段 C：Alt+拖 = 列选择（仅单击粒度启动；双/三击 Alt 忽略）
+        let column = event.modifiers.alt && matches!(kind, ClickKind::Single);
         let anchor = match kind {
             ClickKind::Single => {
                 if event.modifiers.shift {
@@ -661,7 +1035,12 @@ impl Editor {
                 start
             }
         };
-        self.drag = Some(MouseDrag { anchor, kind });
+        self.sync_cursors_from_buffer();
+        self.drag = Some(MouseDrag {
+            anchor,
+            kind,
+            column,
+        });
         self.stop_autoscroll();
         if self.mouse_log {
             println!(
@@ -692,8 +1071,15 @@ impl Editor {
         // 扩展；与点击的文档边界 clamp 区分）。
         let (yhit, col) = self.hit_test_parts(pos, window);
         let target = mouse::visible_clamp_point(&self.buffer, yhit, col, self.visible_lines());
-        let head = mouse::drag_head(&self.buffer, drag.kind, drag.anchor, target);
-        self.buffer.set_selection(drag.anchor, head);
+        if drag.column {
+            // r42 阶段 C：Alt+拖列选择（矩形；每行一光标）
+            self.cursors = Cursors::column_select(&self.buffer, drag.anchor, target);
+            self.sync_buffer_from_cursors_primary();
+        } else {
+            let head = mouse::drag_head(&self.buffer, drag.kind, drag.anchor, target);
+            self.buffer.set_selection(drag.anchor, head);
+        }
+        self.sync_cursors_from_buffer_if_single();
         // 出界自动滚动（回入界内即停目标——任务待命随会话存亡）。
         if let Some((first_top, last_bottom)) = self.rows_extent() {
             if mouse::autoscroll_dir(pos.y, first_top, last_bottom).is_some() {
@@ -771,7 +1157,7 @@ impl Editor {
         let Some(drag) = self.drag else {
             return false; // 防御：拖拽已结束（end_drag 应已停任务）
         };
-        let Some((first_line, last_line)) = self.visible_lines() else {
+        let Some((first_row, last_row)) = self.visible_lines() else {
             return true;
         };
         let Some((first_top, last_bottom)) = self.rows_extent() else {
@@ -781,29 +1167,31 @@ impl Editor {
             self.autoscroll_target = None;
             return true;
         };
-        let (target_line, strategy) = match dir {
-            mouse::ScrollDir::Up => (first_line.saturating_sub(1), ScrollStrategy::Top),
+        // r42：first/last 是显示行（row_bounds 记录口径）——scroll 直接用；
+        // buffer 语义（line_len/drag_head）经 to_buffer 换算。
+        let row_count = self.display_map.display_row_count(&self.buffer);
+        let (target_row, strategy) = match dir {
+            mouse::ScrollDir::Up => (first_row.saturating_sub(1), ScrollStrategy::Top),
             mouse::ScrollDir::Down => (
-                (last_line + 1).min(self.buffer.line_count() - 1),
+                (last_row + 1).min(row_count.saturating_sub(1)),
                 ScrollStrategy::Bottom,
             ),
         };
-        self.scroll.scroll_to_item(target_line, strategy);
+        self.scroll.scroll_to_item(target_row, strategy);
         // 选区头跟到边界行（列取当前列 clamp——纵向意图保持）。
-        let col = self
-            .buffer
-            .cursor()
-            .col
-            .min(self.buffer.line_len(target_line));
+        let tp = self
+            .display_map
+            .to_buffer(&self.buffer, display_map::DisplayPoint::new(target_row, 0));
+        let col = self.buffer.cursor().col.min(self.buffer.line_len(tp.line));
         let head = mouse::drag_head(
             &self.buffer,
             drag.kind,
             drag.anchor,
-            Point::new(target_line, col),
+            Point::new(tp.line, col),
         );
         self.buffer.set_selection(drag.anchor, head);
         if self.mouse_log {
-            println!("mouse: autoscroll {:?} -> line {}", dir, target_line + 1);
+            println!("mouse: autoscroll {:?} -> row {}", dir, target_row + 1);
         }
         cx.notify();
         true
@@ -847,6 +1235,9 @@ impl Editor {
         let rows = self.row_bounds.borrow();
         match mouse::line_for_y(position.y, &rows) {
             mouse::YHit::Row(idx) => {
+                // r42：idx = 显示行——origin 查找同口径；列按段文本算
+                //（段内 col），产出前 to_buffer 换算成 buffer 语义（mouse.rs
+                // 纯函数零改动）。
                 let row_x = rows
                     .iter()
                     .find(|(i, _)| *i == idx)
@@ -854,7 +1245,10 @@ impl Editor {
                     .unwrap_or(px(0.));
                 let x_in_text = position.x - row_x - GUTTER_WIDTH - TEXT_PADDING;
                 let col = self.column_for_x(idx, x_in_text, window);
-                (mouse::YHit::Row(idx), col)
+                let p = self
+                    .display_map
+                    .to_buffer(&self.buffer, display_map::DisplayPoint::new(idx, col));
+                (mouse::YHit::Row(p.line), p.col)
             }
             other => (other, 0),
         }
@@ -862,11 +1256,13 @@ impl Editor {
 
     /// 行内 x（相对正文原点）→ char 列（`shape_line` 单 run + 最近字符
     /// 边界——与渲染同字体面；高亮不改变字形位置）。
+    /// r42 阶段 B：idx = 显示行，文本取段切片（row_text），返回**段内 col**
+    ///（调用方 to_buffer 换算 buffer col）。
     fn column_for_x(&self, idx: usize, x: Pixels, window: &mut Window) -> usize {
         if x <= px(0.) {
             return 0;
         }
-        let line = self.buffer.line(idx); // r42：String（行文本即时取）
+        let line = self.display_map.row_text(&self.buffer, idx); // r42：段文本
         if line.is_empty() {
             return 0;
         }
@@ -979,7 +1375,9 @@ impl Editor {
     /// 编辑区主体：焦点域 + 键盘 + 鼠标（批 2）+ 虚拟化行列表 + IME 接线。
     fn render_editor_area(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
-        let line_count = self.buffer.line_count();
+        // r42 阶段 B：uniform_list 行数 = 显示行数（软换行/折叠后的行序；
+        // wrap 断点回填后行数随之增长——首帧无断点时退化为 buffer 行数）。
+        let line_count = self.display_map.display_row_count(&self.buffer);
         let focused = self.focus.is_focused(window);
         let entity = cx.entity();
         let weak = entity.downgrade();
@@ -1032,6 +1430,63 @@ impl Editor {
                     });
                 },
             )))
+            // r42 阶段 E：命令面板浮层（Ctrl+Shift+P；编辑区顶部居中）。
+            .when_some(self.palette.clone(), |el, pal| {
+                let colors = cx.theme().colors().clone();
+                el.child(
+                    div()
+                        .id("command-palette")
+                        .absolute()
+                        .top(px(8.))
+                        .left(px(80.))
+                        .w(px(420.))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.background)
+                        .shadow_md()
+                        .p_3()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .text_size(px(13.))
+                        .child(
+                            div()
+                                .id("palette-query")
+                                .flex()
+                                .gap_1()
+                                .text_color(colors.text)
+                                .child(div().text_color(colors.text_accent).child("> "))
+                                .child(div().child(format!("{}▏", pal.query))),
+                        )
+                        .child(div().id("palette-list").flex().flex_col().children(
+                            pal.items.iter().take(8).enumerate().map(|(i, c)| {
+                                let sel = i == pal.selected;
+                                div()
+                                    .id(SharedString::from(format!("palette-item-{i}")))
+                                    .flex()
+                                    .justify_between()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .when(sel, |e| e.bg(colors.element_hover))
+                                    .child(div().text_color(colors.text).child(c.title()))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(colors.text_muted)
+                                            .child(c.default_key().unwrap_or("")),
+                                    )
+                            }),
+                        ))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(colors.text_muted)
+                                .child("↑↓ 选择 · Enter 执行 · Esc 关闭"),
+                        ),
+                )
+            })
             .when(!focused, |el| {
                 // 未聚焦时提示层（点击任意处聚焦）
                 el.child(
@@ -1060,8 +1515,19 @@ impl Editor {
         let colors = cx.theme().colors().clone();
         let text_style = editor_text_style(&colors);
         let cursor = self.buffer.cursor();
-        let selection = self.buffer.selection();
         // 本可见区间的查找命中（含是否激活项）。
+        // r42 阶段 B：visible 是显示行区间——换算到 buffer 行区间再过滤
+        // （显示行序保持 buffer 行序）。
+        let vis_first_line = self
+            .display_map
+            .row_source(&self.buffer, visible.start)
+            .map(|(l, _)| l)
+            .unwrap_or(0);
+        let vis_last_line = self
+            .display_map
+            .row_source(&self.buffer, visible.end.saturating_sub(1))
+            .map(|(l, _)| l)
+            .unwrap_or_else(|| self.buffer.line_count().saturating_sub(1));
         let find_hits: Vec<(Point, bool)> = self
             .find
             .as_ref()
@@ -1069,7 +1535,7 @@ impl Editor {
                 f.matches()
                     .iter()
                     .enumerate()
-                    .filter(|(_, m)| visible.contains(&m.line))
+                    .filter(|(_, m)| m.line >= vis_first_line && m.line <= vis_last_line)
                     .map(|(i, m)| (*m, i == f.active_index()))
                     .collect()
             })
@@ -1080,29 +1546,147 @@ impl Editor {
             .map(|f| f.query().chars().count())
             .unwrap_or(0);
         let marked = self.marked.clone();
+        // r42 阶段 B：上一帧行宽采样（clear 前——本帧 wrap 回填基准；
+        // 末条记录是最大显示行的整行 bounds）。
+        {
+            let rows = self.row_bounds.borrow();
+            if let Some((_, b)) = rows.last() {
+                *self.last_text_width.borrow_mut() = Some(b.size.width);
+            }
+        }
         // 批 2：本帧行 bounds 记录重置（下方各行的 canvas prepaint 重填）。
         self.row_bounds.borrow_mut().clear();
 
+        // r42 阶段 B：软换行断点回填（可见显示行 → 所属 buffer 行；折叠
+        // 行/已回填行跳过）。宽度基准 = 上一帧整行宽减 gutter/padding；
+        // 首帧无采样 → 跳过（首帧无断点，第二帧起生效）；断点回填后
+        // 行数增长在下一帧 uniform_list 生效（一帧收敛，Zed 同款异步）。
+        if let Some(full_w) = *self.last_text_width.borrow() {
+            let target = full_w - GUTTER_WIDTH - TEXT_PADDING;
+            if target > px(50.) {
+                let row_end = visible
+                    .end
+                    .min(self.display_map.display_row_count(&self.buffer));
+                for row in visible.start..row_end {
+                    let Some((line, seg)) = self.display_map.row_source(&self.buffer, row) else {
+                        continue;
+                    };
+                    if seg == display_map::FOLD_SEG || self.display_map.has_wrap_points(line) {
+                        continue;
+                    }
+                    let text = self.buffer.line(line);
+                    let n = text.chars().count();
+                    if n == 0 {
+                        self.display_map.set_wrap_points(&self.buffer, line, vec![]);
+                        continue;
+                    }
+                    let run = text_style.to_run(text.len());
+                    let font_size = text_style.font_size.to_pixels(window.rem_size());
+                    let shaped = window.text_system().shape_line(
+                        text.as_str().into(),
+                        font_size,
+                        &[run],
+                        None,
+                    );
+                    let advances: Vec<f32> = (1..=n)
+                        .map(|i| {
+                            let b = buffer::char_to_byte_pub(&text, i);
+                            f32::from(shaped.x_for_index(b))
+                        })
+                        .collect();
+                    let pts =
+                        display_map::wrap_points_from_advances(&advances, n, f32::from(target));
+                    self.display_map.set_wrap_points(&self.buffer, line, pts);
+                }
+            }
+        }
+
+        // r42 阶段 C：光标集 display 化（多光标各头；caret 每处一竖线）
+        let carets: Vec<(usize, usize)> = self
+            .cursors
+            .entries()
+            .iter()
+            .map(|(_, h)| {
+                let dp = self.display_map.to_display(&self.buffer, *h);
+                (dp.row, dp.col)
+            })
+            .collect();
+        // r42 阶段 C：多选区集（零宽不渲染；列选择矩形各行为独立选区）
+        let selections: Vec<Range<Point>> = self
+            .cursors
+            .entries()
+            .iter()
+            .filter(|(a, h)| a != h)
+            .map(|(a, h)| if a <= h { *a..*h } else { *h..*a })
+            .collect();
         (visible.start..visible.end)
-            .map(|idx| {
-                let line = self.buffer.line(idx); // r42：line() 返回 String（rope 无行借用面）
-                let tokens = self.line_tokens(idx, &line);
+            .map(|row| {
+                // r42：display row → (buffer 行, 段)；折叠行 seg=FOLD_SEG
+                let (line, seg) = self
+                    .display_map
+                    .row_source(&self.buffer, row)
+                    .unwrap_or((row, 0));
+                let is_fold = seg == display_map::FOLD_SEG;
+                let line_text = if is_fold {
+                    // 折叠行概要：区间首行 + 已折叠行数 + find 命中数（r42 阶段 D）
+                    let f = self.display_map.fold_head_at(line);
+                    let n = f
+                        .map(|f| f.range.end.line - f.range.start.line - 1)
+                        .unwrap_or(0);
+                    let hits_in = f
+                        .map(|f| {
+                            self.find
+                                .as_ref()
+                                .map(|fd| {
+                                    fd.matches()
+                                        .iter()
+                                        .filter(|m| {
+                                            m.line > f.range.start.line && m.line < f.range.end.line
+                                        })
+                                        .count()
+                                })
+                                .unwrap_or(0)
+                        })
+                        .unwrap_or(0);
+                    let hit_note = if hits_in > 0 {
+                        format!(" ⌕{hits_in}")
+                    } else {
+                        String::new()
+                    };
+                    format!("{} ⋯ 已折叠 {n} 行{}", self.buffer.line(line), hit_note)
+                } else {
+                    self.display_map.row_text(&self.buffer, row)
+                };
+                let tokens = self.line_tokens(line, &line_text);
                 let runs = self.styled_runs_for_line(
-                    &line,
+                    &line_text,
                     &tokens,
-                    idx,
-                    selection.clone(),
+                    line,
+                    &selections,
                     &find_hits,
                     query_len,
                     marked.clone(),
                     &colors,
                 );
-                let is_cursor_line = idx == cursor.line;
-                let line_number = (idx + 1).to_string();
+                // 光标行高亮按 buffer 行（主光标行；软换行后所有段同亮）
+                let is_cursor_line = line == cursor.line;
+                // 行号：首段/折叠头显示 buffer 行号；续段空
+                let line_number = if seg == 0 || is_fold {
+                    (line + 1).to_string()
+                } else {
+                    String::new()
+                };
 
-                // 光标竖线 x：shape 光标前前缀。
-                let caret_x = if is_cursor_line && focused {
-                    let prefix: String = line.chars().take(cursor.col).collect();
+                // 光标竖线 x（r42 阶段 C：carets 集——多光标每处一竖线，
+                // 段内 col 语义）。
+                let is_caret_row = carets.iter().any(|(r, _)| *r == row);
+                let caret_col = carets
+                    .iter()
+                    .find(|(r, _)| *r == row)
+                    .map(|(_, c)| *c)
+                    .unwrap_or(0);
+                let caret_x = if is_caret_row && focused {
+                    let prefix: String = line_text.chars().take(caret_col).collect();
                     GUTTER_WIDTH + TEXT_PADDING + shape_text_width(window, &prefix, &text_style)
                 } else {
                     px(0.)
@@ -1115,7 +1699,7 @@ impl Editor {
                 };
 
                 div()
-                    .id(SharedString::from(format!("line-{idx}")))
+                    .id(SharedString::from(format!("line-{row}")))
                     .h(LINE_HEIGHT)
                     .w_full()
                     .flex()
@@ -1126,7 +1710,7 @@ impl Editor {
                     })
                     .child(
                         div()
-                            .id(SharedString::from(format!("gutter-{idx}")))
+                            .id(SharedString::from(format!("gutter-{row}")))
                             .w(GUTTER_WIDTH)
                             .flex_none()
                             .h_full()
@@ -1136,11 +1720,40 @@ impl Editor {
                             .pr(px(10.))
                             .text_size(px(12.))
                             .text_color(num_color)
+                            // r42 阶段 D：折叠指示物（折叠头 ▾ 点击展开；
+                            // 围栏块内 ▸ 点击折叠；鼠标日志同 alt-f 口径）
+                            .when_some(
+                                {
+                                    let collapsed = self.display_map.fold_head_at(line).is_some();
+                                    let foldable = !collapsed && self.fence_span_at(line).is_some();
+                                    (collapsed || foldable).then_some((collapsed, line))
+                                },
+                                |el, (collapsed, mark_line)| {
+                                    el.child(
+                                        div()
+                                            .id(SharedString::from(format!("fold-{row}")))
+                                            .size(px(16.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_color(num_color)
+                                            .hover(|e| e.bg(colors.element_hover))
+                                            .child(if collapsed { "▾" } else { "▸" })
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_fold_at(mark_line);
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                    )
+                                },
+                            )
                             .child(line_number),
                     )
                     .child(
                         div()
-                            .id(SharedString::from(format!("text-{idx}")))
+                            .id(SharedString::from(format!("text-{row}")))
                             .pl(TEXT_PADDING)
                             .min_w_0()
                             .flex_1()
@@ -1148,12 +1761,12 @@ impl Editor {
                             .line_height(LINE_HEIGHT)
                             .font_family(EDITOR_FONT)
                             .text_color(colors.text)
-                            .child(StyledText::new(line).with_highlights(runs)),
+                            .child(StyledText::new(line_text).with_highlights(runs)),
                     )
-                    .when(is_cursor_line && focused, |el| {
+                    .when(is_caret_row && focused, |el| {
                         el.child(
                             div()
-                                .id(SharedString::from(format!("caret-{idx}")))
+                                .id(SharedString::from(format!("caret-{row}")))
                                 .absolute()
                                 .left(caret_x)
                                 .top(px(2.))
@@ -1163,11 +1776,12 @@ impl Editor {
                         )
                     })
                     // 批 2：行 bounds 记录（absolute 左上角=行原点；size_0
-                    // 不占布局——prepaint 收 bounds，paint 空）。
+                    // 不占布局——prepaint 收 bounds，paint 空）。idx 语义 =
+                    // 显示行（hit-test 侧 to_buffer 换算）。
                     .child({
                         let rows = self.row_bounds.clone();
                         canvas(
-                            move |bounds, _, _| rows.borrow_mut().push((idx, bounds)),
+                            move |bounds, _, _| rows.borrow_mut().push((row, bounds)),
                             |_, _, _, _| {},
                         )
                         .absolute()
@@ -1188,7 +1802,7 @@ impl Editor {
         line: &str,
         tokens: &highlight::LineHighlight,
         line_idx: usize,
-        selection: Option<Range<Point>>,
+        selections: &[Range<Point>],
         find_hits: &[(Point, bool)],
         query_len: usize,
         marked: Option<Range<usize>>,
@@ -1198,16 +1812,26 @@ impl Editor {
         let n = chars.len();
         let base = base_highlight(colors);
 
-        // 该行选区 char 范围。
-        let sel_range: Option<Range<usize>> = selection.map(|s| {
-            let start = if s.start.line == line_idx {
-                s.start.col
-            } else {
-                0
-            };
-            let end = if s.end.line == line_idx { s.end.col } else { n };
-            start.min(end)..end.max(start)
-        });
+        // 该行选区 char 范围集（r42 阶段 C：多选区；零宽不渲染；
+        // 跨行选区在首/尾行取行内剩余段）。
+        let sel_ranges: Vec<Range<usize>> = selections
+            .iter()
+            .filter_map(|s| {
+                if s.start.line > line_idx || s.end.line < line_idx {
+                    return None; // 不相交
+                }
+                let start = if s.start.line == line_idx {
+                    s.start.col
+                } else {
+                    0
+                };
+                let end = if s.end.line == line_idx { s.end.col } else { n };
+                if start >= end {
+                    return None; // 零宽（裸光标）不渲染
+                }
+                Some(start..end)
+            })
+            .collect();
         // 本行查找命中 char 范围集。
         let hit_ranges: Vec<(Range<usize>, bool)> = find_hits
             .iter()
@@ -1241,8 +1865,8 @@ impl Editor {
                     break;
                 }
             }
-            // 选区底色（最高优先）。
-            if sel_range.as_ref().is_some_and(|r| r.contains(&i)) {
+            // 选区底色（最高优先；多选区任一命中）。
+            if sel_ranges.iter().any(|r| r.contains(&i)) {
                 s.background_color = Some(colors.element_selection_background);
             }
             // IME 预编辑下划线。
