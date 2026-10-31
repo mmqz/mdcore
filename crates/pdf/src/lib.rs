@@ -90,6 +90,10 @@ pub mod forms;
 // 不是注释），PNG 自带 alpha 走 SMask，零 image crate 依赖。
 #[cfg(feature = "engine-lopdf")]
 pub mod stamp;
+// S2-7（issue #116 任务 2）：数字签名读取/结构验证——手写 DER 解析
+// + CMS SignedData 遍历，零新增依赖；不验证证书链（第一版范围）。
+#[cfg(feature = "engine-lopdf")]
+pub mod signature;
 
 #[cfg(feature = "engine-lopdf")]
 pub use annotate::{read_annotations, PdfAnnotator, ReadReport};
