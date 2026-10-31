@@ -15,10 +15,12 @@
 //! 折叠状态（`left_open` / `right_open`）与 `editor`（`Option<Entity<Editor>>`，
 //! 由 main 的 CLI 文档分派构造）是本视图全部自持状态；F1 起 `editor` 可经
 //! [`ShellApp::open_document`] 运行时替换（Ctrl+O 对话框 / 文件树 / 最近
-//! 列表共用通道），失败/不支持轻提示横幅（[`NoticeBoard`]）。
+//! 列表共用通道），失败/不支持轻提示横幅（[`NoticeBoard`]）；F2 起
+//! `workspace`（`Option<Entity<FileTree>>`，Ctrl+K Ctrl+O 打开文件夹）——
+//! 记忆落盘随 settings（重启恢复）。
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{Context, Entity, KeyDownEvent, PathPromptOptions, Render, Window};
 use ui::prelude::*;
@@ -26,14 +28,22 @@ use ui::prelude::*;
 use crate::activity_bar;
 use crate::document::{self, OpenOutcome};
 use crate::editor::Editor;
+use crate::file_tree::FileTree;
 use crate::panels;
 use crate::status_bar;
 use crate::title_bar;
+
+/// Ctrl+K 和弦窗口（第二键有效期；过期自动作废——惰性判定无需定时器）。
+const CHORD_WINDOW: Duration = Duration::from_secs(2);
 
 pub struct ShellApp {
     left_open: bool,
     right_open: bool,
     editor: Option<Entity<Editor>>,
+    /// F2：工作区文件树（打开文件夹后呈现；记忆落盘随 settings）。
+    workspace: Option<Entity<FileTree>>,
+    /// F2：Ctrl+K 和弦待续期（None = 无和弦进行中）。
+    chord_until: Option<Instant>,
     /// F1：提示横幅（打开失败 / 类型不支持 / 对话框不可用等面向用户消息）。
     notice_board: NoticeBoard,
 }
@@ -89,16 +99,28 @@ impl NoticeBoard {
 }
 
 impl ShellApp {
-    /// `editor`：成功打开的文档编辑器（`None` = 空态）。
+    /// `editor`：成功打开的文档编辑器（`None` = 空态）；`workspace`：
+    /// 启动恢复的工作区根（F2 记忆——`None` = 无记忆/不存在）。
     pub fn new(
         editor: Option<Entity<Editor>>,
+        workspace_root: Option<PathBuf>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        if let Some(root) = &workspace_root {
+            // 证据通道（与 open_workspace 的 "workspace: <路径>" 区分）。
+            eprintln!("workspace(restored): {}", root.display());
+        }
+        let workspace = workspace_root.map(|root| {
+            let shell = cx.entity().downgrade();
+            cx.new(|_| FileTree::new(root, shell))
+        });
         Self {
             left_open: true,
             right_open: true,
             editor,
+            workspace,
+            chord_until: None,
             notice_board: NoticeBoard::default(),
         }
     }
@@ -116,8 +138,8 @@ impl ShellApp {
     }
 
     /// F1：打开文件替换当前编辑区（Ctrl+O 对话框 / 文件树点击 / 最近
-    /// 列表共用通道）。成功→换入新实体 + 聚焦；失败/不支持→提示横幅
-    /// （不白屏不崩溃）。
+    /// 列表共用通道）。成功→换入新实体 + 聚焦 + 文件树高亮；失败/
+    /// 不支持→提示横幅（不白屏不崩溃）。
     pub fn open_document(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         eprintln!("open: {}", path.display());
         match document::open_editor(&path, cx) {
@@ -126,6 +148,13 @@ impl ShellApp {
                 let focus = editor.read(cx).focus_handle().clone();
                 self.editor = Some(editor);
                 self.notice_board.clear();
+                // F2：文件树高亮同步（工作区打开时）。
+                if let Some(tree) = &self.workspace {
+                    tree.update(cx, |tree, cx| {
+                        tree.set_active_file(Some(path.clone()));
+                        cx.notify();
+                    });
+                }
                 cx.notify();
                 window.focus(&focus, cx);
             }
@@ -140,6 +169,50 @@ impl ShellApp {
                 );
             }
         }
+    }
+
+    /// F2：打开文件夹作为工作区（Ctrl+K Ctrl+O 和弦 / 启动记忆恢复
+    /// / --smoke-workspace 钩子共用通道）——文件树实体落位 + 记忆落盘
+    /// + 状态栏路径。落盘前 absolutize（相对路径记忆在 cwd 变化后失效）。
+    pub fn open_workspace(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        // 相对路径 → 绝对（不解析符号链接——展示口径保留；失败原样）。
+        let root = std::path::absolute(&root).unwrap_or(root);
+        eprintln!("workspace: {}", root.display());
+        let shell = cx.entity().downgrade();
+        let tree = cx.new(|_| FileTree::new(root.clone(), shell));
+        self.workspace = Some(tree);
+        crate::settings::remember_workspace(&root);
+        cx.notify();
+    }
+
+    /// F2：Ctrl+K Ctrl+O 文件夹选择对话框（directories 模式；取消/
+    /// portal 缺失口径同 F1）。
+    fn prompt_open_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rx = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("打开文件夹（工作区）".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            match rx.await {
+                Ok(Ok(Some(paths))) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        let _ = this.update(cx, |shell, cx| shell.open_workspace(path, cx));
+                    }
+                }
+                // 用户取消——无操作。
+                Ok(Ok(None)) => {}
+                Ok(Err(err)) => {
+                    let message = format!("文件夹选择器不可用：{err}");
+                    let _ = this.update_in(cx, |shell, window, cx| {
+                        shell.show_notice(message, window, cx);
+                    });
+                }
+                Err(_canceled) => {}
+            }
+        })
+        .detach();
     }
 
     /// F1：Ctrl+O 系统文件选择对话框（gpui `prompt_for_paths`——
@@ -217,17 +290,36 @@ impl Render for ShellApp {
             .bg(colors.background)
             .text_color(colors.text)
             .font_family("Noto Sans SC")
-            // F1：Ctrl+O 文件打开（shell 级钩子）。空态（无编辑区焦点）
-            // 时键事件派发到 root 节点；编辑态编辑器不消费的组合冒泡至此
-            // （dispatch_key 对未知 ctrl 组合零处理零拦截）。
+            // F1/F2：shell 级键钩子。空态（无编辑区焦点）时键事件派发
+            // 到 root 节点；编辑态编辑器不消费的组合冒泡至此（dispatch_key
+            // 对未知 ctrl 组合零处理零拦截）。
+            //
+            // 命令集：Ctrl+O（F1 文件打开）；Ctrl+K Ctrl+O 和弦（F2 打开
+            // 文件夹工作区——2s 窗口内有效，过期/其它键作废）。
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let ks = &event.keystroke;
                 let ctrl = ks.modifiers.control || ks.modifiers.platform;
-                if ctrl
-                    && !ks.modifiers.shift
-                    && !ks.modifiers.alt
-                    && ks.key.eq_ignore_ascii_case("o")
-                {
+                let plain_ctrl = ctrl && !ks.modifiers.shift && !ks.modifiers.alt;
+
+                // F2 和弦第一键：Ctrl+K（进入待续期，重复按刷新窗口）。
+                if plain_ctrl && ks.key.eq_ignore_ascii_case("k") {
+                    this.chord_until = Some(Instant::now() + CHORD_WINDOW);
+                    return;
+                }
+                // F2 和弦第二键：窗口期内 Ctrl+O → 工作区（吞掉，不落 F1
+                // 文件打开）；过期/非 O → 和弦作废。
+                let chord_pending = this
+                    .chord_until
+                    .take()
+                    .is_some_and(|until| Instant::now() <= until);
+                if chord_pending && plain_ctrl && ks.key.eq_ignore_ascii_case("o") {
+                    this.prompt_open_workspace(window, cx);
+                    return;
+                }
+                this.chord_until = None;
+
+                // F1：Ctrl+O 文件打开。
+                if plain_ctrl && ks.key.eq_ignore_ascii_case("o") {
                     this.prompt_open_file(window, cx);
                 }
             }))
@@ -243,7 +335,11 @@ impl Render for ShellApp {
                         cx,
                     ))
                     .when(self.left_open, |el| {
-                        el.child(panels::left_panel(self.editor.as_ref(), cx))
+                        el.child(panels::left_panel(
+                            self.editor.as_ref(),
+                            self.workspace.as_ref(),
+                            cx,
+                        ))
                     })
                     .child(editor_area(self, cx))
                     .when(self.right_open, |el| {
@@ -255,7 +351,13 @@ impl Render for ShellApp {
                 Some(message) => el.child(notice_bar(message, &colors)),
                 None => el,
             })
-            .child(status_bar::status_bar(self.editor.as_ref(), cx))
+            .child(status_bar::status_bar(
+                self.editor.as_ref(),
+                self.workspace
+                    .as_ref()
+                    .map(|tree| tree.read(cx).root().to_path_buf()),
+                cx,
+            ))
     }
 }
 

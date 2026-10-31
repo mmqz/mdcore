@@ -27,6 +27,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.86"
+# F2：工作区记忆落盘（settings.json）——serde_json 1.0（Cargo.lock 既有
+# 传递依赖版本，直接依赖面零新增编译成本；F5 最近列表共用此依赖）。
+serde_json = "1.0"
 # 批 3（#68）：docx 只读渲染引擎依赖（path 接入，类型零泄漏面不变）
 # ——读面（read_docx 块序）+ 烟雾夹具生成（写面 save_to_vec）。
 mdc-office-io = { path = "../crates/office-io" }

@@ -42,6 +42,7 @@ mod activity_bar;
 mod assets;
 mod document;
 mod editor;
+mod file_tree;
 mod panels;
 mod settings;
 mod shell;
@@ -75,6 +76,12 @@ fn main() {
         .position(|a| a == "--smoke-open")
         .and_then(|i| args.get(i + 1))
         .cloned();
+    // F2：工作区烟雾钩子（--smoke-workspace DIR）。
+    let smoke_workspace = args
+        .iter()
+        .position(|a| a == "--smoke-workspace")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
     // 批 2：鼠标烟雾脚本（需与 --smoke-sec + FILE 组合）。
     let smoke_mouse = args.iter().any(|a| a == "--smoke-mouse");
 
@@ -87,10 +94,11 @@ fn main() {
             // 文档分派：首个非 flag 参数为文件路径（#68 阶段 1.1；跳过
             // 各 flag 的值参数，避免误判为文件）。F1 起与 Ctrl+O 运行时
             // 打开共用 document::open_editor 通道（同一分派语义）。
-            let flag_value_positions: Vec<usize> = ["--smoke-sec", "--smoke-open"]
-                .iter()
-                .filter_map(|flag| args.iter().position(|a| a == flag).map(|pos| pos + 1))
-                .collect();
+            let flag_value_positions: Vec<usize> =
+                ["--smoke-sec", "--smoke-open", "--smoke-workspace"]
+                    .iter()
+                    .filter_map(|flag| args.iter().position(|a| a == flag).map(|pos| pos + 1))
+                    .collect();
             let file_arg = args
                 .iter()
                 .enumerate()
@@ -110,6 +118,11 @@ fn main() {
                     }
                 }
             });
+
+            // F2：启动恢复上次工作区（settings.json 记忆；目录已不存在
+            // 则静默丢弃——不提示不阻断）。
+            let remembered_workspace =
+                settings::remembered_workspace().filter(|root| root.is_dir());
 
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -133,7 +146,7 @@ fn main() {
             // （EX_SOFTWARE）——替代原 .expect 的裸 panic（exit 101 裸
             // 错误链，桌面双击启动时 stderr 无处落 ≈ 静默失败）。
             let window_handle = match cx.open_window(options, |window, cx| {
-                cx.new(|cx| shell::ShellApp::new(editor_entity, window, cx))
+                cx.new(|cx| shell::ShellApp::new(editor_entity, remembered_workspace, window, cx))
             }) {
                 Ok(handle) => handle,
                 Err(error) => {
@@ -176,6 +189,25 @@ fn main() {
                     let _ = cx.update(|cx| {
                         handle.update(cx, |shell, window, cx| {
                             shell.open_document(std::path::PathBuf::from(extra), window, cx);
+                        })
+                    });
+                })
+                .detach();
+            }
+
+            // F2：工作区烟雾——开窗 2.5s 后打开 DIR 为工作区（与
+            // Ctrl+K Ctrl+O 对话框回调同走 ShellApp::open_workspace；
+            // 断言通道 = stderr "workspace: <路径>" + settings.json 落盘
+            // + 下一轮启动的 "workspace:" 恢复行 + quit reached）。
+            if let Some(dir) = smoke_workspace {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(2500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, _window, cx| {
+                            shell.open_workspace(std::path::PathBuf::from(dir), cx);
                         })
                     });
                 })

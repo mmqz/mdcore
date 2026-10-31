@@ -15,6 +15,7 @@ use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
 use crate::editor::Editor;
+use crate::file_tree::FileTree;
 
 /// 左栏宽度（px）。
 pub const LEFT_PANEL_WIDTH: Pixels = px(260.);
@@ -25,9 +26,13 @@ const PANEL_PADDING: Pixels = px(12.);
 /// 面板头部下缘留白（px）。
 const HEADER_MARGIN: Pixels = px(8.);
 
-/// 左栏：文件树（首组 = 当前打开文档；docx 第二组 = 文档结构标题
-/// 树；磁盘目录树随阶段 2 接线）。
-pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
+/// 左栏：工作区文件树（F2——真实目录懒加载/虚拟化，占剩余高度）+
+/// 首组「打开的文档」+ docx/pdf「文档结构」树。
+pub fn left_panel(
+    editor: Option<&Entity<Editor>>,
+    workspace: Option<&Entity<FileTree>>,
+    cx: &App,
+) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     let hover = colors.element_hover;
     let open_docs: Vec<(String, bool)> = match editor {
@@ -56,13 +61,16 @@ pub fn left_panel(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
         .bg(colors.panel_background)
         .p(PANEL_PADDING)
         .gap_1()
-        .overflow_y_scroll()
+        // F2：工作区文件树占剩余高度（uniform_list 内部滚动/虚拟化）
+        // ——移除面板级 overflow_y_scroll 防双层滚动互踩；无工作区时
+        // 自然高度内容（打开的文档/结构树）不溢出。
         .child(
             Label::new("资源管理器")
                 .size(LabelSize::Small)
                 .color(ui::Color::Muted)
                 .mb(HEADER_MARGIN),
         )
+        .when_some(workspace, |el, tree| el.child(tree.clone()))
         .child(tree_group(
             "tg-docs",
             "打开的文档",
