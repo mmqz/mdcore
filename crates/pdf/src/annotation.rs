@@ -119,11 +119,36 @@ impl Rect {
     }
 }
 
-/// 标注种类（v0 四变体；括号内为对应 PDF Annot `/Subtype`——v0 只用
-/// 标准子型，零私有扩展，互通性从第一天成立）。
+/// 形状标注边框（`/BS` /W + /C——PDF 32000 12.5.4；线形与矩形/椭圆
+/// 共用）。width 值域钳制 = [`INK_WIDTH_RANGE`]（与墨迹同域同纪律——
+/// 入列单点 [`clamp_border_width`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Border {
+    /// 边框/线条颜色（`/C`）。
+    pub color: Rgb,
+    /// 边框/线条宽（pt，`/BS /W`）。
+    pub width: f32,
+}
+
+/// #45 面向全部线形/形状的边框宽钳制（NaN → 缺省 2.0；域外 → 边界）。
+/// 与 [`clamp_ink_width`] 同域同语义（会话入列单点归一化）。
+pub fn clamp_border_width(w: f32) -> f32 {
+    clamp_ink_width(w)
+}
+
+/// 整体边框钳制（width 单点归一——color/形状零触碰）。会话入列用。
+pub fn clamp_border(border: Border) -> Border {
+    Border {
+        color: border.color,
+        width: clamp_border_width(border.width),
+    }
+}
+
+/// 标注种类（v0 四变体 + S2-2 七变体；括号内为对应 PDF Annot
+/// `/Subtype`——**只用标准子型，零私有扩展**，互通性从第一天成立）。
 ///
-/// 载荷健全性（如非空 quads/strokes）v0 **不校验**——错误面收窄五类
-/// 无 per-field 变体；PDF-d 落盘时由引擎侧（lopdf 写前）校验。
+/// 载荷健全性（如非空 quads/strokes）**不在此校验**——错误面收窄五类
+/// 无 per-field 变体；落盘时由引擎侧（lopdf 写前）校验。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AnnotationKind {
     /// 高亮（`/Highlight`）：四边形列表 + 颜色。
@@ -146,6 +171,31 @@ pub enum AnnotationKind {
         #[serde(default = "default_ink_width")]
         width: f32,
     },
+    /// 下划线（`/Underline`）：四边形列表 + 颜色（S2-2）。
+    Underline { quads: Vec<Quad>, color: Rgb },
+    /// 删除线（`/StrikeOut`）：四边形列表 + 颜色（S2-2）。
+    StrikeOut { quads: Vec<Quad>, color: Rgb },
+    /// 矩形（`/Square`）：锚定矩形 + 边框（S2-2）。
+    Rectangle { rect: Rect, border: Border },
+    /// 椭圆（`/Circle`）：锚定矩形（外接框）+ 边框（S2-2）。
+    Ellipse { rect: Rect, border: Border },
+    /// 直线（`/Line`）：端点对 + 边框（S2-2）。
+    Line {
+        from: Point,
+        to: Point,
+        border: Border,
+    },
+    /// 箭头（`/Line` + `/LE` 终止符——PDF 无原生 /Arrow 子型，标准
+    /// 终止符形态 = 零私有扩展的通行做法；S2-2）。
+    Arrow {
+        from: Point,
+        to: Point,
+        border: Border,
+    },
+    /// 图章（`/Stamp`）：锚定矩形 + 文本（`/Contents`——如「已审核」；
+    /// 标准图章名 /Name 映射 v0 不做[登记]——阅读器回退按 /Contents
+    /// 显示；S2-2）。
+    Stamp { rect: Rect, text: String },
 }
 
 /// #45：Ink.color serde 缺省（旧 JSON 无字段 → 既有前端硬编码蓝）。
@@ -184,6 +234,13 @@ pub enum AnnotationKindTag {
     Note,
     FreeText,
     Ink,
+    Underline,
+    StrikeOut,
+    Rectangle,
+    Ellipse,
+    Line,
+    Arrow,
+    Stamp,
 }
 
 impl AnnotationKind {
@@ -193,6 +250,13 @@ impl AnnotationKind {
             Self::Note { .. } => AnnotationKindTag::Note,
             Self::FreeText { .. } => AnnotationKindTag::FreeText,
             Self::Ink { .. } => AnnotationKindTag::Ink,
+            Self::Underline { .. } => AnnotationKindTag::Underline,
+            Self::StrikeOut { .. } => AnnotationKindTag::StrikeOut,
+            Self::Rectangle { .. } => AnnotationKindTag::Rectangle,
+            Self::Ellipse { .. } => AnnotationKindTag::Ellipse,
+            Self::Line { .. } => AnnotationKindTag::Line,
+            Self::Arrow { .. } => AnnotationKindTag::Arrow,
+            Self::Stamp { .. } => AnnotationKindTag::Stamp,
         }
     }
 }
@@ -297,6 +361,49 @@ impl Annotation {
                     }
                 }
             }
+            // S2-2：颜色可变面（下划线/删除线——与 Highlight 同语义）。
+            AnnotationKind::Underline { color, .. } | AnnotationKind::StrikeOut { color, .. } => {
+                if let Some(new_color) = patch.color {
+                    if *color != new_color {
+                        *color = new_color;
+                        changed = true;
+                    }
+                }
+            }
+            // S2-2：矩形/椭圆——位置可移（rect）+ 边框色可变；线形几何
+            // （from/to）无 patch 面（删旧加新——Ink 笔划同纪律）。
+            AnnotationKind::Rectangle { rect, border }
+            | AnnotationKind::Ellipse { rect, border } => {
+                if let Some(new_rect) = patch.rect {
+                    if *rect != new_rect {
+                        *rect = new_rect;
+                        changed = true;
+                    }
+                }
+                if let Some(new_color) = patch.color {
+                    if border.color != new_color {
+                        border.color = new_color;
+                        changed = true;
+                    }
+                }
+            }
+            // S2-2：图章——位置可移 + 文本可改。
+            AnnotationKind::Stamp { rect, text } => {
+                if let Some(new_rect) = patch.rect {
+                    if *rect != new_rect {
+                        *rect = new_rect;
+                        changed = true;
+                    }
+                }
+                if let Some(new_text) = &patch.contents {
+                    if text != new_text {
+                        *text = new_text.clone();
+                        changed = true;
+                    }
+                }
+            }
+            // 线形（Line/Arrow）v0 无 patch 面（几何编辑 = 删旧加新）。
+            AnnotationKind::Line { .. } | AnnotationKind::Arrow { .. } => {}
             // Ink v0 无可变面（笔划编辑 = 删旧加新；外观流 PDF-d）。
             AnnotationKind::Ink { .. } => {}
         }
