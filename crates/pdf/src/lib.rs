@@ -86,6 +86,10 @@ pub mod annotate;
 // 增量写回/扁平化，中文走 CIDFont 嵌入（复用 generate 的 Type0 面）。
 #[cfg(feature = "engine-lopdf")]
 pub mod forms;
+// S2-6（issue #116 任务 3）：盖章——图片叠加进页面内容流（打印必带，
+// 不是注释），PNG 自带 alpha 走 SMask，零 image crate 依赖。
+#[cfg(feature = "engine-lopdf")]
+pub mod stamp;
 
 #[cfg(feature = "engine-lopdf")]
 pub use annotate::{read_annotations, PdfAnnotator, ReadReport};
