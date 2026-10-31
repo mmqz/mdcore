@@ -8,6 +8,11 @@
 //! mang-shell --smoke-sec N     烟雾模式：开窗 N 秒后自动退出（exit 0 +
 //!                               stdout 末行 "smoke: quit reached"——Xvfb
 //!                               无头验证通道）
+//! mang-shell --smoke-user-type #111 用户键入烟雾：与 --smoke-sec + 启动
+//!                               FILE 组合——3.5s 合成用户键入 "user
+//!                               typed this" + 回车（真实键处理链）；RPC
+//!                               订阅客户端断言收到 source="user" 的
+//!                               doc_changed 事件（rpc_smoke.sh 消费）
 //! mang-shell --smoke-mouse     批 2 鼠标烟雾：与 --smoke-sec 组合——合成
 //!                               PlatformInput 序列（单击/拖选/双击/三击/
 //!                               滚轮）过 Window::dispatch_event 完整
@@ -46,6 +51,10 @@ mod file_tree;
 mod git_panel;
 mod panels;
 mod recent;
+// doc_events：文档变更事件总线（#111 订阅模式）——editor 的编辑收尾
+//（after_edit）无条件调用 publish（RPC 禁用时静默丢弃），故不做
+// cfg(unix) 门控（跨平台纯 std + 既有依赖）。
+mod doc_events;
 #[cfg(unix)]
 mod rpc;
 mod settings;
@@ -112,6 +121,11 @@ fn main() {
     // Ctrl+G → 输入行号 → Enter 跳转；再一轮越界行号 → 断言 goto: 两条
     // 证据行（正常跳转 + 越界 clamp）+ quit reached）。
     let smoke_goto_line = args.iter().any(|a| a == "--smoke-goto-line");
+    // #111：用户键入烟雾（--smoke-user-type——与启动 FILE 组合；RPC
+    // 订阅回显验证的「用户侧源」）：3.5s 合成用户键入一段文本 + 回车
+    // ——走真实键处理链（handle_key → after_edit → doc_events
+    // source="user"）。订阅客户端（rpc_smoke.sh）断言收到 doc_changed。
+    let smoke_user_type = args.iter().any(|a| a == "--smoke-user-type");
     // G3：缩进烟雾（--smoke-indent——与启动 FILE 组合：home+Shift+↓×3
     // 选 3 行 → Tab 缩进 → Shift+Tab 反缩进 → Ctrl+Z×2 连撤——断言
     // indent:/outdent: 证据行 + quit reached）。
@@ -504,6 +518,37 @@ fn main() {
                 let handle = window_handle;
                 cx.spawn(async move |cx| {
                     run_syntax_hl_probe(&handle, cx).await;
+                })
+                .detach();
+            }
+
+            // #111：用户键入烟雾——真实键处理链合成（非 RPC 路径），
+            // 事件源应为 source="user"（与 RPC 编辑的 source="rpc"
+            // 区分——订阅回显双向断言的用户侧）。
+            if smoke_user_type {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    let text = "user typed this";
+                    // 首键 6s：让 RPC 烟雾客户端先完成 subscribe（3.5s 会早于
+                    // 客户端序列完成——订阅注册前的事件不投递，user 侧断言漏收）。
+                    for (i, ch) in text.chars().enumerate() {
+                        let delay = if i == 0 { 6000 } else { 60 };
+                        dispatch_key(
+                            &handle,
+                            cx,
+                            delay,
+                            "virtual",
+                            false,
+                            false,
+                            Some(ch.to_string().as_str()),
+                        )
+                        .await;
+                    }
+                    dispatch_key(&handle, cx, 400, "enter", false, false, None).await;
+                    eprintln!(
+                        "user-type-smoke: script done (typed {} chars + enter)",
+                        text.chars().count()
+                    );
                 })
                 .detach();
             }
