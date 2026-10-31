@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use gpui::{App, AppContext, Hsla, hsla};
+use gpui::{App, Hsla, hsla};
 use theme::{Appearance, Theme};
 
 /// 主题模式（settings.json `theme` 键的取值）。

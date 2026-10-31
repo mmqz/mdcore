@@ -43,6 +43,7 @@ mod assets;
 mod document;
 mod editor;
 mod file_tree;
+mod git_panel;
 mod panels;
 mod recent;
 mod settings;
@@ -97,11 +98,14 @@ fn main() {
         .position(|a| a == "--smoke-save-as")
         .and_then(|i| args.get(i + 1))
         .cloned();
+    // F7：git 面板烟雾（--smoke-git-diff——与 --smoke-workspace 组合：
+    // 4.5s 打开首个改动的 diff 只读标签；断言 git: 证据行 + diff: 标签）。
+    let smoke_git_diff = args.iter().any(|a| a == "--smoke-git-diff");
     // F6：主题循环烟雾（--smoke-theme-cycle——3.5s 合成 Ctrl+T；
     // 断言 theme: 证据行 + settings.json theme 键 + 全窗重绘不崩）。
     let smoke_theme_cycle = args.iter().any(|a| a == "--smoke-theme-cycle");
     // F6：字号烟雾（--smoke-zoom N——3.5s 设字号 N[8-32]；断言
-    /// font-size: 证据行 + settings.json font_size 键）。
+    // font-size: 证据行 + settings.json font_size 键）。
     let smoke_zoom = args
         .iter()
         .position(|a| a == "--smoke-zoom")
@@ -256,6 +260,37 @@ fn main() {
                     let _ = cx.update(|cx| {
                         handle.update(cx, |shell, _window, cx| {
                             shell.open_workspace(std::path::PathBuf::from(dir), cx);
+                        })
+                    });
+                })
+                .detach();
+            }
+
+            // F7：git diff 烟雾（工作区打开后 2s——shell 层直开：handle
+            // 闭包自带 window，跨实体 update_in 在任务上下文解析不到
+            // 窗口[F7 实测]，故 shell 内完成全部开标签+落焦）。
+            if smoke_git_diff {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(4500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, window, cx| {
+                            let Some(panel) = shell.git_panel() else {
+                                return;
+                            };
+                            let Some((root, path)) = panel.read(cx).first_change() else {
+                                return;
+                            };
+                            let Some(text) = git_panel::git_diff(&root, &path) else {
+                                return;
+                            };
+                            if let Some(focus) =
+                                shell.open_readonly_tab(format!("diff: {path}"), text, cx)
+                            {
+                                window.focus(&focus, cx);
+                            }
                         })
                     });
                 })

@@ -200,6 +200,22 @@ pub struct Editor {
 impl Editor {
     /// 打开文档：`path` 为 `None` 时是未命名新文档。
     pub fn new(path: Option<PathBuf>, content: String, cx: &mut Context<Self>) -> Self {
+        Self::new_text(path, content, false, cx)
+    }
+
+    /// F7：只读文本标签（diff 视图 / 提交文件清单——导航/查找/复制
+    /// 全复用，编辑面被只读门禁拦截）。
+    pub fn new_readonly(path: Option<PathBuf>, content: String, cx: &mut Context<Self>) -> Self {
+        Self::new_text(path, content, true, cx)
+    }
+
+    /// 文本态构造（md 可编辑 / F7 只读视图共用）。
+    fn new_text(
+        path: Option<PathBuf>,
+        content: String,
+        read_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let buffer = Buffer::from_plain_text(&content);
         let display_name = match &path {
             Some(p) => p
@@ -228,7 +244,7 @@ impl Editor {
             autoscroll_target: None,
             autoscroll_task: None,
             mouse_log: false,
-            read_only: false,
+            read_only,
             docx: None,
             pdf: None,
         };

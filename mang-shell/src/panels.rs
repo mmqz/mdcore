@@ -16,6 +16,7 @@ use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
 use crate::editor::Editor;
 use crate::file_tree::FileTree;
+use crate::git_panel::GitPanel;
 
 /// 左栏宽度（px）。
 pub const LEFT_PANEL_WIDTH: Pixels = px(260.);
@@ -31,6 +32,8 @@ const HEADER_MARGIN: Pixels = px(8.);
 pub fn left_panel(
     editor: Option<&Entity<Editor>>,
     workspace: Option<&Entity<FileTree>>,
+    git_panel: Option<&Entity<GitPanel>>,
+    git_view: bool,
     cx: &App,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();

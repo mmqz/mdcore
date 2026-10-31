@@ -296,18 +296,24 @@ impl FileTree {
             .rounded_sm()
             .when(row.is_active, |el| el.bg(selected))
             .hover(move |el| el.bg(hover))
-            // 左键：目录展开/折叠；文件经 F1 通道打开。
+            // 左键：目录展开/折叠；文件经 F1 通道打开（shell 跨实体经
+            // Entity::update 进入，焦点句柄返回后在监听器 window 域落焦
+            //——update_in 在派生上下文解析不到窗口，F7 实测）。
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _, _window, cx| {
+                cx.listener(move |this, _, window, cx| {
                     if is_dir {
                         this.state.toggle(&path);
                         cx.notify();
                     } else {
                         let shell = this.shell.clone();
-                        let _ = shell.update_in(cx, |shell, window, cx| {
-                            shell.open_document(path.clone(), window, cx);
-                        });
+                        let focus = shell
+                            .update(cx, |shell, cx| shell.open_document_tab(path.clone(), cx))
+                            .ok()
+                            .flatten();
+                        if let Some(focus) = focus {
+                            window.focus(&focus, cx);
+                        }
                     }
                 }),
             )

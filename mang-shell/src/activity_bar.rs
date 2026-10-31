@@ -30,6 +30,7 @@ const BAR_PADDING: Pixels = px(8.);
 /// 渲染图标条。`left_open`/`right_open` 决定选中态与右栏开关钮图标方向。
 pub fn activity_bar(
     left_open: bool,
+    git_view: bool,
     right_open: bool,
     cx: &mut Context<ShellApp>,
 ) -> impl IntoElement {
@@ -50,6 +51,16 @@ pub fn activity_bar(
             colors.element_hover,
             colors.element_selected,
             cx.listener(|this, _, _, cx| this.toggle_left(cx)),
+        ))
+        // F7：git 改动/历史视图（文件树钮与 git 钮互切视图）。
+        .child(bar_button(
+            "act-git",
+            IconName::GitBranch,
+            left_open && git_view,
+            "改动 / 历史（git）",
+            colors.element_hover,
+            colors.element_selected,
+            cx.listener(|this, _, _, cx| this.toggle_git(cx)),
         ))
         .child(bar_button(
             "act-search",

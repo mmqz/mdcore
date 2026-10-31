@@ -32,6 +32,7 @@ use crate::activity_bar;
 use crate::document::{self, OpenOutcome};
 use crate::editor::Editor;
 use crate::file_tree::FileTree;
+use crate::git_panel::GitPanel;
 use crate::panels;
 use crate::recent::RecentStore;
 use crate::status_bar;
@@ -73,6 +74,10 @@ pub struct ShellApp {
     active: usize,
     /// F2：工作区文件树（打开文件夹后呈现；记忆落盘随 settings）。
     workspace: Option<Entity<FileTree>>,
+    /// F7：git 面板（工作区打开即建——非 git 目录走面板内提示态）。
+    git_panel: Option<Entity<GitPanel>>,
+    /// F7：左栏视图（文件树 / git——图标条切换）。
+    git_view: bool,
     /// F2：Ctrl+K 和弦待续期（None = 无和弦进行中）。
     chord_until: Option<Instant>,
     /// F4：确认框（脏标签关闭/退出前确认；None = 无进行中）。
@@ -236,6 +241,8 @@ impl ShellApp {
             tabs,
             active: 0,
             workspace,
+            git_panel: None,
+            git_view: false,
             chord_until: None,
             confirm: None,
             confirm_focus,
@@ -266,10 +273,53 @@ impl ShellApp {
         self.tabs.get(self.active).map(|tab| &tab.editor)
     }
 
-    /// 折叠/展开左栏（文件树）。图标条 `act-file-tree` 触发。
+    /// 折叠/展开左栏（文件树）。图标条 `act-file-tree` 触发——已开且
+    /// 在 git 视图时切回文件树视图（F7）。
     pub fn toggle_left(&mut self, cx: &mut Context<Self>) {
-        self.left_open = !self.left_open;
+        if self.left_open && self.git_view {
+            self.git_view = false;
+        } else {
+            self.left_open = !self.left_open;
+        }
         cx.notify();
+    }
+
+    /// F7：切到 git 视图（图标条 `act-git` 触发——已开且在 git 视图时
+    /// 折叠左栏，再开切回）。
+    pub fn toggle_git(&mut self, cx: &mut Context<Self>) {
+        if self.left_open && self.git_view {
+            self.left_open = false;
+        } else {
+            self.left_open = true;
+            self.git_view = true;
+        }
+        cx.notify();
+    }
+
+    /// F7：git 面板实体（烟雾钩子/内部访问）。
+    pub fn git_panel(&self) -> Option<Entity<GitPanel>> {
+        self.git_panel.clone()
+    }
+
+    /// F7：打开只读文本标签（diff 视图 / 提交清单——Editor 只读态：
+    /// 导航/查找/复制全复用，编辑被门禁拦截）。同路径已开 → 激活。
+    pub fn open_readonly_tab(
+        &mut self,
+        title: String,
+        content: String,
+        cx: &mut Context<Self>,
+    ) -> Option<FocusHandle> {
+        let path = PathBuf::from(format!("git-view:{title}"));
+        if let Some(idx) = self.tabs.iter().position(|tab| tab.path == path) {
+            return self.activate_tab_focus(idx, cx);
+        }
+        let editor = cx.new(|cx| Editor::new_readonly(Some(path.clone()), content, cx));
+        let focus = editor.read(cx).focus_handle().clone();
+        self.tabs.push(TabItem { path, editor });
+        self.active = self.tabs.len() - 1;
+        eprintln!("git-view: {title}（tabs: {} 开）", self.tabs.len());
+        cx.notify();
+        Some(focus)
     }
 
     /// 折叠/展开右栏（属性/来源）。图标条底部开关触发。
@@ -282,13 +332,25 @@ impl ShellApp {
     /// 通道）。已开 → 激活既有标签（不重复开）；新文件 → 追加标签并
     /// 激活 + 聚焦 + 文件树高亮；失败/不支持→提示横幅（不白屏不崩溃）。
     pub fn open_document(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(focus) = self.open_document_tab(path, cx) {
+            window.focus(&focus, cx);
+        }
+    }
+
+    /// 打开核心（无 window——跨实体调用面：FileTree/GitPanel 点击经
+    /// `Entity::update` 进入（不带 window 绑定，update_in 在任务/派生
+    /// 上下文解析不到窗口），焦点句柄返回由调用方在其 window 域落焦）。
+    pub fn open_document_tab(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Option<FocusHandle> {
         // F3：标签身份用绝对路径（CLI 相对入参 vs 对话框绝对入参不歧义）。
         let path = std::path::absolute(&path).unwrap_or(path);
         eprintln!("open: {}", path.display());
         // F3：同一文件已开 → 激活既有标签。
         if let Some(idx) = self.tabs.iter().position(|tab| tab.path == path) {
-            self.activate_tab(idx, window, cx);
-            return;
+            return self.activate_tab_focus(idx, cx);
         }
         match document::open_editor(&path, cx) {
             OpenOutcome::Opened(editor) => {
@@ -313,30 +375,33 @@ impl ShellApp {
                     });
                 }
                 cx.notify();
-                window.focus(&focus, cx);
+                Some(focus)
             }
             OpenOutcome::Unsupported { path, message } => {
-                self.show_notice(format!("未打开 {}：{message}", path.display()), window, cx);
+                self.show_notice(format!("未打开 {}：{message}", path.display()), cx);
+                None
             }
             OpenOutcome::Failed { path, message } => {
-                self.show_notice(
-                    format!("打开失败（{}）：{message}", path.display()),
-                    window,
-                    cx,
-                );
+                self.show_notice(format!("打开失败（{}）：{message}", path.display()), cx);
+                None
             }
         }
     }
 
     /// F3：激活标签（点击标签 / 重复打开既有文件 / 循环切换落地）。
     pub fn activate_tab(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.get(idx) else {
-            return;
-        };
+        if let Some(focus) = self.activate_tab_focus(idx, cx) {
+            window.focus(&focus, cx);
+        }
+    }
+
+    /// 激活核心（无 window——焦点句柄返回，调用方落焦）。
+    fn activate_tab_focus(&mut self, idx: usize, cx: &mut Context<Self>) -> Option<FocusHandle> {
+        let tab = self.tabs.get(idx)?;
         self.active = idx;
         let focus = tab.editor.read(cx).focus_handle().clone();
         cx.notify();
-        window.focus(&focus, cx);
+        Some(focus)
     }
 
     /// F3/F4：关闭当前标签（Ctrl+W）——脏标签先弹确认框（保存/不保存/
@@ -490,7 +555,7 @@ impl ShellApp {
             Ok(Err(err)) => {
                 let message = format!("另存为对话框不可用：{err}");
                 let _ = this.update_in(cx, |shell, window, cx| {
-                    shell.show_notice(message, window, cx);
+                    shell.show_notice(message, cx);
                 });
             }
             Err(_canceled) => {}
@@ -547,8 +612,12 @@ impl ShellApp {
         let root = std::path::absolute(&root).unwrap_or(root);
         eprintln!("workspace: {}", root.display());
         let shell = cx.entity().downgrade();
-        let tree = cx.new(|_| FileTree::new(root.clone(), shell));
+        let tree = cx.new(|_| FileTree::new(root.clone(), shell.clone()));
         self.workspace = Some(tree);
+        // F7：git 面板（工作区打开即建——非 git 目录/缺 git 走提示态，
+        // 不崩溃不拦截）。
+        let git = cx.new(|_| GitPanel::new(root.clone(), shell));
+        self.git_panel = Some(git);
         crate::settings::remember_workspace(&root);
         self.recent.record_workspace(&root);
         cx.notify();
@@ -574,8 +643,8 @@ impl ShellApp {
                 Ok(Ok(None)) => {}
                 Ok(Err(err)) => {
                     let message = format!("文件夹选择器不可用：{err}");
-                    let _ = this.update_in(cx, |shell, window, cx| {
-                        shell.show_notice(message, window, cx);
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.show_notice(message, cx);
                     });
                 }
                 Err(_canceled) => {}
@@ -607,8 +676,8 @@ impl ShellApp {
                 Ok(Ok(None)) => {}
                 Ok(Err(err)) => {
                     let message = format!("文件选择器不可用：{err}");
-                    let _ = this.update_in(cx, |shell, window, cx| {
-                        shell.show_notice(message, window, cx);
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.show_notice(message, cx);
                     });
                 }
                 // oneshot 通道关闭（窗口已释放）——无操作。
@@ -619,7 +688,7 @@ impl ShellApp {
     }
 
     /// 展示提示横幅（5 秒后自动清除——代际匹配防旧定时误清新消息）。
-    fn show_notice(&mut self, message: String, _window: &mut Window, cx: &mut Context<Self>) {
+    fn show_notice(&mut self, message: String, cx: &mut Context<Self>) {
         let generation = self.notice_board.show(message);
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -793,6 +862,7 @@ impl Render for ShellApp {
                     .min_h_0()
                     .child(activity_bar::activity_bar(
                         self.left_open,
+                        self.git_view,
                         self.right_open,
                         cx,
                     ))
@@ -800,6 +870,8 @@ impl Render for ShellApp {
                         el.child(panels::left_panel(
                             self.editor(),
                             self.workspace.as_ref(),
+                            self.git_panel.as_ref(),
+                            self.git_view,
                             cx,
                         ))
                     })
@@ -1024,7 +1096,7 @@ fn recent_row(
                     this.open_document(path_for_click.clone(), window, cx);
                 } else {
                     let message = format!("文件不存在：{}", path_for_click.display());
-                    this.show_notice(message, window, cx);
+                    this.show_notice(message, cx);
                 }
             }),
         )
