@@ -100,4 +100,5 @@ pub mod numbering;
 pub mod rebuild;
 pub mod style;
 pub mod write;
+pub mod xlsx_chart;
 pub mod xlsx_condfmt;
