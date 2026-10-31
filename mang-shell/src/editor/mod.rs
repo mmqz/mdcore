@@ -115,6 +115,49 @@ struct PaletteState {
     items: Vec<Cmd>,
 }
 
+/// G2：跳转到行输入框状态（Ctrl+G——复用面板输入交互形态：
+/// 可打印入框 / 退格 / Enter 执行 / Esc 关；`hint` 为实时提示——
+/// 预览目标行或越界/非法说明）。
+#[derive(Clone, Debug, Default)]
+struct GotoState {
+    input: String,
+    hint: String,
+}
+
+/// G2：跳行输入解析（纯函数——单测锚点）。1 基行号入参，返回
+/// 0 基目标行：非法输入 `None`；越界 clamp 到首/末行（不崩溃——
+/// 提示由调用方据 clamp 前后差异生成）。
+fn parse_goto_line(input: &str, line_count: usize) -> Option<usize> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || !trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let requested: usize = trimmed.parse().unwrap_or(0);
+    if requested == 0 {
+        return None; // 行号域从 1 起
+    }
+    Some((requested - 1).min(line_count.saturating_sub(1)))
+}
+
+/// G2：跳行输入的实时提示（纯函数——预览/越界/非法三态）。
+fn goto_hint(input: &str, line_count: usize) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return format!("输入行号，Enter 跳转（1-{line_count}）");
+    }
+    if !trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return "非数字——请输入行号".to_string();
+    }
+    let requested: usize = trimmed.parse().unwrap_or(0);
+    if requested == 0 {
+        return "行号从 1 起".to_string();
+    }
+    if requested > line_count {
+        return format!("越界 → 跳到末行（第 {line_count} 行）");
+    }
+    format!("Enter 跳到第 {requested} 行")
+}
+
 /// 拖选跟随视图（`on_drag` 契约需要一个 Render 实体——空渲染不可见）。
 struct DragGhost;
 
@@ -181,6 +224,8 @@ pub struct Editor {
     cursors: Cursors,
     /// r42 阶段 E：命令面板状态（`None` = 关闭；Ctrl+Shift+P 开）。
     palette: Option<PaletteState>,
+    /// G2：跳转到行输入框（`None` = 关闭；Ctrl+G 开）。
+    goto: Option<GotoState>,
     /// IME 预编辑段（全文 UTF16 偏移区间）。
     marked: Option<Range<usize>>,
     /// 本帧可见行 bounds（行内 canvas prepaint 记录——鼠标 hit-test 行
@@ -250,6 +295,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -293,6 +339,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -335,6 +382,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -370,6 +418,7 @@ impl Editor {
             find_focus: cx.focus_handle(),
             find: None,
             find_saved: FindState::default(),
+            goto: None,
             scroll: UniformListScrollHandle::new(),
             // xlsx 无围栏语义——fence 恒 false（同 docx 态口径，
             // refresh_caches 在 xlsx 模式下跳过 md 逐行推进）。
@@ -560,6 +609,9 @@ impl Editor {
                 }
                 self.open_replace(window, cx);
             }
+            // G2：跳转到行（导航类——只读态同样可用；键位门在
+            // readonly_allows 白名单，面板入口无门也导到同一路径）。
+            Cmd::GotoLine => self.open_goto(cx),
             Cmd::Save => {
                 self.save();
             }
@@ -578,6 +630,101 @@ impl Editor {
                 self.sync_cursors_from_buffer();
             }
         }
+        cx.notify();
+    }
+
+    /// G2：跳行框键处理（面板同形态：全键拦截）。返回 true = 已消费
+    ///（dispatch_key 早退）。
+    ///
+    /// - Esc：关闭；Ctrl+G：重置输入（再次开同一框的幂等口径）
+    /// - Enter：解析→跳转（越界 clamp 到末行 + 提示行）→关闭；
+    ///   非法输入不跳、不关、提示刷新
+    /// - 退格 / 可打印数字：编辑输入，实时提示预览
+    fn handle_goto_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        // 键语义先在输入框态上结算，产出动作；动作应用段避开
+        // `self.goto` 的双重可变借用（状态更新 vs 框开关分离）。
+        enum Act {
+            /// 跳到 0 基行（`requested` 为原始 1 基请求——证据行用）。
+            Jump(usize, usize),
+            Close,
+            Nop,
+        }
+        let count = self.buffer.line_count();
+        let Some(state) = self.goto.as_mut() else {
+            return false;
+        };
+        let ctrl = ks.modifiers.control || ks.modifiers.platform;
+        let act = match ks.key.to_lowercase().as_str() {
+            "escape" => Act::Close,
+            "g" if ctrl => {
+                // Ctrl+G 重置输入（不关闭——连续调整目标行的口径）
+                state.input.clear();
+                state.hint = goto_hint("", count);
+                Act::Nop
+            }
+            "enter" => match parse_goto_line(&state.input, count) {
+                Some(target) => {
+                    let requested: usize = state.input.trim().parse().unwrap_or(0);
+                    Act::Jump(target, requested)
+                }
+                None => {
+                    state.hint = if state.input.trim().is_empty() {
+                        goto_hint("", count)
+                    } else {
+                        "未跳——请输入有效行号".to_string()
+                    };
+                    Act::Nop
+                }
+            },
+            "backspace" => {
+                state.input.pop();
+                state.hint = goto_hint(&state.input, count);
+                Act::Nop
+            }
+            _ => {
+                // 可打印字符入框（数字为主；其余字符入框后由实时提示判非法）
+                if !ctrl
+                    && !ks.modifiers.alt
+                    && let Some(c) = &ks.key_char
+                    && !c.is_empty()
+                    && c.chars().all(|ch| !ch.is_control())
+                {
+                    state.input.push_str(c);
+                    state.hint = goto_hint(&state.input, count);
+                }
+                Act::Nop
+            }
+        };
+        match act {
+            Act::Jump(target, requested) => {
+                self.goto = None;
+                self.jump_to_line(target);
+                self.sync_cursors_from_buffer();
+                // 证据行（烟雾断言通道；越界 clamp 一并如实呈现）
+                eprintln!(
+                    "goto: line {target} (1-based 第 {} 行 / 共 {count} 行{})",
+                    target + 1,
+                    if requested > count {
+                        format!(" ← 请求 {requested} 越界 clamp")
+                    } else {
+                        String::new()
+                    }
+                );
+            }
+            Act::Close => self.goto = None,
+            Act::Nop => {}
+        }
+        cx.notify();
+        true
+    }
+
+    /// G2：面板/命令面入口（Cmd::GotoLine——同 Ctrl+G 开框）。
+    fn open_goto(&mut self, cx: &mut Context<Self>) {
+        let count = self.buffer.line_count();
+        self.goto = Some(GotoState {
+            input: String::new(),
+            hint: goto_hint("", count),
+        });
         cx.notify();
     }
 
@@ -797,6 +944,23 @@ impl Editor {
         }
         // 面板打开时：其余键位全部归面板（含 ctrl 组合——面板态屏蔽编辑键）。
         if self.palette.is_some() && self.handle_palette_key(&event.keystroke, window, cx) {
+            cx.notify();
+            return;
+        }
+
+        // G2：Ctrl+G 开跳行输入框（只读态同样可用——导航类；键位门在
+        // readonly_allows 白名单）。已开时交由下方 goto 键处理（重置输入）。
+        if ctrl && !shift && key == "g" && self.goto.is_none() {
+            let count = self.buffer.line_count();
+            self.goto = Some(GotoState {
+                input: String::new(),
+                hint: goto_hint("", count),
+            });
+            cx.notify();
+            return;
+        }
+        // G2：跳行框打开时优先拦截全部键（含 ctrl 组合——面板同口径）。
+        if self.goto.is_some() && self.handle_goto_key(&event.keystroke, cx) {
             cx.notify();
             return;
         }
@@ -1908,6 +2072,66 @@ impl Editor {
                         ),
                 )
             })
+            // G2：跳转到行输入框（Ctrl+G——面板浮层同形态居中）。
+            .when_some(self.goto.clone(), |el, goto| {
+                let colors = cx.theme().colors().clone();
+                el.child(
+                    div()
+                        .id("goto-box")
+                        .absolute()
+                        .top(px(8.))
+                        .left(px(80.))
+                        .w(px(320.))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.background)
+                        .shadow_md()
+                        .p_3()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .text_size(px(13.))
+                        .child(
+                            div()
+                                .id("goto-title")
+                                .text_size(px(11.))
+                                .text_color(colors.text_muted)
+                                .child("跳转到行（Ctrl+G）"),
+                        )
+                        .child(
+                            div()
+                                .id("goto-input")
+                                .flex()
+                                .gap_1()
+                                .text_color(colors.text)
+                                .child(div().text_color(colors.text_accent).child("行号 "))
+                                .child(div().child(format!("{}▏", goto.input))),
+                        )
+                        .child(
+                            div()
+                                .id("goto-hint")
+                                .text_size(px(11.))
+                                .text_color(
+                                    if goto.hint.starts_with("越界")
+                                        || goto.hint.contains("非数字")
+                                        || goto.hint.contains("未跳")
+                                    {
+                                        colors.text_accent
+                                    } else {
+                                        colors.text_muted
+                                    },
+                                )
+                                .child(goto.hint),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(colors.text_muted)
+                                .child("Enter 跳转 · Esc 关闭"),
+                        ),
+                )
+            })
             .when(!focused, |el| {
                 // 未聚焦时提示层（点击任意处聚焦）
                 el.child(
@@ -2693,6 +2917,48 @@ mod tests {
 
     fn p(line: usize, col: usize) -> Point {
         Point::new(line, col)
+    }
+
+    // ---------------- G2：跳转到行（纯函数面） ----------------
+
+    #[test]
+    fn goto_parse_valid_one_based() {
+        // 1 基输入 → 0 基目标行
+        assert_eq!(parse_goto_line("1", 100), Some(0));
+        assert_eq!(parse_goto_line("42", 100), Some(41));
+        assert_eq!(parse_goto_line(" 7 ", 100), Some(6), "容许前后空白");
+        assert_eq!(parse_goto_line("100", 100), Some(99), "末行恰好");
+    }
+
+    #[test]
+    fn goto_parse_out_of_range_clamps_not_crash() {
+        // 越界 clamp 到末行（不崩溃）；提示行由 hint 承载
+        assert_eq!(parse_goto_line("99999", 100), Some(99));
+        assert_eq!(parse_goto_line("1000000", 1), Some(0));
+    }
+
+    #[test]
+    fn goto_parse_invalid_inputs() {
+        assert_eq!(parse_goto_line("", 100), None, "空输入不跳");
+        assert_eq!(parse_goto_line("0", 100), None, "行号从 1 起");
+        assert_eq!(parse_goto_line("abc", 100), None, "非数字");
+        assert_eq!(parse_goto_line("12x", 100), None, "混合字符");
+        assert_eq!(parse_goto_line("-3", 100), None, "负号非法");
+        assert_eq!(parse_goto_line("1.5", 100), None, "小数点非法");
+    }
+
+    #[test]
+    fn goto_hint_three_states() {
+        let empty = goto_hint("", 100);
+        assert!(empty.contains("1-100"), "空输入给范围提示：{empty}");
+        let preview = goto_hint("42", 100);
+        assert_eq!(preview, "Enter 跳到第 42 行");
+        let over = goto_hint("999", 100);
+        assert_eq!(over, "越界 → 跳到末行（第 100 行）");
+        let bad = goto_hint("xyz", 100);
+        assert_eq!(bad, "非数字——请输入行号");
+        let zero = goto_hint("0", 100);
+        assert_eq!(zero, "行号从 1 起");
     }
 
     #[test]

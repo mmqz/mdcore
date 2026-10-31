@@ -106,6 +106,10 @@ fn main() {
     // Ctrl+Alt+Enter 全部替换 → Esc 关条 → Ctrl+Z 一次整批撤销；
     // 断言 find-replace: 三条证据行 + quit reached）。
     let smoke_find_replace = args.iter().any(|a| a == "--smoke-find-replace");
+    // G2：跳行烟雾（--smoke-goto-line——与启动 FILE 组合：3.5s 合成
+    // Ctrl+G → 输入行号 → Enter 跳转；再一轮越界行号 → 断言 goto: 两条
+    // 证据行（正常跳转 + 越界 clamp）+ quit reached）。
+    let smoke_goto_line = args.iter().any(|a| a == "--smoke-goto-line");
     // F6：主题循环烟雾（--smoke-theme-cycle——3.5s 合成 Ctrl+T；
     // 断言 theme: 证据行 + settings.json theme 键 + 全窗重绘不崩）。
     let smoke_theme_cycle = args.iter().any(|a| a == "--smoke-theme-cycle");
@@ -419,6 +423,36 @@ fn main() {
                 .detach();
             }
 
+            // G2：跳行烟雾（--smoke-goto-line——与启动 FILE 组合）。
+            if smoke_goto_line {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    // 第一轮：Ctrl+G → 行号 4 → Enter（正常跳转）
+                    dispatch_key(&handle, cx, 3500, "g", true, false, None).await;
+                    dispatch_key(&handle, cx, 500, "4", false, false, Some("4")).await;
+                    dispatch_key(&handle, cx, 500, "enter", false, false, None).await;
+                    // 第二轮：Ctrl+G → 9999 → Enter（越界 clamp 到末行）
+                    dispatch_key(&handle, cx, 800, "g", true, false, None).await;
+                    for ch in "9999".chars() {
+                        dispatch_key(
+                            &handle,
+                            cx,
+                            60,
+                            "virtual",
+                            false,
+                            false,
+                            Some(ch.to_string().as_str()),
+                        )
+                        .await;
+                    }
+                    dispatch_key(&handle, cx, 400, "enter", false, false, None).await;
+                    eprintln!(
+                        "goto-smoke: script done (ctrl+g → 4 → enter → ctrl+g → 9999 → enter)"
+                    );
+                })
+                .detach();
+            }
+
             // G5：语法高亮烟雾——3.5s 后经真实渲染分派路径探针取证
             //（ShellApp → 活动编辑器 → line_tokens 同源；不合成键——
             // 高亮是渲染态，证据直接来自真实应用态缓存与扫描器）。
@@ -428,6 +462,10 @@ fn main() {
                 let handle = window_handle;
                 cx.spawn(async move |cx| {
                     run_syntax_hl_probe(&handle, cx).await;
+                    dispatch_key(&handle, cx, 400, "enter", false, false, None).await;
+                    eprintln!(
+                        "goto-smoke: script done (ctrl+g → 4 → enter → ctrl+g → 9999 → enter)"
+                    );
                 })
                 .detach();
             }
