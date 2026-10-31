@@ -68,12 +68,18 @@ pub mod generate;
 // 合并/拆分 + 书签/链接/表单域联动重映射 + 丢失面显式登记）。
 #[cfg(feature = "engine-lopdf")]
 pub mod organize;
+// S2-4（#103 任务 4）：扫描件 OCR——pdfium 渲染 → 灰度 PGM（零
+// image 依赖）→ tesseract 识别。环境门 ocr_available（bid-parse 式）。
+#[cfg(feature = "engine-pdfium")]
+pub mod ocr;
 
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
 pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
 #[cfg(feature = "engine-lopdf")]
 pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
+#[cfg(feature = "engine-pdfium")]
+pub use ocr::{ocr_available, ocr_page, OcrEnv};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};
