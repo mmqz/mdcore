@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 use std::sync::Arc;
 
 use gpui::{
-    Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent, Entity, FocusHandle, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseUpEvent, PathPromptOptions, Pixels, Render, Window, canvas,
-    px,
+    App, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent, Entity, FocusHandle,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent, PathPromptOptions, Pixels, Render,
+    Window, canvas, px,
 };
 use theme::Theme;
 use ui::prelude::*;
@@ -323,6 +323,64 @@ impl ShellApp {
     /// 当前标签的编辑器（无标签 = 空态 None）。
     pub fn editor(&self) -> Option<&Entity<Editor>> {
         self.tabs.get(self.active).map(|tab| &tab.editor)
+    }
+
+    // ------------------------------------------------------------------
+    // RPC 桥公开面（#104 任务 2）：标签清单/定位/无确认关闭——控制
+    // 通道（get_state/close_file/switch_tab）的数据与操作面。全部薄
+    // 方法（既有私有面的直读），不引入新状态。
+    // ------------------------------------------------------------------
+
+    /// 标签数。
+    pub fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    /// 活动标签索引（无标签时为遗留值——调用方以 tab_count 先判空）。
+    pub fn active_index(&self) -> usize {
+        self.active
+    }
+
+    /// 指定标签的路径（越界 `None`；未命名草稿为「未命名」占位路径）。
+    pub fn tab_path(&self, idx: usize) -> Option<PathBuf> {
+        self.tabs.get(idx).map(|tab| tab.path.clone())
+    }
+
+    /// 指定标签是否有未保存修改（越界 `None`）。
+    pub fn tab_is_modified(&self, idx: usize, cx: &App) -> Option<bool> {
+        self.tabs
+            .get(idx)
+            .map(|tab| tab.editor.read(cx).is_modified())
+    }
+
+    /// 指定标签是否只读渲染态（越界 `None`）。
+    pub fn tab_is_readonly(&self, idx: usize, cx: &App) -> Option<bool> {
+        self.tabs
+            .get(idx)
+            .map(|tab| tab.editor.read(cx).is_read_only())
+    }
+
+    /// 按路径定位标签索引（与 open_document_tab 同口径绝对化——
+    /// CLI 相对入参 vs 对话框绝对入参不歧义）。未命中 `None`。
+    pub fn tab_index_by_path(&self, path: &Path) -> Option<usize> {
+        let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        self.tabs.iter().position(|tab| tab.path == absolute)
+    }
+
+    /// 无确认关闭指定标签（控制面通道——确认框是用户交互面，不适合
+    /// 机器通道；**脏拦截在调用方**（RPC 层拒 dirty，先保存再关）。
+    /// 越界 `false`，关闭成功 `true`。
+    pub fn close_tab_no_confirm(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if idx >= self.tabs.len() {
+            return false;
+        }
+        self.close_tab_at(idx, window, cx);
+        true
     }
 
     /// 折叠/展开左栏（文件树）。图标条 `act-file-tree` 触发——已开且
