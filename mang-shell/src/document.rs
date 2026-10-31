@@ -13,6 +13,9 @@
 
 use std::path::{Path, PathBuf};
 
+use gpui::{App, AppContext, Entity};
+
+use crate::editor::Editor;
 use crate::editor::docx_doc::{self, DocxPayload};
 use crate::editor::pdf_doc::{self, PdfPayload};
 
@@ -74,5 +77,110 @@ pub fn open(path: &Path) -> OpenedDocument {
         _ => OpenedDocument::Unsupported {
             path: path.to_path_buf(),
         },
+    }
+}
+
+/// 打开结果（呈现层语义——main CLI 启动文档与 `ShellApp::open_document`
+/// 共用 [`open_editor`] 通道时消费）。
+pub enum OpenOutcome {
+    /// 成功打开：编辑器实体（可编辑 md/txt 或只读 docx/pdf）。
+    Opened(Entity<Editor>),
+    /// 类型不支持——`message` 已是面向用户的完整文案（含支持清单；
+    /// 区分「已知类型但渲染面未接」与「未知类型」）。
+    Unsupported { path: PathBuf, message: String },
+    /// 读取/解析失败（IO 错误 / 超大 / 畸形文件）。
+    Failed { path: PathBuf, message: String },
+}
+
+/// 打开文件为编辑器实体（分派 + 读取 + 构造）。
+///
+/// main CLI（启动文档）与 `ShellApp::open_document`（Ctrl+O 对话框 /
+/// 文件树 / 最近列表——F1/F2/F5）的共用通道，同一分派语义；docx/pdf
+/// 附启动证据行（stderr——烟雾断言通道）。
+pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
+    match open(path) {
+        OpenedDocument::EditableText { path, content } => {
+            OpenOutcome::Opened(cx.new(|cx| Editor::new(Some(path), content, cx)))
+        }
+        // 批 3 证据通道：启动日志一行（属性面 + 只读标记）。
+        OpenedDocument::ReadOnlyDocx { path, payload } => {
+            eprintln!(
+                "docx: {} 段 / {} 表（{} 行）/ {} 标题 / {} 图片 / {} 警告（只读，{}）",
+                payload.props.paragraphs,
+                payload.props.tables,
+                payload.props.table_rows,
+                payload.headings.len(),
+                payload.props.images,
+                payload.props.warnings,
+                path.display()
+            );
+            OpenOutcome::Opened(cx.new(|cx| Editor::new_docx(path, payload, cx)))
+        }
+        // 批 4 证据通道：启动日志一行（属性面 + 只读标记）。
+        OpenedDocument::ReadOnlyPdf { path, payload } => {
+            let scanned = if payload.props.scanned {
+                " / 全文无文本层（扫描件提示）"
+            } else {
+                ""
+            };
+            eprintln!(
+                "pdf: {} 页 / {} 字符 / {} 书签 / {} 空文本页{}（只读，{}）",
+                payload.props.pages,
+                payload.props.chars,
+                payload.headings.len(),
+                payload.props.empty_pages,
+                scanned,
+                path.display()
+            );
+            OpenOutcome::Opened(cx.new(|cx| Editor::new_pdf(path, payload, cx)))
+        }
+        OpenedDocument::Unsupported { path } => OpenOutcome::Unsupported {
+            message: unsupported_message(&path),
+            path,
+        },
+        OpenedDocument::OpenError { path, message } => OpenOutcome::Failed { path, message },
+    }
+}
+
+/// 不支持类型的面向用户文案：区分「已知类型但编辑器渲染面未接」与
+/// 「未知类型」——前者明确告知边界（xlsx 引擎导入面已有，渲染面阶段 F
+/// 范围外），后者给出支持清单。
+fn unsupported_message(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "xlsx" | "xlsm" | "xls" => {
+            "电子表格（.xlsx）编辑器渲染面未接——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf（只读）"
+                .to_string()
+        }
+        _ => "暂不支持的文件类型——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf（只读）".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// F1：不支持文案分叉——xlsx（已知未接）与未知类型各走各的口径。
+    #[test]
+    fn unsupported_message_distinguishes_known_unrendered() {
+        let xlsx = unsupported_message(Path::new("a/b/报价单.xlsx"));
+        assert!(xlsx.contains("渲染面未接"), "xlsx 走已知未接文案：{xlsx}");
+        assert!(xlsx.contains(".docx"), "文案含支持清单：{xlsx}");
+
+        let unknown = unsupported_message(Path::new("a/b/data.xyz"));
+        assert!(
+            unknown.contains("暂不支持"),
+            "未知类型走通用文案：{unknown}"
+        );
+        assert!(!unknown.contains("渲染面未接"));
+    }
+
+    /// F1：扩展名大小写不敏感（与 `open` 分派同口径）。
+    #[test]
+    fn unsupported_message_ext_case_insensitive() {
+        assert!(unsupported_message(Path::new("X.XLSX")).contains("渲染面未接"));
     }
 }

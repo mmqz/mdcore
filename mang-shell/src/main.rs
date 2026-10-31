@@ -13,6 +13,11 @@
 //!                               滚轮）过 Window::dispatch_event 完整
 //!                               派发管线，命中结果由 Editor 日志输出
 //!                               （需同时带 FILE——空态无编辑区）
+//! mang-shell --smoke-open FILE2  F1 替换管线烟雾：与 --smoke-sec 组合——
+//!                               开窗 2.5s 后经 ShellApp::open_document
+//!                               把 FILE2 换入编辑区（Ctrl+O 对话框回调
+//!                               同通道；对话框本体需真机/portal，沙箱
+//!                               以此钩子验证替换链）
 //! mang-shell --version         版本号
 //! ```
 //!
@@ -37,14 +42,18 @@ mod activity_bar;
 mod assets;
 mod document;
 mod editor;
+mod file_tree;
+mod git_panel;
 mod panels;
+mod recent;
 mod settings;
 mod shell;
 mod status_bar;
+mod tab_bar;
+mod theme_switch;
 mod title_bar;
 
-use document::OpenedDocument;
-use editor::Editor;
+use document::OpenOutcome;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -65,7 +74,49 @@ fn main() {
         .position(|a| a == "--smoke-sec")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse().ok());
-    let smoke_pos = args.iter().position(|a| a == "--smoke-sec");
+    // F1/F3：标签烟雾钩子（--smoke-open FILE——可多次：每次追加一个
+    // 标签，与 Ctrl+O 对话框回调同走 ShellApp::open_document）。
+    let smoke_opens: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| *a == "--smoke-open")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+    // F3：标签键位烟雾（--smoke-tab-keys——与 --smoke-open 组合：开窗
+    // 3.5s 合成 Ctrl+Tab 循环 + 4.5s 合成 Ctrl+W 关闭，经完整键派发
+    // 管线断言 tabs 证据行）。
+    let smoke_tab_keys = args.iter().any(|a| a == "--smoke-tab-keys");
+    // F4：保存流烟雾（--smoke-save-flow——启动 FILE 为标签：3.5s 合成
+    // 可打印键弄脏 + 4.5s Ctrl+W 弹确认 + 5.5s Enter 保存并关——断言
+    // confirm/saved/tabs 证据行 + 落盘内容外部校验）。
+    let smoke_save_flow = args.iter().any(|a| a == "--smoke-save-flow");
+    // F4：另存为烟雾（--smoke-save-as PATH——3.5s 弄脏 + 4.5s 另存到
+    // PATH（与对话框回调同走 save_active_as）+ 5.5s Ctrl+W 干净直关
+    // ——断言 saved-as 证据行 + 无 confirm 行 + 落盘内容外部校验）。
+    let smoke_save_as = args
+        .iter()
+        .position(|a| a == "--smoke-save-as")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    // F7：git 面板烟雾（--smoke-git-diff——与 --smoke-workspace 组合：
+    // 4.5s 打开首个改动的 diff 只读标签；断言 git: 证据行 + diff: 标签）。
+    let smoke_git_diff = args.iter().any(|a| a == "--smoke-git-diff");
+    // F6：主题循环烟雾（--smoke-theme-cycle——3.5s 合成 Ctrl+T；
+    // 断言 theme: 证据行 + settings.json theme 键 + 全窗重绘不崩）。
+    let smoke_theme_cycle = args.iter().any(|a| a == "--smoke-theme-cycle");
+    // F6：字号烟雾（--smoke-zoom N——3.5s 设字号 N[8-32]；断言
+    // font-size: 证据行 + settings.json font_size 键）。
+    let smoke_zoom = args
+        .iter()
+        .position(|a| a == "--smoke-zoom")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse::<f32>().ok());
+    // F2：工作区烟雾钩子（--smoke-workspace DIR）。
+    let smoke_workspace = args
+        .iter()
+        .position(|a| a == "--smoke-workspace")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
     // 批 2：鼠标烟雾脚本（需与 --smoke-sec + FILE 组合）。
     let smoke_mouse = args.iter().any(|a| a == "--smoke-mouse");
 
@@ -75,66 +126,48 @@ fn main() {
             theme::init(theme::LoadThemes::JustBase, cx);
             theme::set_theme_settings_provider(Box::new(settings::ShellThemeSettings), cx);
 
-            // 文档分派：首个非 flag 参数为文件路径（#68 阶段 1.1；
-            // 跳过 `--smoke-sec` 的值参数，避免数字误判为文件）。
+            // 文档分派：首个非 flag 参数为文件路径（#68 阶段 1.1；跳过
+            // 各 flag 的值参数，避免误判为文件）。F1 起与 Ctrl+O 运行时
+            // 打开共用 document::open_editor 通道（同一分派语义）。
+            let flag_value_positions: Vec<usize> = [
+                "--smoke-sec",
+                "--smoke-open",
+                "--smoke-workspace",
+                "--smoke-save-as",
+            ]
+            .iter()
+            .flat_map(|flag| {
+                args.iter()
+                    .enumerate()
+                    .filter(|(_, a)| a == flag)
+                    .map(|(i, _)| i + 1)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
             let file_arg = args
                 .iter()
                 .enumerate()
                 .skip(1)
-                .find(|(i, a)| !a.starts_with('-') && !matches!(smoke_pos, Some(p) if *i == p + 1))
+                .find(|(i, a)| !a.starts_with('-') && !flag_value_positions.contains(i))
                 .map(|(_, a)| a.clone());
-            let opened = file_arg
-                .as_ref()
-                .map(|p| document::open(std::path::Path::new(p)));
-            let editor_entity = match opened {
-                Some(OpenedDocument::EditableText { path, content }) => {
-                    Some(cx.new(|cx| Editor::new(Some(path), content, cx)))
+            let editor_entity = file_arg.as_ref().and_then(|p| {
+                match document::open_editor(std::path::Path::new(p), cx) {
+                    OpenOutcome::Opened(editor) => Some(editor),
+                    OpenOutcome::Unsupported { path, message } => {
+                        eprintln!("mang-shell: {message}（{}）", path.display());
+                        None
+                    }
+                    OpenOutcome::Failed { path, message } => {
+                        eprintln!("mang-shell: 打开失败（{}）：{message}", path.display());
+                        None
+                    }
                 }
-                Some(OpenedDocument::ReadOnlyDocx { path, payload }) => {
-                    // 批 3 证据通道：启动日志一行（属性面 + 只读标记）。
-                    eprintln!(
-                        "docx: {} 段 / {} 表（{} 行）/ {} 标题 / {} 图片 / {} 警告（只读，{}）",
-                        payload.props.paragraphs,
-                        payload.props.tables,
-                        payload.props.table_rows,
-                        payload.headings.len(),
-                        payload.props.images,
-                        payload.props.warnings,
-                        path.display()
-                    );
-                    Some(cx.new(|cx| Editor::new_docx(path, payload, cx)))
-                }
-                Some(OpenedDocument::ReadOnlyPdf { path, payload }) => {
-                    // 批 4 证据通道：启动日志一行（属性面 + 只读标记）。
-                    let scanned = if payload.props.scanned {
-                        " / 全文无文本层（扫描件提示）"
-                    } else {
-                        ""
-                    };
-                    eprintln!(
-                        "pdf: {} 页 / {} 字符 / {} 书签 / {} 空文本页{}（只读，{}）",
-                        payload.props.pages,
-                        payload.props.chars,
-                        payload.headings.len(),
-                        payload.props.empty_pages,
-                        scanned,
-                        path.display()
-                    );
-                    Some(cx.new(|cx| Editor::new_pdf(path, payload, cx)))
-                }
-                Some(OpenedDocument::Unsupported { path }) => {
-                    eprintln!(
-                        "mang-shell: 暂不支持该文件类型（{}）——支持 .md/.markdown/.txt",
-                        path.display()
-                    );
-                    None
-                }
-                Some(OpenedDocument::OpenError { path, message }) => {
-                    eprintln!("mang-shell: 打开失败（{}）：{message}", path.display());
-                    None
-                }
-                None => None,
-            };
+            });
+
+            // F2：启动恢复上次工作区（settings.json 记忆；目录已不存在
+            // 则静默丢弃——不提示不阻断）。
+            let remembered_workspace =
+                settings::remembered_workspace().filter(|root| root.is_dir());
 
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -158,7 +191,7 @@ fn main() {
             // （EX_SOFTWARE）——替代原 .expect 的裸 panic（exit 101 裸
             // 错误链，桌面双击启动时 stderr 无处落 ≈ 静默失败）。
             let window_handle = match cx.open_window(options, |window, cx| {
-                cx.new(|cx| shell::ShellApp::new(editor_entity, window, cx))
+                cx.new(|cx| shell::ShellApp::new(editor_entity, remembered_workspace, window, cx))
             }) {
                 Ok(handle) => handle,
                 Err(error) => {
@@ -188,6 +221,138 @@ fn main() {
                 }
             }
 
+            // F1/F3：标签烟雾——开窗 2.5s 起依次打开各 FILE（每个追加
+            // 一标签；与 Ctrl+O 对话框回调同走 open_document）；可选
+            // 3.5s 合成 Ctrl+Tab 循环 + 4.5s 合成 Ctrl+W 关闭（--smoke-
+            // tab-keys——完整键派发管线，断言 tabs 证据行）。
+            if !smoke_opens.is_empty() {
+                let handle = window_handle.clone();
+                let keys = smoke_tab_keys;
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(2500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, window, cx| {
+                            for file in &smoke_opens {
+                                shell.open_document(std::path::PathBuf::from(file), window, cx);
+                            }
+                        })
+                    });
+                    if keys {
+                        dispatch_key(&handle, cx, 1000, "tab", true, false, None).await;
+                        dispatch_key(&handle, cx, 1000, "w", true, false, None).await;
+                    }
+                })
+                .detach();
+            }
+
+            // F2：工作区烟雾——开窗 2.5s 后打开 DIR 为工作区（与
+            // Ctrl+K Ctrl+O 对话框回调同走 ShellApp::open_workspace；
+            // 断言通道 = stderr "workspace: <路径>" + settings.json 落盘
+            // + 下一轮启动的 "workspace:" 恢复行 + quit reached）。
+            if let Some(dir) = smoke_workspace {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(2500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, _window, cx| {
+                            shell.open_workspace(std::path::PathBuf::from(dir), cx);
+                        })
+                    });
+                })
+                .detach();
+            }
+
+            // F7：git diff 烟雾（工作区打开后 2s——shell 层直开：handle
+            // 闭包自带 window，跨实体 update_in 在任务上下文解析不到
+            // 窗口[F7 实测]，故 shell 内完成全部开标签+落焦）。
+            if smoke_git_diff {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(4500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, window, cx| {
+                            let Some(panel) = shell.git_panel() else {
+                                return;
+                            };
+                            let Some((root, path)) = panel.read(cx).first_change() else {
+                                return;
+                            };
+                            let Some(text) = git_panel::git_diff(&root, &path) else {
+                                return;
+                            };
+                            if let Some(focus) =
+                                shell.open_readonly_tab(format!("diff: {path}"), text, cx)
+                            {
+                                window.focus(&focus, cx);
+                            }
+                        })
+                    });
+                })
+                .detach();
+            }
+
+            // F6：主题循环烟雾（完整键派发管线）。
+            if smoke_theme_cycle {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "t", true, false, None).await;
+                })
+                .detach();
+            }
+
+            // F6：字号烟雾（与键位同走 apply_font_size）。
+            if let Some(size) = smoke_zoom {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(3500))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, _window, cx| {
+                            shell.apply_font_size(gpui::px(size), cx);
+                        })
+                    });
+                })
+                .detach();
+            }
+
+            // F4：保存流烟雾——弄脏 → Ctrl+W 弹确认 → Enter 保存并关
+            //（与用户实操同链：可打印键入 buffer / 键位经完整派发管线）。
+            if smoke_save_flow {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "x", false, false, Some("x")).await;
+                    dispatch_key(&handle, cx, 1000, "w", true, false, None).await;
+                    dispatch_key(&handle, cx, 1000, "enter", false, false, None).await;
+                })
+                .detach();
+            }
+
+            // F4：另存为烟雾——弄脏 → 另存到 PATH（对话框回调同链）→
+            // Ctrl+W 干净直关（断言无 confirm 行）。
+            if let Some(target) = smoke_save_as {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    dispatch_key(&handle, cx, 3500, "x", false, false, Some("x")).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1000))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, _window, cx| {
+                            shell.save_active_as(std::path::PathBuf::from(target), cx);
+                        })
+                    });
+                    dispatch_key(&handle, cx, 1000, "w", true, false, None).await;
+                })
+                .detach();
+            }
+
             if let Some(sec) = smoke_sec {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -203,14 +368,62 @@ fn main() {
 }
 
 // ---------------------------------------------------------------------------
+// F3：标签键位烟雾辅助（合成 KeyDown——与鼠标烟雾同经
+// Window::dispatch_event 完整派发管线）。
+// ---------------------------------------------------------------------------
+
+/// 延时 `delay_ms` 后向窗口派发一键（`ctrl`/`shift` 修饰）。键事件走
+/// 与真实输入同路径的派发链（焦点路由 + 冒泡）——shell 级钩子/
+/// 编辑器分派均真实触达。
+async fn dispatch_key(
+    window: &gpui::WindowHandle<shell::ShellApp>,
+    cx: &mut gpui::AsyncApp,
+    delay_ms: u64,
+    key: &str,
+    ctrl: bool,
+    shift: bool,
+    key_char: Option<&str>,
+) {
+    use gpui::{KeyDownEvent, Keystroke, Modifiers, PlatformInput};
+    cx.background_executor()
+        .timer(Duration::from_millis(delay_ms))
+        .await;
+    let event = PlatformInput::KeyDown(KeyDownEvent {
+        keystroke: Keystroke {
+            modifiers: Modifiers {
+                control: ctrl,
+                shift,
+                ..Default::default()
+            },
+            key: key.to_string(),
+            key_char: key_char.map(|c| c.to_string()),
+        },
+        is_held: false,
+        prefer_character_input: false,
+    });
+    // update_window（闭包拿 AnyView 而非根视图实体——官方窗口事件派发
+    // 口径，window.rs 测试同款）：不包根视图 update，shell 级监听器
+    //（cx.listener）不重入。此前用 window.update 会包住 ShellApp
+    // 实体更新——键事件再触发其监听器即「already being updated」panic。
+    let any_handle: gpui::AnyWindowHandle = window.clone().into();
+    let result = cx.update_window(any_handle, |_, window, cx| {
+        window.dispatch_event(event, cx);
+    });
+    if let Err(err) = &result {
+        eprintln!("dispatch_key({key}): update_window 失败: {err}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 批 2：鼠标烟雾脚本（--smoke-mouse）
 // ---------------------------------------------------------------------------
 
 /// 合成鼠标事件序列驱动完整派发管线（`Window::dispatch_event`——hitbox
 /// 路由/拖拽状态机与真实事件同路径，仅平台翻译层除外）。
 ///
-/// 坐标为窗口坐标（1280×800 烟雾窗；编辑区 x∈[312,1000]、y∈[36,776]，
-/// 正文原点 x≈372）。命中结果由 Editor `mouse_log` 输出到 stdout——
+/// 坐标为窗口坐标（1280×800 烟雾窗；编辑区 x∈[312,1000]、
+/// y∈[66,776]（F3 标签栏 30px 后——标题栏 36 + 标签栏 30 起），
+/// 正文原点 x≈372。命中结果由 Editor `mouse_log` 输出到 stdout——
 /// 脚本不假设精确行号（截图 + 日志双通道断言）。
 ///
 /// 序列（总约 5s，配 --smoke-sec ≥ 7）：
@@ -273,20 +486,21 @@ async fn run_mouse_script(window: &gpui::WindowHandle<shell::ShellApp>, cx: &mut
         let _ = cx.update(|cx| window.update(cx, |_, window, cx| window.dispatch_event(ev, cx)));
     }
 
-    // 1) 单击定位（首步 2.5s 吸收启动滞后：进程启动→首帧 ~1.2s）
-    step(window, cx, 2500, click(500., 100., 1)).await;
-    step(window, cx, 300, up_at(500., 100.)).await;
+    // 1) 单击定位（首步 2.5s 吸收启动滞后：进程启动→首帧 ~1.2s；
+    //    F3 后 y+30——标签栏 30px 下移编辑区，保持同一行目标）。
+    step(window, cx, 2500, click(500., 130., 1)).await;
+    step(window, cx, 300, up_at(500., 130.)).await;
     // 2) 拖选（约 6 行；阶段间隔 2s——截图稳定窗）
-    step(window, cx, 2000, click(500., 100., 1)).await;
-    step(window, cx, 300, move_to(500., 170.)).await;
-    step(window, cx, 300, move_to(500., 240.)).await;
-    step(window, cx, 400, up_at(500., 240.)).await;
+    step(window, cx, 2000, click(500., 130., 1)).await;
+    step(window, cx, 300, move_to(500., 200.)).await;
+    step(window, cx, 300, move_to(500., 270.)).await;
+    step(window, cx, 400, up_at(500., 270.)).await;
     // 3) 双击选词
-    step(window, cx, 2000, click(500., 100., 2)).await;
-    step(window, cx, 300, up_at(500., 100.)).await;
+    step(window, cx, 2000, click(500., 130., 2)).await;
+    step(window, cx, 300, up_at(500., 130.)).await;
     // 4) 三击选行
-    step(window, cx, 2000, click(500., 100., 3)).await;
-    step(window, cx, 300, up_at(500., 100.)).await;
+    step(window, cx, 2000, click(500., 130., 3)).await;
+    step(window, cx, 300, up_at(500., 130.)).await;
     // 5) 滚轮滚动（向下）
     step(window, cx, 2100, scroll(600., 400.)).await;
     // 6) 出界拖拽：拖到窗口底缘之下（y=830 > 窗高 800）——渐进式 clamp

@@ -1,6 +1,7 @@
-//! 底部状态栏（#63 Lead 布局 + #68 阶段 1 文档状态联动）。
+//! 底部状态栏（#63 Lead 布局 + #68 阶段 1 文档状态联动 + F2 工作区）。
 //!
-//! 左：文档状态（文件名 + 修改标记 ● + 行,列 + 字数——无文档时「就绪」）；
+//! 左：文档状态（文件名 + 修改标记 ● + 行,列 + 字数——无文档时「就绪」）
+//! + 工作区路径（F2——打开文件夹后显示，`~` 缩写/超长截前保尾）；
 //! 右：版本与许可标识。背景色差（title_bar_background）区分主编辑区，
 //! 无 1px 边框。
 
@@ -9,13 +10,23 @@ use ui::prelude::*;
 use ui::{Label, LabelSize};
 
 use crate::editor::Editor;
+use crate::file_tree::workspace_display;
 
 /// 状态栏高度（px）。
 pub const STATUS_BAR_HEIGHT: Pixels = px(24.);
 
-/// 渲染状态栏。`editor`：打开的编辑器实体（`None` = 无文档就绪态）。
-pub fn status_bar(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement {
+/// 渲染状态栏。`editor`：打开的编辑器实体（`None` = 无文档就绪态）；
+/// `workspace`：工作区根（F2——`None` = 未打开）。
+pub fn status_bar(
+    editor: Option<&Entity<Editor>>,
+    workspace: Option<std::path::PathBuf>,
+    cx: &App,
+) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
+    let workspace_label = workspace
+        .as_deref()
+        .map(workspace_display)
+        .map(|ws| format!("  ·  工作区 {ws}"));
     let left = match editor {
         Some(ed) => {
             let ed = ed.read(cx);
@@ -39,7 +50,12 @@ pub fn status_bar(editor: Option<&Entity<Editor>>, cx: &App) -> impl IntoElement
                 ed.char_label()
             )
         }
-        None => "就绪 —— 打开 .md/.docx/.pdf（mang-shell FILE）".to_string(),
+        None => "就绪 —— Ctrl+O 打开文件 · Ctrl+K Ctrl+O 打开文件夹".to_string(),
+    }
+    .to_string();
+    let left = match workspace_label {
+        Some(ws) => format!("{left}{ws}"),
+        None => left,
     };
 
     h_flex()
