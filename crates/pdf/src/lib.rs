@@ -74,6 +74,10 @@ pub mod links;
 // S2-3（#103 任务 3）：图层（OCG）读取 + 默认可见性持久化开关。
 #[cfg(feature = "engine-lopdf")]
 pub mod layers;
+// S2-4（#103 任务 4）：扫描件 OCR——pdfium 渲染 → 灰度 PGM（零
+// image 依赖）→ tesseract 识别。环境门 ocr_available（bid-parse 式）。
+#[cfg(feature = "engine-pdfium")]
+pub mod ocr;
 // S2-2（#103 任务 2）：标注写回扩展——外部标注读取 + PdfAnnotator
 // 门面（add/remove/list/save）+ 增量删除面 + 11 kind 模型/写面。
 #[cfg(feature = "engine-lopdf")]
@@ -86,6 +90,8 @@ pub use command::{Command, CommandError, Outcome, Source};
 pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
 #[cfg(feature = "engine-lopdf")]
 pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
+#[cfg(feature = "engine-pdfium")]
+pub use ocr::{ocr_available, ocr_page, OcrEnv};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};
