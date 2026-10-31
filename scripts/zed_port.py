@@ -77,8 +77,16 @@ def internal_prod_deps(cname, cdir):
     src = open(f'{cdir}/Cargo.toml').read()
     normal, targeted = dep_sections(src)
     out = set()
-    for n in names_in(normal) + names_in(targeted):
-        if n in internal_ws: out.add(n)
+    # r41 增补：跳过 optional 依赖——feature-gated（如 text 的
+    # test-support → dep:util）；不激活该 feature 则永不进编译图，
+    # 搬入会无谓扩大闭包（util → path/util_macros/async_zip 雪球）。
+    # 若未来激活相应 feature，Cargo 显式报缺（安全方向：可发现非静默）。
+    for seg in (normal, targeted):
+        for ln in seg.splitlines():
+            if 'optional' in ln:
+                continue
+            for n in names_in(ln):
+                if n in internal_ws: out.add(n)
     return out
 
 # ---------- 2. 闭包递归 ----------
@@ -93,9 +101,15 @@ def compute_closure(root_crates):
     return seen
 
 # 闭包根：ui（组件库，PR #65 原根）+ gpui_platform（窗口/平台层，
-# r39 增补——上游已把 OS 后端拆出 gpui 成独立 crate，ui 闭包天然
-# 不含它；真实窗口必需）。多根闭包 = 两者并集。
-closure = compute_closure(['ui', 'gpui_platform'])
+# r39 增补）+ text（编辑器 buffer 基座，r42 增补——#68 阶段 A：
+# rope + 锚点替换自研 Vec<String>；text 闭包新增 text/rope/clock
+# 三 crate，其余依赖已在闭包）+ zlog/bench_metrics（r42 根固定：
+# 前者为 optional prod 依赖（ztracing）/mang-shell 日志面直接引用，
+# 后者为 gpui bench-support feature 面——optional 跳过规则会把它们
+# 甩出闭包致 [features] dep: 引用悬空解析红，故升为根固定）。
+# util 为 text 的 feature-gated optional（test-support），不搬——
+# 其 [features] 引用由 _strip_dropped_from_features 清理。
+closure = compute_closure(['ui', 'gpui_platform', 'text', 'zlog', 'bench_metrics'])
 print(f"[闭包] {len(closure)} crates: {sorted(closure)}")
 
 # ---------- 3. 复制 + 改写 ----------
@@ -273,10 +287,15 @@ def _emit_dep(out, dep, section, dropped, extra):
         merged['path'] = f'"../{dep}"'
         out.append(f'{dep} = {{ ' + ', '.join(f'{k} = {v}' for k, v in merged.items()) + ' }\n')
     elif dep in internal_ws:
-        # 闭包外内部 crate：dev 面删除，生产面报错（不该出现）
+        # 闭包外内部 crate：dev 面删除；生产面若为 feature-gated
+        # optional（r42：text 的 dep:util 仅 test-support 激活）也删除
+        # 并留注释；否则报错（真闭包缺口）。
         if is_dev:
             dropped.append(f'{dep} (dev)')
             out.append(f'# [port] dev-dep {dep} 在闭包外，删除\n')
+        elif extra and re.search(r'\boptional\s*=\s*true', extra):
+            dropped.append(f'{dep} (optional prod, feature-gated)')
+            out.append(f'# [port] optional prod-dep {dep} 在闭包外（feature-gated，未激活），删除\n')
         else:
             raise SystemExit(f"FATAL: 生产依赖 {dep} 在闭包外（闭包计算有缺口）")
     else:
@@ -301,8 +320,41 @@ def copy_crate(name):
     dropped = []
     src_toml = open(f'{src_dir}/Cargo.toml').read()
     new_toml = rewrite_toml(src_toml, name, dropped)
+    # r42：被删的 optional prod 依赖若被 [features] 引用（dep:X / "X/..."），
+    # 同步从 feature 列表剥离——否则 Cargo 解析期对悬空 dep: 引用报错
+    # （text 的 test-support → dep:util）。上游升级重放同规则。
+    opt_dropped = [d.split(' ')[0] for d in dropped if 'optional prod' in d]
+    if opt_dropped:
+        new_toml = _strip_dropped_from_features(new_toml, opt_dropped)
     open(f'{dst_dir}/Cargo.toml', 'w').write(new_toml)
     return dropped
+
+def _strip_dropped_from_features(toml_text, names):
+    """从 [features] 段的 feature 列表里移除对已删 optional 依赖的引用
+    （"dep:X" / "X/..." / "X" 三形式）——否则 Cargo 解析期报
+    "feature includes dep:X with X not being an optional dependency"。"""
+    lines = toml_text.splitlines(keepends=True)
+    out, in_features = [], False
+    for ln in lines:
+        sec_m = re.match(r'^\[{1,2}([a-zA-Z0-9_.-]+)\]{1,2}\s*$', ln)
+        if sec_m:
+            in_features = (sec_m.group(1) == 'features')
+            out.append(ln)
+            continue
+        if in_features:
+            m = re.match(r'^([\s]*)([a-zA-Z0-9_-]+)\s*=\s*\[(.*)\]\s*$', ln)
+            if m and not ln.strip().startswith('#'):
+                items = [x.strip() for x in m.group(3).split(',') if x.strip()]
+                keep = []
+                for it in items:
+                    bare = it.strip('"')
+                    if any(bare == f'dep:{n}' or bare == n or bare.startswith(f'{n}/') for n in names):
+                        continue
+                    keep.append(it)
+                out.append(f'{m.group(1)}{m.group(2)} = [' + ', '.join(keep) + ']\n')
+                continue
+        out.append(ln)
+    return ''.join(out)
 
 # ---------- 4. 生成 workspace 根 ----------
 def gen_workspace(closure):

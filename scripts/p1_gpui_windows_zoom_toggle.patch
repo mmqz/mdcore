@@ -1,0 +1,22 @@
+--- a/third_party/zed/crates/gpui_windows/src/window.rs
++++ b/third_party/zed/crates/gpui_windows/src/window.rs
+@@ -947,7 +947,18 @@
+     fn zoom(&self) {
+         unsafe {
+             if IsWindowVisible(self.0.hwnd).as_bool() {
+-                ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
++                // [mdcore patch P1] #68 Lead Windows 真机验证：上游无条件
++                // SW_MAXIMIZE，对已最大化窗口为 no-op——「最大化后无法还原」。
++                // PlatformWindow::zoom 在其余三后端均为 toggle 语义（macOS
++                // NSWindow zoom: / X11 _NET_WM_STATE Toggle hint / Wayland
++                // set-unset_maximized），本处对齐。IsZoomed 已用于本文件
++                // is_maximized（~L202），SW_RESTORE 已用于 activate()（~L826）。
++                // 登记：third_party/zed/PROVENANCE.md「源码补丁登记」P1。
++                if IsZoomed(self.0.hwnd).as_bool() {
++                    ShowWindowAsync(self.0.hwnd, SW_RESTORE).ok().log_err();
++                } else {
++                    ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
++                }
+             } else if let Some(mut status) = self.state.initial_placement.take() {
+                 status.state = WindowOpenState::Maximized;
+                 self.state.initial_placement.set(Some(status));

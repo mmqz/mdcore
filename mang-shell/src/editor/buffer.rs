@@ -1,22 +1,37 @@
-//! 编辑缓冲区 —— 纯逻辑文本模型（#68 阶段 1.2 文本编辑能力的地基）。
+//! 编辑缓冲区 —— 纯逻辑文本模型（#68 阶段 1.2 文本编辑能力的地基；
+//! r42 阶段 A 换芯：存储层 Zed `text::Buffer`（rope + 锚点 + O(log n)））。
 //!
-//! 刻意不依赖 gpui：行存储 / 光标 / 选区 / 编辑原语 / undo-redo / 查找
-//! 全部在此以纯数据结构实现，单元测试覆盖移动矩阵与编辑语义，
-//! 视图层（`super::Editor`）只做命令分发与渲染。
+//! ## r42 阶段 A 换芯说明（#68 Lead 定调：抄设计，用干净 crate）
 //!
-//! ## 坐标语义
+//! - **存储层**：`text::Buffer`（Zed 编辑器同款——rope 持文 + 事务历史 +
+//!   锚点基座）。编辑走 `inner.edit([(offset_range, text)])` 单点，
+//!   O(log n)——替换前实现（`Vec<String>` 逐行 drain/insert，O(n)）。
+//! - **语义层外壳**：光标/选区/粘性列/undo-redo 四元组/查找全部保持
+//!   r39 语义不变——41 个既有单测逐一照抄零改写（公开 API 语义即契约）。
+//!   text::Buffer 内建的 undo 基础设施不用（外壳四元组与既有测试/光标
+//!   语义一一锚定；锚点能力在 inner 上保留，阶段 C 多光标取用）。
+//! - **坐标语义**：对外 `Point { line, col }` 的 `col` 仍按 **char 索引**
+//!   （CJK 列语义不变）；rope 层坐标（byte 列）由外壳双向换算，调用方
+//!   无感。`col` 换算需行文本（O(行长)）——行文本每次调用即时取
+//!   （`row_text`），不缓存；50 万字场景的可见行操作 O(行长) 量级
+//!   （阶段 B display_map 落地前的边界登记，见 PR 说明）。
+//! - **行尾语义**：`\r\n` 原样存取（`new_normalized` 直通，不经
+//!   `Buffer::new` 的 normalize——mang-shell 行语义只按 `\n` 划行，
+//!   `\r` 属行内容，与 r39 `split('\n')` 语义逐位一致）。
+//!
+//! ## 坐标语义（r39 原文保持）
 //!
 //! - `Point { line, col }`：`col` 一律按 **char 索引** 计（非字节）——
 //!   CJK 语义安全：一个汉字占一列。
-//! - 行存储 `lines: Vec<String>` 不含换行符；文档至少一行（空文档 = `[""]`）。
+//! - 文档至少一行（空文档 = 单空行）；行不含换行符。
 //! - `desired_col`：上下移动的「期望列」粘性——经过短行 clamp 后回到
 //!   长行时恢复原列（经典编辑器语义）。
 //!
 //! ## 编辑原语
 //!
 //! 所有文本变更收敛到 [`Buffer::replace_range`] 单点（内部走
-//! [`Buffer::apply_core`]）：删除 `[start, end)`（首行前段 + 末行后段
-//! 拼接）再插入 `text`（可含 `\n` 拆行）。
+//! [`Buffer::apply_core`] → `inner.edit`）：删除 `[start, end)` 再插入
+//! `text`（可含 `\n` 拆行）。
 //!
 //! undo/redo 以四元组 `(start, end_del, old_text, new_text)` 记录：
 //! redo 方向 = `[start, end_del)` 的 `old` 换成 `new`；undo 方向 = 把
@@ -30,6 +45,9 @@
 //! 排序后 `[start, end)`。无 Shift 的移动清锚。编辑命令先消费选区。
 
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use text as zed_text;
 
 /// 文本坐标：`line` 从 0 起，`col` 为行内 **char** 索引。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -67,10 +85,33 @@ fn char_to_byte(s: &str, col: usize) -> usize {
     s.char_indices().nth(col).map(|(b, _)| b).unwrap_or(s.len())
 }
 
+/// 字节偏移 → char 索引（越界 clamp 到末尾；`byte` 不落在 char 边界时
+/// 向下取所属 char 的索引）。
+fn byte_to_char(s: &str, byte: usize) -> usize {
+    let mut acc = 0;
+    for (b, _) in s.char_indices() {
+        if b >= byte {
+            return acc;
+        }
+        acc += 1;
+    }
+    acc
+}
+
+/// 外壳 BufferId 序列（本地无协同——id 唯一性只为 text 层语义完整；
+/// `BufferId::new` 对非零恒 Ok，`expect` 消息写明）。
+fn next_buffer_id() -> zed_text::BufferId {
+    static SEQ: AtomicU64 = AtomicU64::new(1);
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    zed_text::BufferId::new(n).expect("BufferId::new 对非零 id 恒 Ok")
+}
+
 /// 纯逻辑编辑缓冲区。
-#[derive(Clone, Debug, Default)]
 pub struct Buffer {
-    lines: Vec<String>,
+    /// 存储层：Zed text::Buffer（rope 持文 + 锚点 + 事务）。
+    /// 外壳不消费其 undo 历史（语义层四元组自管）；每次 `apply_core`
+    /// 的 edit 会同步落入 inner 的 history（无害堆积，见头注释）。
+    inner: zed_text::Buffer,
     cursor: Point,
     /// Shift 选区锚点（无选区为 `None`）。
     anchor: Option<Point>,
@@ -84,27 +125,71 @@ pub struct Buffer {
     saved_depth: usize,
 }
 
+impl Clone for Buffer {
+    /// 深拷贝经 `inner.branch()`（text 层同构快照——克隆体与源共享
+    /// 历史，编辑互不影响；`text::Buffer` 未派生 Clone，branch 是
+    /// 上游提供的唯一全量复制路径）。
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.branch(),
+            cursor: self.cursor,
+            anchor: self.anchor,
+            desired_col: self.desired_col,
+            undo_stack: self.undo_stack.clone(),
+            redo_stack: self.redo_stack.clone(),
+            saved_depth: self.saved_depth,
+        }
+    }
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::from_plain_text("")
+    }
+}
+
+impl std::fmt::Debug for Buffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Buffer")
+            .field("lines", &self.line_count())
+            .field("chars", &self.char_count())
+            .field("cursor", &self.cursor)
+            .field("modified", &self.is_modified())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Buffer {
     // ---------------------------------------------------------------------------
     // 构造与序列化
     // ---------------------------------------------------------------------------
 
-    /// 从纯文本构造（`\n` 拆行；空文本 = 单空行）。
+    /// 从纯文本构造（行语义按 `\n` 划分；空文本 = 单空行）。
+    /// 经 `new_normalized` 直通——不走 `Buffer::new` 的 `\r\n`→`\n`
+    /// normalize（mang-shell 行语义中 `\r` 属行内容，roundtrip 逐位保真）。
     pub fn from_plain_text(text: &str) -> Self {
-        let lines: Vec<String> = if text.is_empty() {
-            vec![String::new()]
-        } else {
-            text.split('\n').map(|l| l.to_string()).collect()
-        };
+        let ending = zed_text::LineEnding::detect(text);
+        let rope = zed_text::Rope::from(text);
+        let inner = zed_text::Buffer::new_normalized(
+            zed_text::ReplicaId::LOCAL,
+            next_buffer_id(),
+            ending,
+            rope,
+        );
         Self {
-            lines,
-            ..Default::default()
+            inner,
+            cursor: Point::default(),
+            anchor: None,
+            desired_col: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            saved_depth: 0,
         }
     }
 
-    /// 序列化为纯文本（行 join `\n`）。
+    /// 序列化为纯文本（`\r\n` 等行尾原样——与构造逐位互逆）。
     pub fn to_plain_text(&self) -> String {
-        self.lines.join("\n")
+        self.snap().text()
     }
 
     // ---------------------------------------------------------------------------
@@ -113,12 +198,13 @@ impl Buffer {
 
     /// 行数。
     pub fn line_count(&self) -> usize {
-        self.lines.len()
+        self.snap().max_point().row as usize + 1
     }
 
     /// 指定行内容（越界返回空串——渲染层免判）。
-    pub fn line(&self, line: usize) -> &str {
-        self.lines.get(line).map(String::as_str).unwrap_or("")
+    /// 返回 `String`（rope 无行借用面）；行长场景的分配开销见头注释。
+    pub fn line(&self, line: usize) -> String {
+        self.row_text(line as u32)
     }
 
     /// 指定行 char 数。
@@ -152,8 +238,7 @@ impl Buffer {
 
     /// 全文 char 总数（可见字符 + 换行；状态栏字数——CJK 逐字语义天然成立）。
     pub fn char_count(&self) -> usize {
-        self.lines.iter().map(|l| l.chars().count()).sum::<usize>()
-            + self.lines.len().saturating_sub(1)
+        self.to_plain_text().chars().count()
     }
 
     /// `[start, end)` 范围文本（跨行以 `\n` 连接；两点自动排序）。
@@ -164,23 +249,23 @@ impl Buffer {
         }
         if start.line == end.line {
             let s = self.line(start.line);
-            let b0 = char_to_byte(s, start.col);
-            let b1 = char_to_byte(s, end.col);
+            let b0 = char_to_byte(&s, start.col);
+            let b1 = char_to_byte(&s, end.col);
             return s[b0..b1].to_string();
         }
         let mut out = String::new();
         // 首行尾段
         let first = self.line(start.line);
-        out.push_str(&first[char_to_byte(first, start.col)..]);
+        out.push_str(&first[char_to_byte(&first, start.col)..]);
         // 中间整行
         for l in start.line + 1..end.line {
             out.push('\n');
-            out.push_str(self.line(l));
+            out.push_str(&self.line(l));
         }
         // 末行头段
         out.push('\n');
         let last = self.line(end.line);
-        out.push_str(&last[..char_to_byte(last, end.col)]);
+        out.push_str(&last[..char_to_byte(&last, end.col)]);
         out
     }
 
@@ -325,45 +410,16 @@ impl Buffer {
         true
     }
 
-    /// 核心变更（不落栈，由调用方组装 undo/redo 语义）：
-    /// 删除 `[start, end)`（首行前段保留、末行后段摘出、中间行 drain），
-    /// 在 `start` 处插入 `text`（按 `\n` 拆段，中间成新行），最后把
-    /// 摘出的后段拼回插入末段的行尾。返回插入文本末尾点（即新光标）。
+    /// 核心变更（不落外壳栈，由调用方组装 undo/redo 语义）：
+    /// 删除 `[start, end)` 插入 `text`——单次 `inner.edit`（O(log n)）。
+    /// 返回插入文本末尾点（即新光标；纯算术，不读 inner）。
     fn apply_core(&mut self, start: Point, end: Point, text: &str) -> Point {
         debug_assert!(start <= end, "apply_core: start <= end（调用方已排序）");
-        // 1) 摘出 end 行的后段（插入完成后拼回）。
-        let tail: String = {
-            let last = self.line(end.line);
-            last[char_to_byte(last, end.col)..].to_string()
-        };
-        // 2) start 行截到 start.col；跨行时 drain 中间整行。
-        if start.line == end.line {
-            let l = &mut self.lines[start.line];
-            let b = char_to_byte(l, start.col);
-            l.truncate(b);
-        } else {
-            {
-                let l = &mut self.lines[start.line];
-                let b = char_to_byte(l, start.col);
-                l.truncate(b);
-            }
-            self.lines.drain(start.line + 1..=end.line);
-        }
-        // 3) 插入：首段接在 start 行尾，其余各成新行（cursor 随段推进）。
-        let mut cursor = start;
-        let mut parts = text.split('\n');
-        if let Some(first) = parts.next() {
-            self.lines[start.line].push_str(first);
-            cursor = Point::new(start.line, start.col + first.chars().count());
-        }
-        for part in parts {
-            let next_line = cursor.line + 1;
-            self.lines.insert(next_line, part.to_string());
-            cursor = Point::new(next_line, part.chars().count());
-        }
-        // 4) 后段拼回插入末段所在行。
-        self.lines[cursor.line].push_str(&tail);
-        cursor
+        let zstart = self.point_to_zoffset(start);
+        let zend = self.point_to_zoffset(end);
+        // inner 的 history 同步记录（外壳不消费；见头注释——r42 边界登记）
+        let _ops = self.inner.edit([(zstart..zend, text.to_string())]);
+        self.end_after_insert(&start, text)
     }
 
     /// 在 `start` 插入 `text` 后的终点（undo / redo 的占位末点重算）。
@@ -465,7 +521,8 @@ impl Buffer {
     pub fn move_word_left(&mut self, extend: bool) {
         self.begin_move(extend);
         let mut p = self.cursor;
-        let chars: Vec<char> = self.line(p.line).chars().collect();
+        let text = self.line(p.line);
+        let chars: Vec<char> = text.chars().collect();
         while p.col > 0 && !is_word_char(chars[p.col - 1]) {
             p.col -= 1;
         }
@@ -484,7 +541,8 @@ impl Buffer {
     pub fn move_word_right(&mut self, extend: bool) {
         self.begin_move(extend);
         let mut p = self.cursor;
-        let chars: Vec<char> = self.line(p.line).chars().collect();
+        let text = self.line(p.line);
+        let chars: Vec<char> = text.chars().collect();
         let len = chars.len();
         while p.col < len && !is_word_char(chars[p.col]) {
             p.col += 1;
@@ -550,11 +608,11 @@ impl Buffer {
 
     /// 光标 clamp 到合法域（外部 set 后保证不变量）。
     fn clamp_cursor(&mut self) {
-        if self.lines.is_empty() {
-            self.lines.push(String::new());
+        if self.line_count() == 0 {
+            return; // inner 恒非空；防御早退（不可达分支）
         }
-        if self.cursor.line >= self.lines.len() {
-            self.cursor.line = self.lines.len() - 1;
+        if self.cursor.line >= self.line_count() {
+            self.cursor.line = self.line_count() - 1;
         }
         let len = self.line_len(self.cursor.line);
         if self.cursor.col > len {
@@ -573,7 +631,8 @@ impl Buffer {
         }
         let needle: Vec<char> = query.to_lowercase().chars().collect();
         let mut hits = Vec::new();
-        for (li, line) in self.lines.iter().enumerate() {
+        for li in 0..self.line_count() {
+            let line = self.line(li);
             let lower: Vec<char> = line
                 .chars()
                 .map(|c| c.to_lowercase().next().unwrap_or(c))
@@ -591,8 +650,40 @@ impl Buffer {
     }
 
     // ---------------------------------------------------------------------------
-    // 内部工具
+    // 内部工具（rope 坐标换算层——外壳 char 语义 <-> rope byte 列）
     // ---------------------------------------------------------------------------
+
+    /// 存储层快照（借用 inner）。
+    fn snap(&self) -> &zed_text::BufferSnapshot {
+        self.inner.snapshot()
+    }
+
+    /// 行文本（rope 按 `\n` 划行；`\r` 属行内容原样；越界空串）。
+    fn row_text(&self, row: u32) -> String {
+        if row >= self.line_count() as u32 {
+            return String::new();
+        }
+        let snap = self.snap();
+        let start = snap.point_to_offset(zed_text::Point::new(row, 0));
+        let len = snap.line_len(row) as usize;
+        if len == 0 {
+            return String::new();
+        }
+        snap.text_for_range(start..start + len).collect()
+    }
+
+    /// mang `Point`（char 列）→ rope 全文 offset（字节）。
+    /// 输入先 clamp 到文档域（外部调用可传越界点——防御性收窄，
+    /// 旧实现对越界索引直接 panic，此为语义超集）。
+    fn point_to_zoffset(&self, p: Point) -> usize {
+        let rows = self.line_count();
+        let line = p.line.min(rows.saturating_sub(1));
+        let col = p.col.min(self.line_len(line));
+        let text = self.line(line);
+        let byte_col = char_to_byte(&text, col);
+        self.snap()
+            .point_to_offset(zed_text::Point::new(line as u32, byte_col as u32))
+    }
 
     /// 两点排序（start <= end）。
     fn ordered_range(&self, r: Range<Point>) -> Range<Point> {
@@ -602,6 +693,7 @@ impl Buffer {
 
 // =============================================================================
 // 单元测试 —— 纯逻辑全绿是本模块的交付门
+// （r39 的 41 个测试逐字迁移（公开 API 语义即契约）；r42 追加坐标层/换芯专项）
 // =============================================================================
 
 #[cfg(test)]
@@ -625,10 +717,29 @@ mod tests {
     }
 
     #[test]
+    fn crlf_roundtrip_bit_fidelity() {
+        // r42 专项：\r\n 属行内容原样存取（不走 Buffer::new 的 normalize）
+        let b = Buffer::from_plain_text("a\r\nb\rc");
+        assert_eq!(b.to_plain_text(), "a\r\nb\rc");
+        assert_eq!(b.line_count(), 2, "\\n 划行（1 个 \\n）：\\r 留行内");
+        assert_eq!(b.line(0), "a\r");
+        assert_eq!(b.line(1), "b\rc");
+    }
+
+    #[test]
     fn empty_is_single_empty_line() {
         let b = Buffer::from_plain_text("");
         assert_eq!(b.line_count(), 1);
         assert_eq!(b.line(0), "");
+    }
+
+    #[test]
+    fn trailing_newline_keeps_empty_last_line() {
+        // r42 专项：末行 \n → 尾空行保位（旧 split 语义 = rope max_point 语义）
+        let b = Buffer::from_plain_text("a\n");
+        assert_eq!(b.line_count(), 2);
+        assert_eq!(b.line(1), "");
+        assert_eq!(b.to_plain_text(), "a\n");
     }
 
     // ---------------- 光标移动矩阵 ----------------
@@ -784,6 +895,17 @@ mod tests {
         assert_eq!(b.cursor(), p(1, 1));
     }
 
+    #[test]
+    fn replace_range_out_of_bounds_is_clamped() {
+        // r42 专项：越界点防御性 clamp（旧实现 panic 面，语义超集）。
+        // "ab\ncd"：p(0,99)→(0,2)，p(99,99)→(1,2)；即 (0,2)..(1,2)
+        // 的 "\ncd" 被换成 "X" → "abX"。
+        let mut b = Buffer::from_plain_text("ab\ncd");
+        b.replace_range(p(0, 99), p(99, 99), "X");
+        assert_eq!(b.to_plain_text(), "abX");
+        assert_eq!(b.cursor(), p(0, 3), "插入末尾点（start=(0,2) + 1 char）");
+    }
+
     // ---------------- 选区 ----------------
 
     #[test]
@@ -935,9 +1057,7 @@ mod tests {
     fn word_jump_ascii() {
         let mut b = Buffer::from_plain_text("foo bar_baz  qux");
         b.set_cursor(p(0, 15)); // "qux" 词内（x 上）
-        println!("DEBUG start cursor={:?}", b.cursor());
         b.move_word_left(false);
-        println!("DEBUG after 1st left={:?} line={:?}", b.cursor(), b.line(0));
         assert_eq!(b.cursor(), p(0, 13), "跳到 qux 词首");
         b.move_word_left(false);
         assert_eq!(b.cursor(), p(0, 4), "跨过空格跳到 bar_baz 词首");
@@ -1008,4 +1128,134 @@ mod tests {
         // 5 可见字符 + 1 换行 = 6。
         assert_eq!(b.char_count(), 6);
     }
+
+    // ---------------- r42 换芯专项（坐标层 / Clone / 大文档） ----------------
+
+    #[test]
+    fn clone_is_independent_deep_copy() {
+        let mut b = Buffer::from_plain_text("ab\ncd");
+        b.set_cursor(p(1, 1));
+        b.insert("X");
+        let c = b.clone();
+        assert_eq!(c.to_plain_text(), "ab\ncXd");
+        // 克隆体独立编辑不回写源
+        let mut c2 = c;
+        c2.insert("Y");
+        assert_eq!(c2.to_plain_text(), "ab\ncXYd");
+        assert_eq!(b.to_plain_text(), "ab\ncXd", "克隆体编辑不影响源");
+        // undo 历史随行（四元组外壳栈深拷贝）
+        assert!(b.undo());
+        assert_eq!(b.to_plain_text(), "ab\ncd");
+    }
+
+    #[test]
+    fn debug_impl_is_compact_summary() {
+        let b = Buffer::from_plain_text("中文\nx");
+        let s = format!("{b:?}");
+        assert!(s.contains("lines: 2"), "Debug 含行数：{s}");
+        assert!(s.contains("chars: 4"), "Debug 含字符数：{s}");
+    }
+
+    #[test]
+    fn large_document_edit_and_navigate() {
+        // r42 换芯收益冒烟：10 万行 / 50 万字级文档的随机点编辑 + 深点导航
+        // （旧 Vec<String> 实现的逐行 drain/insert 在此规模显著退化）
+        let lines: Vec<String> = (0..100_000)
+            .map(|i| format!("第{i}行内容padding"))
+            .collect();
+        let text = lines.join("\n");
+        let mut b = Buffer::from_plain_text(&text);
+        assert_eq!(b.line_count(), 100_000);
+        // 深点导航（末行行尾）
+        b.set_cursor(p(99_999, b.line_len(99_999)));
+        // 中段随机替换（跨 3 行）
+        b.replace_range(p(50_000, 0), p(50_002, 2), "换芯");
+        assert!(b.line(50_000).starts_with("换芯"));
+        assert!(b.line(50_000).ends_with("padding"), "前段保留");
+        // 全文序列化完整
+        let round = b.to_plain_text();
+        assert!(round.contains("第0行内容padding"));
+        assert!(round.contains("第99999行内容padding"));
+        // undo 完整可逆
+        assert!(b.undo());
+        assert_eq!(b.to_plain_text(), text, "undo 恢复 50 万字原文");
+    }
+}
+
+// =============================================================================
+// r42 性能实测（--ignored 面板）：cargo test -- --ignored
+#[test]
+#[ignore = "r42 性能实测（#68 阶段 A 验收证据）"]
+fn perf_rope_edit_find_2m_chars() {
+    use std::time::Instant;
+    // 10 万行 × ~20 字/行 ≈ 200 万字符（4 倍于 50 万字红线规格）
+    let text: String = {
+        let lines: Vec<String> =
+            (0..100_000).map(|i| format!("第{i}行内容padding")).collect();
+        lines.join("\n")
+    };
+    let expect_chars = text.chars().count();
+    assert!(expect_chars > 1_500_000, "压力规格 ≥150 万字符，实际 {expect_chars}");
+
+    // ① 构造（红线 <2s——4 倍规格下仍须达标）
+    let t0 = Instant::now();
+    let mut b = Buffer::from_plain_text(&text);
+    let t_build = t0.elapsed();
+    // ② 输入延迟（红线 p99 <50ms）：随机点 1000 次 insert
+    let mut rng_state: u64 = 0x9E3779B97F4A7C15;
+    let mut rng = || {
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
+        rng_state
+    };
+    let mut samples: Vec<std::time::Duration> = Vec::with_capacity(1000);
+    for _ in 0..1000 {
+        let line = (rng() % b.line_count() as u64) as usize;
+        let col = (rng() % (b.line_len(line) as u64 + 1)) as usize;
+        b.set_cursor(Point::new(line, col));
+        let t = Instant::now();
+        b.insert("芯");
+        samples.push(t.elapsed());
+    }
+    samples.sort();
+    let p50 = samples[500];
+    let p99 = samples[990];
+    let t_edit_max = samples[999];
+    // ③ undo 路径（反向 apply_core，红线 <50ms/次）× 200
+    let mut undo_samples: Vec<std::time::Duration> = Vec::with_capacity(200);
+    for _ in 0..200 {
+        let t = Instant::now();
+        assert!(b.undo());
+        undo_samples.push(t.elapsed());
+    }
+    undo_samples.sort();
+    let undo_p99 = undo_samples[198];
+    // ④ 全文查找（红线 <1s）
+    let t = Instant::now();
+    let hits = b.find_matches("行内容");
+    let t_find = t.elapsed();
+    assert!(!hits.is_empty());
+    // ⑤ 深点导航（末行行尾 line_len + set_cursor）
+    let t = Instant::now();
+    let last = b.line_count() - 1;
+    let len = b.line_len(last);
+    b.set_cursor(Point::new(last, len));
+    let t_nav = t.elapsed();
+    // ⑥ 序列化
+    let t = Instant::now();
+    let round = b.to_plain_text();
+    let t_ser = t.elapsed();
+    drop(round);
+    println!("perf(r42 换芯, {expect_chars} chars):");
+    println!("  构造      = {:>10.1?}  (红线 <2s)", t_build);
+    println!("  insert    = p50 {p50:?} / p99 {p99:?} / max {t_edit_max:?}  (红线 p99 <50ms)");
+    println!("  undo      = p99 {undo_p99:?}  (红线 <50ms)");
+    println!("  find      = {:>10.1?}  hits={} (红线 <1s)", t_find, hits.len());
+    println!("  深点导航  = {:>10.1?}", t_nav);
+    println!("  序列化    = {:>10.1?}", t_ser);
+    assert!(t_build < std::time::Duration::from_secs(2), "构造超红线：{t_build:?}");
+    assert!(p99 < std::time::Duration::from_millis(50), "insert p99 超红线：{p99:?}");
+    assert!(undo_p99 < std::time::Duration::from_millis(50), "undo p99 超红线：{undo_p99:?}");
+    assert!(t_find < std::time::Duration::from_secs(1), "查找超红线：{t_find:?}");
 }

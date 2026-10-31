@@ -390,7 +390,8 @@ impl Editor {
             let mut fence = false;
             for i in 0..self.buffer.line_count() {
                 states.push(fence);
-                fence = highlight_line(self.buffer.line(i), fence).fence_at_end;
+                fence = highlight_line(&self.buffer.line(i), fence).fence_at_end;
+                // r42：&String → &str deref（line() 返回 String）
             }
             self.fence_cache = states;
         }
@@ -642,7 +643,7 @@ impl Editor {
                     hit
                 }
             }
-            ClickKind::Double => match mouse::word_range_at(self.buffer.line(hit.line), hit.col) {
+            ClickKind::Double => match mouse::word_range_at(&self.buffer.line(hit.line), hit.col) {
                 Some(r) => {
                     let (start, end) = (Point::new(hit.line, r.start), Point::new(hit.line, r.end));
                     self.buffer.set_selection(start, end);
@@ -865,7 +866,7 @@ impl Editor {
         if x <= px(0.) {
             return 0;
         }
-        let line = self.buffer.line(idx);
+        let line = self.buffer.line(idx); // r42：String（行文本即时取）
         if line.is_empty() {
             return 0;
         }
@@ -874,10 +875,10 @@ impl Editor {
         let run = style.to_run(line.len());
         let shaped = window
             .text_system()
-            .shape_line(line.into(), font_size, &[run], None);
+            .shape_line(line.as_str().into(), font_size, &[run], None); // r42：String 借用（不 move——后续 byte_index_to_col 还要用）
         // 行内未换行 shaping——最近字符边界（越界=行尾字节偏移）。
         let byte = shaped.closest_index_for_x(x);
-        mouse::byte_index_to_col(line, byte)
+        mouse::byte_index_to_col(&line, byte) // r42：line() 返回 String
     }
 
     // -----------------------------------------------------------------------
@@ -1084,7 +1085,7 @@ impl Editor {
 
         (visible.start..visible.end)
             .map(|idx| {
-                let line = self.buffer.line(idx).to_string();
+                let line = self.buffer.line(idx); // r42：line() 返回 String（rope 无行借用面）
                 let tokens = self.line_tokens(idx, &line);
                 let runs = self.styled_runs_for_line(
                     &line,

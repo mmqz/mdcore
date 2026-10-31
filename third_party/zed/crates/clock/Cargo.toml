@@ -1,0 +1,19 @@
+[package]
+name = "clock"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+# [lints] 移植时删除：第三方代码不受项目 lint 门（Zed workspace lints）
+[lib]
+path = "src/clock.rs"
+doctest = false
+
+[features]
+test-support = ["dep:parking_lot"]
+
+[dependencies]
+parking_lot = { version = "0.12.1", optional = true }
+serde = { version = "1.0", features = ["rc", "derive"] }
+smallvec = { version = "1.6", features = ["union", "const_new"] }
