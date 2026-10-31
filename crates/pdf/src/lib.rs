@@ -64,10 +64,16 @@ pub mod writer_lopdf;
 // lopdf font_embedding 仅单字节简单字体，CJK 必须手工构建）。
 #[cfg(feature = "engine-lopdf")]
 pub mod generate;
+// S2-1（#103 任务 1）：页面组织——lopdf 页树手术（增删/旋转/重排/
+// 合并/拆分 + 书签/链接/表单域联动重映射 + 丢失面显式登记）。
+#[cfg(feature = "engine-lopdf")]
+pub mod organize;
 
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
 pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
+#[cfg(feature = "engine-lopdf")]
+pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};

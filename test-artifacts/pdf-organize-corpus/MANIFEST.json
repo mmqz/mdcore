@@ -1,0 +1,463 @@
+{
+ "built_at": "2026-10-31T11:59:09",
+ "tool": "soffice headless convert-to pdf",
+ "provenance": "POI/docx4j 真实 docx 语料 → LibreOffice PDF 写出器",
+ "files": [
+  {
+   "name": "poi__51921-Word-Crash067.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/51921-Word-Crash067.docx"
+  },
+  {
+   "name": "poi__55733.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/55733.docx"
+  },
+  {
+   "name": "poi__57312.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/57312.docx"
+  },
+  {
+   "name": "poi__59030.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/59030.docx"
+  },
+  {
+   "name": "poi__60316.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/60316.docx"
+  },
+  {
+   "name": "poi__61745.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/61745.docx"
+  },
+  {
+   "name": "poi__65099.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/65099.docx"
+  },
+  {
+   "name": "poi__Bug54771b.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/Bug54771b.docx"
+  },
+  {
+   "name": "poi__Bug60337.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/Bug60337.docx"
+  },
+  {
+   "name": "poi__Bug64561.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/Bug64561.docx"
+  },
+  {
+   "name": "poi__Bug66988.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/Bug66988.docx"
+  },
+  {
+   "name": "poi__EmbeddedDocument.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/EmbeddedDocument.docx"
+  },
+  {
+   "name": "poi__FldSimple.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/FldSimple.docx"
+  },
+  {
+   "name": "poi__IllustrativeCases.pdf",
+   "pages": 4,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/IllustrativeCases.docx"
+  },
+  {
+   "name": "poi__Numbering.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/Numbering.docx"
+  },
+  {
+   "name": "poi__PageSpecificHeadFoot.pdf",
+   "pages": 2,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/PageSpecificHeadFoot.docx"
+  },
+  {
+   "name": "poi__Styles.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/Styles.docx"
+  },
+  {
+   "name": "poi__TestTableCellAlign.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/TestTableCellAlign.docx"
+  },
+  {
+   "name": "poi__ThreeColHead.pdf",
+   "pages": 2,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/ThreeColHead.docx"
+  },
+  {
+   "name": "poi__VariousPictures.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/VariousPictures.docx"
+  },
+  {
+   "name": "poi__WordWithAttachments.pdf",
+   "pages": 2,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/WordWithAttachments.docx"
+  },
+  {
+   "name": "poi__bug-paragraph-alignment.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/bug-paragraph-alignment.docx"
+  },
+  {
+   "name": "poi__bug56075-changeTracking_off.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/bug56075-changeTracking_off.docx"
+  },
+  {
+   "name": "poi__bug57031.pdf",
+   "pages": 14,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/bug57031.docx"
+  },
+  {
+   "name": "poi__bug65738.pdf",
+   "pages": 2,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/bug65738.docx"
+  },
+  {
+   "name": "poi__capitalized.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/capitalized.docx"
+  },
+  {
+   "name": "poi__comment.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/comment.docx"
+  },
+  {
+   "name": "poi__delins.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/delins.docx"
+  },
+  {
+   "name": "poi__documentProtection_forms_no_password.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/documentProtection_forms_no_password.docx"
+  },
+  {
+   "name": "poi__documentProtection_readonly_no_password.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/documentProtection_readonly_no_password.docx"
+  },
+  {
+   "name": "poi__emptyPPr.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/emptyPPr.docx"
+  },
+  {
+   "name": "poi__form_footnotes.pdf",
+   "pages": 2,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/form_footnotes.docx"
+  },
+  {
+   "name": "poi__heading123.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/heading123.docx"
+  },
+  {
+   "name": "poi__issue_51265_3.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/issue_51265_3.docx"
+  },
+  {
+   "name": "poi__sample.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/poi-docx/sample.docx"
+  },
+  {
+   "name": "docx4j__2010_2010-glow-then-AlternateContent.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/2010_2010-glow-then-AlternateContent.docx"
+  },
+  {
+   "name": "docx4j__AlteredParts_header-simple.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/AlteredParts_header-simple.docx"
+  },
+  {
+   "name": "docx4j__Mac_OSX_Fonts.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/Mac_OSX_Fonts.docx"
+  },
+  {
+   "name": "docx4j__OpenDoPE_hyperlinks.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/OpenDoPE_hyperlinks.docx"
+  },
+  {
+   "name": "docx4j__OpenDoPE_w15-repeating-section-zero-items.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/OpenDoPE_w15-repeating-section-zero-items.docx"
+  },
+  {
+   "name": "docx4j__charts_authoring_p3-line-markers.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/charts_authoring_p3-line-markers.docx"
+  },
+  {
+   "name": "docx4j__charts_authoring_p5w-remove-series-after.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/charts_authoring_p5w-remove-series-after.docx"
+  },
+  {
+   "name": "docx4j__empty_p.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/empty_p.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-iffield_iffield-probe-r3.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-iffield_iffield-probe-r3.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-iffield_round8_by-hand_iffield-probe-r8-dirty-docproperty.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-iffield_round8_by-hand_iffield-probe-r8-dirty-docproperty.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-iffield_round8_corpus_iffield-probe-r8-date.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-iffield_round8_corpus_iffield-probe-r8-date.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-iffield_round8_corpus_iffield-probe-r8-numwords.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-iffield_round8_corpus_iffield-probe-r8-numwords.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-iffield_round8_corpus_iffield-probe-r8-userinitials.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-iffield_round8_corpus_iffield-probe-r8-userinitials.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-iffield_round8_resaved_iffield-probe-r8-formula.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-iffield_round8_resaved_iffield-probe-r8-formula.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-iffield_round8_resaved_iffield-probe-r8-section.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-iffield_round8_resaved_iffield-probe-r8-section.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-phase1_field-probe-r1-word365.pdf",
+   "pages": 3,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-phase1_field-probe-r1-word365.docx"
+  },
+  {
+   "name": "docx4j__fields_cr067-phase3_numwords-probe-r1.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/fields_cr067-phase3_numwords-probe-r1.docx"
+  },
+  {
+   "name": "docx4j__headers_footers_simple_hf.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/headers_footers_simple_hf.docx"
+  },
+  {
+   "name": "docx4j__mc-fun_mc-block-nofallback-word365.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/mc-fun_mc-block-nofallback-word365.docx"
+  },
+  {
+   "name": "docx4j__mc-fun_mc-sdt-block-newest-first-word365.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/mc-fun_mc-sdt-block-newest-first-word365.docx"
+  },
+  {
+   "name": "docx4j__mc-fun_mc-txbx-block-word365.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/mc-fun_mc-txbx-block-word365.docx"
+  },
+  {
+   "name": "docx4j__numPicBullet-word2019-pict.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/numPicBullet-word2019-pict.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check20_01-type-inside-a-reject.pdf",
+   "pages": 3,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check20_01-type-inside-a-reject.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check20_06-delete-part-a-reject-keep-new.pdf",
+   "pages": 3,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check20_06-delete-part-a-reject-keep-new.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check20_10-move-again-accept.pdf",
+   "pages": 3,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check20_10-move-again-accept.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check20_14-moveFrom-no-ranges-accept-dest-input.pdf",
+   "pages": 3,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check20_14-moveFrom-no-ranges-accept-dest-input.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check21_21b-at-insertion-end.pdf",
+   "pages": 3,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check21_21b-at-insertion-end.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check24_24e-style-cleared.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check24_24e-style-cleared.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check26_26d-indented-back.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check26_26d-indented-back.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check32_check32-typed.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check32_check32-typed.docx"
+  },
+  {
+   "name": "docx4j__revisions_core-ts_check36_36b-w15-declared.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_core-ts_check36_36b-w15-declared.docx"
+  },
+  {
+   "name": "docx4j__revisions_cr043_comments_c43-u21-accept-all-deletion-comment-outside.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_cr043_comments_c43-u21-accept-all-deletion-comment-outside.docx"
+  },
+  {
+   "name": "docx4j__revisions_cr043_s17_17-text-left-accepted.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_cr043_s17_17-text-left-accepted.docx"
+  },
+  {
+   "name": "docx4j__revisions_editor_review_review-for-word.pdf",
+   "pages": 3,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/revisions_editor_review_review-for-word.docx"
+  },
+  {
+   "name": "docx4j__runprops_word365_colour-background-hex.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/runprops_word365_colour-background-hex.docx"
+  },
+  {
+   "name": "docx4j__runprops_word365_colour-hex.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/runprops_word365_colour-hex.docx"
+  },
+  {
+   "name": "docx4j__runprops_word365_colour-table-other.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/runprops_word365_colour-table-other.docx"
+  },
+  {
+   "name": "docx4j__runprops_word365_onoff-valid.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/runprops_word365_onoff-valid.docx"
+  },
+  {
+   "name": "docx4j__runprops_word365_props-enum-styles.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/runprops_word365_props-enum-styles.docx"
+  },
+  {
+   "name": "docx4j__runprops_word365_props-u-styles.pdf",
+   "pages": 1,
+   "encrypted": false,
+   "source": "test-artifacts/health-check/corpus/docx4j/runprops_word365_props-u-styles.docx"
+  },
+  {
+   "name": "large__manual300.pdf",
+   "pages": 1390,
+   "encrypted": false,
+   "source": "全池 75 件真实件 ×10 轮 pdfunite 拼接（poppler 写出器——300 页级压测件）"
+  }
+ ]
+}
