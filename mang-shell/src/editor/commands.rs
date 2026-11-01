@@ -59,6 +59,37 @@ impl Cmd {
         Cmd::Redo,
     ];
 
+    /// #134：机器名（snake_case——RPC `run_command` 按名调用的口径；
+    /// 与变体名的对应关系稳定可预测，新命令逆推零成本）。
+    pub fn id(self) -> &'static str {
+        match self {
+            Cmd::MoveLeft => "move_left",
+            Cmd::MoveRight => "move_right",
+            Cmd::MoveUp => "move_up",
+            Cmd::MoveDown => "move_down",
+            Cmd::WordLeft => "word_left",
+            Cmd::WordRight => "word_right",
+            Cmd::MoveHome => "move_home",
+            Cmd::MoveEnd => "move_end",
+            Cmd::DocStart => "doc_start",
+            Cmd::DocEnd => "doc_end",
+            Cmd::ToggleFold => "toggle_fold",
+            Cmd::OpenFind => "open_find",
+            Cmd::OpenReplace => "open_replace",
+            Cmd::GotoLine => "goto_line",
+            Cmd::Save => "save",
+            Cmd::SelectAll => "select_all",
+            Cmd::Undo => "undo",
+            Cmd::Redo => "redo",
+        }
+    }
+
+    /// #134：按机器名反查（RPC `run_command` 的入口；未知名 None——
+    /// 调用方引导 `list_commands`）。
+    pub fn from_id(id: &str) -> Option<Cmd> {
+        Cmd::ALL.iter().copied().find(|c| c.id() == id)
+    }
+
     /// 面板标题。
     pub fn title(self) -> &'static str {
         match self {
@@ -177,5 +208,32 @@ mod tests {
             assert!(c.default_key().is_some(), "{:?} 默认键缺失", c);
             // 标题与默认键唯一（面板去重依赖）
         }
+    }
+
+    // ---------------- #134：机器名面（RPC run_command 口径） ----------------
+
+    #[test]
+    fn id_from_id_roundtrip_all_commands() {
+        for &c in Cmd::ALL {
+            let id = c.id();
+            assert!(
+                id.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_'),
+                "{id} 应为 snake_case"
+            );
+            assert_eq!(Cmd::from_id(id), Some(c), "{id} 反查应命中自身");
+        }
+        // 机器名全局唯一（未知名不会歧义命中）
+        let ids: Vec<&str> = Cmd::ALL.iter().map(|c| c.id()).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(ids.len(), sorted.len(), "机器名不得重复");
+    }
+
+    #[test]
+    fn from_id_unknown_is_none() {
+        assert_eq!(Cmd::from_id("open_fiel"), None, "拼错名不命中");
+        assert_eq!(Cmd::from_id(""), None);
+        assert_eq!(Cmd::from_id("MoveLeft"), None, "变体名不是机器名");
     }
 }

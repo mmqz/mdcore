@@ -445,6 +445,15 @@ fn scan_inline(runs: &mut RunCollector, chars: &[char], from: usize) {
     }
 }
 
+/// #134：ATX 标题级别判定（`GetOutline` 的数据源——与高亮判定同源
+/// 同语义：`#{1,6}` 后跟空格或行尾才成立，`#7`/`#x`/`#a#` 都不是标题）。
+/// 返回 `Some(1..=6)`；非标题行 `None`。
+pub fn heading_level(line: &str) -> Option<u8> {
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+    let is_heading = (1..=6).contains(&hashes) && line.chars().nth(hashes).is_none_or(|c| c == ' ');
+    if is_heading { Some(hashes as u8) } else { None }
+}
+
 /// G5：高亮一行（携带围栏语言态——唯一入口）。
 ///
 /// - 围栏内 + 无语言标注 → 整行 BlockCode（既有语义零漂移）
@@ -490,8 +499,7 @@ pub fn highlight_line_ex(line: &str, fence: FenceState) -> LineHighlight {
     }
 
     // ---- ATX 标题：#{1,6} 后跟空格或行尾 ----
-    let hashes = chars.iter().take_while(|c| **c == '#').count();
-    if (1..=6).contains(&hashes) && (hashes == len || chars[hashes] == ' ') {
+    if heading_level(line).is_some() {
         runs.try_insert(0..len, TokenKind::Heading);
         return LineHighlight {
             runs: runs.sorted(),
@@ -539,6 +547,26 @@ pub fn highlight_line_ex(line: &str, fence: FenceState) -> LineHighlight {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------------- #134：heading_level（GetOutline 数据源） ----------------
+
+    #[test]
+    fn heading_level_atx_forms() {
+        assert_eq!(heading_level("# 标题"), Some(1));
+        assert_eq!(heading_level("## 二级"), Some(2));
+        assert_eq!(heading_level("###### 六级"), Some(6));
+        // 纯井号行 = 标题（后跟行尾——ATX 允许）
+        assert_eq!(heading_level("###"), Some(3));
+        // 超级（7 个 #）不是标题
+        assert_eq!(heading_level("####### 七个"), None);
+        // # 后跟非空格不是标题（#7 是话题标签、#x 是普通文本）
+        assert_eq!(heading_level("#7 话题"), None);
+        assert_eq!(heading_level("#x"), None);
+        // 普通行 / 空行 / 缩进标题（前导空格破坏 ATX——与高亮同语义）
+        assert_eq!(heading_level("普通段落"), None);
+        assert_eq!(heading_level(""), None);
+        assert_eq!(heading_level(" # 缩进"), None);
+    }
 
     /// 快捷：某行的 token 区间列表（char 索引）。bool 围栏口径 →
     /// 无语言标注态（legacy 测试语义零漂移）。

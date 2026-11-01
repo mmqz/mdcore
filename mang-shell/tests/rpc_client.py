@@ -35,6 +35,12 @@
      delete 自动关标签；应用需以 --smoke-workspace WS 启动）::
 
        ./rpc_client.py SOCK --smoke-fs WORKSPACE
+
+  5. #134 编辑器命令序列（rpc_smoke.sh 消费——run_command 真实
+     分派 + list_commands 清单 + get_outline 标题树 + apply_format
+     md 包裹与 undo 回滚）::
+
+       ./rpc_client.py SOCK --smoke-cmd FILE2
 """
 
 import json
@@ -629,6 +635,107 @@ def run_smoke_fs(sock, ws):
     )
 
 
+def run_smoke_cmd(sock, file2):
+    """#134 任务 2：编辑器命令面——run_command / list_commands /
+    get_outline / apply_format（真实 socket 断言）。
+
+    file2 = 干净文本战场（mouse_smoke.md——#111 序列已复原它；
+    本序列的 apply_format 只在 Buffer 内不改盘，收尾 undo 回滚）。
+    """
+    file2 = os.path.abspath(file2)
+    n = 0
+
+    def cmd(payload):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is True, f"命令失败：{payload} -> {resp}"
+        return resp["result"]
+
+    def cmd_err(payload, needle):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is False, f"应失败却成功：{payload} -> {resp}"
+        assert needle in resp.get("error", ""), f"错误应含 {needle!r}：{resp}"
+        return resp
+
+    # ---- 1. list_commands：全部命令可见（机器名/标题/默认键位）----
+    r = cmd({"id": 1, "cmd": "list_commands"})
+    assert r["count"] >= 18, r
+    ids = {c["id"] for c in r["commands"]}
+    assert {"move_left", "undo", "save", "goto_line", "toggle_fold"} <= ids, r
+    undo_item = next(c for c in r["commands"] if c["id"] == "undo")
+    assert undo_item["default_key"] == "Ctrl+Z", undo_item
+    assert undo_item["title"], undo_item
+
+    # ---- 2. run_command：doc_end 真移动光标（get_state 对照）----
+    r = cmd({"id": 2, "cmd": "open_file", "path": file2})
+    assert r["already_open"] is False, r
+    r = cmd({"id": 3, "cmd": "run_command", "name": "doc_end"})
+    assert r["ran"] is True and r["command"] == "doc_end", r
+    r = cmd({"id": 4, "cmd": "get_state"})
+    assert r["active"]["cursor"]["line"] == r["active"]["line_count"] - 1, (
+        f"doc_end 后光标应在末行：{r}"
+    )
+    # 未知名拒绝（引导 list_commands）
+    cmd_err({"id": 5, "cmd": "run_command", "name": "bogus_cmd"}, "list_commands")
+
+    # ---- 3. get_outline：mouse_smoke.md 首行是 "# mang 编辑器冒烟样例" ----
+    r = cmd({"id": 6, "cmd": "get_outline"})
+    assert r["count"] >= 1, r
+    first = r["entries"][0]
+    assert first["level"] == 1, first
+    assert first["line"] == 0, first
+    assert "冒烟" in first["text"], first
+
+    # ---- 4. apply_format：加粗/斜体 + undo 回滚（char 计数链）----
+    r = cmd({"id": 7, "cmd": "get_state"})
+    base_chars = r["active"]["char_count"]
+    r = cmd(
+        {
+            "id": 8,
+            "cmd": "apply_format",
+            "range": [{"line": 0, "col": 0}, {"line": 0, "col": 4}],
+            "format": "bold",
+        }
+    )
+    assert r["applied"] is True and r["format"] == "bold", r
+    r = cmd({"id": 9, "cmd": "get_state"})
+    assert r["active"]["char_count"] == base_chars + 4, (
+        f"bold 包裹应 +4 字符（** + **）：{r}"
+    )
+    assert r["active"]["modified"] is True, r
+    # 逆序两点（内部排序——同范围再包 italic）
+    r = cmd(
+        {
+            "id": 10,
+            "cmd": "apply_format",
+            "range": [{"line": 0, "col": 4}, {"line": 0, "col": 0}],
+            "format": "italic",
+        }
+    )
+    assert r["applied"] is True, r
+    r = cmd({"id": 11, "cmd": "get_state"})
+    assert r["active"]["char_count"] == base_chars + 6, f"italic 再 +2：{r}"
+    # 未知格式拒绝
+    cmd_err(
+        {"id": 12, "cmd": "apply_format", "range": [[0, 0], [0, 4]], "format": "underline"},
+        "",  # serde 错误——只断言失败
+    )
+    # undo×2 回滚两个格式（一条 undo 一个格式动作）
+    cmd({"id": 13, "cmd": "undo"})
+    cmd({"id": 14, "cmd": "undo"})
+    r = cmd({"id": 15, "cmd": "get_state"})
+    assert r["active"]["char_count"] == base_chars, f"两次 undo 应回滚全部格式：{r}"
+
+    print(
+        f"rpc-smoke-cmd: client sequence passed（{n} 命令：run_command "
+        f"真实移动 + list_commands 清单 + outline 首标题 + apply_format "
+        f"char 链 + undo 回滚）"
+    )
+
+
 def main():
     args = sys.argv[1:]
     if len(args) < 2:
@@ -672,6 +779,19 @@ def main():
             sys.exit(1)
         except RuntimeError as e:
             print(f"rpc-smoke-fs: FAIL —— {e}", file=sys.stderr)
+            sys.exit(3)
+        return
+    if rest[0] == "--smoke-cmd":
+        if len(rest) != 2:
+            print("用法：rpc_client.py SOCK --smoke-cmd FILE2", file=sys.stderr)
+            sys.exit(2)
+        try:
+            run_smoke_cmd(sock, rest[1])
+        except AssertionError as e:
+            print(f"rpc-smoke-cmd: FAIL —— {e}", file=sys.stderr)
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f"rpc-smoke-cmd: FAIL —— {e}", file=sys.stderr)
             sys.exit(3)
         return
     payload = build_payload(rest)

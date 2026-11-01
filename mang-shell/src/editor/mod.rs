@@ -238,6 +238,39 @@ fn outdent_line_edit(
 // Editor
 // ---------------------------------------------------------------------------
 
+/// #134：md 行内格式种类（RPC `apply_format` 的规格面；线上
+/// snake_case：`"bold"` / `"italic"` / `"code"` / `"strikethrough"`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatKind {
+    Bold,
+    Italic,
+    Code,
+    Strikethrough,
+}
+
+impl FormatKind {
+    /// 机器名（与线上 serde 形态同串——日志/响应面）。
+    pub fn id(self) -> &'static str {
+        match self {
+            FormatKind::Bold => "bold",
+            FormatKind::Italic => "italic",
+            FormatKind::Code => "code",
+            FormatKind::Strikethrough => "strikethrough",
+        }
+    }
+
+    /// 标记对（md 行内语法——左右对称包裹）。
+    pub fn markers(self) -> (&'static str, &'static str) {
+        match self {
+            FormatKind::Bold => ("**", "**"),
+            FormatKind::Italic => ("*", "*"),
+            FormatKind::Code => ("`", "`"),
+            FormatKind::Strikethrough => ("~~", "~~"),
+        }
+    }
+}
+
 /// 文档编辑器视图（md 源文本编辑；docx/pdf 只读面后续批接线）。
 pub struct Editor {
     buffer: Buffer,
@@ -1434,6 +1467,69 @@ impl Editor {
                 .unwrap_or_else(|| "未命名".to_string()),
         );
         self.file_path = Some(path);
+    }
+
+    // ------------------------------------------------------------------
+    // #134 任务 2「编辑器命令补完」：命令分派公开面 + 大纲 + 行内格式
+    // ------------------------------------------------------------------
+
+    /// #134：按命令执行（RPC `run_command` 的入口——与命令面板/
+    /// 键位同一分派路径 `exec_command`，只读门禁/折叠/查找全同语义）。
+    pub fn run_command(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
+        self.exec_command(cmd, window, cx);
+    }
+
+    /// #134：md 标题大纲（RPC `get_outline` 的数据面——逐行
+    /// [`highlight::heading_level`]，与语法高亮同一判定源）。返回
+    /// `(级别, 行号 0 基, 标题文本)` 列表。渲染态（docx/pdf/xlsx 含
+    /// docx 行模型态）无 md 大纲语义——`None`（调用方组织错误）。
+    pub fn md_outline(&self) -> Option<Vec<(u8, usize, String)>> {
+        if self.doc_kind() != "md" {
+            return None;
+        }
+        let mut out = Vec::new();
+        for i in 0..self.buffer.line_count() {
+            let line = self.buffer.line(i);
+            if let Some(level) = highlight::heading_level(&line) {
+                let title = line.trim_start_matches('#').trim().to_string();
+                out.push((level, i, title));
+            }
+        }
+        Some(out)
+    }
+
+    /// #134：对指定范围应用 md 行内格式（RPC `apply_format`——AI 的
+    /// 「把这段加粗」）。范围文本取出 → 标记对包裹 → 单次
+    /// `replace_range`（一条 undo；`after_edit` 全链——事件/缓存照常）。
+    /// 两点任意次序（内部排序）；空范围/空文本/只读态/行模型态返回
+    /// `None`（调用方组织错误）。成功返回替换后光标点。
+    pub fn apply_format(
+        &mut self,
+        start: Point,
+        end: Point,
+        format: FormatKind,
+        cx: &mut Context<Self>,
+    ) -> Option<Point> {
+        if self.read_only || self.docx_edit.is_some() {
+            return None;
+        }
+        // 两点排序（行列字典序——与 set_selection_range 同口径）。
+        let (start, end) = if (start.line, start.col) <= (end.line, end.col) {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let text = self.buffer.range_text(&(start..end));
+        if text.is_empty() {
+            return None;
+        }
+        let (l, r) = format.markers();
+        let wrapped = format!("{l}{text}{r}");
+        self.buffer.replace_range(start, end, &wrapped);
+        self.sync_cursors_from_buffer();
+        self.after_edit();
+        cx.notify();
+        Some(self.buffer.cursor())
     }
 
     /// 文档变更后的缓存刷新（fence 状态 + 查找匹配 + 断点失效）。
