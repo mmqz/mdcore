@@ -140,4 +140,6 @@ jobs:
         #   · real_rust_corpus_full_sweep —— 扫描全仓 .rs（11 分钟），CI 太慢
         #   · real_rust_file_string_and_comment_are_ignored —— CI 环境失败待查
         #     （本地过、CI 挂；已排除行尾因素，疑高版本 rustc 的 highlight 行为差异）
-        run: cargo test --tests -- --test-threads=1 --skip real_rust_corpus_full_sweep --skip real_rust_file_string_and_comment_are_ignored
+        # 只跳过「扫全仓 .rs」的重测试（11 分钟，CI 太慢）。
+        # real_rust_file_string_and_comment_are_ignored 已在 #157 修好（Doc::new 围栏态），不再跳过。
+        run: cargo test --tests -- --test-threads=1 --skip real_rust_corpus_full_sweep
