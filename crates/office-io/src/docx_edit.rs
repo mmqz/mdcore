@@ -198,6 +198,18 @@ pub struct ParagraphRef {
     pub in_table: bool,
     /// 文本框内段落（`w:txbxContent` 开启态中——DrawingML/VML 同形）。
     pub in_textbox: bool,
+    /// 结构化文档标签（`w:sdt` 容器）内段落（#156：含 `w:sdtContent`
+    /// 开启态中的段/表格内段）。
+    ///
+    /// 背景：标书导出链（ai-bid-research → docx-rs）把 TOC 域包在
+    /// `w:sdt` 里 emitted；宽面读门（docx-rs 读模型 `StructuredDataTag`
+    /// 节点）**结构性丢弃**整个 sdt 容器内容（登记的模型级切片面外项），
+    /// 而引擎按原文 `w:p` 逐段计数——两侧段落序因此发散（mang-shell
+    /// 装载对账降级只读）。本旗标让消费方能精确对账：**sdt 容器内的
+    /// 段落 = 引擎可见、宽面不可见的结构性盲区**（sdt 包裹表格的形态
+    /// 消费方应整体拒改——栅格块序与宽面块序无法对齐，见 mang-shell
+    /// 装载门）。
+    pub in_sdt: bool,
     /// 原始装配文本（私有——经 [`DocxEditor::paragraph_text`] 读）。
     text: String,
 }
@@ -1185,6 +1197,9 @@ fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
     let mut fallback = 0usize;
     let mut tbl = 0usize;
     let mut txbx = 0usize;
+    // #156：`w:sdt` 容器深度（段落级 in_sdt 旗标的数据源——背景见
+    // [`ParagraphRef::in_sdt`]）。sdt 可嵌套（sdtContent 内再套 sdt）。
+    let mut sdt = 0usize;
 
     // ── #115 表格编辑（加性扩展）栅格扫描状态 ──────────────────────
     // 开启中的 `w:tbl`（只为**最外层**建栅格——见 DocxEditor::table_cells）。
@@ -1203,6 +1218,7 @@ fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
                 let name = local_name(&e);
                 match name.as_str() {
                     "Fallback" => fallback += 1,
+                    "sdt" => sdt += 1,
                     "tbl" => {
                         // 深度 0 → 1 才是外层表；嵌套表（深度 ≥2）只加
                         // 深度，其单元格段落**不进**任何栅格。
@@ -1265,6 +1281,7 @@ fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
                             fallback_copy: fallback > 0,
                             in_table: tbl > 0,
                             in_textbox: txbx > 0,
+                            in_sdt: sdt > 0,
                             text: String::new(),
                         });
                         para_stack.push(idx);
@@ -1351,6 +1368,7 @@ fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
                             fallback_copy: fallback > 0,
                             in_table: tbl > 0,
                             in_textbox: txbx > 0,
+                            in_sdt: sdt > 0,
                             text: String::new(),
                         });
                         if tbl <= 1 {
@@ -1452,6 +1470,7 @@ fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
                 let name = local_name_end(&e);
                 match name.as_str() {
                     "Fallback" => fallback = fallback.saturating_sub(1),
+                    "sdt" => sdt = sdt.saturating_sub(1),
                     "tbl" => {
                         // 外层表收尾：栅格落表。
                         if tbl == 1 {
@@ -3759,5 +3778,76 @@ xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><w:body
         assert_eq!(ed2.paragraph_text(1), "新正文");
         // 幂等。
         assert_eq!(ed2.save_to_vec().unwrap(), saved);
+    }
+    // ── #156：sdt 容器段落旗标（标书 e2e 对账的地基）────────────
+
+    /// 标书导出链真形：docx-rs 的 TOC 域 = `<w:sdt><w:sdtContent>`
+    /// 包裹两个纯域脚手段（begin+instrText+separate 一段 / end 一段）。
+    /// 引擎必须逐段计数且打 `in_sdt`（宽面读门结构性丢弃 sdt 内容——
+    /// 消费方据此对账，见 [`ParagraphRef::in_sdt`] 文档）。
+    #[test]
+    fn sdt_wrapped_toc_paragraphs_flagged_and_counted() {
+        let body = concat!(
+            r#"<w:p><w:r><w:t>标题</w:t></w:r></w:p>"#,
+            r#"<w:sdt><w:sdtPr><w:rPr /></w:sdtPr><w:sdtContent>"#,
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/>"#,
+            r#"<w:instrText>TOC \o "1-3" \h \u</w:instrText>"#,
+            r#"<w:fldChar w:fldCharType="separate" w:dirty="false"/></w:r></w:p>"#,
+            r#"<w:p><w:r><w:fldChar w:fldCharType="end" w:dirty="false"/></w:r></w:p>"#,
+            r#"</w:sdtContent></w:sdt>"#,
+            r#"<w:p><w:r><w:t>第一章 正文</w:t></w:r></w:p>"#,
+        );
+        let mut ed = DocxEditor::open(&build_docx(body)).unwrap();
+        let paras = ed.paragraphs();
+        assert_eq!(paras.len(), 4, "sdt 内两段必须计数（宽面丢弃 ≠ 引擎丢弃）");
+        assert!(!paras[0].in_sdt && !paras[0].field_code);
+        // sdt 内两段：in_sdt + 域脚手（跨段 TOC——域面只读保护对象）。
+        assert!(paras[1].in_sdt && paras[1].field_code);
+        assert!(paras[2].in_sdt && paras[2].field_code);
+        assert!(!paras[3].in_sdt);
+        // 域面：TOC 跨段只读（editable=false——既有语义不因 sdt 改变）。
+        let f = &ed.fields()[0];
+        assert!(matches!(f.kind, FieldKind::Toc));
+        assert!(!f.editable && !f.same_para);
+        assert!(ed.set_field_value(f.para, f.field_idx, "X").is_err());
+        // sdt 段照常拒整段替换（域段防线）；落账零接触（字节恒等往返）。
+        assert!(ed.set_paragraph_text(1, "x").is_err());
+        assert!(ed.set_paragraph_text(2, "x").is_err());
+        ed.set_paragraph_text(3, "改后正文").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        assert!(xml.contains("<w:sdt>"), "sdt 容器字节保真");
+        assert!(xml.contains(r#"<w:instrText>TOC"#), "TOC 域指令保真");
+        assert!(xml.contains("改后正文"));
+    }
+
+    /// sdt 包裹**表格**：单元格段 in_sdt && in_table（消费方整体拒改的
+    /// 信号——栅格块序与宽面块序无法对齐）。
+    #[test]
+    fn sdt_wrapped_table_cells_flagged_in_table() {
+        let cell =
+            |t: &str| format!(r#"<w:tc><w:tcPr/><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"#);
+        let body = format!(
+            concat!(
+                r#"<w:tbl><w:tr>{}{}</w:tr></w:tbl>"#,
+                r#"<w:sdt><w:sdtPr/><w:sdtContent>"#,
+                r#"<w:tbl><w:tr>{}{}</w:tr></w:tbl>"#,
+                r#"</w:sdtContent></w:sdt>"#,
+            ),
+            cell("A1"),
+            cell("B1"),
+            cell("S1"),
+            cell("S2"),
+        );
+        let ed = DocxEditor::open(&build_docx(&body)).unwrap();
+        let paras = ed.paragraphs();
+        // 外层表 2 格 + sdt 表 2 格 = 4 段。
+        assert_eq!(paras.len(), 4);
+        assert!(paras[0].in_table && !paras[0].in_sdt);
+        assert!(paras[1].in_table && !paras[1].in_sdt);
+        assert!(paras[2].in_table && paras[2].in_sdt, "sdt 表内段双旗标");
+        assert!(paras[3].in_table && paras[3].in_sdt);
+        // 两表都进引擎栅格（原文坐标系不区分 sdt——消费方负责拒改面）。
+        assert_eq!(ed.table_count(), 2);
     }
 }

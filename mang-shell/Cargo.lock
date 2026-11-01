@@ -3167,6 +3167,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-net",
+ "flate2",
  "futures-lite",
  "gpui",
  "gpui_platform",

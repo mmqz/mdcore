@@ -183,6 +183,45 @@ pub trait DocxPort {
     fn table_cells(&self) -> Vec<Vec<Vec<usize>>> {
         Vec::new()
     }
+
+    /// #156：sdt 容器内段落号清单（升序——引擎可见、宽面**结构性不可见**
+    /// 的盲区；背景见 `mdc_office_io::docx_edit::ParagraphRef::in_sdt`）。
+    ///
+    /// 装载对账消费：宽面块模型丢弃 `w:sdt` 内容（docx-rs 读模型
+    /// `StructuredDataTag` 面外项），这些段落必须从行模型顺序游标里
+    /// **跳过**（空投影 + 不入行流），段落序才能与引擎原文坐标系对齐。
+    /// 缺省空集（窄面替身）。
+    fn sdt_paragraphs(&self) -> Vec<usize> {
+        Vec::new()
+    }
+
+    /// #156：域清单（透传引擎 `DocxEditor::fields`——`--smoke-docx-bid`
+    /// 四面貌编辑的域面）。缺省空集。
+    fn fields(&self) -> Vec<mdc_office_io::docx_edit::FieldInfo> {
+        Vec::new()
+    }
+
+    /// #156：更新域显示值（透传引擎——只改结果区 `w:t`，域五段结构
+    /// 零接触）。缺省拒（窄面替身无域面）。
+    fn set_field_value(
+        &mut self,
+        _para: usize,
+        _field_idx: usize,
+        _value: &str,
+    ) -> Result<(), String> {
+        Err("port 无域面".into())
+    }
+
+    /// #156：批注清单（透传引擎 `DocxEditor::comments`）。缺省空集。
+    fn comments(&self) -> Vec<mdc_office_io::docx_edit::CommentInfo> {
+        Vec::new()
+    }
+
+    /// #156：更新批注文本（透传引擎——部件级手术，只动 `word/comments.xml`
+    /// 目标条目）。缺省拒（窄面替身无批注面）。
+    fn set_comment_text(&mut self, _id: usize, _text: &str) -> Result<(), String> {
+        Err("port 无批注面".into())
+    }
 }
 
 // ---------------------------------------------------------------------------

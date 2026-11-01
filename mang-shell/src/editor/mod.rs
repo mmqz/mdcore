@@ -1695,6 +1695,133 @@ impl Editor {
         true
     }
 
+    /// #156（`--smoke-docx-bid`）：标书 docx 四面貌编辑脚本——真实链取证。
+    ///
+    /// 标书系统（ai-bid-research e2e）生成的完整标书 docx 交给 mang-shell
+    /// 打开编辑保存的**端到端**证据链：四个编辑面各走一条与用户实操同链
+    /// 的通路，每步落一条 `smoke-docx-bid:` 证据行（stderr——烟雾断言
+    /// 通道）：
+    ///
+    /// | 面 | 通路 | 标书真档上的预期 |
+    /// |---|---|---|
+    /// | 段落 | Buffer `replace_range`（EditHook 门禁 + 行归属重排——键入同链） | 首个非空正文段行尾追加标记（格式面零扰动） |
+    /// | 单元格 | 同上（六表首个非空格） | 格追加标记 |
+    /// | 域 | 引擎 `set_field_value`（部件级——行模型对域段锁定，引擎是域面唯一通路） | 标书正文只有 TOC（跨段）→ typed 拒——保护语义在真档上的验证 |
+    /// | 批注 | 引擎 `set_comment_text` | 标书生成器不产批注 → 空集取证（登记缺口） |
+    ///
+    /// 返回 false = 前置不符（非可编辑 docx / 段落或单元格无目标——
+    /// 标书档必有两者，缺失即夹具或链路异常）。
+    pub fn docx_bid_smoke_edits(&mut self) -> bool {
+        let Some(edit) = self.docx_edit.clone() else {
+            eprintln!("smoke-docx-bid: 非可编辑 docx（降级只读态）——脚本不适用");
+            return false;
+        };
+        // 开场证据：行模型 + 引擎面规模。
+        let (paras, tables) = {
+            let e = edit.borrow();
+            (e.engine.paragraph_count(), e.engine.table_cells().len())
+        };
+        eprintln!(
+            "smoke-docx-bid: open ok paragraphs={paras} tables={tables} lines={}",
+            self.buffer.line_count()
+        );
+
+        // ── 面 1：段落（首个非空 Para 行——行尾追加，不动列表标记/缩进）──
+        let para_line = (0..self.buffer.line_count()).find(|&i| {
+            matches!(edit.borrow().bridge.block(i), Some(LineBlock::Para { .. }))
+                && !self.buffer.line(i).trim().is_empty()
+        });
+        let mut para_ok = false;
+        if let Some(l) = para_line {
+            let marker = "（端到端段落编辑）";
+            let len = self.buffer.line_len(l);
+            para_ok = self
+                .buffer
+                .replace_range(Point::new(l, len), Point::new(l, len), marker);
+            let shown: String = self.buffer.line(l).chars().take(24).collect();
+            eprintln!("smoke-docx-bid: para-edit line={l} ok={para_ok} → {shown}…");
+        } else {
+            eprintln!("smoke-docx-bid: para-edit 无目标（无非空正文段）");
+        }
+
+        // ── 面 2：表格单元格（首个非空 Cell 行——六表真表格坐标）──────
+        let cell_line = (0..self.buffer.line_count()).find(|&i| {
+            matches!(edit.borrow().bridge.block(i), Some(LineBlock::Cell { .. }))
+                && !self.buffer.line(i).trim().is_empty()
+        });
+        let mut cell_ok = false;
+        if let Some(l) = cell_line {
+            let marker = "（端到端单元格编辑）";
+            let len = self.buffer.line_len(l);
+            let (table, row, col) = match edit.borrow().bridge.block(l) {
+                Some(LineBlock::Cell { table, row, col }) => (table, row, col),
+                _ => unreachable!(),
+            };
+            cell_ok = self
+                .buffer
+                .replace_range(Point::new(l, len), Point::new(l, len), marker);
+            let shown: String = self.buffer.line(l).chars().take(24).collect();
+            eprintln!(
+                "smoke-docx-bid: cell-edit T{table}R{row}C{col} line={l} ok={cell_ok} → {shown}…"
+            );
+        } else {
+            eprintln!("smoke-docx-bid: cell-edit 无目标（无表格单元格行）");
+        }
+
+        // ── 面 3：域（引擎部件级——可编辑域优先，否则对首域取 typed 拒证）──
+        let fields = edit.borrow().engine.fields();
+        eprintln!(
+            "smoke-docx-bid: fields n={} kinds={:?}",
+            fields.len(),
+            fields
+                .iter()
+                .map(|f| format!("{:?}", f.kind))
+                .collect::<Vec<_>>()
+        );
+        if let Some(f) = fields.iter().find(|f| f.editable) {
+            let r = edit
+                .borrow_mut()
+                .engine
+                .set_field_value(f.para, f.field_idx, "999");
+            eprintln!(
+                "smoke-docx-bid: field-edit para={} idx={} → {:?}",
+                f.para, f.field_idx, r
+            );
+        } else if let Some(f) = fields.first() {
+            // 标书真档形态：TOC 跨段只读——typed 拒即保护语义的端到端验证。
+            let r = edit
+                .borrow_mut()
+                .engine
+                .set_field_value(f.para, f.field_idx, "999");
+            eprintln!(
+                "smoke-docx-bid: field-edit (protected target) para={} idx={} → 拒：{}",
+                f.para,
+                f.field_idx,
+                r.err().unwrap_or_default()
+            );
+        } else {
+            eprintln!("smoke-docx-bid: field-edit 无目标（正文无域）");
+        }
+
+        // ── 面 4：批注（引擎部件级——首条改文本；空集 = 生成器现状取证）──
+        let comments = edit.borrow().engine.comments();
+        eprintln!("smoke-docx-bid: comments n={}", comments.len());
+        if let Some(c) = comments.first() {
+            let r = edit
+                .borrow_mut()
+                .engine
+                .set_comment_text(c.id, "端到端批注编辑");
+            eprintln!("smoke-docx-bid: comment-edit id={} → {:?}", c.id, r);
+        } else {
+            eprintln!("smoke-docx-bid: comment-edit 无目标（标书生成器不产批注——登记缺口）");
+        }
+
+        eprintln!(
+            "smoke-docx-bid: script done (para={para_ok} / cell={cell_ok} / field+comment=evidence)"
+        );
+        para_ok && cell_ok
+    }
+
     /// F4：另存为（新路径写盘 + 身份迁移——file_path/display_name 更新
     /// + mark_saved）。只读态拒（返回 false 不写盘）。
     pub fn save_as(&mut self, path: PathBuf) -> bool {

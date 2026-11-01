@@ -22,7 +22,10 @@
 打开   load_editable(path)
        ├─ 宽面 read_docx_from_bytes ──→ 行模型（纯文本行 + span + 标题树）
        ├─ 窄面 DocxEditor::open    ──→ 段落索引（w:p 文档序 + 拒改面标记）
-       └─ 段落序对账（候选段 = 宽面 w:p 数 = 引擎 w:p 数）→ 对不上就降级只读
+       ├─ #156 sdt 盲区跳过（引擎 in_sdt 段：宽面结构性丢弃 → 空投影
+       │  不入行流；sdt 包表格 → 整篇降级只读——栅格错位不可写）
+       └─ 段落序对账（候选段 = 宽面 w:p 数 + sdt 盲区 = 引擎 w:p 数）
+          → 对不上就降级只读
 
 编辑   Buffer（rope）← 钩子挂在唯一变更入口 replace_range / replace_batch
        ├─ before_edit：起点/终点行是否锁定（表格/域/修订/文本框/清单）→ 拒
@@ -190,3 +193,15 @@ test result: ok
    自己的段落序做行模型来源，彻底消除对账分歧。
 5. **文本框内段落**：引擎侧标 `in_textbox` 并拒改（L1 嵌套互斥），行模型
    同样只读。
+6. **#156 sdt（结构化内容控件）盲区**：docx-rs 读模型把 `w:sdt` 解析为
+   `StructuredDataTag`，宽面读门**结构性丢弃**其内容（登记的模型级切片
+   面外项）——**纯段落 sdt**（标书导出链的 TOC、Word 目录内容控件）经
+   引擎 `in_sdt` 旗标 + 装载门盲区跳过后**可编辑**（盲区段空投影、字节
+   保真透传；docx4j 语料 +13 件转可编辑）；**sdt 包表格**仍整篇降级
+   （块序↔栅格对位不可信，宁缺毋错）。
+7. **#156 标书真档的域/批注面**：标书生成器（ai-bid-research → docx-rs）
+   正文只产 TOC 域（跨段只读——typed 拒保护）且**不产批注**（comments.xml
+   0 条）；页脚 PAGE/NUMPAGES 域在 footer 部件（引擎 v1 坐标系只扫
+   document.xml）——四面貌编辑中域/批注两面在标书真档上无既有目标可改，
+   属生成器现状（登记，非引擎缺陷；端到端证据 =
+   `tests/docx_bid_e2e.rs` + `--smoke-docx-bid` 烟雾）。
