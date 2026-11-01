@@ -1,0 +1,24 @@
+    /// 已登记折叠头行（升序——持久化/诊断面）。
+    pub fn fold_heads(&self) -> Vec<usize> {
+        self.folds.iter().map(|f| f.range.start.line).collect()
+    }
+
+    /// 折叠区间快照（渲染/持久化恢复共用——`(start_line, end_line)`）。
+    pub fn fold_ranges(&self) -> Vec<(usize, usize)> {
+        self.folds
+            .iter()
+            .map(|f| (f.range.start.line, f.range.end.line))
+            .collect()
+    }
+
+    /// 清空全部折叠（「全部展开」；返回是否有变化）。
+    pub fn unfold_all(&mut self) -> bool {
+        if self.folds.is_empty() {
+            return false;
+        }
+        self.folds.clear();
+        self.invalidate();
+        true
+    }
+
+    /// 展开包含 `line` 的折叠（含折叠头/内部行命中；返回是否发生展开）。

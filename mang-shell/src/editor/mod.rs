@@ -365,6 +365,8 @@ pub struct Editor {
     scroll: UniformListScrollHandle,
     /// 每行行首的代码围栏状态缓存（文档变更时重算）。
     fence_cache: Vec<bool>,
+    /// #132-3：`Ctrl+K` 前缀键已按下（等下一个键完成组合）。
+    ctrl_k_pending: bool,
     /// G5：每行所属围栏块的语言标注（`Some(lang)` = 行首处于带语言
     /// 标注的围栏内；`None` = 围栏外/无标注块——与 fence_cache 并行）。
     fence_lang_cache: Vec<Option<highlight::CodeLang>>,
@@ -474,6 +476,7 @@ impl Editor {
             find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
+            ctrl_k_pending: false,
             fence_lang_cache: Vec::new(),
             bracket_cache: BracketCache::default(),
             bracket_lang,
@@ -530,6 +533,7 @@ impl Editor {
             // docx 无围栏语义——fence 恒 false（refresh_caches 在 docx
             // 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
+            ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
             bracket_cache: BracketCache::default(),
             bracket_lang,
@@ -598,6 +602,7 @@ impl Editor {
             find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             fence_cache: vec![false; line_count],
+            ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
             bracket_cache: BracketCache::default(),
             bracket_lang,
@@ -657,6 +662,7 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
             fence_cache: vec![false; line_count],
+            ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
             bracket_cache: BracketCache::default(),
             bracket_lang,
@@ -715,6 +721,7 @@ impl Editor {
             // xlsx 无围栏语义——fence 恒 false（同 docx 态口径，
             // refresh_caches 在 xlsx 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
+            ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
             bracket_cache: BracketCache::default(),
             bracket_lang,
@@ -770,6 +777,7 @@ impl Editor {
             // canvas 无围栏语义——fence 恒 false（同 docx/pdf/xlsx 口径）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            ctrl_k_pending: false,
             // #132 任务1：括号匹配缓存（canvas 无语言语义——恒 None）。
             bracket_cache: BracketCache::default(),
             bracket_lang: None,
@@ -1224,6 +1232,23 @@ impl Editor {
                 let line = self.buffer.cursor().line;
                 self.toggle_fold_at(line);
             }
+            // #132-3：折叠/展开当前块（与快捷键同链）。
+            Cmd::FoldCurrent => {
+                self.fold_current();
+                self.persist_folds();
+            }
+            Cmd::UnfoldCurrent => {
+                self.unfold_current();
+                self.persist_folds();
+            }
+            Cmd::FoldAll => {
+                self.fold_all();
+                self.persist_folds();
+            }
+            Cmd::UnfoldAll => {
+                self.unfold_all();
+                self.persist_folds();
+            }
             Cmd::OpenFind => self.open_find(window, cx),
             // G1：替换（Ctrl+H——与键位同链；只读门禁在 exec 上游无覆盖，
             // 面板入口补一道 read_only 拒——面板在只读态可开（浏览类））。
@@ -1428,6 +1453,155 @@ impl Editor {
         }
         // 折叠区间 [a-1, b+1)：开 ``` 行起、闭行后第一行止（end 行可见）
         Some((a.saturating_sub(1), b + 1))
+    }
+
+    // -----------------------------------------------------------------------
+    // 折叠：#132 任务 3（gutter 箭头已有 → 补 markdown 标题 + 全部折叠/展开
+    // + 持久化）
+    // -----------------------------------------------------------------------
+
+    /// 行 `line` 处的**可折叠区间**（`[start, end)`，end 行可见）。
+    ///
+    /// 判定顺序（先到先得——同一行两种都可能时取围栏）：
+    /// 1. **围栏代码块**：行在 ``` 块内 → 整块（含开闭行）；
+    /// 2. **markdown 标题**：行是 ATX 标题（`#`..`######` + 空格）→
+    ///    到**下一个同级或更高级标题**之前（含其所有下级小节）。
+    ///    文档末标题折叠到文末。
+    ///
+    /// 不以围栏/标题开头、或区间不足两行（无内容可折）→ `None`。
+    fn foldable_span_at(&self, line: usize) -> Option<(usize, usize)> {
+        if line >= self.buffer.line_count() {
+            return None;
+        }
+        // 缩进折叠是「区块折叠」的反面：纯文本语言里没有语义块。
+        if self.docx.is_some() || self.xlsx.is_some() {
+            return None;
+        }
+        if let Some(span) = self.fence_span_at(line) {
+            return (span.1 > span.0).then_some(span);
+        }
+        let level = heading_level_of(&self.buffer.line(line))?;
+        // 标题块 = 本行之后、到下一个 <= level 的标题之前。
+        let mut end = line + 1;
+        let n = self.buffer.line_count();
+        while end < n {
+            if let Some(l) = heading_level_of(&self.buffer.line(end))
+                && l <= level
+            {
+                break;
+            }
+            end += 1;
+        }
+        (end > line + 1).then_some((line, end))
+    }
+
+    /// 折叠当前光标行（可折叠时）；返回是否发生折叠。
+    ///
+    /// 光标在折叠**内部**时先跳到折叠头（语义：折叠内部无可见行，
+    /// 用户按「折叠当前」应指向整个块）。
+    pub fn fold_current(&mut self) -> bool {
+        let line = self.buffer.cursor().line;
+        if let Some(f) = self.display_map.fold_containing(line) {
+            let head = f.range.start.line;
+            return self.display_map.fold_head_at(head).is_some();
+        }
+        if self.display_map.fold_head_at(line).is_some() {
+            return true; // 已折叠
+        }
+        let Some((s, e)) = self.foldable_span_at(line) else {
+            return false;
+        };
+        self.display_map
+            .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0))
+            .is_some()
+    }
+
+    /// 展开当前光标所在/所属的折叠；返回是否发生展开。
+    pub fn unfold_current(&mut self) -> bool {
+        self.display_map.unfold_at(self.buffer.cursor().line)
+    }
+
+    /// 全部折叠：**顶层**可折叠块（围栏 / 标题）。
+    ///
+    /// 只折顶层——标题块已经覆盖其下所有小节，再折内部块就是重复
+    /// 区间（`fold` 会因重叠拒绝）。返回折叠数。
+    pub fn fold_all(&mut self) -> usize {
+        if self.docx.is_some() || self.xlsx.is_some() {
+            return 0;
+        }
+        // 与 gitter 指示物/单点折叠**同口径**：共用 top_level_fold_spans
+        //（围栏开行 fenced=false 的边界在纯函数里处理，避免两处逻辑漂移）。
+        let owned: Vec<String> = (0..self.buffer.line_count())
+            .map(|i| self.buffer.line(i))
+            .collect();
+        let lines: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        let spans = top_level_fold_spans(&lines, &self.fence_cache);
+        let mut made = 0usize;
+        for (s, e) in spans {
+            if self
+                .display_map
+                .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0))
+                .is_some()
+            {
+                made += 1;
+            }
+        }
+        made
+    }
+
+    /// #132-3：把当前折叠头行集合落盘（按文件路径记）；未命名文档跳过。
+    fn persist_folds(&self) {
+        let key = fold_persist_key(self.file_path.as_deref());
+        if key.is_empty() {
+            return;
+        }
+        let heads = self.display_map.fold_heads();
+        crate::settings::save_folds(&key, &heads);
+        eprintln!(
+            "fold: persist {} head(s) for {key}",
+            heads.len()
+        );
+    }
+
+    /// #132-3：按当前文本恢复已落盘的折叠（装载/首次渲染后调用一次）。
+    ///
+    /// 存的是**头行号**：头行仍在且当行可折叠才恢复；区间尾按当前文本
+    /// 重算。对不上的一律丢弃（编辑后行号漂移是常态——宁缺毋错，绝不
+    /// 折错块）。返回恢复的折叠数。
+    pub fn restore_folds(&mut self) -> usize {
+        let key = fold_persist_key(self.file_path.as_deref());
+        if key.is_empty() {
+            return 0;
+        }
+        let heads = crate::settings::load_folds(&key);
+        let mut made = 0usize;
+        for head in heads {
+            if head >= self.buffer.line_count() {
+                continue;
+            }
+            // 只认「该行现在是可折叠块的起点」——行号漂移后自动弃权。
+            let Some((s, e)) = self.foldable_span_at(head) else {
+                continue;
+            };
+            if s != head {
+                continue;
+            }
+            if self
+                .display_map
+                .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0))
+                .is_some()
+            {
+                made += 1;
+            }
+        }
+        if made > 0 {
+            eprintln!("fold: restore {made} head(s) for {key}");
+        }
+        made
+    }
+    /// 全部展开：清空所有折叠（含用户手工折的单点区间）。返回是否变化。
+    pub fn unfold_all(&mut self) -> bool {
+        self.display_map.unfold_all()
     }
 
     /// 保存（Ctrl+S）：同步写盘 + 清修改标记。未命名文档无路径——
@@ -1849,6 +2023,13 @@ impl Editor {
             return;
         }
 
+        // #132-3：Ctrl+K 前缀键。到此说明上一个键是 Ctrl+K——本键若不
+        // 是 0/J 就**取消前缀并照常下沉**（不吞键）。0/J 分支在下方。
+        let ctrl_k_was_pending = self.ctrl_k_pending;
+        if ctrl_k_was_pending && !(key == "0" || key == "j") {
+            self.ctrl_k_pending = false;
+        }
+
         match key.as_str() {
             // r42 阶段 C：移动统一入口 do_move（多光标同向分派）
             "left" => self.do_move(MultiMove::Left, ctrl, shift),
@@ -1964,6 +2145,33 @@ impl Editor {
                 // r42 阶段 B/D：围栏块折叠 toggle（与 gutter 指示物共用）。
                 let line = self.buffer.cursor().line;
                 self.toggle_fold_at(line);
+                self.persist_folds();
+            }
+            // #132-3：折叠快捷键（VS Code 口径）。
+            "[" if ctrl && shift => {
+                self.fold_current();
+                self.persist_folds();
+            }
+            "]" if ctrl && shift => {
+                self.unfold_current();
+                self.persist_folds();
+            }
+            // Ctrl+K 是**前缀键**（VS Code 的 Ctrl+K Ctrl+X 系列）。按下时
+            // 只置标志、不消费内容；下一个键按该标志分流。超时/其它键 =
+            // 前缀取消（不静默吞键：其余键照常下沉原分支）。
+            "k" if ctrl && !shift => {
+                self.ctrl_k_pending = true;
+                return;
+            }
+            "0" if self.ctrl_k_pending => {
+                self.ctrl_k_pending = false;
+                self.fold_all();
+                self.persist_folds();
+            }
+            "j" if self.ctrl_k_pending => {
+                self.ctrl_k_pending = false;
+                self.unfold_all();
+                self.persist_folds();
             }
             "f" if ctrl => self.open_find(window, cx),
             // G1：Ctrl+H 替换条（只读门禁在前——docx/pdf 态不达此处）。
@@ -4040,6 +4248,113 @@ fn shape_text_width(window: &mut Window, text: &str, style: &TextStyle) -> Pixel
         .width()
 }
 
+/// 行首 ATX 标题层级（1-6）；非标题 → None。
+///
+/// 与 G5 高亮同口径：「`#` 后必须跟空格或行尾」，`#######`（7 个）不是
+/// 标题（CommonMark）。缩进标题（代码块内 `#`）不在此判定——那是围栏
+/// 折叠的面，调用方先试围栏。
+fn heading_level_of(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut n = 0usize;
+    while n < bytes.len() && bytes[n] == b'#' {
+        n += 1;
+    }
+    if n == 0 || n > 6 {
+        return None;
+    }
+    match bytes.get(n) {
+        None => Some(n),
+        Some(b' ') => Some(n),
+        _ => None,
+    }
+}
+
+/// 标题块区间（纯函数）：行 `line` 是 ATX 标题 → `[line, end)`，end =
+/// 下一个同级或更高级标题的行（无则文末）。非标题 → None。
+///
+/// 与 `Editor::foldable_span_at` 的标题分支同口径；独立成纯函数是
+/// 为了在无 GPUI 上下文时单测（`lines` 为全文行切片）。
+pub fn heading_span_in(lines: &[&str], line: usize) -> Option<(usize, usize)> {
+    let own = heading_level_of(lines.get(line)?)?;
+    let mut end = line + 1;
+    while end < lines.len() {
+        if let Some(l) = heading_level_of(lines[end])
+            && l <= own
+        {
+            break;
+        }
+        end += 1;
+    }
+    (end > line + 1).then_some((line, end))
+}
+
+/// 全部**顶层**可折叠块（纯函数）：返回升序 `(start, end)` 区间。
+///
+/// 顶层 = 不落在前一个块区间内部的块。围栏优先于标题（同
+/// `foldable_span_at` 口径）；`fenced` 是「行首处于围栏内部」的并行
+/// 数组（与 `fence_cache` 同义）。
+pub fn top_level_fold_spans(lines: &[&str], fenced: &[bool]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0usize;
+    while i < lines.len() {
+        // 围栏块：**任意**围栏内行都归约到同一个块区间；开行行首（行号
+        // a-1）本身 fenced=false，所以不能只看 `s == i`——要看行 i 是否
+        // 落在该块内（含开行）。
+        if let Some((s, e)) = fence_span_in(fenced, i).or_else(|| {
+            // 行 i 是**开行**（fenced[i]=false 但 fenced[i+1]=true）。
+            fenced
+                .get(i + 1)
+                .copied()
+                .unwrap_or(false)
+                .then(|| fence_span_in(fenced, i + 1))
+                .flatten()
+        }) {
+            if s == i {
+                out.push((s, e));
+                i = e;
+                continue;
+            }
+            // 尚未到开行（不应发生——从 0 递增），保险起见推进到块尾。
+            if s < i && i < e {
+                i = e;
+                continue;
+            }
+        }
+        if let Some((s, e)) = heading_span_in(lines, i) {
+            if s == i {
+                out.push((s, e));
+                i = e;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// 围栏块区间（纯函数）：`fenced[i]` 为「行 i 行首处于围栏内部」。
+fn fence_span_in(fenced: &[bool], line: usize) -> Option<(usize, usize)> {
+    let inside = |i: usize| fenced.get(i).copied().unwrap_or(false);
+    if !inside(line) {
+        return None;
+    }
+    let mut a = line;
+    while a > 0 && inside(a - 1) {
+        a -= 1;
+    }
+    let mut b = line;
+    while inside(b + 1) {
+        b += 1;
+    }
+    Some((a.saturating_sub(1), b + 1))
+}
+
+/// 折叠持久化键：文件路径的 lossy 字符串（未命名文档 → 空串 = 不持久化）。
+fn fold_persist_key(path: Option<&std::path::Path>) -> String {
+    path.map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// Point 日志格式（1 基「行:列」——`--smoke-mouse` 断言通道）。
 fn format_point(p: &Point) -> String {
     format!("{}:{}", p.line + 1, p.col + 1)
@@ -4418,5 +4733,98 @@ mod tests {
         assert!(!b.is_modified());
         b.insert("新增");
         assert!(b.is_modified());
+    }
+
+    // ---------------- #132-3：折叠 UI 入口（纯函数面） ----------------
+
+    #[test]
+    fn heading_level_parses_atx_forms() {
+        assert_eq!(heading_level_of("# 一级"), Some(1));
+        assert_eq!(heading_level_of("### 三级"), Some(3));
+        assert_eq!(heading_level_of("###### 六级"), Some(6));
+        assert_eq!(heading_level_of("#"), Some(1), "裸 # 也是标题");
+        assert_eq!(heading_level_of("####### 七级"), None, "7 个 # 不是标题");
+        assert_eq!(heading_level_of("#无空格"), None, "# 后须有空格");
+        assert_eq!(heading_level_of("正文 # 不是标题"), None, "行中 # 不算");
+        assert_eq!(heading_level_of(""), None);
+        assert_eq!(heading_level_of("  # 缩进"), None, "缩进 # 不认");
+    }
+
+    #[test]
+    fn heading_span_covers_subtree_until_same_level() {
+        let lines = ["# A", "正文", "正文2", "# B", "后文"];
+        assert_eq!(heading_span_in(&lines, 0), Some((0, 3)), "到下一个同级标题前");
+        assert_eq!(heading_span_in(&lines, 3), Some((3, 5)), "末尾标题到文末");
+        assert_eq!(heading_span_in(&lines, 1), None, "正文不可折叠");
+    }
+
+    #[test]
+    fn heading_span_includes_deeper_subheadings() {
+        let lines = ["# A", "## B", "b-body", "### C", "c-body", "# D"];
+        assert_eq!(
+            heading_span_in(&lines, 0),
+            Some((0, 5)),
+            "一级标题吃掉所有下级小节"
+        );
+        assert_eq!(heading_span_in(&lines, 1), Some((1, 5)), "二级吃到 # D 前");
+        assert_eq!(heading_span_in(&lines, 3), Some((3, 5)), "三级同");
+    }
+
+    #[test]
+    fn heading_with_no_body_is_not_foldable() {
+        // 连续两个标题：前一个没有正文 → 区间 [0,1) 只有 1 行，不折。
+        let lines = ["# A", "# B", "body"];
+        assert_eq!(heading_span_in(&lines, 0), None, "无正文不折叠（无意义）");
+        assert_eq!(heading_span_in(&lines, 1), Some((1, 3)));
+    }
+
+    #[test]
+    fn top_level_spans_skip_nested_blocks() {
+        // A 小节含子标题 B：顶层只有 A，B 不单独出现（避免重叠区间）。
+        let lines = ["# A", "## B", "b-body", "# C", "c-body"];
+        let fenced = vec![false; lines.len()];
+        assert_eq!(
+            top_level_fold_spans(&lines, &fenced),
+            vec![(0, 3), (3, 5)],
+            "顶层两块（A 吃 B）"
+        );
+    }
+
+    #[test]
+    fn top_level_spans_handle_fenced_code() {
+        // fenced[i] = 行 i 行首在围栏内；开行/闭行行首 false。
+        // 行号：0=intro 1=开``` 2=code1 3=code2 4=闭``` 5=tail
+        // 区间 = [1, 4)：开行(1) 是折叠头行、闭行(4) 是**末可见行**，
+        // 被藏起来的是 2..3 两行代码。
+        let lines = ["intro", "```", "code1", "code2", "```", "tail"];
+        let fenced = vec![false, false, true, true, false, false];
+        assert_eq!(
+            top_level_fold_spans(&lines, &fenced),
+            vec![(1, 4)],
+            "围栏块 [开行, 闭行] —— 开行折叠头、闭行末可见行"
+        );
+    }
+
+    #[test]
+    fn top_level_spans_mix_headings_and_fences() {
+        // 0=# A 1=text 2=开``` 3=code 4=闭``` 5=# B 6=b
+        // A 小节 = [0, 5)（到 # B 前）；B 小节 = [5, 7)（到文末）。
+        // A 内的代码块不单独出现（顶层语义）。
+        let lines = ["# A", "text", "```", "code", "```", "# B", "b"];
+        let fenced = vec![false, false, false, true, false, false, false];
+        assert_eq!(
+            top_level_fold_spans(&lines, &fenced),
+            vec![(0, 5), (5, 7)],
+            "A 小节整体（代码块在其内）；B 小节其后"
+        );
+    }
+
+    #[test]
+    fn fold_persist_key_is_empty_for_unnamed() {
+        assert_eq!(fold_persist_key(None), "");
+        assert_eq!(
+            fold_persist_key(Some(std::path::Path::new("/w/notes.md"))),
+            "/w/notes.md"
+        );
     }
 }

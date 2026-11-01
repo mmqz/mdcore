@@ -133,6 +133,93 @@ pub fn load_font_size() -> Option<f32> {
     load_from(&dir).get("font_size")?.as_f64().map(|v| v as f32)
 }
 
+/// #132-3：折叠状态读写（`folds` 键：`{"<文件路径>": [起始行, ...]}`）。
+///
+/// 语义：**按文件记住「折叠头行的行号集合」**（0 基）。存头行而非区间，
+/// 是因为区间尾行在编辑后会漂移；头行在同一块没被编辑时相对稳定，
+/// 恢复时由调用方按当前文本重算区间尾（算不出就丢弃该条——宁缺毋错）。
+///
+/// 容量：每文件最多 [`FOLD_PERSIST_CAP`] 条、全局最多
+/// [`FOLD_FILE_CAP`] 个文件（超限丢最旧写入的那个键，避免配置文件
+/// 无限增长）。
+pub const FOLD_PERSIST_CAP: usize = 200;
+/// 全局最多记住多少个文件的折叠状态。
+pub const FOLD_FILE_CAP: usize = 64;
+
+pub fn save_folds(key: &str, heads: &[usize]) {
+    if let Some(dir) = config_dir() {
+        save_folds_in(&dir, key, heads);
+    }
+}
+
+pub fn load_folds(key: &str) -> Vec<usize> {
+    let Some(dir) = config_dir() else {
+        return Vec::new();
+    };
+    load_folds_in(&dir, key)
+}
+
+fn save_folds_in(dir: &Path, key: &str, heads: &[usize]) {
+    // 空键 = 未命名文档：不持久化（无稳定身份）。
+    if key.is_empty() {
+        return;
+    }
+    let mut value = load_from(dir);
+    if value.get("folds").is_none_or(|v| !v.is_object()) {
+        value["folds"] = serde_json::json!({});
+    }
+    let Some(map) = value["folds"].as_object_mut() else {
+        return;
+    };
+    if heads.is_empty() {
+        // 全展开 = 清掉该文件的记录（不积空数组垃圾）。
+        map.remove(key);
+    } else {
+        let mut sorted: Vec<usize> = heads.iter().copied().take(FOLD_PERSIST_CAP).collect();
+        sorted.sort_unstable();
+        sorted.dedup();
+        map.insert(
+            key.to_string(),
+            serde_json::Value::Array(
+                sorted
+                    .into_iter()
+                    .map(|h| serde_json::Value::from(h as u64))
+                    .collect(),
+            ),
+        );
+        // 容量控制：超限时丢掉最旧写入的**别的**文件（Map 保插入序）。
+        if map.len() > FOLD_FILE_CAP
+            && let Some(oldest) = map.keys().find(|k| k.as_str() != key).cloned()
+        {
+            map.remove(&oldest);
+        }
+    }
+    save_to(dir, &value);
+}
+
+fn load_folds_in(dir: &Path, key: &str) -> Vec<usize> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    let value = load_from(dir);
+    let Some(arr) = value
+        .get("folds")
+        .and_then(|f| f.get(key))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<usize> = arr
+        .iter()
+        .filter_map(|v| v.as_u64())
+        .map(|v| v as usize)
+        .take(FOLD_PERSIST_CAP)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 fn remember_workspace_in(dir: &Path, root: &Path) {
     let mut value = load_from(dir);
     value["workspace"] = serde_json::Value::String(root.to_string_lossy().into_owned());
@@ -373,6 +460,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// #132-3：折叠状态键往返（头行号数组 + 与既有键共存 + 空列表即删除）。
+    ///
+    /// 注：`save_folds`/`load_folds` 走全局 `config_dir()`，并行测试互相
+    /// 污染；此处测底层 `save_folds_in`/`load_folds_in`（与生产同路径，
+    /// 无全局态）。
+    #[test]
+    fn folds_roundtrip_per_file() {
+        let dir = temp_config("fold");
+        remember_workspace_in(&dir, Path::new("/ws"));
+        save_folds_in(&dir, "/ws/a.md", &[7, 0, 3, 3]);
+        save_folds_in(&dir, "/ws/b.md", &[1]);
+        assert_eq!(load_folds_in(&dir, "/ws/a.md"), vec![0, 3, 7], "排序去重");
+        assert_eq!(load_folds_in(&dir, "/ws/b.md"), vec![1], "按文件隔离");
+        assert_eq!(load_folds_in(&dir, "/ws/c.md"), Vec::<usize>::new(), "未知文件空");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// #132：查找历史键往返 + 截断语义（超 20 条由消费方截——本层如实存）。
     #[test]
     fn find_history_roundtrip_and_coexist() {
@@ -406,6 +510,38 @@ mod tests {
         save_find_regex_in(&dir, true);
         let value = load_from(&dir);
         assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 空头行集合 = 删除该文件记录（全展开后不留垃圾）。
+    #[test]
+    fn folds_empty_clears_file_entry() {
+        let dir = temp_config("fold-clear");
+        save_folds_in(&dir, "/ws/a.md", &[2, 5]);
+        assert_eq!(load_folds_in(&dir, "/ws/a.md"), vec![2, 5]);
+        save_folds_in(&dir, "/ws/a.md", &[]);
+        assert_eq!(load_folds_in(&dir, "/ws/a.md"), Vec::<usize>::new());
+        let value = load_from(&dir);
+        assert!(
+            value
+                .get("folds")
+                .and_then(|f| f.get("/ws/a.md"))
+                .is_none(),
+            "空列表应删除键：{value}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 未命名文档（空键）不落盘——无稳定身份。
+    #[test]
+    fn folds_empty_key_is_not_persisted() {
+        let dir = temp_config("fold-nokey");
+        save_folds_in(&dir, "", &[1, 2]);
+        assert_eq!(load_folds_in(&dir, ""), Vec::<usize>::new());
+        assert!(
+            load_from(&dir).get("folds").is_none(),
+            "空键不产生 folds 段"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
