@@ -20,3 +20,9 @@
 *.pptx  binary
 *.zip   binary
 *.wasm  binary
+
+# 外部语料（CommonMark spec / markdown-it good）：
+# 这两份 txt 原样是 CRLF，其「32 反引号围栏」解析按原字节计数。
+# git 入库时若转成 LF，用例数会从 655/652 掉到 0（CI 上实测）。
+# 标记为 binary 保证入库/检出不触碰字节。
+test-artifacts/external-corpus/** binary
