@@ -29,6 +29,12 @@
      战场——--smoke 对 FILE1 的编辑会污染 undo 栈/版本）::
 
        ./rpc_client.py SOCK --smoke2 FILE1 FILE2
+
+  4. #134 FS 序列（rpc_smoke.sh 消费——7 个文件系统命令全链 +
+     沙箱边界拒绝 + 写已开文件 reload 同步 + rename 标签迁移 +
+     delete 自动关标签；应用需以 --smoke-workspace WS 启动）::
+
+       ./rpc_client.py SOCK --smoke-fs WORKSPACE
 """
 
 import json
@@ -83,6 +89,25 @@ def build_payload(parts):
         return {"cmd": "close_file", "path": os.path.abspath(args[0])}
     if cmd == "switch_tab" and len(args) == 1:
         return {"cmd": "switch_tab", "index": int(args[0])}
+    # ---- #134 任务 1：文件系统命令（路径相对工作区根——不 abspath，
+    # 沙箱解析在服务端；绝对路径也照传）----
+    if cmd == "list_dir" and len(args) == 1:
+        return {"cmd": "list_dir", "path": args[0]}
+    if cmd == "read_file" and len(args) == 1:
+        return {"cmd": "read_file", "path": args[0]}
+    if cmd == "write_file" and len(args) == 2:
+        return {"cmd": "write_file", "path": args[0], "content": args[1]}
+    if cmd == "create_file" and len(args) in (1, 2):
+        p = {"cmd": "create_file", "path": args[0]}
+        if len(args) == 2:
+            p["content"] = args[1]
+        return p
+    if cmd == "create_dir" and len(args) == 1:
+        return {"cmd": "create_dir", "path": args[0]}
+    if cmd == "delete" and len(args) == 1:
+        return {"cmd": "delete", "path": args[0]}
+    if cmd == "rename" and len(args) == 2:
+        return {"cmd": "rename", "from": args[0], "to": args[1]}
     raise SystemExit(f"未知命令或参数不匹配：{parts}（见文件头用法）")
 
 
@@ -295,6 +320,11 @@ def run_smoke2(sock, file1, file2):
     file2 = os.path.abspath(file2)
     n = 0
 
+    # #134 修复：FILE2 快照/恢复——本序列的 save 步骤（id 11）会把带
+    # “RPC”插入的内容真实写盘，多轮烟雾会叠加污染夹具（#111 遗留坑，
+    # 修复前已实测 4 轮叠加出 "RPCRPCRPCRPC" 前缀）。序列尾原样写回。
+    file2_snapshot = open(file2, encoding="utf-8").read()
+
     def cmd(payload):
         nonlocal n
         n += 1
@@ -457,9 +487,145 @@ def run_smoke2(sock, file1, file2):
     assert ev is not None, "A 断连后 B 应照常收到（互不干扰 + 自动注销不炸泵）"
     sub_b.close()
 
+    # #134：FILE2 复原——save 步骤的写盘回滚（夹具零污染收口）。
+    with open(file2, "w", encoding="utf-8") as f:
+        f.write(file2_snapshot)
+
     print(
         f"rpc-smoke2: client sequence passed"
         f"（{n} 命令 + 15 命令面全链 + 订阅/双向回显/多客户端/断连注销）"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #134 任务 1「RPC 文件系统命令」：沙箱实测序列（真实 unix socket）
+# ---------------------------------------------------------------------------
+
+
+def run_smoke_fs(sock, ws):
+    """#134 FS 序列：7 命令全链 + 沙箱边界 + 写已开文件同步 + 标签迁移。
+
+    ws = 烟雾工作区根（rpc_smoke.sh 预置夹具：readme.md / src/{a,b}.rs /
+    docs/deep/note.md）。应用需以 --smoke-workspace $WS 启动。
+    """
+    ws = os.path.abspath(ws)
+    n = 0
+
+    def cmd(payload):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is True, f"命令失败：{payload} -> {resp}"
+        return resp["result"]
+
+    def cmd_err(payload, needle):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is False, f"应失败却成功：{payload} -> {resp}"
+        assert needle in resp.get("error", ""), f"错误应含 {needle!r}：{resp}"
+        return resp
+
+    # ---- 1. list_dir 根（单层）：夹具可见 + rel 相对根 ----
+    r = cmd({"id": 1, "cmd": "list_dir", "path": "."})
+    names = {e["name"] for e in r["entries"]}
+    assert {"readme.md", "src", "docs"} <= names, r
+    assert r["truncated"] is False
+    readme = next(e for e in r["entries"] if e["name"] == "readme.md")
+    assert readme["is_dir"] is False and readme["size"] > 0, readme
+    assert readme["rel"] == "readme.md", readme
+
+    # ---- 2. list_dir recursive：嵌套文件可见 ----
+    r = cmd({"id": 2, "cmd": "list_dir", "path": ".", "recursive": True})
+    rels = {e["rel"] for e in r["entries"]}
+    assert {"src/a.rs", "src/b.md", "docs/deep/note.md"} <= rels, r
+
+    # ---- 3. read_file：相对路径 + 内容回带 ----
+    r = cmd({"id": 3, "cmd": "read_file", "path": "src/a.rs"})
+    assert "fn main" in r["text"], r
+    assert r["truncated"] is False and r["size"] == len(r["text"].encode()), r
+
+    # ---- 4. 沙箱边界：根外绝对路径 / .. 逃逸 全拒（安全验收核心）----
+    cmd_err({"id": 4, "cmd": "read_file", "path": "/etc/passwd"}, "工作区")
+    cmd_err({"id": 5, "cmd": "list_dir", "path": "../"}, "工作区")
+    cmd_err(
+        {"id": 6, "cmd": "write_file", "path": "/tmp/mang-escape.md", "content": "x"},
+        "工作区",
+    )
+    cmd_err({"id": 7, "cmd": "delete", "path": "../../etc"}, "工作区")
+    assert not os.path.exists("/tmp/mang-escape.md"), "逃逸写入绝不能落盘"
+
+    # ---- 5. create_dir + create_file（含内容）+ 已存在/父目录拒绝 ----
+    cmd({"id": 8, "cmd": "create_dir", "path": "gen"})
+    r = cmd({"id": 9, "cmd": "create_file", "path": "gen/new.md", "content": "// generated\n"})
+    assert r["bytes"] == 13, r
+    cmd_err({"id": 10, "cmd": "create_file", "path": "gen/new.md"}, "已存在")
+    cmd_err({"id": 11, "cmd": "create_file", "path": "nope/x.rs"}, "父目录")
+    cmd_err({"id": 12, "cmd": "create_dir", "path": "gen"}, "已存在")
+
+    # ---- 6. write_file 未打开文件：直接落盘（不动 UI）----
+    r = cmd({"id": 13, "cmd": "write_file", "path": "gen/new.md", "content": "// rewritten\n"})
+    assert r["synced_open_tab"] is False, r
+    r = cmd({"id": 14, "cmd": "read_file", "path": "gen/new.md"})
+    assert r["text"] == "// rewritten\n", r
+
+    # ---- 7. write_file 已打开的干净标签 → reload 同步 + 订阅事件 ----
+    sub = SubClient(sock)
+    r = sub.send({"id": 3000, "cmd": "subscribe"})
+    assert r.get("ok") is True and r["result"]["subscribed"] is True, r
+    n += 1
+    r = cmd({"id": 15, "cmd": "open_file", "path": os.path.join(ws, "src/b.md")})
+    assert r["already_open"] is False, r
+    r = cmd({"id": 16, "cmd": "write_file", "path": "src/b.md", "content": "// b rewritten\n"})
+    assert r["synced_open_tab"] is True, f"已打开干净标签应 reload 同步：{r}"
+    # Buffer 同步实测：活动文档干净（无未保存差异）且后续读取即新内容
+    r = cmd({"id": 17, "cmd": "get_state"})
+    assert r["active"]["path"].endswith("b.md"), r
+    assert r["active"]["modified"] is False, f"reload 后应干净：{r}"
+    # 双向回显不破：订阅端收到 reload 触发的 doc_changed（source=rpc）
+    ev = sub.wait_event(
+        lambda e: e.get("source") == "rpc"
+        and (e.get("path") or "").endswith("b.md")
+        and any("b rewritten" in (c.get("text") or "") for c in e.get("changes", []))
+    )
+    assert ev is not None, "write_file → reload → doc_changed：订阅端应收到"
+    sub.close()
+
+    # ---- 8. write_file 已打开的脏标签 → 拒（防丢用户修改）----
+    cmd({"id": 18, "cmd": "insert_text", "line": 0, "col": 0, "text": "dirty"})
+    cmd_err({"id": 19, "cmd": "write_file", "path": "src/b.md", "content": "x"}, "未保存")
+    # 收尾：撤销脏化 + 保存（幂等）+ 关闭
+    cmd({"id": 20, "cmd": "undo"})
+    cmd({"id": 21, "cmd": "save"})
+    cmd({"id": 22, "cmd": "close_file", "path": os.path.join(ws, "src/b.md")})
+
+    # ---- 9. rename：文件 + 已打开标签身份迁移 ----
+    cmd({"id": 23, "cmd": "open_file", "path": os.path.join(ws, "gen/new.md")})
+    r = cmd({"id": 24, "cmd": "rename", "from": "gen/new.md", "to": "gen/renamed.md"})
+    assert r["migrated_tabs"] == 1, r
+    r = cmd({"id": 25, "cmd": "get_state"})
+    paths = [t["path"] for t in r["tabs"]]
+    assert any(p.endswith("gen/renamed.md") for p in paths), f"标签应迁到新名：{paths}"
+    assert not any(p.endswith("gen/new.md") for p in paths), f"旧名标签应消失：{paths}"
+    # rename 不覆盖：目标已存在拒绝
+    cmd_err({"id": 26, "cmd": "rename", "from": "gen/renamed.md", "to": "readme.md"}, "已存在")
+    cmd({"id": 27, "cmd": "close_file", "path": os.path.join(ws, "gen/renamed.md")})
+
+    # ---- 10. delete：文件 + 目录（含自动关标签）+ 根自身拒绝 ----
+    r = cmd({"id": 28, "cmd": "delete", "path": "gen/renamed.md"})
+    assert r["deleted"] is True and r["was_dir"] is False, r
+    cmd_err({"id": 29, "cmd": "read_file", "path": "gen/renamed.md"}, "读取失败")
+    # 删目录：目录里有已打开的干净标签 → 删后自动关
+    cmd({"id": 30, "cmd": "open_file", "path": os.path.join(ws, "docs/deep/note.md")})
+    r = cmd({"id": 31, "cmd": "delete", "path": "docs"})
+    assert r["was_dir"] is True and r["closed_tabs"] == 1, r
+    r = cmd({"id": 32, "cmd": "get_state"})
+    assert not any("note.md" in (t["path"] or "") for t in r["tabs"]), r
+    cmd_err({"id": 33, "cmd": "delete", "path": "."}, "根目录")
+
+    print(
+        f"rpc-smoke-fs: client sequence passed（{n} 命令：7 FS 命令全链 + "
+        f"沙箱拒绝 + reload 同步/脏拒 + rename 迁移 + delete 关标签）"
     )
 
 
@@ -493,6 +659,19 @@ def main():
             sys.exit(1)
         except RuntimeError as e:
             print(f"rpc-smoke2: FAIL —— {e}", file=sys.stderr)
+            sys.exit(3)
+        return
+    if rest[0] == "--smoke-fs":
+        if len(rest) != 2:
+            print("用法：rpc_client.py SOCK --smoke-fs WORKSPACE", file=sys.stderr)
+            sys.exit(2)
+        try:
+            run_smoke_fs(sock, rest[1])
+        except AssertionError as e:
+            print(f"rpc-smoke-fs: FAIL —— {e}", file=sys.stderr)
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f"rpc-smoke-fs: FAIL —— {e}", file=sys.stderr)
             sys.exit(3)
         return
     payload = build_payload(rest)

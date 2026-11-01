@@ -19,7 +19,7 @@ export PATH="/home/z/.cargo/bin:$SYSROOT/usr/bin:/home/z/.local/bin:$PATH"
 export LD_LIBRARY_PATH="$SYSROOT/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # 与 smoke.sh 同一链接面（sysroot dev 库）——RUSTFLAGS 变化会触发全量重编。
 if [ -d "$SYSROOT/usr/lib/x86_64-linux-gnu" ]; then
-  export RUSTFLAGS="-L $SYSROOT/usr/lib/x86_64-linux-gnu${RUSTFLAGS:+ $RUSTFLAGS}"
+  export RUSTFLAGS="${RUSTFLAGS:--L native=$SYSROOT/usr/lib/x86_64-linux-gnu}"
 fi
 
 CARGO_INCREMENTAL=0 cargo build

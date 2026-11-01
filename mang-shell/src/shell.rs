@@ -726,6 +726,66 @@ impl ShellApp {
         cx.notify();
     }
 
+    // ------------------------------------------------------------------
+    // #134 任务 1「RPC 文件系统命令」：工作区沙箱边界 + 标签的
+    // 磁盘权威面（重载 / 改名迁移）。
+    // ------------------------------------------------------------------
+
+    /// #134：工作区根目录（RPC FS 命令的沙箱边界；无工作区 = `None`
+    /// ——FS 命令一律拒绝）。返回的是 FileTree 持有的原始根路径，
+    /// 符号链接摊平（canonicalize）由 rpc::resolve_sandboxed 完成。
+    pub fn workspace_root(&self, cx: &Context<Self>) -> Option<PathBuf> {
+        self.workspace
+            .as_ref()
+            .map(|tree| tree.read(cx).root().to_path_buf())
+    }
+
+    /// #134：重载指定标签（RPC `write_file` 写盘后把 Buffer 同步到磁盘
+    /// 现状——`Editor::reload_from_disk` 完整编辑链）。索引越界 / 编辑器
+    /// 拒绝（只读渲染态 / docx 行模型态）返回 false。
+    pub fn reload_tab(&mut self, idx: usize, cx: &mut Context<Self>) -> bool {
+        let Some(tab) = self.tabs.get(idx) else {
+            return false;
+        };
+        let ok = tab.editor.update(cx, |ed, cx| ed.reload_from_disk(cx));
+        if ok {
+            cx.notify();
+        }
+        ok
+    }
+
+    /// #134：标签可否从磁盘重载（write_file 的门槛探针——只读渲染态
+    /// / docx 行模型态 false）。
+    pub fn tab_can_reload(&self, idx: usize, cx: &Context<Self>) -> bool {
+        self.tabs
+            .get(idx)
+            .is_some_and(|tab| tab.editor.read(cx).can_reload_from_disk())
+    }
+
+    /// #134：rename 后的标签身份迁移（磁盘已改名——按「索引 → 新路径」
+    /// 计划逐一更新 `TabItem.path` + `Editor::adopt_path`；不写盘、不动
+    /// Buffer）。计划由调用方在 rename **前**采集（旧路径还能 canonicalize
+    /// 时）。返回迁移的标签数。
+    pub fn apply_tab_renames(
+        &mut self,
+        plan: &[(usize, PathBuf)],
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let mut n = 0;
+        for &(idx, ref new_path) in plan {
+            if let Some(tab) = self.tabs.get_mut(idx) {
+                tab.path = new_path.clone();
+                tab.editor
+                    .update(cx, |ed, _| ed.adopt_path(new_path.clone()));
+                n += 1;
+            }
+        }
+        if n > 0 {
+            cx.notify();
+        }
+        n
+    }
+
     /// F4：Ctrl+Shift+S 另存为对话框（prompt_for_new_path——
     /// 建议名取当前文件名；目录取当前文件所在目录，缺省工作区根/家目录）。
     fn prompt_save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {

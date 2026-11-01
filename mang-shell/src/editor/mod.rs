@@ -1374,6 +1374,68 @@ impl Editor {
         }
     }
 
+    // ------------------------------------------------------------------
+    // #134 任务 1「RPC 文件系统命令」：磁盘权威面三方法——
+    // write_file 写已打开文件后重载 / rename 后身份跟随。
+    // ------------------------------------------------------------------
+
+    /// #134：从磁盘重载（RPC `write_file` 写已打开文件后的 Buffer 同步
+    /// ——「写文件不等于打开文件」的镜像面：磁盘是权威，Buffer 追上）。
+    ///
+    /// 走与用户编辑同一变更链（`replace_range` 全文一次替换 + `after_edit`
+    /// 收尾——缓存刷新/事件总线/一条 undo 记录全真实生效；重载本身可被
+    /// Ctrl+Z 撤回）。门槛见 [`Self::can_reload_from_disk`]；读盘失败 /
+    /// 非 UTF-8 同样 false（调用方组织错误消息）。成功后 `mark_saved`
+    ///（重载后的 Buffer 与磁盘一致——干净态）。
+    pub fn reload_from_disk(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.can_reload_from_disk() {
+            return false;
+        }
+        let Some(path) = self.file_path.clone() else {
+            return false;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(err) => {
+                eprintln!("mang-shell: 重载失败 {}: {err}", path.display());
+                return false;
+            }
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            eprintln!("mang-shell: 重载拒绝（非 UTF-8）：{}", path.display());
+            return false;
+        };
+        let last = self.buffer.line_count().saturating_sub(1);
+        let end = Point::new(last, self.buffer.line_len(last));
+        self.buffer.replace_range(Point::new(0, 0), end, &text);
+        self.sync_cursors_from_buffer();
+        self.buffer.mark_saved();
+        self.after_edit();
+        cx.notify();
+        eprintln!("reloaded: {}", path.display());
+        true
+    }
+
+    /// #134：可否从磁盘重载——文本态且非 docx 行模型态。只读渲染态
+    ///（docx/pdf/xlsx 渲染）无 Buffer 重载语义；docx 可编辑态的行模型
+    /// 与磁盘字节不同构（编辑桥在途），重载会破坏回写链——两者都拒。
+    pub fn can_reload_from_disk(&self) -> bool {
+        !self.read_only && self.docx_edit.is_none()
+    }
+
+    /// #134：外部改名后的身份跟随（磁盘文件已改名——`file_path` 与
+    /// `display_name` 更新；不写盘、不动 Buffer、不清 undo 栈）。
+    /// 修改态有意保留：用户未保存的编辑跟着新名字走，下次 `save`
+    /// 落到新路径（VSCode 同语义）。
+    pub fn adopt_path(&mut self, path: PathBuf) {
+        self.display_name = SharedString::from(
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "未命名".to_string()),
+        );
+        self.file_path = Some(path);
+    }
+
     /// 文档变更后的缓存刷新（fence 状态 + 查找匹配 + 断点失效）。
     fn refresh_caches(&mut self) {
         // r42 阶段 B：编辑后断点全部失效（被编辑行的断点需重算；

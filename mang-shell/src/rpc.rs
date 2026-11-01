@@ -37,16 +37,17 @@
 //!   的残留由下次启动 [`prepare_socket`] 探活清理（连得上 = 别的实例
 //!   在监听 → 本实例禁用 RPC；连不上 = 陈旧文件 → 删除后重绑）。
 //!
-//! ## 协议（#111 后 15 命令 + 事件流）
+//! ## 协议（#134 后 22 命令 + 事件流）
 //!
 //! 请求（`id` 可省——省略时响应 `id` 为 null；未知字段忽略——前向
 //! 兼容）。#104 六命令（open_file / insert_text / replace_selection /
-//! get_state / close_file / switch_tab）之上，#111 任务 2 新增：
+//! get_state / close_file / switch_tab）之上，#111 任务 2 新增导航/历史/
+//! 保存/订阅面，#134 任务 1 新增文件系统面：
 //!
 //! ```json
 //! {"id": 7,  "cmd": "set_cursor",     "line": 10, "col": 5}
 //! {"id": 8,  "cmd": "set_selection",  "start": {"line": 0, "col": 1},
-//!                                        "end":   {"line": 0, "col": 5}}
+//!                                         "end":  {"line": 0, "col": 5}}
 //! {"id": 9,  "cmd": "get_selection"}
 //! {"id": 10, "cmd": "undo"}
 //! {"id": 11, "cmd": "redo"}
@@ -54,7 +55,24 @@
 //! {"id": 13, "cmd": "save_as",        "path": "/tmp/b.md"}
 //! {"id": 14, "cmd": "scroll_to",      "line": 42}
 //! {"id": 15, "cmd": "subscribe"}
+//! {"id": 16, "cmd": "list_dir",        "path": "src", "recursive": true}
+//! {"id": 17, "cmd": "read_file",       "path": "src/main.rs"}
+//! {"id": 18, "cmd": "write_file",      "path": "src/lib.rs", "content": "…"}
+//! {"id": 19, "cmd": "create_file",     "path": "src/new.rs"}
+//! {"id": 20, "cmd": "create_dir",      "path": "src/util"}
+//! {"id": 21, "cmd": "delete",          "path": "src/old.rs"}
+//! {"id": 22, "cmd": "rename",          "from": "src/a.rs", "to": "src/b.rs"}
 //! ```
+//!
+//! ### #134 文件系统安全边界（沙箱）
+//!
+//! 全部 FS 命令只允许在**工作区根目录**内操作（无工作区 = 一律拒绝）
+//! ——[resolve_sandboxed](#)：canonicalize 解析后检查前缀（组件级），
+//! 相对路径相对根，`..`/符号链接逃逸全部拒在门外。写已打开文件的
+//! 语义：只写盘不动 UI，已打开的干净文本标签自动 reload 同步（走
+//! 完整编辑链——订阅端照收 doc_changed）；只读渲染态/脏标签拒绝
+//!（引导 close/save）。删除：根自身拒绝、路径下脏标签拒绝；rename：
+//! 不覆盖、已开标签身份自动迁移。
 //!
 //! 响应（恒一行 JSON；`ok` 分支二选一 `result`/`error`）：
 //!
@@ -86,12 +104,27 @@
 //! - `subscribe`：幂等（重复订阅替换旧通道）；断连自动注销（事件泵
 //!   send 失败即移除）。
 //!
+//! ## 命令语义要点（#134 文件系统面）
+//!
+//! - `list_dir`/`read_file`：浏览面——只读盘不碰 UI；`list_dir` 递归
+//!   上限 5000 条（截断置 truncated），`read_file` 上限 1 MiB（截断
+//!   到字符边界）+ 非 UTF-8 拒绝。
+//! - `write_file`：磁盘是权威——写盘不动 UI；已打开的干净文本标签
+//!   reload 同步（可 Ctrl+Z 撤回）。`create_file`/`create_dir`：已存
+//!   在拒绝（不隐式覆盖/不隐式建多层——操作可预期）。
+//! - `delete`：AI 有责任直接删（第一版无回收站，#134 给的取舍）；
+//!   根自身 + 脏标签路径拒（防丢用户未保存的编辑），干净标签自动关。
+//! - `rename`：不覆盖已存在目标；from 是目录时整棵子树的已开标签
+//!   身份迁移（修改态跟随新名——下次 save 落新路径）。
+//!
 //! ## 验证
 //!
-//! - 单测：协议解析/序列化、事件行形态、订阅表逻辑（文件尾 mod tests）。
-//! - 端到端：`rpc_smoke.sh`（Xvfb + `tests/rpc_client.py`——15 命令
+//! - 单测：协议解析/序列化、事件行形态、订阅表逻辑、沙箱边界
+//!   （逃逸/符号链接/组件前缀）——文件尾 mod tests。
+//! - 端到端：`rpc_smoke.sh`（Xvfb + `tests/rpc_client.py`——22 命令
 //!   全链 + 订阅/双向回显（`--smoke-user-type` 合成用户键入路径）+
-//!   双客户端并发）。
+//!   双客户端并发 + `--smoke-workspace` 沙箱实测（FS 命令 + 越界拒绝
+//!   + 写已开文件同步 + rename 标签迁移））。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -188,6 +221,48 @@ pub enum ControlCommand {
     /// 幂等；断连自动注销）。
     #[serde(rename = "subscribe")]
     Subscribe,
+
+    // ---------------- #134 任务 1：文件系统命令（工作区沙箱内） ----------------
+    /// 列目录（相对路径相对工作区根；`recursive` 缺省 false——只列
+    /// 一层。条目上限 [`LIST_DIR_MAX_ENTRIES`]，超限截断置 truncated）。
+    #[serde(rename = "list_dir")]
+    ListDir {
+        path: String,
+        #[serde(default)]
+        recursive: bool,
+    },
+
+    /// 读文件（不打开 UI——直接读盘给 AI 消费；上限
+    /// [`READ_FILE_CAP_BYTES`]，超限截断置 truncated；非 UTF-8 拒绝）。
+    #[serde(rename = "read_file")]
+    ReadFile { path: String },
+
+    /// 写文件（只写盘，不动 UI——已打开的干净文本标签自动 reload
+    /// 同步；只读渲染态/脏标签拒绝）。父目录必须存在。
+    #[serde(rename = "write_file")]
+    WriteFile { path: String, content: String },
+
+    /// 新建文件（已存在拒绝——覆盖走 write_file；`content` 可省 = 空文件）。
+    #[serde(rename = "create_file")]
+    CreateFile {
+        path: String,
+        #[serde(default)]
+        content: Option<String>,
+    },
+
+    /// 新建目录（单层——父目录必须存在；已存在拒绝）。
+    #[serde(rename = "create_dir")]
+    CreateDir { path: String },
+
+    /// 删除（文件 remove_file / 目录递归 remove_dir_all；工作区根
+    /// 自身拒绝；路径下有脏标签拒绝、干净标签自动关闭）。
+    #[serde(rename = "delete")]
+    Delete { path: String },
+
+    /// 重命名/移动（`from`→`to` 都必须在沙箱内；`to` 已存在拒绝；
+    /// 已打开标签身份自动迁移——修改态跟随新名）。
+    #[serde(rename = "rename")]
+    Rename { from: String, to: String },
 }
 
 /// 点位线上形态（`{"line": n, "col": n}`——与响应 `point_json` 同构）。
@@ -222,6 +297,13 @@ impl ControlCommand {
             ControlCommand::SaveAs { .. } => "save_as",
             ControlCommand::ScrollTo { .. } => "scroll_to",
             ControlCommand::Subscribe => "subscribe",
+            ControlCommand::ListDir { .. } => "list_dir",
+            ControlCommand::ReadFile { .. } => "read_file",
+            ControlCommand::WriteFile { .. } => "write_file",
+            ControlCommand::CreateFile { .. } => "create_file",
+            ControlCommand::CreateDir { .. } => "create_dir",
+            ControlCommand::Delete { .. } => "delete",
+            ControlCommand::Rename { .. } => "rename",
         }
     }
 }
@@ -784,6 +866,16 @@ fn execute_command(
         // #111 Subscribe 在 dispatcher_loop 内特判（纯通道注册，不经
         // 主线程）——此分支不可达，但 match 穷尽性要求列出。
         ControlCommand::Subscribe => unreachable!("subscribe 在 dispatcher 侧特判"),
+        // ---------------- #134 任务 1：文件系统命令（沙箱内） ----------------
+        ControlCommand::ListDir { path, recursive } => cmd_list_dir(shell, cx, path, *recursive),
+        ControlCommand::ReadFile { path } => cmd_read_file(shell, cx, path),
+        ControlCommand::WriteFile { path, content } => cmd_write_file(shell, cx, path, content),
+        ControlCommand::CreateFile { path, content } => {
+            cmd_create_file(shell, cx, path, content.as_deref())
+        }
+        ControlCommand::CreateDir { path } => cmd_create_dir(shell, cx, path),
+        ControlCommand::Delete { path } => cmd_delete(shell, window, cx, path),
+        ControlCommand::Rename { from, to } => cmd_rename(shell, cx, from, to),
     }
 }
 
@@ -1071,6 +1163,430 @@ fn cmd_save_as(
             path.display()
         )),
     }
+}
+
+// ---------------------------------------------------------------------------
+// #134 任务 1：工作区沙箱（纯函数面——单测主战场）
+// ---------------------------------------------------------------------------
+
+/// 把 AI 给的路径解析进工作区沙箱（canonicalize 解析后检查前缀——
+/// issue #134 安全要求）。
+///
+/// - 相对路径相对工作区根（AI 的 `"src/main.rs"` = 根下 src/main.rs）
+/// - 绝对路径必须落在根内（`Path::starts_with` 按组件比较——`/ws/a`
+///   不是 `/ws/ab` 的前缀，不会误放行）
+/// - 目标存在 → 整条 canonicalize（符号链接/`..` 全摊平）；不存在
+///   （create_file / write_file 新目标）→ canonicalize 最近存在的祖
+///   先再拼回不存在的尾段——逃逸链接在祖先解析时即被摊平拒掉
+/// - 根外一律 `Err`（消息含目标与根——AI 可诊断自救）
+///
+/// TOCTOU 窄窗（检查与实际 IO 之间路径被换）本机单用户场景 + AI 有
+/// 责任的前提下接受（#134 明确边界：本机、不做认证；fd-based 检查
+/// 留待网络化时升级）。
+pub fn resolve_sandboxed(root: &Path, target: &Path) -> Result<PathBuf, String> {
+    let joined = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        root.join(target)
+    };
+    let canon_root = root
+        .canonicalize()
+        .map_err(|e| format!("工作区根不可解析（{}）：{e}", root.display()))?;
+    let resolved = match joined.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            // 目标不存在：canonicalize 最近存在的祖先，拼回尾段。
+            let mut existing = joined.clone();
+            let mut tail: Vec<std::ffi::OsString> = Vec::new();
+            while !existing.exists() {
+                let Some(name) = existing.file_name().map(|n| n.to_os_string()) else {
+                    return Err(format!(
+                        "路径不可解析（越过文件系统根）：{}",
+                        joined.display()
+                    ));
+                };
+                tail.push(name);
+                let Some(parent) = existing.parent().map(|p| p.to_path_buf()) else {
+                    return Err(format!("路径不可解析（无父目录）：{}", joined.display()));
+                };
+                existing = parent;
+            }
+            let mut p = existing
+                .canonicalize()
+                .map_err(|e| format!("路径解析失败（{}）：{e}", existing.display()))?;
+            for name in tail.iter().rev() {
+                p.push(name);
+            }
+            p
+        }
+    };
+    if resolved.starts_with(&canon_root) {
+        Ok(resolved)
+    } else {
+        Err(format!(
+            "路径越出工作区边界（目标 {}，根 {}）——FS 命令只允许工作区内操作",
+            resolved.display(),
+            canon_root.display()
+        ))
+    }
+}
+
+/// 沙箱根获取（无工作区 = 全部 FS 命令拒绝——「无边界」比「错误的
+/// 边界」更危险）。
+fn workspace_root_of(shell: &ShellApp, cx: &Context<ShellApp>) -> Result<PathBuf, String> {
+    shell.workspace_root(cx).ok_or_else(|| {
+        "无打开的工作区——FS 命令限定工作区根目录内（Ctrl+K Ctrl+O 打开文件夹）".into()
+    })
+}
+
+/// 按 canonical 路径找已打开标签（`tab.path` 是打开时的绝对路径，未必
+/// 摊平符号链接——磁盘权威面对齐用 canonical 比较）。
+fn open_tab_by_canonical(shell: &ShellApp, cx: &Context<ShellApp>, target: &Path) -> Option<usize> {
+    (0..shell.tab_count()).find(|&i| {
+        shell
+            .tab_path(i)
+            .is_some_and(|p| p.canonicalize().is_ok_and(|c| c.as_path() == target))
+    })
+}
+
+/// 收集「路径下」（自身或子孙）的已打开标签索引。
+fn tabs_under_path(shell: &ShellApp, cx: &Context<ShellApp>, root: &Path) -> Vec<usize> {
+    (0..shell.tab_count())
+        .filter(|&i| {
+            shell
+                .tab_path(i)
+                .and_then(|p| p.canonicalize().ok())
+                .is_some_and(|cp| cp.starts_with(root))
+        })
+        .collect()
+}
+
+/// `list_dir` 条目上限（防一次递归把响应撑爆；超限 `truncated=true`）。
+const LIST_DIR_MAX_ENTRIES: usize = 5000;
+
+/// `read_file` 载荷上限（字节；超限截断到字符边界 + `truncated=true`）。
+const READ_FILE_CAP_BYTES: usize = 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// #134 任务 1：文件系统命令（主线程薄编排——磁盘权威面）
+// ---------------------------------------------------------------------------
+
+fn cmd_list_dir(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    path: &str,
+    recursive: bool,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root_of(shell, cx)?;
+    let dir = resolve_sandboxed(&root, Path::new(path))?;
+    if !dir.is_dir() {
+        return Err(format!("不是目录（{}）", dir.display()));
+    }
+    let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    if recursive {
+        walk_dir_recursive(&dir, &canon_root, &mut entries, &mut truncated);
+    } else {
+        let rd =
+            std::fs::read_dir(&dir).map_err(|e| format!("列目录失败（{}）：{e}", dir.display()))?;
+        let mut items: Vec<_> = rd.flatten().collect();
+        items.sort_by_key(|e| e.file_name());
+        for entry in items {
+            if entries.len() >= LIST_DIR_MAX_ENTRIES {
+                truncated = true;
+                break;
+            }
+            entries.push(dir_entry_json(&entry, &canon_root));
+        }
+    }
+    let count = entries.len();
+    Ok(serde_json::json!({
+        "path": dir.display().to_string(),
+        "entries": entries,
+        "count": count,
+        "truncated": truncated,
+    }))
+}
+
+/// 递归列目录（先序——目录条目紧跟其子项；读不了的子目录静默跳过：
+/// 单个坏子目录不炸整次列举）。
+fn walk_dir_recursive(
+    dir: &Path,
+    canon_root: &Path,
+    out: &mut Vec<serde_json::Value>,
+    truncated: &mut bool,
+) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut items: Vec<_> = rd.flatten().collect();
+    items.sort_by_key(|e| e.file_name());
+    for entry in items {
+        if out.len() >= LIST_DIR_MAX_ENTRIES {
+            *truncated = true;
+            return;
+        }
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        out.push(dir_entry_json(&entry, canon_root));
+        if is_dir {
+            walk_dir_recursive(&entry.path(), canon_root, out, truncated);
+        }
+    }
+}
+
+/// 单条目录项的 JSON 形态（`rel` 相对工作区根——AI 上下文省字；
+/// canonical 后不在根内时 `rel` 为 null）。
+fn dir_entry_json(entry: &std::fs::DirEntry, canon_root: &Path) -> serde_json::Value {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let path = entry.path();
+    let (is_dir, size) = match entry.metadata() {
+        Ok(meta) => (meta.is_dir(), if meta.is_dir() { 0 } else { meta.len() }),
+        Err(err) => {
+            return serde_json::json!({
+                "name": name, "path": path.display().to_string(),
+                "error": format!("metadata 失败：{err}"),
+            });
+        }
+    };
+    serde_json::json!({
+        "name": name,
+        "path": path.display().to_string(),
+        "rel": path.strip_prefix(canon_root).ok().map(|p| p.display().to_string()),
+        "is_dir": is_dir,
+        "size": size,
+    })
+}
+
+fn cmd_read_file(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    path: &str,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root_of(shell, cx)?;
+    let path = resolve_sandboxed(&root, Path::new(path))?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取失败（{}）：{e}", path.display()))?;
+    let total = bytes.len();
+    let truncated = total > READ_FILE_CAP_BYTES;
+    let mut slice = &bytes[..total.min(READ_FILE_CAP_BYTES)];
+    // 截断退到 UTF-8 字符边界（多字节字符不劈半）；未截断时此循环
+    // 不进——整体合法性由随后的 from_utf8 判定。
+    while !slice.is_empty() && std::str::from_utf8(slice).is_err() {
+        slice = &slice[..slice.len() - 1];
+    }
+    let text = std::str::from_utf8(slice)
+        .map_err(|_| format!("非 UTF-8 文本（{}）——二进制文件不支持读取", path.display()))?;
+    Ok(serde_json::json!({
+        "path": path.display().to_string(),
+        "size": total,
+        "chars": text.chars().count(),
+        "text": text,
+        "truncated": truncated,
+    }))
+}
+
+fn cmd_write_file(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    path: &str,
+    content: &str,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root_of(shell, cx)?;
+    let path = resolve_sandboxed(&root, Path::new(path))?;
+    // 已打开标签：渲染态/行模型态拒（UI 与盘脱节），脏标签拒（静默
+    // 覆盖丢用户修改——AI 有责任先 save）。
+    let open_idx = open_tab_by_canonical(shell, cx, &path);
+    if let Some(idx) = open_idx {
+        if shell.tab_is_readonly(idx, cx).unwrap_or(false) {
+            return Err(format!(
+                "文件以只读渲染态打开（{}）——先 close_file 再写",
+                path.display()
+            ));
+        }
+        if !shell.tab_can_reload(idx, cx) {
+            return Err(format!(
+                "文件以 docx 行模型态打开（{}）——行模型与磁盘字节不同构，先 close_file 再写",
+                path.display()
+            ));
+        }
+        if shell.tab_is_modified(idx, cx).unwrap_or(false) {
+            return Err(format!(
+                "文件有未保存修改（{}）——先 save 再覆盖写",
+                path.display()
+            ));
+        }
+    }
+    // 父目录必须存在（新建目录走 create_dir——不隐式 mkdir，AI 的
+    // 操作结果可预期）。
+    if let Some(parent) = path.parent() {
+        if !parent.is_dir() {
+            return Err(format!(
+                "父目录不存在（{}）——先 create_dir",
+                parent.display()
+            ));
+        }
+    }
+    std::fs::write(&path, content).map_err(|e| format!("写入失败（{}）：{e}", path.display()))?;
+    // 已打开的干净文本标签：reload 同步（走完整编辑链——订阅端也
+    // 会收到这次变更的 doc_changed 事件，双向回显不破）。
+    let synced = open_idx
+        .map(|idx| shell.reload_tab(idx, cx))
+        .unwrap_or(false);
+    Ok(serde_json::json!({
+        "written": true,
+        "path": path.display().to_string(),
+        "bytes": content.len(),
+        "synced_open_tab": synced,
+    }))
+}
+
+fn cmd_create_file(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    path: &str,
+    content: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root_of(shell, cx)?;
+    let path = resolve_sandboxed(&root, Path::new(path))?;
+    if path.exists() {
+        return Err(format!(
+            "文件已存在（{}）——覆盖请用 write_file",
+            path.display()
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.is_dir() {
+            return Err(format!(
+                "父目录不存在（{}）——先 create_dir",
+                parent.display()
+            ));
+        }
+    }
+    let content = content.unwrap_or("");
+    std::fs::write(&path, content).map_err(|e| format!("创建失败（{}）：{e}", path.display()))?;
+    Ok(serde_json::json!({
+        "created": true,
+        "path": path.display().to_string(),
+        "bytes": content.len(),
+    }))
+}
+
+fn cmd_create_dir(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    path: &str,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root_of(shell, cx)?;
+    let path = resolve_sandboxed(&root, Path::new(path))?;
+    if path.exists() {
+        return Err(format!("路径已存在（{}）", path.display()));
+    }
+    // 单层 create_dir（父必须存在）——隐式建多层会让 delete/rename
+    // 的路径假设失效；AI 需要 -p 语义就逐层 create_dir。
+    std::fs::create_dir(&path).map_err(|e| format!("创建失败（{}）：{e}", path.display()))?;
+    Ok(serde_json::json!({
+        "created": true,
+        "path": path.display().to_string(),
+    }))
+}
+
+fn cmd_delete(
+    shell: &mut ShellApp,
+    window: &mut Window,
+    cx: &mut Context<ShellApp>,
+    path: &str,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root_of(shell, cx)?;
+    let target = resolve_sandboxed(&root, Path::new(path))?;
+    // 根自身拒绝（AI 一行命令蒸发整个工作区——防呆）。
+    if root
+        .canonicalize()
+        .is_ok_and(|canon_root| target == canon_root)
+    {
+        return Err("拒绝删除工作区根目录自身".into());
+    }
+    if !target.exists() {
+        return Err(format!("目标不存在（{}）", target.display()));
+    }
+    let was_dir = target.is_dir();
+    // 路径下有脏标签 → 拒（连用户未保存的编辑一起删掉——AI 有责任
+    // 先处理）；干净标签删后自动关（文件已不存在，标签留着无意义）。
+    let under = tabs_under_path(shell, cx, &target);
+    for &idx in &under {
+        if shell.tab_is_modified(idx, cx).unwrap_or(false) {
+            let tab_path = shell.tab_path(idx).unwrap_or_default();
+            return Err(format!(
+                "路径下有未保存的标签（{}）——先保存或关闭再删除",
+                tab_path.display()
+            ));
+        }
+    }
+    if was_dir {
+        std::fs::remove_dir_all(&target)
+            .map_err(|e| format!("删除目录失败（{}）：{e}", target.display()))?;
+    } else {
+        std::fs::remove_file(&target)
+            .map_err(|e| format!("删除文件失败（{}）：{e}", target.display()))?;
+    }
+    let closed = under.len();
+    for &idx in under.iter().rev() {
+        shell.close_tab_no_confirm(idx, window, cx);
+    }
+    Ok(serde_json::json!({
+        "deleted": true,
+        "path": target.display().to_string(),
+        "was_dir": was_dir,
+        "closed_tabs": closed,
+    }))
+}
+
+fn cmd_rename(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    from: &str,
+    to: &str,
+) -> Result<serde_json::Value, String> {
+    let root = workspace_root_of(shell, cx)?;
+    let from = resolve_sandboxed(&root, Path::new(from))?;
+    let to = resolve_sandboxed(&root, Path::new(to))?;
+    if !from.exists() {
+        return Err(format!("源不存在（{}）", from.display()));
+    }
+    if to.exists() {
+        return Err(format!("目标已存在（{}）——rename 不覆盖", to.display()));
+    }
+    if let Some(parent) = to.parent() {
+        if !parent.is_dir() {
+            return Err(format!(
+                "目标父目录不存在（{}）——先 create_dir",
+                parent.display()
+            ));
+        }
+    }
+    // 迁移计划在 rename **前**采集（旧路径还能 canonicalize 时）；
+    // 文件/目录（from 是目录时整棵子树）下的标签全部跟随。rest 为空
+    // = 标签正是 from 自身（join("") 会带尾分隔符——直接用 to）。
+    let plan: Vec<(usize, PathBuf)> = (0..shell.tab_count())
+        .filter_map(|idx| {
+            let canon = shell.tab_path(idx)?.canonicalize().ok()?;
+            let rest = canon.strip_prefix(&from).ok()?.to_path_buf();
+            let new_path = if rest.as_os_str().is_empty() {
+                to.to_path_buf()
+            } else {
+                to.join(rest)
+            };
+            Some((idx, new_path))
+        })
+        .collect();
+    std::fs::rename(&from, &to)
+        .map_err(|e| format!("改名失败（{} → {}）：{e}", from.display(), to.display()))?;
+    let migrated = shell.apply_tab_renames(&plan, cx);
+    Ok(serde_json::json!({
+        "renamed": true,
+        "from": from.display().to_string(),
+        "to": to.display().to_string(),
+        "migrated_tabs": migrated,
+    }))
 }
 
 /// 全量状态（get_state 的 result 载荷）。
@@ -1466,6 +1982,266 @@ mod tests {
         assert_eq!(parsed["type"], "doc_changed");
         assert_eq!(parsed["source"], "rpc");
         assert_eq!(parsed["changes"][0]["kind"], "replace");
+    }
+
+    // ---------------- #134 任务 1：FS 命令协议 + 沙箱 ----------------
+
+    #[test]
+    fn parse_fs_commands_roundtrip() {
+        // list_dir：recursive 缺省 false（serde default——宽容输入）。
+        let (id, cmd) = parse_command(r#"{"id":16,"cmd":"list_dir","path":"src"}"#);
+        assert_eq!(id, Some(16));
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::ListDir {
+                path: "src".into(),
+                recursive: false
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":17,"cmd":"list_dir","path":".","recursive":true}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::ListDir {
+                path: ".".into(),
+                recursive: true
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":18,"cmd":"read_file","path":"a.rs"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::ReadFile {
+                path: "a.rs".into()
+            })
+        );
+
+        let (_, cmd) =
+            parse_command(r#"{"id":19,"cmd":"write_file","path":"a.rs","content":"fn main(){}"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::WriteFile {
+                path: "a.rs".into(),
+                content: "fn main(){}".into()
+            })
+        );
+
+        // create_file：content 可省（None = 空文件）。
+        let (_, cmd) = parse_command(r#"{"id":20,"cmd":"create_file","path":"b.rs"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::CreateFile {
+                path: "b.rs".into(),
+                content: None
+            })
+        );
+
+        let (_, cmd) =
+            parse_command(r#"{"id":21,"cmd":"create_file","path":"b.rs","content":"x"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::CreateFile {
+                path: "b.rs".into(),
+                content: Some("x".into())
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":22,"cmd":"create_dir","path":"src/sub"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::CreateDir {
+                path: "src/sub".into()
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":23,"cmd":"delete","path":"old.rs"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::Delete {
+                path: "old.rs".into()
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":24,"cmd":"rename","from":"a.rs","to":"b.rs"}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::Rename {
+                from: "a.rs".into(),
+                to: "b.rs".into()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_fs_commands_field_errors() {
+        // read_file 缺 path
+        let (_, cmd) = parse_command(r#"{"cmd":"read_file"}"#);
+        assert!(cmd.is_err());
+        // write_file 缺 content
+        let (_, cmd) = parse_command(r#"{"cmd":"write_file","path":"x"}"#);
+        assert!(cmd.is_err());
+        // rename 缺 to
+        let (_, cmd) = parse_command(r#"{"cmd":"rename","from":"x"}"#);
+        assert!(cmd.is_err());
+        // list_dir 的 recursive 类型错（字符串）
+        let (_, cmd) = parse_command(r#"{"cmd":"list_dir","path":".","recursive":"yes"}"#);
+        assert!(cmd.is_err());
+    }
+
+    #[test]
+    fn fs_command_names_match_wire_tags() {
+        assert_eq!(
+            ControlCommand::ListDir {
+                path: String::new(),
+                recursive: false
+            }
+            .name(),
+            "list_dir"
+        );
+        assert_eq!(
+            ControlCommand::ReadFile {
+                path: String::new()
+            }
+            .name(),
+            "read_file"
+        );
+        assert_eq!(
+            ControlCommand::WriteFile {
+                path: String::new(),
+                content: String::new()
+            }
+            .name(),
+            "write_file"
+        );
+        assert_eq!(
+            ControlCommand::CreateFile {
+                path: String::new(),
+                content: None
+            }
+            .name(),
+            "create_file"
+        );
+        assert_eq!(
+            ControlCommand::CreateDir {
+                path: String::new()
+            }
+            .name(),
+            "create_dir"
+        );
+        assert_eq!(
+            ControlCommand::Delete {
+                path: String::new()
+            }
+            .name(),
+            "delete"
+        );
+        assert_eq!(
+            ControlCommand::Rename {
+                from: String::new(),
+                to: String::new()
+            }
+            .name(),
+            "rename"
+        );
+    }
+
+    /// 沙箱测试夹具：进程唯一临时工作区（G3 全局污染教训——不共享
+    /// 可变全局路径；每个用例独立目录）。
+    fn temp_ws(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("mang-rpc-fs-ws-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn sandbox_accepts_inside_paths() {
+        let ws = temp_ws("inside");
+        std::fs::write(ws.join("a.md"), "x").unwrap();
+        std::fs::create_dir(ws.join("src")).unwrap();
+        let canon_ws = ws.canonicalize().unwrap();
+
+        // 相对路径 → 相对根解析（AI 主用法）
+        assert_eq!(
+            resolve_sandboxed(&ws, Path::new("a.md")).unwrap(),
+            canon_ws.join("a.md")
+        );
+        // 根内绝对路径
+        assert_eq!(
+            resolve_sandboxed(&ws, &ws.join("src")).unwrap(),
+            canon_ws.join("src")
+        );
+        // 根自身（list_dir "." 的合法场景）
+        assert_eq!(resolve_sandboxed(&ws, Path::new(".")).unwrap(), canon_ws);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn sandbox_rejects_outside_paths() {
+        let ws = temp_ws("outside");
+        // 绝对路径根外
+        assert!(
+            resolve_sandboxed(&ws, Path::new("/etc/passwd")).is_err(),
+            "根外绝对路径必须拒绝"
+        );
+        // 相对路径 .. 逃逸（目标不存在——最近祖先解析后落根外）
+        assert!(resolve_sandboxed(&ws, Path::new("../escape.md")).is_err());
+        // 深逃逸（穿过根内前缀再出根）
+        assert!(resolve_sandboxed(&ws, Path::new("src/../../escape.md")).is_err());
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn sandbox_rejects_symlink_escape() {
+        let ws = temp_ws("symlink");
+        let outside =
+            std::env::temp_dir().join(format!("mang-rpc-fs-out-{}-symlink", std::process::id()));
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join("link")).unwrap();
+
+        // 链接目标在根外（存在路径——整条 canonicalize 摊平后拒）
+        assert!(resolve_sandboxed(&ws, Path::new("link")).is_err());
+        // 经链接指向根外的不存在路径（祖先 canonicalize 摊平后拒）
+        assert!(resolve_sandboxed(&ws, Path::new("link/newfile.md")).is_err());
+        let _ = std::fs::remove_dir_all(&ws);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn sandbox_resolves_nonexistent_tail_via_existing_ancestor() {
+        let ws = temp_ws("tail");
+        std::fs::create_dir_all(ws.join("src/deep")).unwrap();
+        let canon_ws = ws.canonicalize().unwrap();
+
+        // 不存在的文件（父存在）→ canonical 祖先 + 尾段
+        assert_eq!(
+            resolve_sandboxed(&ws, Path::new("src/main.rs")).unwrap(),
+            canon_ws.join("src/main.rs")
+        );
+        // 多层不存在（父也不存在）→ 逐级上溯到最近存在祖先
+        assert_eq!(
+            resolve_sandboxed(&ws, Path::new("src/new1/new2/f.rs")).unwrap(),
+            canon_ws.join("src/new1/new2/f.rs")
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn sandbox_prefix_is_component_wise_not_string_wise() {
+        let ws = temp_ws("prefix");
+        // 兄弟目录：字符串前缀相同（ws + "x"）但组件不同——必须拒
+        //（字符串级 starts_with 会误放行）。
+        let ws_x = ws.with_file_name(format!("{}x", ws.file_name().unwrap().to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&ws_x);
+        std::fs::create_dir_all(&ws_x).unwrap();
+        assert!(
+            resolve_sandboxed(&ws, &ws_x).is_err(),
+            "组件级前缀：兄弟目录不得因字符串前缀相同而放行"
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+        let _ = std::fs::remove_dir_all(&ws_x);
     }
 
     // ---------------- 端点解析 ----------------
