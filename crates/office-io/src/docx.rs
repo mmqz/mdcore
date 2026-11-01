@@ -2364,7 +2364,7 @@ fn parse_textbox_region(
                 return Err(io::ReadError::InvalidPart {
                     part: part.to_string(),
                     detail: "textbox region malformed (missing txbxContent open)".into(),
-                })
+                });
             }
         }
     };
@@ -4023,6 +4023,163 @@ impl RunSpec {
     }
 }
 
+// ---------------------------------------------------------------------------
+// #133 任务 2：高级表格写面（合并/底纹/边框/列宽——标书表格要件）
+// ---------------------------------------------------------------------------
+
+/// 单元格纵向合并状态（`w:vMerge`——#133 任务 2）。
+///
+/// 语义与读面 [`MergeRange`] 的 restart-continue 链对齐：`Restart` =
+/// 合并原点（内容承载格）；`Continue` = 续格（Word 渲染不可见——
+/// 读面栅格展开置空）。**续格禁止携带文本**（V10e——见
+/// [`TableCellSpec`]）：读面把续格文本丢弃（Word 显示语义），写面
+/// 放行 = 内容静默丢失，宁拒勿吞。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CellVMerge {
+    /// 不参与纵向合并（缺省——不发 `w:vMerge`）。
+    #[default]
+    None,
+    /// 合并原点（`w:vMerge w:val="restart"`——内容承载格）。
+    Restart,
+    /// 续格（`w:vMerge w:val="continue"`）——文本须为空（V10e）。
+    Continue,
+}
+
+/// 边框线型（`w:val` 跨引擎稳妥子集——#133 任务 2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CellBorderStyle {
+    /// 无边框（`nil`——显式压掉表级继承边框）。
+    Nil,
+    /// 单实线（缺省——Word 表格最常见形态）。
+    #[default]
+    Single,
+    /// 双线。
+    Double,
+    /// 虚线。
+    Dashed,
+    /// 点线。
+    Dotted,
+    /// 粗线。
+    Thick,
+}
+
+/// 单边边框（#133 任务 2）。
+///
+/// `size_eighths` = 1/8 磅（`w:sz` 语义：4 = 1/2 磅；域 1..=96，
+/// V10c）；`color` = `#RRGGBB` 或 `auto`（V10b）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellBorderEdge {
+    pub style: CellBorderStyle,
+    pub size_eighths: u8,
+    pub color: String,
+}
+
+impl CellBorderEdge {
+    /// 便捷构造：单实线 1/2 磅 + `auto` 色（Word「所有框线」默认档）。
+    pub fn single() -> Self {
+        CellBorderEdge {
+            style: CellBorderStyle::Single,
+            size_eighths: 4,
+            color: "auto".to_string(),
+        }
+    }
+}
+
+/// 单元格边框四边（#133 任务 2；`None` = 该边不设——继承表级样式）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CellBorders {
+    pub top: Option<CellBorderEdge>,
+    pub left: Option<CellBorderEdge>,
+    pub bottom: Option<CellBorderEdge>,
+    pub right: Option<CellBorderEdge>,
+}
+
+/// 高级单元格规格（#133 任务 2——合并/底纹/边框/格宽）。
+///
+/// V10 域校验（save 漏斗粘性拒绝——与 V7/V9 同纪律，发射保持人体
+/// 工学签名 [`DocxWriter::table_advanced`]）：
+///
+/// - **V10a** `grid_span` ≥ 1（0 非法；1 = 不合并——不发 `w:gridSpan`）；
+/// - **V10b** `background` = `#RRGGBB`（6 位十六进制，前缀 `#` 必带）；
+///   边框 `color` = `#RRGGBB` 或 `auto`；
+/// - **V10c** `size_eighths` 1..=96（`w:sz` 1/8 磅域）；
+/// - **V10d** `width` ≥ 1 twips（`w:tcW` dxa 域）；
+/// - **V10e** `v_merge = Continue` 且 `text` 非空 → 拒（续格文本
+///   Word 不可见且读面不回读——内容请置于 `Restart` 原点格）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableCellSpec {
+    pub text: String,
+    /// 横向合并跨列数（`w:gridSpan`；1 = 不合并）。**缺省 = 1**
+    ///（手写 Default——`u32` 零值 0 是 V10a 非法域，derive 会踩坑）。
+    pub grid_span: u32,
+    pub v_merge: CellVMerge,
+    /// 底纹填充色（`w:shd w:val="clear" w:fill`；`None` = 无底纹）。
+    pub background: Option<String>,
+    pub borders: Option<CellBorders>,
+    /// 格宽（twips——`w:tcW` dxa；`None` = 自适应）。
+    pub width: Option<u32>,
+}
+
+impl Default for TableCellSpec {
+    /// 缺省 = 纯文本不合并格（`grid_span: 1`——非 u32 零值）。
+    fn default() -> Self {
+        TableCellSpec {
+            text: String::new(),
+            grid_span: 1,
+            v_merge: CellVMerge::None,
+            background: None,
+            borders: None,
+            width: None,
+        }
+    }
+}
+
+impl TableCellSpec {
+    /// 纯文本格便捷构造（与 [`DocxWriter::table`] 的 `Vec<String>` 格
+    /// 等价——零合并/零装饰）。
+    pub fn text(text: impl Into<String>) -> Self {
+        TableCellSpec {
+            text: text.into(),
+            ..Default::default()
+        }
+    }
+}
+
+/// 高级表规格（#133 任务 2）。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TableSpec {
+    /// 行 × 格（**物理格序**——合并由格内 `grid_span`/`v_merge` 表达，
+    /// 不是栅格展开形；读回经 [`TableData`] 得展开栅格 + `merges`
+    /// 矩形清单——roundtrip 对账面）。
+    pub rows: Vec<Vec<TableCellSpec>>,
+    /// 列宽（twips——`w:tblGrid/w:gridCol @w:w`，按栅格列序）。
+    /// 空 = 不发 tblGrid（引擎行和兜底——读面同语义，
+    /// `missing_tbl_grid_falls_back_to_row_sums` 钉定）。
+    pub column_widths: Vec<u32>,
+}
+
+/// `#RRGGBB` 校验 + 引擎形（大写无前缀——OOXML `ST_HexColor`）。
+/// 非法输入返回 `None`（调用方落 V10b 粘性错误）。
+fn hex_color_6(s: &str) -> Option<String> {
+    let body = s.strip_prefix('#')?;
+    if body.len() != 6 || !body.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(body.to_ascii_uppercase())
+}
+
+/// 边框线型映射（公开子集 → 引擎枚举）。
+fn map_border_style(s: CellBorderStyle) -> docx_rs::BorderType {
+    match s {
+        CellBorderStyle::Nil => docx_rs::BorderType::Nil,
+        CellBorderStyle::Single => docx_rs::BorderType::Single,
+        CellBorderStyle::Double => docx_rs::BorderType::Double,
+        CellBorderStyle::Dashed => docx_rs::BorderType::Dashed,
+        CellBorderStyle::Dotted => docx_rs::BorderType::Dotted,
+        CellBorderStyle::Thick => docx_rs::BorderType::Thick,
+    }
+}
+
 /// DOCX 新建文档写器（**仅新建语义**——不存在已有文档编辑往返，
 /// 与 XLSX [`crate::write::WorkbookWriter`] 边界同构）。
 ///
@@ -4391,6 +4548,169 @@ impl DocxWriter {
         if rows.len() >= 2 {
             self.header_tables.insert(idx);
         }
+    }
+
+    /// 高级表格（#133 任务 2）：合并单元格（`w:gridSpan`/`w:vMerge`）+
+    /// 单元格底纹（`w:shd`）+ 边框（`w:tcBorders`）+ 列宽（`w:tblGrid`
+    /// + `w:tcW`）——标书表格要件。
+    ///
+    /// 与 [`Self::table`] 并存（`table` 纯文本极简签名零变——既有 API
+    /// 契约）。语义镜像读面：`grid_span`/`v_merge` 写入 → 读回经
+    /// [`TableData`] 展开为栅格 + [`MergeRange`] 矩形清单（roundtrip
+    /// 对账见 tests/docx_table_advanced.rs）；底纹/边框/列宽为纯写面
+    /// 装饰（docx-rs 反序列化不回读——与 tblHeader 同登记口径，字节
+    /// 断言 + LibreOffice 开档代验）。
+    ///
+    /// V10 域校验（save 漏斗粘性拒绝——见 [`TableCellSpec`]；发射
+    /// 保持人体工学签名）。计数同 [`Self::table`] 口径：物理格数
+    /// （每格 = 引擎侧 1 段 + 1 run）+ 表计数。
+    pub fn table_advanced(&mut self, spec: TableSpec) {
+        // V10 前置：空表/空行防御（无意义产物，宁拒勿吞）。
+        if spec.rows.is_empty() || spec.rows.iter().any(|r| r.is_empty()) {
+            self.validation_error.get_or_insert_with(|| {
+                "V10: table_advanced 空表/空行（rows 须非空且每行至少一格）".to_string()
+            });
+        }
+        // V10d（列宽域）——发射前登记（set_grid 仍发合法形）。
+        if spec.column_widths.contains(&0) {
+            self.validation_error
+                .get_or_insert_with(|| "V10: table_advanced 列宽须为正 twips".to_string());
+        }
+        let mut cells: u64 = 0;
+        let rows: Vec<docx_rs::TableRow> = spec
+            .rows
+            .iter()
+            .map(|row| {
+                let out: Vec<docx_rs::TableCell> =
+                    row.iter().map(|c| self.advanced_cell(c)).collect();
+                cells += row.len() as u64;
+                docx_rs::TableRow::new(out)
+            })
+            .collect();
+        let mut table = docx_rs::Table::new(rows);
+        if !spec.column_widths.is_empty() {
+            table = table.set_grid(spec.column_widths.iter().map(|&w| w as usize).collect());
+        }
+        self.docx = std::mem::take(&mut self.docx).add_table(table);
+        self.paragraphs += cells;
+        self.runs += cells;
+        self.tables_emitted += 1;
+    }
+
+    /// #133 任务 2：格规格 → 引擎格（V10 粘性校验 + XML 发射）。
+    /// 违规格仍发射合法降级形（与 V7「无效 run 已进引擎文档」同语义
+    /// ——save 漏斗零产物，发射形仅保持引擎构造不炸）。
+    fn advanced_cell(&mut self, c: &TableCellSpec) -> docx_rs::TableCell {
+        // V10a：grid_span 域。
+        if c.grid_span == 0 {
+            self.validation_error.get_or_insert_with(|| {
+                "V10: table_advanced grid_span 须 ≥ 1（0 非法；1 = 不合并）".to_string()
+            });
+        }
+        // V10b：底纹色域（#RRGGBB——前缀必带）。
+        let mut bg_ok: Option<String> = None;
+        if let Some(bg) = &c.background {
+            match hex_color_6(bg) {
+                Some(hex) => bg_ok = Some(hex),
+                None => {
+                    self.validation_error.get_or_insert_with(|| {
+                        format!("V10: table_advanced 底纹色 {bg:?} 非法（须 #RRGGBB 6 位十六进制）")
+                    });
+                }
+            }
+        }
+        // V10b/V10c：边框色域 + 尺寸域。
+        let mut borders_ok: Option<(docx_rs::TableCellBorders, usize)> = None;
+        if let Some(bs) = &c.borders {
+            let mut engine = docx_rs::TableCellBorders::new();
+            let mut count = 0usize;
+            let sides = [
+                (docx_rs::TableCellBorderPosition::Top, &bs.top),
+                (docx_rs::TableCellBorderPosition::Left, &bs.left),
+                (docx_rs::TableCellBorderPosition::Bottom, &bs.bottom),
+                (docx_rs::TableCellBorderPosition::Right, &bs.right),
+            ];
+            for (pos, edge) in sides {
+                let Some(e) = edge else { continue };
+                if e.size_eighths == 0 || e.size_eighths > 96 {
+                    self.validation_error.get_or_insert_with(|| {
+                        format!(
+                            "V10: table_advanced 边框尺寸 {} 越域（w:sz 1/8 磅须 1..=96）",
+                            e.size_eighths
+                        )
+                    });
+                }
+                let color = if e.color == "auto" {
+                    "auto".to_string()
+                } else {
+                    match hex_color_6(&e.color) {
+                        Some(hex) => hex,
+                        None => {
+                            self.validation_error.get_or_insert_with(|| {
+                                format!(
+                                    "V10: table_advanced 边框色 {:?} 非法（须 #RRGGBB 或 auto）",
+                                    e.color
+                                )
+                            });
+                            "auto".to_string()
+                        }
+                    }
+                };
+                engine = engine.set(
+                    docx_rs::TableCellBorder::new(pos)
+                        .size(e.size_eighths.max(1) as usize)
+                        .color(color)
+                        .border_type(map_border_style(e.style)),
+                );
+                count += 1;
+            }
+            if count > 0 {
+                borders_ok = Some((engine, count));
+            }
+        }
+        // V10d：格宽域。
+        if c.width == Some(0) {
+            self.validation_error
+                .get_or_insert_with(|| "V10: table_advanced 格宽须为正 twips".to_string());
+        }
+        // V10e：续格文本（读面丢弃——放行 = 内容静默丢失）。
+        if c.v_merge == CellVMerge::Continue && !c.text.is_empty() {
+            self.validation_error.get_or_insert_with(|| {
+                "V10: table_advanced 续格（v_merge=Continue）禁止携带文本——Word 不可见且读面不回读；内容置于 Restart 原点格".to_string()
+            });
+        }
+
+        let mut cell = docx_rs::TableCell::new().add_paragraph(
+            docx_rs::Paragraph::new().add_run(docx_rs::Run::new().add_text(c.text.as_str())),
+        );
+        if c.grid_span > 1 {
+            cell = cell.grid_span(c.grid_span as usize);
+        }
+        match c.v_merge {
+            CellVMerge::Restart => {
+                cell = cell.vertical_merge(docx_rs::VMergeType::Restart);
+            }
+            CellVMerge::Continue => {
+                cell = cell.vertical_merge(docx_rs::VMergeType::Continue);
+            }
+            CellVMerge::None => {}
+        }
+        if let Some(hex) = bg_ok {
+            cell = cell.shading(
+                docx_rs::Shading::new()
+                    .shd_type(docx_rs::ShdType::Clear)
+                    .fill(hex),
+            );
+        }
+        if let Some(w) = c.width {
+            if w > 0 {
+                cell = cell.width(w as usize, docx_rs::WidthType::Dxa);
+            }
+        }
+        if let Some((engine, _)) = borders_ok {
+            cell = cell.set_borders(engine);
+        }
+        cell
     }
 
     /// 保存到文件路径。
@@ -5029,8 +5349,8 @@ const ANON_PEOPLE_XML: &str = concat!(
 /// comments.xml 批注作者面匿名化（w:author/w:initials → 空串、
 /// w:date → epoch——quick-xml 事件流属性级改写，文本内容零触碰）。
 fn anonymize_comments_xml(xml: &str) -> Result<String, DocxError> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut writer = quick_xml::Writer::new(Vec::new());
@@ -5283,7 +5603,7 @@ fn inject_tbl_header(
             None => {
                 return Err(DocxError::Io(
                     "tblHeader 注入：<w:tbl 开标签无闭合（畸形 XML——fail-closed 拒绝）".into(),
-                ))
+                ));
             }
         };
         let next = rest.as_bytes().get(after_tag).copied();
@@ -5307,7 +5627,7 @@ fn inject_tbl_header(
             None => {
                 return Err(DocxError::Io(
                     "tblHeader 注入：表内无 <w:tr 行（畸形——fail-closed 拒绝）".into(),
-                ))
+                ));
             }
         };
         let after_row = row_open + "<w:tr".len();
@@ -5322,7 +5642,7 @@ fn inject_tbl_header(
             None => {
                 return Err(DocxError::Io(
                     "tblHeader 注入：<w:tr 开标签无闭合（畸形——fail-closed 拒绝）".into(),
-                ))
+                ));
             }
         };
         out.push_str(&rest[..row_close + 1]);
@@ -5353,7 +5673,7 @@ fn inject_tbl_header(
                 None => {
                     return Err(DocxError::Io(
                         "tblHeader 注入：<w:trPr> 无闭合（畸形——fail-closed 拒绝）".into(),
-                    ))
+                    ));
                 }
             }
         } else {
@@ -5595,12 +5915,14 @@ mod tests {
     #[test]
     fn list_item_ilvl_validation() {
         let mut w = DocxWriter::new();
-        assert!(w
-            .list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
-            .is_ok());
-        assert!(w
-            .list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
-            .is_ok());
+        assert!(
+            w.list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
+                .is_ok()
+        );
+        assert!(
+            w.list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
+                .is_ok()
+        );
         assert!(matches!(
             w.list_item(&[RunSpec::text("a")], ListKind::Bullet, MAX_LIST_LEVEL + 1),
             Err(DocxError::Parse(m)) if m.contains("ilvl")
@@ -5862,9 +6184,11 @@ mod tests {
         let mut w = Vec::new();
         let ct = parse_content_types(xml, false, &mut w).unwrap();
         assert_eq!(ct.content_type_of("a.png").as_deref(), Some("image/png"));
-        assert!(w
-            .iter()
-            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
+        assert!(
+            w.iter().any(
+                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
+            )
+        );
     }
 
     /// [Content_Types].xml 缺属性条目 + 重复条目：严格拒 / 兼容跳过
@@ -5951,9 +6275,11 @@ mod tests {
             .unwrap()
             .expect("兼容容忍");
         assert!(t.get("rId1").is_some(), "合法条目保留");
-        assert!(w
-            .iter()
-            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
+        assert!(
+            w.iter().any(
+                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
+            )
+        );
     }
 
     /// .rels 根元素名错误：严格拒 / 兼容警告 + 条目照常解析
@@ -6244,8 +6570,8 @@ mod tests {
             240,
         )
         .unwrap(); // 1p + 1r
-                   // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
-                   // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
+        // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
+        // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
         assert_eq!(w.paragraphs, 14);
         // 17 run：heading 1 + paragraph 4（3 run + 脚注 1）+ table 3 +
         // header 1 + footer 1 + code 1 + hr 0 + quote 1 + list_item 1 +
