@@ -21,7 +21,7 @@ export PATH="/home/z/.cargo/bin:$SYSROOT/usr/bin:/home/z/.local/bin:$PATH"
 
 # 链接期（仅无 root 沙箱需要；宿主机自带 dev 面时该目录不存在，跳过）
 if [ -d "$SYSROOT/usr/lib/x86_64-linux-gnu" ]; then
-  export RUSTFLAGS="-L $SYSROOT/usr/lib/x86_64-linux-gnu${RUSTFLAGS:+ $RUSTFLAGS}"
+  export RUSTFLAGS="${RUSTFLAGS:--L native=$SYSROOT/usr/lib/x86_64-linux-gnu}"
 fi
 
 CARGO_INCREMENTAL=0 cargo build

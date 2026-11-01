@@ -18,7 +18,7 @@ SYSROOT="${MANG_SYSROOT:-/home/z/.local/sysroot}"
 export PATH="/home/z/.cargo/bin:$SYSROOT/usr/bin:/home/z/.local/bin:$PATH"
 export LD_LIBRARY_PATH="$SYSROOT/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 if [ -d "$SYSROOT/usr/lib/x86_64-linux-gnu" ]; then
-  export RUSTFLAGS="-L $SYSROOT/usr/lib/x86_64-linux-gnu${RUSTFLAGS:+ $RUSTFLAGS}"
+  export RUSTFLAGS="${RUSTFLAGS:--L native=$SYSROOT/usr/lib/x86_64-linux-gnu}"
   export PKG_CONFIG_PATH="$SYSROOT/usr/lib/x86_64-linux-gnu/pkgconfig"
   export CPATH="$SYSROOT/usr/include"
 fi
