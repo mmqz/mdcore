@@ -11,10 +11,29 @@
 //! - `matches` 为缓存：query 变化或文档编辑后由 `refresh` 重算
 //!   （大小写不敏感，全量重扫——批 1 规模可接受，阶段 6 大文档再增量）。
 //! - 打开时以当前选中文本初始化 query（经典编辑器行为）。
+//!
+//! ## #132 任务 2：查找历史 + 正则查找
+//!
+//! - **历史**（`history`）：最近 `HISTORY_CAP` 条**提交过的**查询，新的在
+//!   前；查找条聚焦时 ↑/↓ 翻历史（VS Code 语义：↑ 往更早走、↓ 往更近走，
+//!   越过最新一条回到「当前编辑中的文本」——见 [`HistoryNavigation::reset`]）；
+//! - **提交时机**：Enter 跳转 / 关闭查找条 / 切换正则 / 命中替换——都会把
+//!   非空 query 记入历史（去重置顶）；
+//! - **正则**（`is_regex`）：Ctrl+Alt+R 切换；匹配走
+//!   [`Buffer::find_matches_regex`]（行内，不跨行）；**编译失败不静默**：
+//!   `regex_error` 存一条面向用户的原因，渲染层据此画**红边框**并显示提示，
+//!   匹配集清空（不是沿用旧结果——旧结果会误导用户以为正则生效了）；
+//! - **持久化**：历史与正则开关走 `settings`（`find_history` /
+//!   `find_regex` 键），由 Editor 在打开/关闭查找条时读写（本模块不碰
+//!   文件系统——纯状态机，便于单测）。
 
 use gpui::Keystroke;
 
 use super::buffer::{Buffer, Point};
+
+/// 查找历史上限（最近 N 条；VS Code 默认 50，此处取 20——面板/配置文件
+/// 都可控，够用且不膨胀 settings.json）。
+pub const HISTORY_CAP: usize = 20;
 
 /// 查找条状态。
 #[derive(Clone, Debug, Default)]
@@ -39,6 +58,20 @@ pub struct FindState {
     case_sensitive: bool,
     /// G1：全词匹配选项。
     whole_word: bool,
+    /// #132：查找历史（最近 [`HISTORY_CAP`] 条，**新的在前**；已提交的查询）。
+    history: Vec<String>,
+    /// #132：历史浏览位置（`None` = 不在浏览态，输入框里是「用户当前文本」）。
+    /// `Some(i)` 时 query 显示 `history[i]`。
+    history_idx: Option<usize>,
+    /// #132：历史浏览态下用户原来的输入（↓ 越过最新一条时恢复它）。
+    history_draft: String,
+    /// #132：正则模式开关。
+    is_regex: bool,
+    /// #132：正则编译失败原因（`None` = 无错；渲染层据此画红边框）。
+    regex_error: Option<String>,
+    /// #132：正则模式下的匹配区间 `(起点, 终点)`——与 `matches` 并行，
+    /// 非正则模式为空（渲染层按零长处理见 [`FindState::match_ranges`]）。
+    regex_ranges: Vec<(Point, Point)>,
 }
 
 /// 查找条按键处理结果。
@@ -92,8 +125,32 @@ impl FindState {
     }
 
     /// 重算匹配（query / 选项 / 文档变化后调用；G1 起按两选项算）。
+    ///
+    /// #132：正则模式下走 [`Buffer::find_matches_regex`]——
+    /// - 编译失败：`regex_error` 置因、匹配集清零（**不沿用旧结果**：
+    ///   旧结果会让用户误以为错误的正则生效了）；
+    /// - 编译成功：`regex_error` 清空、区间落 `regex_ranges`，`matches`
+    ///   只存起点（与 G1 的 `jump`/`replace_*` 消费面兼容）。
     pub fn refresh(&mut self, buffer: &Buffer) {
-        self.matches = buffer.find_matches_opts(&self.query, self.case_sensitive, self.whole_word);
+        if self.is_regex {
+            match buffer.find_matches_regex(&self.query, self.case_sensitive, self.whole_word) {
+                Ok(ranges) => {
+                    self.regex_error = None;
+                    self.regex_ranges = ranges.clone();
+                    self.matches = ranges.into_iter().map(|(s, _)| s).collect();
+                }
+                Err(msg) => {
+                    self.regex_error = Some(msg);
+                    self.regex_ranges.clear();
+                    self.matches.clear();
+                }
+            }
+        } else {
+            self.regex_error = None;
+            self.regex_ranges.clear();
+            self.matches =
+                buffer.find_matches_opts(&self.query, self.case_sensitive, self.whole_word);
+        }
         if self.active >= self.matches.len() {
             self.active = 0;
         }
@@ -215,6 +272,142 @@ impl FindState {
     }
 
     // ------------------------------------------------------------------
+    // #132 任务 2：查找历史 / 正则查找
+    // ------------------------------------------------------------------
+
+    /// 历史条目（新→旧；渲染层/设置持久化消费）。
+    pub fn history(&self) -> &[String] {
+        &self.history
+    }
+
+    /// 装载历史（打开查找条时由 Editor 从 settings 灌入；去空/去重/截上限）。
+    pub fn set_history(&mut self, entries: Vec<String>) {
+        let mut out: Vec<String> = Vec::new();
+        for e in entries {
+            let e = e.trim().to_string();
+            if e.is_empty() || out.contains(&e) {
+                continue;
+            }
+            out.push(e);
+            if out.len() >= HISTORY_CAP {
+                break;
+            }
+        }
+        self.history = out;
+        self.history_idx = None;
+        self.history_draft.clear();
+    }
+
+    /// 记录一条历史（去重置顶；空/纯空白忽略）。返回是否**内容有变**
+    /// （调用方据此决定是否落盘——避免每次关条都写文件）。
+    ///
+    /// 口径：只有当该条目**不是已在队首**时才算「有变」。已在队首 = 历史
+    /// 字典序未变 = 不需要写盘（但仍会清空浏览态——见下）。
+    pub fn remember_query(&mut self, query: &str) -> bool {
+        let q = query.trim().to_string();
+        if q.is_empty() {
+            return false;
+        }
+        let already_head = self.history.first().is_some_and(|h| *h == q);
+        self.history.retain(|h| *h != q);
+        self.history.insert(0, q);
+        self.history.truncate(HISTORY_CAP);
+        // 浏览态下写入历史：退出浏览态（否则 idx 指向错位）。
+        self.history_idx = None;
+        self.history_draft.clear();
+        !already_head
+    }
+
+    /// 当前是否处于历史浏览态（渲染层据此把输入框文字着色为「历史值」）。
+    pub fn history_index(&self) -> Option<usize> {
+        self.history_idx
+    }
+
+    /// **↑ 翻历史**（往更早走）。首个 ↑ 先把当前输入存为 draft 再取最新一条；
+    /// 到最老一条后停住（不循环——VS Code 语义）。返回是否有变化。
+    pub fn history_prev(&mut self, buffer: &Buffer) -> bool {
+        if self.history.is_empty() {
+            return false;
+        }
+        let next = match self.history_idx {
+            None => {
+                self.history_draft = self.query.clone();
+                0
+            }
+            Some(i) => (i + 1).min(self.history.len() - 1),
+        };
+        if Some(next) == self.history_idx {
+            return false; // 已在最老一条
+        }
+        self.history_idx = Some(next);
+        self.apply_history(buffer);
+        true
+    }
+
+    /// **↓ 翻历史**（往最近走）。越过最新一条 → 恢复 draft（用户原来的输入）。
+    pub fn history_next(&mut self, buffer: &Buffer) -> bool {
+        let Some(i) = self.history_idx else {
+            return false; // 非浏览态：↓ 不动（交给输入行切换等既有语义）
+        };
+        if i == 0 {
+            let draft = std::mem::take(&mut self.history_draft);
+            self.history_idx = None;
+            self.set_query(&draft, buffer);
+            return true;
+        }
+        self.history_idx = Some(i - 1);
+        self.apply_history(buffer);
+        true
+    }
+
+    /// 把 `history[history_idx]` 灌进输入框并重算匹配。
+    fn apply_history(&mut self, buffer: &Buffer) {
+        let Some(i) = self.history_idx else { return };
+        let text = self.history.get(i).cloned().unwrap_or_default();
+        self.set_query(&text, buffer);
+    }
+
+    /// 直接设定 query（历史回填/外部注入）；光标落尾、退出浏览态。
+    pub fn set_query(&mut self, text: &str, buffer: &Buffer) {
+        self.query = text.to_string();
+        self.cursor_col = self.query.chars().count();
+        if self.history_idx.is_some() && self.history.get(self.history_idx.unwrap()) != Some(&self.query) {
+            // 输入被改过——浏览态下用户继续打字：退出浏览态但保留 draft。
+            self.history_idx = None;
+        }
+        self.refresh(buffer);
+    }
+
+    /// 正则模式开关状态（渲染层高亮钮）。
+    pub fn is_regex(&self) -> bool {
+        self.is_regex
+    }
+
+    /// 正则编译失败原因（`None` = 无错）。渲染层据此画**红边框**。
+    pub fn regex_error(&self) -> Option<&str> {
+        self.regex_error.as_deref()
+    }
+
+    /// 切换正则模式（Ctrl+Alt+R / 钮同源）。返回切换后是否处于正则模式。
+    pub fn toggle_regex(&mut self, buffer: &Buffer) {
+        self.is_regex = !self.is_regex;
+        self.refresh(buffer);
+    }
+
+    /// 匹配区间（渲染层高亮）：正则模式取真实区间，普通模式按 query 长度
+    /// 推零宽之后的尾点（与 G1 替换口径一致）。
+    pub fn match_ranges(&self) -> Vec<(Point, Point)> {
+        if self.is_regex {
+            return self.regex_ranges.clone();
+        }
+        let n = self.query.chars().count();
+        self.matches
+            .iter()
+            .map(|m| (*m, Point::new(m.line, m.col + n)))
+            .collect()
+    }
+
+    // ------------------------------------------------------------------
     // G1：替换执行（buffer 变更在此——Editor 只做分发）
     // ------------------------------------------------------------------
 
@@ -291,6 +484,23 @@ impl FindState {
         }
         if ks.key == "escape" {
             return FindKeyOutcome::Close;
+        }
+        // #132：Ctrl+Alt+R 切换正则模式（先于 Alt 家族分支——它带 ctrl）。
+        if ctrl && ks.modifiers.alt && ks.key.eq_ignore_ascii_case("r") {
+            self.toggle_regex(buffer);
+            return FindKeyOutcome::OptionsChanged;
+        }
+        // #132：↑/↓ 翻历史——仅「查找态」或「替换态的 query 行」（替换行里
+        // 上下键仍是输入行切换，见下）。浏览态下 ↑ 到最老停住、↓ 越过最新
+        // 回到原来输入，均视为「已处理」（不改匹配以外的 UI 态）。
+        let on_query_line = !(self.replace_mode && self.focus_replacement);
+        if on_query_line && !ctrl && !ks.modifiers.alt && !ks.modifiers.shift {
+            if ks.key == "up" && self.history_prev(buffer) {
+                return FindKeyOutcome::QueryChanged;
+            }
+            if ks.key == "down" && self.history_next(buffer) {
+                return FindKeyOutcome::QueryChanged;
+            }
         }
         // G1：选项切换（Alt+C 大小写 / Alt+W 全词；Ctrl 家族不占用）。
         if ks.modifiers.alt && !ctrl {
@@ -780,5 +990,210 @@ mod g1_replace_tests {
         let n = f.replace_all(&mut b);
         assert_eq!(n, 3);
         assert_eq!(b.to_plain_text(), " bar\n baz\n");
+    }
+}
+
+// =============================================================================
+// #132 任务 2——查找历史 / 正则查找（专项单测）
+// =============================================================================
+
+#[cfg(test)]
+mod find_history_tests {
+    use super::*;
+
+    fn p(line: usize, col: usize) -> Point {
+        Point::new(line, col)
+    }
+
+    fn ks(key: &str, key_char: Option<&str>) -> Keystroke {
+        Keystroke {
+            modifiers: Default::default(),
+            key: key.to_string(),
+            key_char: key_char.map(|c| c.to_string()),
+        }
+    }
+
+    fn mods(key: &str, ctrl: bool, alt: bool, shift: bool) -> Keystroke {
+        Keystroke {
+            modifiers: gpui::Modifiers {
+                control: ctrl,
+                alt,
+                shift,
+                ..Default::default()
+            },
+            key: key.to_string(),
+            key_char: None,
+        }
+    }
+
+    fn type_text(f: &mut FindState, b: &Buffer, text: &str) {
+        for c in text.chars() {
+            f.handle_key(b, &ks("virtual", Some(c.to_string().as_str())));
+        }
+    }
+
+    fn seeded(entries: &[&str]) -> (Buffer, FindState) {
+        let b = Buffer::from_plain_text("alpha beta gamma");
+        let mut f = FindState::default();
+        f.open(&b);
+        f.set_history(entries.iter().map(|s| (*s).to_string()).collect());
+        (b, f)
+    }
+
+    // ---------------- 历史翻页 ----------------
+
+    #[test]
+    fn history_prev_next_walks_entries_and_restores_draft() {
+        let (b, mut f) = seeded(&["newest", "middle", "oldest"]);
+        // 先输入草稿（不提交）
+        type_text(&mut f, &b, "dra");
+        assert_eq!(f.query(), "dra");
+        // ↑ → 最新一条历史
+        assert!(f.history_prev(&b));
+        assert_eq!(f.query(), "newest");
+        assert_eq!(f.history_index(), Some(0));
+        // ↑↑ → 更早
+        assert!(f.history_prev(&b));
+        assert_eq!(f.query(), "middle");
+        assert!(f.history_prev(&b));
+        assert_eq!(f.query(), "oldest");
+        // 到最老一条后停住（不循环）
+        assert!(!f.history_prev(&b), "最老一条不再动");
+        assert_eq!(f.query(), "oldest");
+        // ↓ 往回走
+        assert!(f.history_next(&b));
+        assert_eq!(f.query(), "middle");
+        assert!(f.history_next(&b));
+        assert_eq!(f.query(), "newest");
+        // ↓ 越过最新 → 恢复草稿
+        assert!(f.history_next(&b));
+        assert_eq!(f.query(), "dra", "回到用户原来的输入");
+        assert_eq!(f.history_index(), None);
+        // 非浏览态 ↓ 不动
+        assert!(!f.history_next(&b));
+    }
+
+    #[test]
+    fn history_cap_keeps_most_recent_20() {
+        let b = Buffer::from_plain_text("x");
+        let mut f = FindState::default();
+        f.open(&b);
+        for i in 0..30 {
+            f.remember_query(&format!("q{i}"));
+        }
+        assert_eq!(f.history().len(), HISTORY_CAP, "上限 {HISTORY_CAP} 条");
+        assert_eq!(f.history()[0], "q29", "最新在前");
+        assert_eq!(f.history()[HISTORY_CAP - 1], "q10", "最老的被挤出");
+    }
+
+    #[test]
+    fn remember_query_dedupes_and_promotes() {
+        let b = Buffer::from_plain_text("x");
+        let mut f = FindState::default();
+        f.open(&b);
+        assert!(f.remember_query("foo"), "首次写入算新条目（历史有变 → 需落盘）");
+        assert!(f.remember_query("bar"), "新条目（历史有变）");
+        // 「foo」此刻在**第二位**：重新记录会把它提到队首 → 顺序变了 → 仍需落盘。
+        assert!(f.remember_query("foo"), "非队首的重复项：置顶改变顺序 → true");
+        assert_eq!(f.history(), &["foo".to_string(), "bar".to_string()], "去重置顶");
+        // 已是队首的重复项：历史未变 → false（免写盘）
+        assert!(!f.remember_query("foo"), "队首重复 = 历史未变 → false");
+        assert!(!f.remember_query("   "), "纯空白不记");
+        assert!(!f.remember_query(""), "空串不记");
+    }
+
+    // ---------------- 正则开关 ----------------
+
+    #[test]
+    fn ctrl_alt_r_toggles_regex_and_switches_match_engine() {
+        let b = Buffer::from_plain_text("let x = 1;\nlet y = 22;");
+        let mut f = FindState::default();
+        f.open(&b);
+        type_text(&mut f, &b, "let");
+        assert!(!f.is_regex(), "缺省普通查找");
+        assert_eq!(f.matches().len(), 2);
+        // Ctrl+Alt+R → 正则模式
+        assert_eq!(
+            f.handle_key(&b, &mods("r", true, true, false)),
+            FindKeyOutcome::OptionsChanged
+        );
+        assert!(f.is_regex(), "切到正则");
+        assert_eq!(f.matches().len(), 2, "同一模式在正则下也命中 2 处");
+        // 正则模式下 \\d+ 能命中数字（普通模式查 \\d+ 是零结果）
+        f.set_query("", &b);
+        type_text(&mut f, &b, "\\d+");
+        assert_eq!(f.matches().len(), 2, "正则命中两处数字区间");
+        let ranges = f.match_ranges();
+        assert_eq!(ranges, vec![(p(0, 8), p(0, 9)), (p(1, 8), p(1, 10))], "真实区间");
+        // 切回普通模式：\\d+ 当字面量 → 零结果
+        f.handle_key(&b, &mods("r", true, true, false));
+        assert!(!f.is_regex());
+        assert_eq!(f.matches().len(), 0, "普通模式把 \\d+ 当四个字面字符");
+    }
+
+    #[test]
+    fn invalid_regex_sets_error_and_clears_matches() {
+        let b = Buffer::from_plain_text("abc abc");
+        let mut f = FindState::default();
+        f.open(&b);
+        f.toggle_regex(&b);
+        type_text(&mut f, &b, "abc");
+        assert_eq!(f.matches().len(), 2, "合法正则先命中");
+        assert!(f.regex_error().is_none());
+        // 补一个未闭合括号 → 编译失败
+        type_text(&mut f, &b, "(");
+        let err = f.regex_error().expect("非法正则必须给出原因");
+        assert!(err.contains("正则无效"), "错误消息可读：{err}");
+        assert!(f.matches().is_empty(), "错误时清空匹配（不沿用旧结果误导用户）");
+        assert_eq!(f.match_label(), "0 结果");
+        // 修正后错误清除
+        f.set_query("abc", &b);
+        assert!(f.regex_error().is_none(), "改正后不再报错");
+        assert_eq!(f.matches().len(), 2);
+    }
+
+    // ---------------- 上下键路由 ----------------
+
+    #[test]
+    fn arrow_keys_route_to_history_only_on_query_line() {
+        let b = Buffer::from_plain_text("foo bar\nfoo baz");
+        let mut f = FindState::default();
+        f.open_replace(&b);
+        f.set_history(vec!["first".into()]);
+        // query 行：↑ 翻历史
+        assert_eq!(
+            f.handle_key(&b, &ks("up", None)),
+            FindKeyOutcome::QueryChanged
+        );
+        assert_eq!(f.query(), "first");
+        // 切到替换行后：↑/↓ 是输入行切换（不被历史吃掉）
+        f.handle_key(&b, &ks("tab", None));
+        assert!(f.focus_is_replacement());
+        assert_eq!(
+            f.handle_key(&b, &ks("up", None)),
+            FindKeyOutcome::FocusSwitched
+        );
+        assert!(!f.focus_is_replacement(), "↑ 从替换行回到 query 行");
+    }
+
+    // ---------------- 持久化载荷 ----------------
+
+    #[test]
+    fn set_history_normalizes_input() {
+        let b = Buffer::from_plain_text("x");
+        let mut f = FindState::default();
+        f.open(&b);
+        f.set_history(vec![
+            "  padded  ".into(),
+            "".into(),
+            "padded".into(),
+            "dup".into(),
+            "dup".into(),
+        ]);
+        assert_eq!(
+            f.history(),
+            &["padded".to_string(), "dup".to_string()],
+            "去空白/去空/去重（装载侧同样守一遍）"
+        );
     }
 }

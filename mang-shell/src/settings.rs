@@ -143,6 +143,72 @@ fn remembered_workspace_in(dir: &Path) -> Option<PathBuf> {
     load_from(dir).get("workspace")?.as_str().map(PathBuf::from)
 }
 
+/// #132 任务 2：查找历史读写（`find_history` 键：字符串数组，新→旧）。
+///
+/// 容错口径与其余键一致：目录/文件不可得 → 静默跳过（历史是增强不是依赖）。
+pub fn save_find_history(entries: &[String]) {
+    if let Some(dir) = config_dir() {
+        save_find_history_in(&dir, entries);
+    }
+}
+
+pub fn load_find_history() -> Vec<String> {
+    config_dir()
+        .map(|dir| load_find_history_in(&dir))
+        .unwrap_or_default()
+}
+
+/// #132 任务 2：正则开关读写（`find_regex` 键：布尔）。
+pub fn save_find_regex(on: bool) {
+    if let Some(dir) = config_dir() {
+        save_find_regex_in(&dir, on);
+    }
+}
+
+pub fn load_find_regex() -> bool {
+    config_dir()
+        .map(|dir| load_find_regex_in(&dir))
+        .unwrap_or(false)
+}
+
+// ---- 目录显式传入的底层实现（单测用——并行测试不互相污染全局态） ----
+
+fn save_find_history_in(dir: &Path, entries: &[String]) {
+    let mut value = load_from(dir);
+    value["find_history"] = serde_json::Value::Array(
+        entries
+            .iter()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .collect(),
+    );
+    save_to(dir, &value);
+}
+
+fn load_find_history_in(dir: &Path) -> Vec<String> {
+    load_from(dir)
+        .get("find_history")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn save_find_regex_in(dir: &Path, on: bool) {
+    let mut value = load_from(dir);
+    value["find_regex"] = serde_json::Value::Bool(on);
+    save_to(dir, &value);
+}
+
+fn load_find_regex_in(dir: &Path) -> bool {
+    load_from(dir)
+        .get("find_regex")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 /// UI 字体（界面元素）。
 pub fn ui_font() -> &'static Font {
     static FONT: std::sync::OnceLock<Font> = std::sync::OnceLock::new();
@@ -302,6 +368,42 @@ mod tests {
                 "右宽往返（第二轮即覆盖写生效）"
             );
         }
+        let value = load_from(&dir);
+        assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #132：查找历史键往返 + 截断语义（超 20 条由消费方截——本层如实存）。
+    #[test]
+    fn find_history_roundtrip_and_coexist() {
+        let dir = temp_config("find-history");
+        remember_workspace_in(&dir, Path::new("/ws"));
+        let entries: Vec<String> = vec!["\\bfn\\s+\\w+".into(), "foo".into(), "中文".into()];
+        save_find_history_in(&dir, &entries);
+        assert_eq!(load_find_history_in(&dir), entries, "历史往返（含正则/中文）");
+
+        // 覆盖写：新历史替换旧历史
+        save_find_history_in(&dir, &["bar".to_string()]);
+        assert_eq!(load_find_history_in(&dir), vec!["bar".to_string()]);
+
+        // 既有键保留
+        let value = load_from(&dir);
+        assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");
+        let _ = std::fs::remove_dir_all(&dir);
+        }
+
+    /// #132：正则开关键往返 + 缺省 false + 与既有键共存。
+    #[test]
+    fn find_regex_roundtrip() {
+        let dir = temp_config("find-regex");
+        assert!(!load_find_regex_in(&dir), "缺省关闭");
+        save_find_regex_in(&dir, true);
+        assert!(load_find_regex_in(&dir));
+        save_find_regex_in(&dir, false);
+        assert!(!load_find_regex_in(&dir), "覆盖写生效");
+
+        remember_workspace_in(&dir, Path::new("/ws"));
+        save_find_regex_in(&dir, true);
         let value = load_from(&dir);
         assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");
         let _ = std::fs::remove_dir_all(&dir);
