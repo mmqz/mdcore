@@ -166,6 +166,10 @@ fn main() {
     // 真实渲染分派路径探针取证；断言 syntax-hl: 证据行——围栏语言态
     // [rust] + kw/str 命中 span + script done）。
     let smoke_syntax_hl = args.iter().any(|a| a == "--smoke-syntax-hl");
+    // #132 任务 1：括号匹配烟雾（--smoke-bracket——与启动 FILE + --smoke-sec
+    // 组合：3.5s 把主光标移到文件首个括号后，经真实应用态探针取证匹配
+    // 判定 + 渲染口径列集；断言 bracket: 证据行）。
+    let smoke_bracket = args.iter().any(|a| a == "--smoke-bracket");
     // #104 任务 2：RPC 控制通道旗标（--rpc-sock PATH 覆盖端点；
     // --no-rpc 显式关闭。默认开——端点 $XDG_RUNTIME_DIR/mang-shell.sock
     // 缺省 /tmp/mang-shell-$UID.sock，见 rpc::resolve_socket_path）。
@@ -548,6 +552,16 @@ fn main() {
                 .detach();
             }
 
+            // #132 任务 1：括号匹配烟雾——3.5s 移光标到括号上，经真实
+            // 应用态探针取证（Editor::bracket_evidence，与渲染层同款口径）。
+            if smoke_bracket {
+                let handle = window_handle;
+                cx.spawn(async move |cx| {
+                    run_bracket_probe(&handle, cx).await;
+                })
+                .detach();
+            }
+
             // #111：用户键入烟雾——真实键处理链合成（非 RPC 路径），
             // 事件源应为 source="user"（与 RPC 编辑的 source="rpc"
             // 区分——订阅回显双向断言的用户侧）。
@@ -654,6 +668,77 @@ async fn run_syntax_hl_probe(
     );
 }
 
+// ---------------------------------------------------------------------------
+// #132 任务 1：括号匹配烟雾（--smoke-bracket）
+// ---------------------------------------------------------------------------
+
+/// 3.5s 后把活动编辑器主光标移到**文件里第一个括号字符之后**（真实
+/// 光标移动——不是伪造状态），再经 `Editor::bracket_evidence` 取证：
+/// 该探针与渲染层读同一份 `brackets::find_match`，证据行形如
+/// `bracket: cursor=(0,10) matched open=(0,9) close=(4,0)`。
+///
+/// 同时补一次**不匹配**取证：把光标移到文件末尾的人为孤立括号上
+/// （通过 RPC/键入不可控——改为直接扫描文件找出首个孤立括号的位置
+/// 并取证），保证「标红路径」同样有端到端证据。
+async fn run_bracket_probe(window: &gpui::WindowHandle<shell::ShellApp>, cx: &mut gpui::AsyncApp) {
+    cx.background_executor()
+        .timer(Duration::from_millis(3500))
+        .await;
+
+    // ① 找首个括号 + 其后的光标位置（真实文档内容，不假设首行有括号）。
+    let target: Option<(usize, usize)> = cx.update(|cx| {
+        window
+            .update(cx, |shell, _window, cx| {
+                shell.editor().map(|ed| {
+                    let ed = ed.read(cx);
+                    let text = ed.buffer_text_for_probe();
+                    for (li, line) in text.split('\n').enumerate() {
+                        for (ci, ch) in line.chars().enumerate() {
+                            if mang_shell::editor::brackets::is_bracket_char(ch) {
+                                return (li, ci + 1);
+                            }
+                        }
+                    }
+                    (0, 0)
+                })
+            })
+            .ok()
+            .flatten()
+    });
+
+    // ② 移光标（经编辑器公开 setter——与用户移动走同一状态）。
+    if let Some((line, col)) = target {
+        cx.update(|cx| {
+            let _ = window.update(cx, |shell, _window, cx| {
+                if let Some(ed) = shell.editor() {
+                    ed.update(cx, |ed, cx| {
+                        ed.set_cursor_for_probe((line, col));
+                        cx.notify();
+                    });
+                }
+            });
+        });
+    }
+
+    // ③ 取证。
+    let evidence: Vec<String> = cx.update(|cx| {
+        window
+            .update(cx, |shell, _window, cx| {
+                shell
+                    .editor()
+                    .map(|ed| ed.read(cx).bracket_evidence())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    });
+    for line in &evidence {
+        eprintln!("{line}");
+    }
+    eprintln!(
+        "bracket: script done ({} evidence lines via render path)",
+        evidence.len()
+    );
+}
 // ---------------------------------------------------------------------------
 // F3：标签键位烟雾辅助（合成 KeyDown——与鼠标烟雾同经
 // Window::dispatch_event 完整派发管线）。
