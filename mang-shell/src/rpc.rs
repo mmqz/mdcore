@@ -37,7 +37,7 @@
 //!   的残留由下次启动 [`prepare_socket`] 探活清理（连得上 = 别的实例
 //!   在监听 → 本实例禁用 RPC；连不上 = 陈旧文件 → 删除后重绑）。
 //!
-//! ## 协议（#134 后 22 命令 + 事件流）
+//! ## 协议（#134 后 26 命令 + 事件流）
 //!
 //! 请求（`id` 可省——省略时响应 `id` 为 null；未知字段忽略——前向
 //! 兼容）。#104 六命令（open_file / insert_text / replace_selection /
@@ -62,6 +62,11 @@
 //! {"id": 20, "cmd": "create_dir",      "path": "src/util"}
 //! {"id": 21, "cmd": "delete",          "path": "src/old.rs"}
 //! {"id": 22, "cmd": "rename",          "from": "src/a.rs", "to": "src/b.rs"}
+//! {"id": 25, "cmd": "run_command",     "name": "goto_line"}
+//! {"id": 26, "cmd": "list_commands"}
+//! {"id": 27, "cmd": "get_outline"}
+//! {"id": 28, "cmd": "apply_format",    "range": [{"line":0,"col":0},{"line":0,"col":4}],
+//!                                        "format": "bold"}
 //! ```
 //!
 //! ### #134 文件系统安全边界（沙箱）
@@ -117,11 +122,22 @@
 //! - `rename`：不覆盖已存在目标；from 是目录时整棵子树的已开标签
 //!   身份迁移（修改态跟随新名——下次 save 落新路径）。
 //!
+//! ## 命令语义要点（#134 编辑器命令面）
+//!
+//! - `run_command`：按机器名调现有 18 命令（`Cmd::from_id`——与命令
+//!   面板/键位同一分派路径，只读门禁全同语义）；未知名拒并引导
+//!   `list_commands`。`args` 保留前向兼容（现有命令均零参）。
+//! - `list_commands`：机器名 + 面板标题 + 默认键位（`Cmd::ALL` 全集）。
+//! - `get_outline`：md 标题树（[`highlight::heading_level`] 同源判定；
+//!   平铺 entries 带 level/line/text——AI 自行组树）；渲染态拒。
+//! - `apply_format`：范围文本 md 标记对包裹（bold/italic/code/
+//!   strikethrough）；一条 undo；空范围/只读态/行模型态拒。
+//!
 //! ## 验证
 //!
 //! - 单测：协议解析/序列化、事件行形态、订阅表逻辑、沙箱边界
 //!   （逃逸/符号链接/组件前缀）——文件尾 mod tests。
-//! - 端到端：`rpc_smoke.sh`（Xvfb + `tests/rpc_client.py`——22 命令
+//! - 端到端：`rpc_smoke.sh`（Xvfb + `tests/rpc_client.py`——26 命令
 //!   全链 + 订阅/双向回显（`--smoke-user-type` 合成用户键入路径）+
 //!   双客户端并发 + `--smoke-workspace` 沙箱实测（FS 命令 + 越界拒绝
 //!   + 写已开文件同步 + rename 标签迁移））。
@@ -263,6 +279,33 @@ pub enum ControlCommand {
     /// 已打开标签身份自动迁移——修改态跟随新名）。
     #[serde(rename = "rename")]
     Rename { from: String, to: String },
+
+    // ---------------- #134 任务 2：编辑器命令补完 ----------------
+    /// 执行命令（按机器名——与命令面板/键位同一分派路径；可用清单
+    /// `list_commands`；`args` 保留前向兼容，现有 18 命令均零参）。
+    #[serde(rename = "run_command")]
+    RunCommand {
+        name: String,
+        #[serde(default)]
+        args: Option<serde_json::Value>,
+    },
+
+    /// 列出可用命令（机器名 + 面板标题 + 默认键位）。
+    #[serde(rename = "list_commands")]
+    ListCommands,
+
+    /// 查询文档大纲（md 标题树——与语法高亮同一判定源；平铺条目带
+    /// level，AI 可自行组树）。渲染态文档无 md 大纲语义拒。
+    #[serde(rename = "get_outline")]
+    GetOutline,
+
+    /// 应用 md 行内格式（范围文本标记对包裹——bold/italic/code/
+    /// strikethrough；一条 undo；两点任意次序）。
+    #[serde(rename = "apply_format")]
+    ApplyFormat {
+        range: (PointWire, PointWire),
+        format: crate::editor::FormatKind,
+    },
 }
 
 /// 点位线上形态（`{"line": n, "col": n}`——与响应 `point_json` 同构）。
@@ -304,6 +347,10 @@ impl ControlCommand {
             ControlCommand::CreateDir { .. } => "create_dir",
             ControlCommand::Delete { .. } => "delete",
             ControlCommand::Rename { .. } => "rename",
+            ControlCommand::RunCommand { .. } => "run_command",
+            ControlCommand::ListCommands => "list_commands",
+            ControlCommand::GetOutline => "get_outline",
+            ControlCommand::ApplyFormat { .. } => "apply_format",
         }
     }
 }
@@ -876,6 +923,13 @@ fn execute_command(
         ControlCommand::CreateDir { path } => cmd_create_dir(shell, cx, path),
         ControlCommand::Delete { path } => cmd_delete(shell, window, cx, path),
         ControlCommand::Rename { from, to } => cmd_rename(shell, cx, from, to),
+        // ---------------- #134 任务 2：编辑器命令补完 ----------------
+        ControlCommand::RunCommand { name, .. } => cmd_run_command(shell, window, cx, name),
+        ControlCommand::ListCommands => cmd_list_commands(),
+        ControlCommand::GetOutline => cmd_get_outline(shell, cx),
+        ControlCommand::ApplyFormat { range, format } => {
+            cmd_apply_format(shell, cx, range.0, range.1, *format)
+        }
     }
 }
 
@@ -1241,7 +1295,7 @@ fn workspace_root_of(shell: &ShellApp, cx: &Context<ShellApp>) -> Result<PathBuf
 
 /// 按 canonical 路径找已打开标签（`tab.path` 是打开时的绝对路径，未必
 /// 摊平符号链接——磁盘权威面对齐用 canonical 比较）。
-fn open_tab_by_canonical(shell: &ShellApp, cx: &Context<ShellApp>, target: &Path) -> Option<usize> {
+fn open_tab_by_canonical(shell: &ShellApp, target: &Path) -> Option<usize> {
     (0..shell.tab_count()).find(|&i| {
         shell
             .tab_path(i)
@@ -1250,7 +1304,7 @@ fn open_tab_by_canonical(shell: &ShellApp, cx: &Context<ShellApp>, target: &Path
 }
 
 /// 收集「路径下」（自身或子孙）的已打开标签索引。
-fn tabs_under_path(shell: &ShellApp, cx: &Context<ShellApp>, root: &Path) -> Vec<usize> {
+fn tabs_under_path(shell: &ShellApp, root: &Path) -> Vec<usize> {
     (0..shell.tab_count())
         .filter(|&i| {
             shell
@@ -1395,7 +1449,7 @@ fn cmd_write_file(
     let path = resolve_sandboxed(&root, Path::new(path))?;
     // 已打开标签：渲染态/行模型态拒（UI 与盘脱节），脏标签拒（静默
     // 覆盖丢用户修改——AI 有责任先 save）。
-    let open_idx = open_tab_by_canonical(shell, cx, &path);
+    let open_idx = open_tab_by_canonical(shell, &path);
     if let Some(idx) = open_idx {
         if shell.tab_is_readonly(idx, cx).unwrap_or(false) {
             return Err(format!(
@@ -1418,13 +1472,13 @@ fn cmd_write_file(
     }
     // 父目录必须存在（新建目录走 create_dir——不隐式 mkdir，AI 的
     // 操作结果可预期）。
-    if let Some(parent) = path.parent() {
-        if !parent.is_dir() {
-            return Err(format!(
-                "父目录不存在（{}）——先 create_dir",
-                parent.display()
-            ));
-        }
+    if let Some(parent) = path.parent()
+        && !parent.is_dir()
+    {
+        return Err(format!(
+            "父目录不存在（{}）——先 create_dir",
+            parent.display()
+        ));
     }
     std::fs::write(&path, content).map_err(|e| format!("写入失败（{}）：{e}", path.display()))?;
     // 已打开的干净文本标签：reload 同步（走完整编辑链——订阅端也
@@ -1454,13 +1508,13 @@ fn cmd_create_file(
             path.display()
         ));
     }
-    if let Some(parent) = path.parent() {
-        if !parent.is_dir() {
-            return Err(format!(
-                "父目录不存在（{}）——先 create_dir",
-                parent.display()
-            ));
-        }
+    if let Some(parent) = path.parent()
+        && !parent.is_dir()
+    {
+        return Err(format!(
+            "父目录不存在（{}）——先 create_dir",
+            parent.display()
+        ));
     }
     let content = content.unwrap_or("");
     std::fs::write(&path, content).map_err(|e| format!("创建失败（{}）：{e}", path.display()))?;
@@ -1511,7 +1565,7 @@ fn cmd_delete(
     let was_dir = target.is_dir();
     // 路径下有脏标签 → 拒（连用户未保存的编辑一起删掉——AI 有责任
     // 先处理）；干净标签删后自动关（文件已不存在，标签留着无意义）。
-    let under = tabs_under_path(shell, cx, &target);
+    let under = tabs_under_path(shell, &target);
     for &idx in &under {
         if shell.tab_is_modified(idx, cx).unwrap_or(false) {
             let tab_path = shell.tab_path(idx).unwrap_or_default();
@@ -1555,13 +1609,13 @@ fn cmd_rename(
     if to.exists() {
         return Err(format!("目标已存在（{}）——rename 不覆盖", to.display()));
     }
-    if let Some(parent) = to.parent() {
-        if !parent.is_dir() {
-            return Err(format!(
-                "目标父目录不存在（{}）——先 create_dir",
-                parent.display()
-            ));
-        }
+    if let Some(parent) = to.parent()
+        && !parent.is_dir()
+    {
+        return Err(format!(
+            "目标父目录不存在（{}）——先 create_dir",
+            parent.display()
+        ));
     }
     // 迁移计划在 rename **前**采集（旧路径还能 canonicalize 时）；
     // 文件/目录（from 是目录时整棵子树）下的标签全部跟随。rest 为空
@@ -1587,6 +1641,99 @@ fn cmd_rename(
         "to": to.display().to_string(),
         "migrated_tabs": migrated,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// #134 任务 2：编辑器命令补完（主线程薄编排——Cmd 注册表/大纲/格式）
+// ---------------------------------------------------------------------------
+
+fn cmd_run_command(
+    shell: &mut ShellApp,
+    window: &mut Window,
+    cx: &mut Context<ShellApp>,
+    name: &str,
+) -> Result<serde_json::Value, String> {
+    let Some(cmd) = crate::editor::commands::Cmd::from_id(name) else {
+        return Err(format!("未知命令（{name}）——list_commands 查看可用清单"));
+    };
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    // 与命令面板/键位同一分派路径（只读门禁/折叠/查找全同语义——
+    // exec_command 内部各命令自带门）。
+    editor.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
+    Ok(serde_json::json!({
+        "ran": true,
+        "command": name,
+    }))
+}
+
+fn cmd_list_commands() -> Result<serde_json::Value, String> {
+    let commands: Vec<serde_json::Value> = crate::editor::commands::Cmd::ALL
+        .iter()
+        .map(|&c| {
+            serde_json::json!({
+                "id": c.id(),
+                "title": c.title(),
+                "default_key": c.default_key(),
+            })
+        })
+        .collect();
+    let count = commands.len();
+    Ok(serde_json::json!({
+        "commands": commands,
+        "count": count,
+    }))
+}
+
+fn cmd_get_outline(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    let editor = editor.read(cx);
+    let Some(entries) = editor.md_outline() else {
+        return Err(format!(
+            "文档无 md 大纲（kind={}）——get_outline 只对文本态文档可用",
+            editor.doc_kind()
+        ));
+    };
+    let items: Vec<serde_json::Value> = entries
+        .into_iter()
+        .map(
+            |(level, line, text)| serde_json::json!({ "level": level, "line": line, "text": text }),
+        )
+        .collect();
+    let count = items.len();
+    Ok(serde_json::json!({
+        "entries": items,
+        "count": count,
+    }))
+}
+
+fn cmd_apply_format(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    start: PointWire,
+    end: PointWire,
+    format: crate::editor::FormatKind,
+) -> Result<serde_json::Value, String> {
+    let Some(editor) = shell.editor().cloned() else {
+        return Err("无活动文档（空态——先 open_file）".into());
+    };
+    match editor.update(cx, |ed, cx| {
+        ed.apply_format(start.into_point(), end.into_point(), format, cx)
+    }) {
+        Some(cursor) => Ok(serde_json::json!({
+            "applied": true,
+            "format": format.id(),
+            "cursor": point_json(cursor),
+            "chars": editor.read(cx).char_count(),
+        })),
+        None => Err("无法应用格式（空范围 / 只读渲染态 / docx 行模型态）".into()),
+    }
 }
 
 /// 全量状态（get_state 的 result 载荷）。
@@ -2142,6 +2289,102 @@ mod tests {
             }
             .name(),
             "rename"
+        );
+    }
+
+    #[test]
+    fn parse_editor_command_commands_roundtrip() {
+        // run_command：args 可省（前向兼容字段）
+        let (id, cmd) = parse_command(r#"{"id":25,"cmd":"run_command","name":"goto_line"}"#);
+        assert_eq!(id, Some(25));
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::RunCommand {
+                name: "goto_line".into(),
+                args: None,
+            })
+        );
+        // args 显式传（当前忽略——前向兼容）
+        let (_, cmd) = parse_command(r#"{"cmd":"run_command","name":"undo","args":{"n":1}}"#);
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::RunCommand {
+                name: "undo".into(),
+                args: Some(serde_json::json!({"n": 1})),
+            })
+        );
+
+        let (_, cmd) = parse_command(r#"{"id":26,"cmd":"list_commands"}"#);
+        assert_eq!(cmd, Ok(ControlCommand::ListCommands));
+
+        let (_, cmd) = parse_command(r#"{"id":27,"cmd":"get_outline"}"#);
+        assert_eq!(cmd, Ok(ControlCommand::GetOutline));
+
+        // apply_format：点位对象/数组两形态 + 全部格式枚举值
+        let (_, cmd) = parse_command(
+            r#"{"cmd":"apply_format","range":[{"line":0,"col":0},{"line":0,"col":4}],"format":"bold"}"#,
+        );
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::ApplyFormat {
+                range: (PointWire { line: 0, col: 0 }, PointWire { line: 0, col: 4 },),
+                format: crate::editor::FormatKind::Bold,
+            })
+        );
+        for (wire, kind) in [
+            ("bold", crate::editor::FormatKind::Bold),
+            ("italic", crate::editor::FormatKind::Italic),
+            ("code", crate::editor::FormatKind::Code),
+            ("strikethrough", crate::editor::FormatKind::Strikethrough),
+        ] {
+            let (_, cmd) = parse_command(&format!(
+                r#"{{"cmd":"apply_format","range":[[0,0],[0,1]],"format":"{wire}"}}"#
+            ));
+            assert_eq!(
+                cmd,
+                Ok(ControlCommand::ApplyFormat {
+                    range: (PointWire { line: 0, col: 0 }, PointWire { line: 0, col: 1 },),
+                    format: kind,
+                }),
+                "{wire} 应解析到对应格式"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_editor_command_commands_field_errors() {
+        // run_command 缺 name
+        let (_, cmd) = parse_command(r#"{"cmd":"run_command"}"#);
+        assert!(cmd.is_err());
+        // apply_format 缺 format / range 类型错 / 未知格式值
+        let (_, cmd) = parse_command(r#"{"cmd":"apply_format","range":[[0,0],[0,1]]}"#);
+        assert!(cmd.is_err());
+        let (_, cmd) = parse_command(r#"{"cmd":"apply_format","range":"0,0-0,1","format":"bold"}"#);
+        assert!(cmd.is_err());
+        let (_, cmd) =
+            parse_command(r#"{"cmd":"apply_format","range":[[0,0],[0,1]],"format":"underline"}"#);
+        assert!(cmd.is_err(), "未知格式值拒绝");
+    }
+
+    #[test]
+    fn editor_command_names_match_wire_tags() {
+        assert_eq!(
+            ControlCommand::RunCommand {
+                name: String::new(),
+                args: None,
+            }
+            .name(),
+            "run_command"
+        );
+        assert_eq!(ControlCommand::ListCommands.name(), "list_commands");
+        assert_eq!(ControlCommand::GetOutline.name(), "get_outline");
+        assert_eq!(
+            ControlCommand::ApplyFormat {
+                range: (PointWire { line: 0, col: 0 }, PointWire { line: 0, col: 0 },),
+                format: crate::editor::FormatKind::Bold,
+            }
+            .name(),
+            "apply_format"
         );
     }
 

@@ -11,8 +11,9 @@
 #      source=user）+ 多客户端订阅互不干扰 + 断连自动注销（--smoke2）；
 #      #134 FS：7 个文件系统命令全链 + 沙箱边界拒绝 + 写已开文件
 #      reload 同步 + rename 标签迁移 + delete 自动关标签（--smoke-fs，
-#      应用以 --smoke-workspace 启动）。真实 unix socket 通信（非
-#      进程内自测）。
+#      应用以 --smoke-workspace 启动）；#134 任务 2：编辑器命令面
+#      run_command / list_commands / get_outline / apply_format
+#      （--smoke-cmd）。真实 unix socket 通信（非进程内自测）。
 #   2. 应用侧证据行（rpc.log）——"rpc: listening at" + "rpc: 事件泵已
 #      启动" + "rpc: exec <cmd> ok=<bool>" + "rpc: client connected" +
 #      "rpc: doc-event push"（订阅广播主线程外证据）+ "workspace: <路径>"
@@ -147,8 +148,10 @@ python3 tests/rpc_client.py "$SOCK" --smoke "$FILE1" "$FILE2"
 python3 tests/rpc_client.py "$SOCK" --smoke2 "$FILE1" "$FILE2"
 # 2c. #134 FS 面（7 命令 + 沙箱 + reload 同步 + rename 迁移 + delete 关标签）
 python3 tests/rpc_client.py "$SOCK" --smoke-fs "$WS"
+# 2d. #134 任务 2 编辑器命令面（run_command/list_commands/get_outline/apply_format）
+python3 tests/rpc_client.py "$SOCK" --smoke-cmd "$FILE2"
 
-# 等应用自然退出（--smoke-sec 30；三段客户端序列 + 订阅等待 ~17s，余量充足）
+# 等应用自然退出（--smoke-sec 30；四段客户端序列 + 订阅等待 ~19s，余量充足）
 wait "$APP_PID" || {
   echo "FAIL: 应用退出码非零"
   tail -20 "$OUT/rpc.log" || true
@@ -157,8 +160,8 @@ wait "$APP_PID" || {
 
 # 通道 3：应用侧证据行 + quit reached
 EXEC_N=$(grep -c "rpc: exec" "$OUT/rpc.log" || true)
-if [ "$EXEC_N" -lt 25 ]; then
-  echo "FAIL: 'rpc: exec' 证据行不足（$EXEC_N < 25）"
+if [ "$EXEC_N" -lt 40 ]; then
+  echo "FAIL: 'rpc: exec' 证据行不足（$EXEC_N < 40）"
   exit 1
 fi
 grep -q "rpc: client connected" "$OUT/rpc.log" || {
@@ -198,4 +201,4 @@ grep -q "smoke: quit reached" "$OUT/rpc.log" || {
   exit 1
 }
 
-echo "rpc-smoke: PASS（exec ${EXEC_N} + doc-event ${EVENT_N} 证据行 + reloaded ${RELOAD_N} + 三段客户端全链 + quit reached）"
+echo "rpc-smoke: PASS（exec ${EXEC_N} + doc-event ${EVENT_N} 证据行 + reloaded ${RELOAD_N} + 四段客户端全链 + quit reached）"
