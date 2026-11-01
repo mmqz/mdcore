@@ -19,7 +19,7 @@
 //! |----|------|------|
 //! | 一段多 run（格式不同） | 保留首个**含文本** run 的 `w:rPr` 原文；其余文本 run 合并（其 `w:t` 移除） | [`process_run`] |
 //! | run 内特殊节点（w:br/w:tab/w:drawing） | 不删：非文本子节点原样保留（整 run 清空后才连 run 一起移除） | [`process_run`] 空壳判定 |
-//! | 域代码段（w:fldChar/w:instrText/w:fldSimple） | 拒改 typed 错（读不受影响——缓存结果文本可读） | [`ParagraphRef::field_code`] |
+//! | 域代码段（w:fldChar/w:instrText/w:fldSimple） | 整段替换拒改 typed 错（读不受影响——缓存结果文本可读）；#140 加性：显示值可编辑（只改结果区 w:t，五段结构零接触） | [`ParagraphRef::field_code`] / [`DocxEditor::set_field_value`] |
 //! | 修订标记（w:ins/w:del） | 按配置：[`RevisionPolicy::Refuse`]（默认，拒改）/ [`RevisionPolicy::Edit`]（ins 参与、del 原样） | [`DocxEditor::set_paragraph_text`] |
 //! | 超链接内文字（w:hyperlink 包 w:r） | 首个文本位若在 hyperlink 内 → 新文字落在 hyperlink 里（属性原样）；后位 hyperlink 清空则整壳移除 | [`process_container`] |
 //! | 空白保留 | 重写 `w:t` 恒带 `xml:space="preserve"`（永不吃首尾空白） | [`emit_text_payload`] |
@@ -38,7 +38,12 @@
 //! 编辑存**待落账态**（`pending`），`doc_xml`/`paragraphs` 恒为 open()
 //! 时的原文坐标系——`paragraphs()` 的 span 不随编辑漂移；同一 paragraph
 //! 后写胜。`save_to_vec` 单趟拼接（编辑段升序、互不重叠——XML 良构
-//! 保证），对未编辑区域零接触。
+//! 保证），对未编辑区域零接触。#140 域编辑同模型（`field_edits` 平行
+//! 数组）：结果区字节区间手术（首 w:t Replace 新值、余 w:t Remove；
+//! fldChar/instrText/separate/end 零 op——域在 Word/LibreOffice 打开
+//! 仍是活域，见 tests/docx_fields.rs 域活证伪）。跨段域（TOC 型）/嵌套
+//! 域/无 separate 退化域第一版只读（fields() 可列——display_value
+//! 恒可读）。
 //!
 //! ## 容器防线（与读路径同门，恒严格）
 //!
@@ -58,6 +63,73 @@ use quick_xml::events::Event;
 // ---------------------------------------------------------------------------
 // 公开类型
 // ---------------------------------------------------------------------------
+
+/// 域类型（#140 任务 1：域码段编辑——指令首词切分，与读面
+/// [`crate::docx`] 模块 FieldMachine 的 is_volatile 同一口径：
+/// 首词 trim 后按空格/反斜杠/tab/nbsp 切分，大小写不敏感）。
+///
+/// 未映射指令（PAGEREF/PRINTDATE/IF/DOCPROPERTY…）→ [`FieldKind::Custom`]，
+/// 装原始指令串（诊断面——不发明映射，宁缺毋错）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldKind {
+    /// `PAGE`（当前页码域）。
+    Page,
+    /// `NUMPAGES`（总页数域）。
+    NumPages,
+    /// `DATE`（日期域）。
+    Date,
+    /// `TIME`（时间域）。
+    Time,
+    /// `TOC \o "1-3" …`（目录域——跨段大域，第一版只读）。
+    Toc,
+    /// `REF <bookmark>`（书签引用域——第二词为书签名）。
+    Ref(String),
+    /// 其他指令（原始串透传）。
+    Custom(String),
+}
+
+impl FieldKind {
+    /// 指令串 → 类型（首词切分；`REF` 取第二词为书签名）。
+    pub fn from_instr(instr: &str) -> FieldKind {
+        field_kind_from_instr(instr)
+    }
+
+    /// 该域的指令串（`Ref`/`Custom` 装载原值；纯变体给规范名）。
+    pub fn instr(&self) -> String {
+        match self {
+            FieldKind::Page => "PAGE".into(),
+            FieldKind::NumPages => "NUMPAGES".into(),
+            FieldKind::Date => "DATE".into(),
+            FieldKind::Time => "TIME".into(),
+            FieldKind::Toc => "TOC".into(),
+            FieldKind::Ref(b) => format!("REF {b}"),
+            FieldKind::Custom(s) => s.clone(),
+        }
+    }
+}
+
+/// 域条目（[`DocxEditor::fields`] 返回——段落号 + 域类型 + 当前显示值，
+/// 用户坐标面 `(para, field_idx)` 双键即 [`DocxEditor::set_field_value`] 入参）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldInfo {
+    /// begin 所在段落号（文档序扁平坐标系——与 `paragraphs()` 同源；
+    /// 跨段域挂 begin 段，end 可能在后段）。
+    pub para: usize,
+    /// 段内域序（0 基，按 begin 在段内的文档序）。
+    pub field_idx: usize,
+    /// 域类型。
+    pub kind: FieldKind,
+    /// 原始指令串（完整——含开关参数；fldSimple 取 `w:instr` 属性）。
+    pub instr: String,
+    /// 当前缓存显示值（separate 与 end 之间的 `w:t` 拼接；
+    /// 无 separate 的退化域 = 空串——指令文本恒不入显示值）。
+    pub display_value: String,
+    /// begin/end 同段（跨段域——TOC 型——第一版只读）。
+    pub same_para: bool,
+    /// 本版可编辑（= same_para && 非嵌套 && 有结果区；
+    /// TOC 域/嵌套域/无缓存区退化域均为 false）。
+    pub editable: bool,
+}
 
 /// 修订策略（坑④「按配置处理」的配置面）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +207,11 @@ pub struct DocxEditor {
     /// 表格栅格（#115-表格编辑 加性扩展：表 → 行 → 栅格列 → 段落号）。
     /// 原文坐标系，与 `paragraphs` 同源同序；open 后不变。
     tables: Vec<TableGrid>,
+    /// 域索引（#140-域码段编辑：open 时与段落同趟扫描落账；
+    /// 原文坐标系，open 后不变——`fields()` 的数据源）。
+    fields_idx: Vec<FieldScan>,
+    /// 待落账域编辑（与 fields_idx 等长平行数组；None = 未编辑）。
+    field_edits: Vec<Option<String>>,
 }
 
 impl DocxEditor {
@@ -179,7 +256,7 @@ impl DocxEditor {
                 }));
             }
         }
-        let (paragraphs, tables) = scan_paragraphs(&xml)?;
+        let (paragraphs, tables, fields_idx) = scan_paragraphs(&xml)?;
         let n = paragraphs.len();
         Ok(Self {
             bytes: bytes.to_vec(),
@@ -188,6 +265,8 @@ impl DocxEditor {
             pending: vec![None; n],
             policy,
             tables,
+            field_edits: vec![None; fields_idx.len()],
+            fields_idx,
         })
     }
 
@@ -259,6 +338,88 @@ impl DocxEditor {
     }
 
     // -----------------------------------------------------------------------
+    // #140 域码段编辑（加性扩展——不改既有语义；拒改面见模块文档）
+    // -----------------------------------------------------------------------
+
+    /// 列出文档里的域（段落号 + 类型 + 当前显示值）。
+    ///
+    /// 坐标系：`para` 与 `paragraphs()` 同源（文档序扁平，含表格/文本框
+    /// 内段落）；`field_idx` 为段内序（0 基，按 begin 在段内文档序）。
+    /// `(para, field_idx)` 即 [`Self::set_field_value`] 入参。
+    pub fn fields(&self) -> Vec<FieldInfo> {
+        self.fields_idx
+            .iter()
+            .map(|f| FieldInfo {
+                para: f.begin_para,
+                field_idx: f.seq_in_para,
+                kind: f.kind.clone(),
+                instr: f.instr.clone(),
+                display_value: f.display.clone(),
+                same_para: f.same_para,
+                editable: f.editable,
+            })
+            .collect()
+    }
+
+    /// 更新域的显示值（只改结果区 `w:t`；fldChar/instrText/separate/end
+    /// 五段结构零接触——域在 Word/LibreOffice 里仍是活域）。
+    ///
+    /// 结果区规则：首个 `w:t` 换新值（`xml:space` + 实体转义 +
+    /// `\t`→tab/`\n`→br，与 `set_paragraph_text` 同口径）；其余
+    /// 结果区 `w:t` 节点移除（run 壳保留——最小侵入）。
+    ///
+    /// 拒改面（typed `DocxError::InvalidInput`，fail-closed）：
+    /// 坐标不存在 / 跨段域（TOC 型）/ 嵌套域 / 无结果区
+    /// （无 `separate` 的退化域，或 separate 后无 `w:t`）/ 新值含
+    /// XML 1.0 非法控制字符或非字符。
+    ///
+    /// 注：域编辑不反映在 [`Self::paragraph_text`]（该文本坐标系
+    /// 只随 `set_paragraph_text` 落账；域显示值读面 = `fields()`
+    /// `display_value`——save 后 reopen 即新值）。
+    pub fn set_field_value(
+        &mut self,
+        para: usize,
+        field_idx: usize,
+        value: &str,
+    ) -> Result<(), DocxError> {
+        let pos = self
+            .fields_idx
+            .iter()
+            .position(|f| f.begin_para == para && f.seq_in_para == field_idx)
+            .ok_or_else(|| {
+                DocxError::InvalidInput(format!(
+                    "field ({para}, {field_idx}) not found — use fields() for actual coordinates"
+                ))
+            })?;
+        let f = &self.fields_idx[pos];
+        if !f.same_para {
+            return Err(DocxError::InvalidInput(format!(
+                "field ({para}, {field_idx}): cross-paragraph field (TOC-type) is read-only in v1"
+            )));
+        }
+        if f.nested {
+            return Err(DocxError::InvalidInput(format!(
+                "field ({para}, {field_idx}): nested field structure is read-only in v1"
+            )));
+        }
+        if !f.has_separate {
+            return Err(DocxError::InvalidInput(format!(
+                "field ({para}, {field_idx}): no w:fldChar separate (degenerate field) \
+                 refuses edit — refusing to invent field structure"
+            )));
+        }
+        if f.result_spans.is_empty() {
+            return Err(DocxError::InvalidInput(format!(
+                "field ({para}, {field_idx}): empty result region (no w:t between \
+                 separate and end) refuses edit"
+            )));
+        }
+        check_field_text(para, field_idx, value)?;
+        self.field_edits[pos] = Some(value.to_string());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // #115 表格编辑（加性扩展——只读查表，不改既有语义）
     // -----------------------------------------------------------------------
 
@@ -306,9 +467,16 @@ impl DocxEditor {
         })
     }
 
-    /// 保存（一次性落账全部待编辑；幂等——同状态重复调用产出相同字节）。
+    /// 保存（一次性落账全部待编辑——段落文本与域显示值两类；
+    /// 幂等——同状态重复调用产出相同字节）。
     pub fn save_to_vec(&self) -> Result<Vec<u8>, DocxError> {
-        let new_xml = apply_pending_edits(&self.doc_xml, &self.paragraphs, &self.pending)?;
+        let new_xml = apply_all_edits(
+            &self.doc_xml,
+            &self.paragraphs,
+            &self.pending,
+            &self.fields_idx,
+            &self.field_edits,
+        )?;
         repack_document_part(&self.bytes, new_xml.as_bytes())
     }
 }
@@ -361,16 +529,276 @@ fn local_name(e: &quick_xml::events::BytesStart<'_>) -> String {
     String::from_utf8_lossy(e.local_name().as_ref()).into_owned()
 }
 
+// ---------------------------------------------------------------------------
+// #140 域码段：域扫描（与 scan_paragraphs 同趟喂点——域事件/段落
+// 坐标系天然同源；fldChar 五段结构与 fldSimple 简单形两形态）
+// ---------------------------------------------------------------------------
 
-fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), DocxError> {
+/// 域扫描落账条目（原文坐标系——open 后不变，`fields()` 数据源）。
+#[derive(Debug)]
+struct FieldScan {
+    /// begin（或 fldSimple）所在段落号。
+    begin_para: usize,
+    /// 段内域序（0 基，按 begin 在段内文档序——finish 统一分配）。
+    seq_in_para: usize,
+    /// begin 节点 '<' 字节位（同段多域的段内排序锚）。
+    begin_byte: usize,
+    kind: FieldKind,
+    /// 原始指令串（instrText 拼接 / fldSimple `w:instr` 属性）。
+    instr: String,
+    /// 缓存显示值（结果区 `w:t` 拼接；退化域 = 空串）。
+    display: String,
+    /// 结果区各 `w:t` **节点域**（含开闭标签——编辑锚点：首 Replace /
+    /// 余 Remove；跨段域照收全量但只读面不用）。
+    result_spans: Vec<(usize, usize)>,
+    /// begin/end 同段（fldSimple 恒 true——不跨段元素）。
+    same_para: bool,
+    /// 嵌套参与（结果区内出现子 begin / 本域内出现 fldChar）。
+    nested: bool,
+    /// 有 separate（fldSimple = true——简单形无 separate 概念，
+    /// 结果区即子 `w:t`）。
+    has_separate: bool,
+    /// 可编辑（= same_para && !nested && has_separate && !result_spans.empty()）。
+    editable: bool,
+}
+
+/// 开放域累积态（fldChar 栈项 / fldSimple 槽共用形）。
+#[derive(Debug, Default)]
+struct OpenField {
+    begin_para: Option<usize>,
+    begin_byte: usize,
+    instr: String,
+    /// separate 已见（结果区开放——complex 域专用）。
+    in_result: bool,
+    has_separate: bool,
+    display: String,
+    result_spans: Vec<(usize, usize)>,
+    nested: bool,
+    /// fldSimple 形。
+    is_simple: bool,
+}
+
+/// 域扫描状态机（scan_paragraphs 同趟喂点；开放域 EOF 未闭合 = 丢弃
+/// 不落账——未闭合域非完整结构，列出来会误导「有显示值」）。
+#[derive(Debug, Default)]
+struct FieldBuilders {
+    /// fldChar 域嵌套栈（内层最尾）。
+    complex: Vec<OpenField>,
+    /// fldSimple 开放槽（fldSimple 内遇 fldChar → 本槽标 nested，
+    /// complex 机照常独立跑——畸形态只读保全）。
+    simple: Option<OpenField>,
+    /// 开放中 instrText 的 (node_start, content_open)。
+    instr_open: Option<(usize, usize)>,
+    /// 已落账域（finish 前序——begin 文档序大体但非严格，终期统一排序）。
+    done: Vec<FieldScan>,
+}
+
+impl FieldBuilders {
+    /// fldChar 事件（Start/Empty 同形——`w:fldCharType` 驱动）。
+    fn on_fldchar(&mut self, ty: Option<&str>, para: Option<usize>, node_start: usize) {
+        match ty {
+            Some("begin") => {
+                if let Some(s) = self.simple.as_mut() {
+                    s.nested = true;
+                }
+                if let Some(top) = self.complex.last_mut() {
+                    top.nested = true;
+                }
+                if let Some(p) = para {
+                    self.complex.push(OpenField {
+                        begin_para: Some(p),
+                        begin_byte: node_start,
+                        ..OpenField::default()
+                    });
+                }
+                // begin 无段落上下文（段落外 run——畸形）：不 push；
+                // 后续 separate/end 因栈空自然忽略。
+            }
+            Some("separate") => {
+                if let Some(top) = self.complex.last_mut() {
+                    top.has_separate = true;
+                    top.in_result = true;
+                }
+                // fldSimple 内的 fldChar separate：simple 已在 begin 喂点
+                // 标 nested——这里无需再动（simple 无结果态概念）。
+            }
+            Some("end") => {
+                if let Some(open) = self.complex.pop() {
+                    if open.begin_para.is_some() {
+                        let scan = finalize_scan(open, para);
+                        self.done.push(scan);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// instrText 内容闭（喂开放 complex 栈顶；无栈顶时喂 simple——
+    /// fldSimple 内 instrText 罕见面）。
+    fn on_instr_close(&mut self, content: &str) {
+        if let Some(top) = self.complex.last_mut() {
+            top.instr.push_str(content);
+        } else if let Some(s) = self.simple.as_mut() {
+            s.instr.push_str(content);
+        }
+    }
+
+    /// fldSimple 开（Start 形——子内容随后；Empty 形走 on_fldsimple_empty）。
+    fn on_fldsimple_start(
+        &mut self,
+        instr: Option<String>,
+        para: Option<usize>,
+        node_start: usize,
+    ) {
+        // 简单形无 separate 概念：结果区 = 子层 w:t（恒开放收集）。
+        let open = OpenField {
+            begin_para: para,
+            begin_byte: node_start,
+            instr: instr.unwrap_or_default(),
+            is_simple: true,
+            has_separate: true,
+            ..OpenField::default()
+        };
+        // 已有开放 simple（w:p 层 fldSimple 套 fldSimple 畸形）：旧槽
+        // 丢弃不落账，新槽顶替（登记面——罕畸形态）。
+        self.simple = Some(open);
+    }
+
+    /// fldSimple 自闭合（无子内容——空结果区，只读面即刻落账）。
+    fn on_fldsimple_empty(&mut self, instr: Option<String>, para: Option<usize>) {
+        if para.is_none() {
+            return;
+        }
+        let open = OpenField {
+            begin_para: para,
+            instr: instr.unwrap_or_default(),
+            is_simple: true,
+            has_separate: true,
+            ..OpenField::default()
+        };
+        let scan = finalize_scan(open, para);
+        self.done.push(scan);
+    }
+
+    /// fldSimple 闭（End 事件——落账）。
+    fn on_fldsimple_end(&mut self, para: Option<usize>) {
+        if let Some(open) = self.simple.take() {
+            if open.begin_para.is_some() {
+                let scan = finalize_scan(open, para);
+                self.done.push(scan);
+            }
+        }
+    }
+
+    /// 收尾：残开放域丢弃 + 排序 + 段内序分配。
+    fn finish(mut self) -> Vec<FieldScan> {
+        let mut items = std::mem::take(&mut self.done);
+        items.sort_by_key(|f| (f.begin_para, f.begin_byte));
+        let mut cur_para = usize::MAX;
+        let mut seq = 0usize;
+        for f in items.iter_mut() {
+            if f.begin_para != cur_para {
+                cur_para = f.begin_para;
+                seq = 0;
+            }
+            f.seq_in_para = seq;
+            seq += 1;
+        }
+        items
+    }
+}
+
+/// 开放域 → 落账条目（kind 解析 + editable 判定）。
+fn finalize_scan(open: OpenField, end_para: Option<usize>) -> FieldScan {
+    let same_para = if open.is_simple {
+        true // fldSimple 是段落内元素，不跨段。
+    } else {
+        end_para.is_some() && open.begin_para.is_some() && open.begin_para == end_para
+    };
+    let kind = field_kind_from_instr(&open.instr);
+    let editable = same_para && !open.nested && open.has_separate && !open.result_spans.is_empty();
+    FieldScan {
+        begin_para: open.begin_para.unwrap_or(usize::MAX),
+        seq_in_para: 0,
+        begin_byte: open.begin_byte,
+        kind,
+        instr: open.instr,
+        display: open.display,
+        result_spans: open.result_spans,
+        same_para,
+        nested: open.nested,
+        has_separate: open.has_separate,
+        editable,
+    }
+}
+
+/// 指令串 → 域类型（首词切分与读面 FieldMachine::is_volatile 同口径；
+/// `REF` 取第二词为书签名；未映射 → Custom 装原串）。
+fn field_kind_from_instr(instr: &str) -> FieldKind {
+    let t = instr.trim();
+    let head = t.split([' ', '\\', '\t', '\u{a0}']).next().unwrap_or("");
+    let up = head.to_ascii_uppercase();
+    match up.as_str() {
+        "PAGE" => FieldKind::Page,
+        "NUMPAGES" => FieldKind::NumPages,
+        "DATE" => FieldKind::Date,
+        "TIME" => FieldKind::Time,
+        "TOC" => FieldKind::Toc,
+        "REF" => {
+            let rest = t.get(head.len()..).unwrap_or("").trim();
+            let bm = rest.split([' ', '\\', '\t', '\u{a0}']).next().unwrap_or("");
+            FieldKind::Ref(bm.to_string())
+        }
+        _ => FieldKind::Custom(t.to_string()),
+    }
+}
+
+/// 取任意命名属性（无前缀变体同名同认——`val`/`fldCharType`/`instr`）。
+fn attr_named(e: &quick_xml::events::BytesStart<'_>, want: &str) -> Option<String> {
+    for a in e.attributes().flatten() {
+        let key = String::from_utf8_lossy(a.key.local_name().as_ref()).into_owned();
+        if key == want {
+            return Some(String::from_utf8_lossy(a.value.as_ref()).into_owned());
+        }
+    }
+    None
+}
+
+/// 域新值防线（与 check_edit_text 同口径——坐标面换域）。
+fn check_field_text(para: usize, field_idx: usize, text: &str) -> Result<(), DocxError> {
+    for c in text.chars() {
+        let cp = c as u32;
+        if matches!(c, '\u{FFFE}' | '\u{FFFF}') {
+            return Err(DocxError::InvalidInput(format!(
+                "field ({para}, {field_idx}): new value contains XML noncharacter U+{cp:04X}"
+            )));
+        }
+        if cp < 0x20 && !matches!(c, '\t' | '\n' | '\r') {
+            return Err(DocxError::InvalidInput(format!(
+                "field ({para}, {field_idx}): new value contains control character U+{cp:04X} \
+                 (XML 1.0 illegal; allowed: \\t \\n \\r as tab/br)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// scan_paragraphs 返回形（段落表 / 表格栅格 / 域索引）。
+type ScanTuple = (Vec<ParagraphRef>, Vec<TableGrid>, Vec<FieldScan>);
+
+fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
     let mut reader = quick_xml::Reader::from_str(xml);
     let bytes = xml.as_bytes();
     let mut out: Vec<ParagraphRef> = Vec::new();
     // 开启中的段落（内层最尾——文本/旗标只记 innermost；嵌套文本框段落
     // 各自独立索引，外层不吃内层文本）。
     let mut para_stack: Vec<usize> = Vec::new();
-    // 开启中 w:t 的 open 端（内层段落的待装配文本；w:t 恒为叶——单槽）。
-    let mut wt_open: Option<usize> = None;
+    // 开启中 w:t 的 (节点 '<' 位, 内容区 open 端)（w:t 恒为叶——单槽；
+    // #140：节点位供域结果区收集，内容端供段落文本装配）。
+    let mut wt_open: Option<(usize, usize)> = None;
+    // #140 域状态机（与段落同趟喂点）。
+    let mut fbuild = FieldBuilders::default();
     let mut fallback = 0usize;
     let mut tbl = 0usize;
     let mut txbx = 0usize;
@@ -470,9 +898,11 @@ fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), Doc
                         }
                     }
                     "t" if !para_stack.is_empty() => {
-                        // 文本节点开：记 open 端（内容由配对 End 补齐——
-                        // 需要闭标签起点定位内容区）。
-                        wt_open = Some(fwd_to_gt(bytes, reader.buffer_position() as usize));
+                        // 文本节点开：记 (节点 '<' 位, 内容区 open 端)
+                        // （内容由配对 End 补齐——需闭标签起点定位内容区）。
+                        let node_start = fwd_to_lt(bytes, pos_before);
+                        let content_open = fwd_to_gt(bytes, reader.buffer_position() as usize);
+                        wt_open = Some((node_start, content_open));
                     }
                     "ins" | "del" | "moveFrom" | "moveTo" if !para_stack.is_empty() => {
                         if let Some(&i) = para_stack.last() {
@@ -482,6 +912,32 @@ fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), Doc
                     "fldChar" | "instrText" | "fldSimple" if !para_stack.is_empty() => {
                         if let Some(&i) = para_stack.last() {
                             out[i].field_code = true;
+                        }
+                        // #140 域状态机喂点（开形——Empty 形在 Empty 分支同款）。
+                        let node_start = fwd_to_lt(bytes, pos_before);
+                        match name.as_str() {
+                            "fldChar" => {
+                                let ty = attr_named(&e, "fldCharType");
+                                fbuild.on_fldchar(
+                                    ty.as_deref(),
+                                    para_stack.last().copied(),
+                                    node_start,
+                                );
+                            }
+                            "instrText" => {
+                                let content_open =
+                                    fwd_to_gt(bytes, reader.buffer_position() as usize);
+                                fbuild.instr_open = Some((node_start, content_open));
+                            }
+                            "fldSimple" => {
+                                let instr = attr_named(&e, "instr");
+                                fbuild.on_fldsimple_start(
+                                    instr,
+                                    para_stack.last().copied(),
+                                    node_start,
+                                );
+                            }
+                            _ => unreachable!(),
                         }
                     }
                     _ => {}
@@ -560,6 +1016,24 @@ fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), Doc
                         if let Some(&i) = para_stack.last() {
                             out[i].field_code = true;
                         }
+                        // #140 域状态机喂点（自闭合形）。
+                        let node_start = fwd_to_lt(bytes, pos_before);
+                        match name.as_str() {
+                            "fldChar" => {
+                                let ty = attr_named(&e, "fldCharType");
+                                fbuild.on_fldchar(
+                                    ty.as_deref(),
+                                    para_stack.last().copied(),
+                                    node_start,
+                                );
+                            }
+                            "instrText" => {} // 自闭合空指令——零内容。
+                            "fldSimple" => {
+                                let instr = attr_named(&e, "instr");
+                                fbuild.on_fldsimple_empty(instr, para_stack.last().copied());
+                            }
+                            _ => unreachable!(),
+                        }
                     }
                     "ins" | "del" | "moveFrom" | "moveTo" if !para_stack.is_empty() => {
                         if let Some(&i) = para_stack.last() {
@@ -605,8 +1079,10 @@ fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), Doc
                         }
                     }
                     "t" => {
-                        // 文本节点闭：内容区 = [wt_open, 闭标签起点)。
-                        if let (Some(&i), Some(open)) = (para_stack.last(), wt_open.take()) {
+                        // 文本节点闭：内容区 = [content_open, 闭标签起点)。
+                        if let (Some(&i), Some((node_start, open))) =
+                            (para_stack.last(), wt_open.take())
+                        {
                             let end = fwd_to_gt(bytes, reader.buffer_position() as usize);
                             let close_start = back_to_lt(bytes, end);
                             if close_start >= open {
@@ -618,8 +1094,48 @@ fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), Doc
                                     })
                                 })?;
                                 out[i].text.push_str(decoded.as_ref());
+                                // #140 域结果区收集：嵌套期 w:t 归属
+                                // **所有** in_result 开放层（外层 display
+                                // = 整域渲染文本——含嵌套子域显示值；
+                                // fldSimple 与 complex 栈各层独立喂）。
+                                // 空 w:t 不收（display 与 spans 一致）。
+                                if !decoded.is_empty() {
+                                    let node_span = (node_start, end);
+                                    if let Some(s) = fbuild.simple.as_mut() {
+                                        s.display.push_str(decoded.as_ref());
+                                        s.result_spans.push(node_span);
+                                    }
+                                    for open in fbuild.complex.iter_mut() {
+                                        if open.in_result {
+                                            open.display.push_str(decoded.as_ref());
+                                            open.result_spans.push(node_span);
+                                        }
+                                    }
+                                }
                             }
                         }
+                    }
+                    "instrText" => {
+                        // #140 指令文本闭：内容区 → 开放域 instr 累积
+                        //（simple 开放优先喂 simple，否则 complex 栈顶）。
+                        if let Some((_node_start, open)) = fbuild.instr_open.take() {
+                            let end = fwd_to_gt(bytes, reader.buffer_position() as usize);
+                            let close_start = back_to_lt(bytes, end);
+                            if close_start >= open {
+                                let raw = &xml[open..close_start];
+                                let decoded = quick_xml::escape::unescape(raw).map_err(|e| {
+                                    DocxError::Container(io::ReadError::InvalidPart {
+                                        part: "word/document.xml".to_string(),
+                                        detail: format!("instrText entity decode failed: {e}"),
+                                    })
+                                })?;
+                                fbuild.on_instr_close(decoded.as_ref());
+                            }
+                        }
+                    }
+                    "fldSimple" => {
+                        // #140 fldSimple 闭：simple 槽落账。
+                        fbuild.on_fldsimple_end(para_stack.last().copied());
                     }
                     "br" if !para_stack.is_empty() => {
                         // 开形 <w:br …></w:br>：与自闭合同语义。
@@ -640,7 +1156,7 @@ fn scan_paragraphs(xml: &str) -> Result<(Vec<ParagraphRef>, Vec<TableGrid>), Doc
             }
         }
     }
-    Ok((out, tables))
+    Ok((out, tables, fbuild.finish()))
 }
 
 /// 表栅格扫描累积态（扫描期）。
@@ -660,11 +1176,7 @@ impl TableBuild {
     /// 栅格展开（与读面 `TableData::rows` 同口径：gridSpan 覆盖列重复
     /// 首格段落号；vMerge 续格指向起始格段落号）。
     fn finish(self) -> TableGrid {
-        let first_paragraph = self
-            .cells
-            .iter()
-            .find_map(|c| c.paragraph)
-            .unwrap_or(0);
+        let first_paragraph = self.cells.iter().find_map(|c| c.paragraph).unwrap_or(0);
         let width = self.grid_width.max(1);
         let mut rows: Vec<Vec<usize>> = Vec::new();
         let mut current: Vec<usize> = Vec::new();
@@ -1040,65 +1552,132 @@ fn escape_text(s: &str) -> String {
 }
 
 /// 全部待落账编辑 → 新 document.xml（单趟；未编辑区域零接触）。
-fn apply_pending_edits(
+///
+/// 两类编辑统一升序归并（段落 span 互不重叠——XML 良构保证；
+/// 嵌套段冲突由 cursor 单调不变量 fail-closed 拒绝）：
+/// · 文本编辑（既有 `set_paragraph_text`——段落树手术）；
+/// · 域编辑（#140 `set_field_value`——结果区字节区间手术：
+///   首 `w:t` Replace 新值、余 `w:t` Remove；fldChar/instrText/
+///   separate/end 零 op——域结构零接触，Word/LibreOffice 打开
+///   仍是活域）。
+///
+/// 同段互斥不变量：域段（`field_code`）拒文本编辑（既有防线），
+/// 双 Some 同段 = 内部不变量破坏，fail-closed。
+fn apply_all_edits(
     doc_xml: &str,
     paragraphs: &[ParagraphRef],
-    pending: &[Option<String>],
+    text_pending: &[Option<String>],
+    fields_idx: &[FieldScan],
+    field_edits: &[Option<String>],
 ) -> Result<String, DocxError> {
+    // 域编辑按段聚合（BTreeMap——begin_para 升序；同段多域保
+    // fields_idx 序，段内 ops 无重叠[同段域结果区互斥，嵌套域已拒编辑]）。
+    let mut field_by_para: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (pos, val) in field_edits.iter().enumerate() {
+        if val.is_some() {
+            field_by_para
+                .entry(fields_idx[pos].begin_para)
+                .or_default()
+                .push(pos);
+        }
+    }
     let mut out = String::with_capacity(doc_xml.len() + 64);
     let mut cursor = 0usize;
-    for (idx, new_text) in pending.iter().enumerate() {
-        let Some(new_text) = new_text.as_deref() else {
-            continue;
+    let mut idx = 0usize;
+    while idx < paragraphs.len() || !field_by_para.is_empty() {
+        // 双源归并取下一段（升序；文本源游标 idx 跳过 None 段）。
+        let text_at = {
+            let mut j = idx;
+            while j < paragraphs.len() && text_pending[j].is_none() {
+                j += 1;
+            }
+            if j < paragraphs.len() {
+                Some(j)
+            } else {
+                None
+            }
         };
-        let p = &paragraphs[idx];
+        let field_at = field_by_para.keys().next().copied();
+        // 取较小者（文本段与域段不可能同号——互斥不变量；此处防御
+        // fail-closed）。无下一段即退出。
+        let Some(target) = [text_at, field_at].into_iter().flatten().min() else {
+            break;
+        };
+        let is_text = text_at == Some(target);
+        let is_field = field_at == Some(target);
+        if is_text && is_field {
+            return Err(DocxError::Container(io::ReadError::InvalidPart {
+                part: "word/document.xml".to_string(),
+                detail: format!(
+                    "paragraph {target}: text edit and field edit co-present \
+                     (invariant broken — field paragraph refuses text edit)"
+                ),
+            }));
+        }
+        if is_text {
+            idx = target + 1;
+        } else {
+            field_by_para.remove(&target);
+        }
+        let p = &paragraphs[target];
         if p.span.1 <= p.span.0 || p.span.1 == usize::MAX {
             return Err(DocxError::Container(io::ReadError::InvalidPart {
                 part: "word/document.xml".to_string(),
-                detail: format!("paragraph {idx} span invalid ({:?})", p.span),
+                detail: format!("paragraph {target} span invalid ({:?})", p.span),
             }));
         }
         if p.span.0 < cursor {
             return Err(DocxError::Container(io::ReadError::InvalidPart {
                 part: "word/document.xml".to_string(),
                 detail: format!(
-                    "paragraph {idx} span overlaps prior edit (ordering invariant broken)"
+                    "paragraph {target} span overlaps prior edit (ordering invariant broken)"
                 ),
             }));
         }
-        let node = parse_element(&doc_xml[p.span.0..p.span.1], p.span.0)?;
-        let mut ctx = SurgeryCtx {
-            first_done: false,
-            new_text,
-        };
         let mut ops: Vec<OpRec> = Vec::new();
-        process_children(&node.children, &mut ctx, &mut ops);
-        if !ctx.first_done {
-            // 无文本段落：新 run 插在 pPr 之后（无 pPr = children 区首）。
-            let insert_at = node
-                .children
-                .iter()
-                .find(|c| c.name == "pPr")
-                .map(|ppr| ppr.end)
-                .unwrap_or(node.open_end);
-            ops.push(OpRec {
-                start: insert_at,
-                end: insert_at,
-                op: Op::Insert(format!("<w:r>{}</w:r>", emit_text_payload(new_text))),
-            });
-        }
-        if node.self_closing {
-            // `<w:p …/>` → 开形：`/>` 换 `>`（换行段需承载子层）。
-            ops.push(OpRec {
-                start: node.end - 2,
-                end: node.end,
-                op: Op::Replace(">".to_string()),
-            });
-            ops.push(OpRec {
-                start: node.end,
-                end: node.end,
-                op: Op::Insert("</w:p>".to_string()),
-            });
+        if is_text {
+            // 既有路径：段落树手术（多 run 合并/特殊节点保留）。
+            let new_text = text_pending[target]
+                .as_deref()
+                .expect("is_text implies Some");
+            let node = parse_element(&doc_xml[p.span.0..p.span.1], p.span.0)?;
+            let mut ctx = SurgeryCtx {
+                first_done: false,
+                new_text,
+            };
+            process_children(&node.children, &mut ctx, &mut ops);
+            if !ctx.first_done {
+                // 无文本段落：新 run 插在 pPr 之后（无 pPr = children 区首）。
+                let insert_at = node
+                    .children
+                    .iter()
+                    .find(|c| c.name == "pPr")
+                    .map(|ppr| ppr.end)
+                    .unwrap_or(node.open_end);
+                ops.push(OpRec {
+                    start: insert_at,
+                    end: insert_at,
+                    op: Op::Insert(format!("<w:r>{}</w:r>", emit_text_payload(new_text))),
+                });
+            }
+            if node.self_closing {
+                // `<w:p …/>` → 开形：`/>` 换 `>`（换行段需承载子层）。
+                ops.push(OpRec {
+                    start: node.end - 2,
+                    end: node.end,
+                    op: Op::Replace(">".to_string()),
+                });
+                ops.push(OpRec {
+                    start: node.end,
+                    end: node.end,
+                    op: Op::Insert("</w:p>".to_string()),
+                });
+            }
+        } else {
+            // #140 域路径：结果区字节区间手术（无树重解析——open 时
+            // 建好的 result_spans 坐标直用；域结构节点零 op）。
+            field_surgery_ops(fields_idx, field_edits, target, &mut ops);
         }
         out.push_str(&doc_xml[cursor..p.span.0]);
         out.push_str(&splice(&doc_xml[p.span.0..p.span.1], p.span.0, ops)?);
@@ -1106,6 +1685,42 @@ fn apply_pending_edits(
     }
     out.push_str(&doc_xml[cursor..]);
     Ok(out)
+}
+
+/// #140 域手术 ops：段 `para` 的全部待编辑域（fields_idx 文档序）——
+/// 各域结果区**首** `w:t` Replace 新值（`emit_text_payload`：xml:space
+/// 恒带/实体转义/`\t`→tab/`\n`→br——与段落文本编辑同口径），其余
+/// 结果区 `w:t` Remove。fldChar/instrText/separate/end 零 op（域结构
+/// 零接触——域在 Word/LibreOffice 打开仍是活域）。
+/// `!editable` 防御跳过（set 面已拒——双保险）。
+fn field_surgery_ops(
+    fields_idx: &[FieldScan],
+    field_edits: &[Option<String>],
+    para: usize,
+    ops: &mut Vec<OpRec>,
+) {
+    for (f, val) in fields_idx.iter().zip(field_edits.iter()) {
+        let Some(value) = val.as_deref() else {
+            continue;
+        };
+        if f.begin_para != para || !f.editable {
+            continue;
+        }
+        if let Some((&first, rest)) = f.result_spans.split_first() {
+            ops.push(OpRec {
+                start: first.0,
+                end: first.1,
+                op: Op::Replace(emit_text_payload(value)),
+            });
+            for &(s, e) in rest {
+                ops.push(OpRec {
+                    start: s,
+                    end: e,
+                    op: Op::Remove,
+                });
+            }
+        }
+    }
 }
 
 /// ops 单趟拼接（排序稳定——同位保提交序；重叠 = 内部不变量破坏，
@@ -1944,5 +2559,376 @@ xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><w:body
         let re = DocxEditor::open(&saved).unwrap();
         assert_eq!(re.table_cells(), cells);
         assert_eq!(re.paragraph_text(target), "New");
+    }
+
+    // ── #140 域码段编辑（fields/set_field_value）─────────────────
+
+    fn fld_begin() -> &'static str {
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#
+    }
+    fn fld_sep() -> &'static str {
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#
+    }
+    fn fld_end() -> &'static str {
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    }
+    fn instr(s: &str) -> String {
+        format!(r#"<w:r><w:instrText xml:space="preserve">{s}</w:instrText></w:r>"#)
+    }
+    fn wt(s: &str) -> String {
+        format!(r#"<w:r><w:t>{s}</w:t></w:r>"#)
+    }
+
+    /// 单段 PAGE 域：fields 列出 → set 显示值 → save →
+    /// 域五段结构字节原样（Word 打开仍是活域）→ reopen 新值。
+    #[test]
+    fn field_page_edit_keeps_five_part_structure() {
+        let body = format!(
+            "{bb}{ii}{ss}{rr}{ee}",
+            bb = fld_begin(),
+            ii = instr(" PAGE \\* MERGEFORMAT "),
+            ss = fld_sep(),
+            rr = wt("3"),
+            ee = fld_end()
+        );
+        let bytes = build_docx(&format!("<w:p>{body}</w:p>"));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        // 列出：段落号 + 类型 + 显示值。
+        let fs = ed.fields();
+        assert_eq!(fs.len(), 1, "一个 PAGE 域: {fs:?}");
+        assert_eq!(fs[0].para, 0);
+        assert_eq!(fs[0].field_idx, 0);
+        assert_eq!(fs[0].kind, FieldKind::Page);
+        assert_eq!(fs[0].instr, " PAGE \\* MERGEFORMAT ");
+        assert_eq!(fs[0].display_value, "3");
+        assert!(fs[0].editable && fs[0].same_para);
+        // 编辑显示值（不碰结构）。
+        ed.set_field_value(0, 0, "7").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        // 五段结构零接触（活域——非死文本）。
+        assert!(
+            xml.contains(r#"<w:fldChar w:fldCharType="begin"/>"#),
+            "begin 原样: {xml}"
+        );
+        assert!(
+            xml.contains("PAGE \\* MERGEFORMAT"),
+            "instrText 原样: {xml}"
+        );
+        assert!(
+            xml.contains(r#"<w:fldChar w:fldCharType="separate"/>"#),
+            "separate 原样: {xml}"
+        );
+        assert!(
+            xml.contains(r#"<w:fldChar w:fldCharType="end"/>"#),
+            "end 原样: {xml}"
+        );
+        // 新值在场（xml:space 恒带）；旧值消失。
+        assert!(
+            xml.contains(r#"<w:t xml:space="preserve">7</w:t>"#),
+            "新显示值: {xml}"
+        );
+        assert!(!xml.contains(">3</w:t>"), "旧显示值已换: {xml}");
+        // reopen：域仍被识别为活域 + 新值。
+        let ed2 = DocxEditor::open(&saved).unwrap();
+        let fs2 = ed2.fields();
+        assert_eq!(fs2.len(), 1);
+        assert_eq!(fs2[0].kind, FieldKind::Page);
+        assert_eq!(fs2[0].display_value, "7");
+        assert!(fs2[0].editable, "保存后域仍可编辑（幂等链）");
+    }
+
+    /// 多 span 结果区（DATE 域跨 3 个 w:t run）：首 Replace、余 Remove。
+    #[test]
+    fn field_multi_span_result_first_replaced_rest_removed() {
+        let body = format!(
+            "{bb}{ii}{ss}{r1}{r2}{r3}{ee}",
+            bb = fld_begin(),
+            ii = instr(" DATE \\@ \"yyyy-MM-dd\" "),
+            ss = fld_sep(),
+            r1 = wt("2020"),
+            r2 = wt("-06"),
+            r3 = wt("-30"),
+            ee = fld_end()
+        );
+        let bytes = build_docx(&format!("<w:p>{body}</w:p>"));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        let fs = ed.fields();
+        assert_eq!(fs[0].kind, FieldKind::Date);
+        assert_eq!(fs[0].display_value, "2020-06-30", "三 span 拼接: {fs:?}");
+        ed.set_field_value(0, 0, "2026-11-01").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        assert!(
+            xml.contains(r#"<w:t xml:space="preserve">2026-11-01</w:t>"#),
+            "首 span 换新值: {xml}"
+        );
+        assert!(!xml.contains(">2020</w:t>"), "span1 旧值消失");
+        assert!(!xml.contains(">-06</w:t>"), "span2 已移除");
+        assert!(!xml.contains(">-30</w:t>"), "span3 已移除");
+        // 域结构原样。
+        assert!(xml.contains(r#"fldCharType="separate""#) && xml.contains(r#"fldCharType="end""#));
+        let ed2 = DocxEditor::open(&saved).unwrap();
+        assert_eq!(ed2.fields()[0].display_value, "2026-11-01");
+    }
+
+    /// TOC 跨段域 + 嵌套 PAGEREF：TOC 只读（跨段+嵌套双拒因）、
+    /// 嵌套子域 PAGEREF 按 same_para 规则可编辑（规则一致性钉定——
+    /// TOC 刷新覆盖是 Word 语义，结构保持是本面承诺）。
+    #[test]
+    fn field_toc_crosspara_readonly_pageref_nested_editable() {
+        // 段2: TOC begin+instr+separate；段3: 条目文本 + PAGEREF 域；
+        // 段4: TOC end。
+        let toc_open = format!(
+            "{bb}{ii}{ss}",
+            bb = fld_begin(),
+            ii = instr(" TOC \\o \"1-3\" \\h \\z \\u "),
+            ss = fld_sep()
+        );
+        let pageref = format!(
+            "{t}{bb}{ii}{ss}{one}{ee}",
+            t = wt("第一章 概述 "),
+            bb = fld_begin(),
+            ii = instr(" PAGEREF _Toc1 \\h "),
+            ss = fld_sep(),
+            one = wt("1"),
+            ee = fld_end()
+        );
+        let toc_close = format!("{t}{ee}", t = wt("第二章 方案 "), ee = fld_end());
+        let bytes = build_docx(&format!(
+            "<w:p>{toc_open}</w:p><w:p>{pageref}</w:p><w:p>{toc_close}</w:p>\
+             <w:p><w:r><w:t>普通段</w:t></w:r></w:p>"
+        ));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        let fs = ed.fields();
+        assert_eq!(fs.len(), 2, "TOC + PAGEREF: {fs:?}");
+        // TOC：跨段只读。
+        let toc = &fs[0];
+        assert_eq!(toc.kind, FieldKind::Toc);
+        assert_eq!(toc.para, 0);
+        assert!(!toc.same_para, "begin 段0 / end 段2——跨段");
+        assert!(!toc.editable);
+        assert!(
+            toc.display_value.contains("第一章 概述 ")
+                && toc.display_value.contains("第二章 方案 "),
+            "跨段结果区拼接（含条目文本）: {}",
+            toc.display_value
+        );
+        // PAGEREF：嵌套子域，begin/end 同段3（数组序 1）——可编辑。
+        let pr = &fs[1];
+        assert_eq!(pr.kind, FieldKind::Custom("PAGEREF _Toc1 \\h".into()));
+        assert_eq!(pr.para, 1);
+        assert!(pr.same_para);
+        assert!(pr.editable, "子域未标 nested（nested 只记在栈顶 TOC）");
+        // TOC 拒编辑（跨段 typed 错）。
+        let err = ed.set_field_value(0, 0, "x").unwrap_err();
+        assert!(err.to_string().contains("cross-paragraph"), "跨段拒: {err}");
+        // TOC 域段（0/2）整段文本替换也拒（field_code 既有防线）。
+        for i in [0usize, 2] {
+            assert!(ed.set_paragraph_text(i, "x").is_err(), "段{i} 拒整段替换");
+        }
+        // 条目段1：既拒整段替换（field_code——PAGEREF 在场），子域可编辑。
+        assert!(ed.set_paragraph_text(1, "x").is_err());
+        ed.set_field_value(1, 0, "12").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        // TOC 结构整体原样（begin/separate/end 计数 3+1）。
+        assert_eq!(xml.matches(r#"fldCharType="begin""#).count(), 2);
+        assert_eq!(xml.matches(r#"fldCharType="separate""#).count(), 2);
+        assert_eq!(xml.matches(r#"fldCharType="end""#).count(), 2);
+        assert!(
+            xml.contains(" TOC \\o \"1-3\" \\h \\z \\u "),
+            "TOC 指令原样"
+        );
+        assert!(xml.contains(" PAGEREF _Toc1 \\h "), "PAGEREF 指令原样");
+        // PAGEREF 显示值 "1"→"12"；TOC 缓存条目文本原样。
+        assert!(xml.contains(r#"<w:t xml:space="preserve">12</w:t>"#));
+        assert!(!xml.contains(">1</w:t>"), "旧页码换新");
+        assert!(xml.contains("第一章 概述 "), "TOC 缓存文本未动");
+        assert!(xml.contains("第二章 方案 "));
+    }
+
+    /// 退化域（无 separate——WPS 形）：列出 + 拒编辑（不发明结构）。
+    #[test]
+    fn field_degenerate_no_separate_refuses_edit() {
+        let body = format!(
+            "{w}{bb}{ii}{ee}{t}",
+            w = wt("字面前 "),
+            bb = fld_begin(),
+            ii = instr(" REF _Ref123456789 \\h "),
+            ee = fld_end(),
+            t = wt(" 字面后")
+        );
+        let bytes = build_docx(&format!("<w:p>{body}</w:p>"));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        let fs = ed.fields();
+        assert_eq!(fs.len(), 1);
+        assert_eq!(fs[0].kind, FieldKind::Ref("_Ref123456789".into()));
+        assert_eq!(fs[0].display_value, "", "无结果区——空显示值");
+        assert!(fs[0].same_para);
+        assert!(!fs[0].editable, "无 separate → 只读");
+        let err = ed.set_field_value(0, 0, "x").unwrap_err();
+        assert!(err.to_string().contains("separate"), "退化域拒: {err}");
+        // 段落文本：字面 run 与指令区并存（指令不入正文——读面同口径）。
+        assert_eq!(ed.paragraph_text(0), "字面前  字面后");
+    }
+
+    /// fldSimple 简单形：instr 属性 + 子层 w:t 结果区。
+    #[test]
+    fn field_fldsimple_instr_attr_and_editable() {
+        let body = format!(
+            r#"<w:fldSimple w:instr=" TIME \* MERGEFORMAT ">{t}</w:fldSimple>{tail}"#,
+            t = wt("09:30"),
+            tail = wt("（更新于）")
+        );
+        let bytes = build_docx(&format!("<w:p>{body}</w:p>"));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        let fs = ed.fields();
+        assert_eq!(fs.len(), 1);
+        assert_eq!(fs[0].kind, FieldKind::Time);
+        assert_eq!(fs[0].instr, " TIME \\* MERGEFORMAT ");
+        assert_eq!(fs[0].display_value, "09:30");
+        assert!(fs[0].editable);
+        // fldSimple 属性原样约束下的显示值编辑。
+        ed.set_field_value(0, 0, "23:59").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        assert!(
+            xml.contains(r#"<w:fldSimple w:instr=" TIME \* MERGEFORMAT "><w:r><w:t xml:space="preserve">23:59</w:t></w:r></w:fldSimple>"#),
+            "fldSimple 属性/壳原样 + 新值: {xml}"
+        );
+        assert!(xml.contains("（更新于）"), "后续字面 run 未动");
+        let ed2 = DocxEditor::open(&saved).unwrap();
+        assert_eq!(ed2.fields()[0].display_value, "23:59");
+        // 落款段文本面：fldSimple 结果 + 字面 tail 都入段落文本（既有口径）。
+        assert_eq!(ed2.paragraph_text(0), "23:59（更新于）");
+    }
+
+    /// FieldKind 解析矩阵（首词切分 + REF 书签名 + 未映射 Custom）。
+    #[test]
+    fn field_kind_parsing_matrix() {
+        use FieldKind::*;
+        assert_eq!(field_kind_from_instr(" PAGE \\* MERGEFORMAT "), Page);
+        assert_eq!(field_kind_from_instr("page"), Page, "大小写不敏感");
+        assert_eq!(field_kind_from_instr("  NUMPAGES "), NumPages);
+        assert_eq!(field_kind_from_instr("DATE \\@ \"yyyy-MM-dd\""), Date);
+        assert_eq!(field_kind_from_instr("TOC \\o \"1-3\""), Toc);
+        assert_eq!(
+            field_kind_from_instr(" REF _Ref123 \\h "),
+            Ref("_Ref123".into())
+        );
+        // 未映射：Custom 装原串（PAGEREF/PRINTDATE/IF 不发明映射）。
+        assert_eq!(
+            field_kind_from_instr(" PAGEREF _Toc9 \\h "),
+            Custom(" PAGEREF _Toc9 \\h ".trim().into())
+        );
+        assert_eq!(
+            field_kind_from_instr("PRINTDATE"),
+            Custom("PRINTDATE".into())
+        );
+        assert_eq!(field_kind_from_instr(""), Custom("".into()));
+        // 公开构造器透传。
+        assert_eq!(FieldKind::from_instr("TIME"), Time);
+        assert_eq!(FieldKind::from_instr("REF bm").instr(), "REF bm");
+    }
+
+    /// 域值防线：控制字符/非字符 typed 拒；合法 \t\n 放行（tab/br 发射）。
+    #[test]
+    fn field_value_defense_and_tab_br_emission() {
+        let body = format!(
+            "{bb}{ii}{ss}{rr}{ee}",
+            bb = fld_begin(),
+            ii = instr(" PAGE "),
+            ss = fld_sep(),
+            rr = wt("9"),
+            ee = fld_end()
+        );
+        let bytes = build_docx(&format!("<w:p>{body}</w:p>"));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        assert!(
+            ed.set_field_value(0, 0, "a\u{7}b").is_err(),
+            "U+0007 控制字符拒"
+        );
+        assert!(
+            ed.set_field_value(0, 0, "a\u{FFFE}b").is_err(),
+            "U+FFFE 非字符拒"
+        );
+        // 合法：\t → <w:tab/>、\n → <w:br/>；实体转义。
+        ed.set_field_value(0, 0, "A\tB\nC&D<E").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        assert!(
+            xml.contains(">A</w:t><w:tab/><w:t xml:space=\"preserve\">B</w:t><w:br/><w:t xml:space=\"preserve\">C&amp;D&lt;E</w:t>"),
+            "tab/br/实体转义发射: {xml}"
+        );
+    }
+
+    /// 混合保存：域编辑段 + 普通段文本编辑同 save（归并升序）。
+    #[test]
+    fn field_and_text_edits_merged_save() {
+        let page = format!(
+            "{bb}{ii}{ss}{rr}{ee}",
+            bb = fld_begin(),
+            ii = instr(" PAGE "),
+            ss = fld_sep(),
+            rr = wt("9"),
+            ee = fld_end()
+        );
+        let bytes = build_docx(&format!(
+            "<w:p>{page}</w:p><w:p><w:r><w:t>旧文本</w:t></w:r></w:p><w:p><w:r><w:t>尾段</w:t></w:r></w:p>"
+        ));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        ed.set_field_value(0, 0, "5").unwrap();
+        ed.set_paragraph_text(1, "新文本").unwrap();
+        ed.set_paragraph_text(2, "改尾").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = saved_document_xml(&saved);
+        assert!(
+            xml.contains(r#"<w:t xml:space="preserve">5</w:t>"#),
+            "域值: {xml}"
+        );
+        assert!(xml.contains(r#"<w:t xml:space="preserve">新文本</w:t>"#));
+        assert!(xml.contains(r#"<w:t xml:space="preserve">改尾</w:t>"#));
+        assert!(!xml.contains(">9</w:t>") && !xml.contains("旧文本"));
+        // 未编辑区域零接触 + 幂等。
+        let again = ed.save_to_vec().unwrap();
+        assert_eq!(saved, again, "幂等——同状态重复 save 同字节");
+    }
+
+    /// 坐标防线：未知 (para, field_idx) typed 拒。
+    #[test]
+    fn field_unknown_coords_rejected() {
+        let body = format!(
+            "{bb}{ii}{ss}{rr}{ee}",
+            bb = fld_begin(),
+            ii = instr(" PAGE "),
+            ss = fld_sep(),
+            rr = wt("9"),
+            ee = fld_end()
+        );
+        let bytes = build_docx(&format!("<w:p>{body}</w:p>"));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        assert!(ed.set_field_value(0, 1, "x").is_err(), "field_idx 越界拒");
+        assert!(ed.set_field_value(9, 0, "x").is_err(), "para 越界拒");
+        assert!(ed.set_field_value(1, 0, "x").is_err(), "无域段拒");
+    }
+
+    /// 空结果区（有 separate 但无 w:t）：拒编辑。
+    #[test]
+    fn field_empty_result_region_refuses() {
+        let body = format!(
+            "{bb}{ii}{ss}{ee}",
+            bb = fld_begin(),
+            ii = instr(" PAGE "),
+            ss = fld_sep(),
+            ee = fld_end()
+        );
+        let bytes = build_docx(&format!("<w:p>{body}</w:p>"));
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        let fs = ed.fields();
+        assert_eq!(fs[0].display_value, "");
+        assert!(!fs[0].editable);
+        let err = ed.set_field_value(0, 0, "x").unwrap_err();
+        assert!(err.to_string().contains("empty result region"), "{err}");
     }
 }
