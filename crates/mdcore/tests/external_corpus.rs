@@ -88,7 +88,11 @@ fn parse_spec_examples(text: &str) -> Vec<(String, String)> {
             i += 1;
             while i < lines.len() {
                 let l = lines[i];
-                if l.len() == 32 && l.as_bytes().iter().all(|&b| b == b'`') {
+                // 闭合围栏：允许尾部 \r（语料原样 CRLF，git 入库转 LF——
+                // 本地是 CRLF、CI 是 LF，两种都要认，否则闭合永不命中，
+                // 整个文件被当成一个 example，用例数掉到 0。)
+                let lb = l.trim_end_matches('\r');
+                if lb.len() == 32 && lb.as_bytes().iter().all(|&b| b == b'`') {
                     break;
                 }
                 body.push(l);
@@ -108,6 +112,9 @@ fn parse_spec_examples(text: &str) -> Vec<(String, String)> {
 /// good.txt 解析（42 波浪线分块——TR-2B 驱动逐行同构）。
 fn parse_good_txt(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
+    // 行尾归一化（见 parse_spec_examples 注释）：语料 CRLF/LF 两种形态都要能
+    // 解析——分块锚是 "\n~~~~\n"，CRLF 下永远不匹配（用例数会掉到 0）。
+    let text = text.replace("\r\n", "\n");
     for block in text.split("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n") {
         let lines: Vec<&str> = block.split('\n').collect();
         let dots: Vec<usize> = lines
