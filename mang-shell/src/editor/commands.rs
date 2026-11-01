@@ -25,6 +25,14 @@ pub enum Cmd {
     DocStart,
     DocEnd,
     ToggleFold,
+    /// #132-3：折叠光标所在块（Ctrl+Shift+[）。
+    FoldCurrent,
+    /// #132-3：展开光标所在块（Ctrl+Shift+]）。
+    UnfoldCurrent,
+    /// #132-3：全部折叠（Ctrl+K Ctrl+0）。
+    FoldAll,
+    /// #132-3：全部展开（Ctrl+K Ctrl+J）。
+    UnfoldAll,
     OpenFind,
     /// G1：打开替换条（Ctrl+H）。
     OpenReplace,
@@ -50,6 +58,10 @@ impl Cmd {
         Cmd::DocStart,
         Cmd::DocEnd,
         Cmd::ToggleFold,
+        Cmd::FoldCurrent,
+        Cmd::UnfoldCurrent,
+        Cmd::FoldAll,
+        Cmd::UnfoldAll,
         Cmd::OpenFind,
         Cmd::OpenReplace,
         Cmd::GotoLine,
@@ -104,6 +116,10 @@ impl Cmd {
             Cmd::DocStart => "移动：文首",
             Cmd::DocEnd => "移动：文尾",
             Cmd::ToggleFold => "折叠：切换围栏块",
+            Cmd::FoldCurrent => "折叠：折叠当前块",
+            Cmd::UnfoldCurrent => "折叠：展开当前块",
+            Cmd::FoldAll => "折叠：全部折叠",
+            Cmd::UnfoldAll => "折叠：全部展开",
             Cmd::OpenFind => "查找（Ctrl+F）",
             // G1：替换（只读态 exec 侧拒——面板候选集含之，执行有门）。
             Cmd::OpenReplace => "替换（Ctrl+H）",
@@ -129,6 +145,10 @@ impl Cmd {
             Cmd::DocStart => Some("Ctrl+Home"),
             Cmd::DocEnd => Some("Ctrl+End"),
             Cmd::ToggleFold => Some("Alt+F"),
+            Cmd::FoldCurrent => Some("Ctrl+Shift+["),
+            Cmd::UnfoldCurrent => Some("Ctrl+Shift+]"),
+            Cmd::FoldAll => Some("Ctrl+K Ctrl+0"),
+            Cmd::UnfoldAll => Some("Ctrl+K Ctrl+J"),
             Cmd::OpenFind => Some("Ctrl+F"),
             Cmd::OpenReplace => Some("Ctrl+H"),
             Cmd::GotoLine => Some("Ctrl+G"),
