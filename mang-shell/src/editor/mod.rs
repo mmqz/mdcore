@@ -71,12 +71,15 @@ use multi_cursor::{Cursors, Move as MultiMove};
 use commands::Cmd;
 
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
+    AnyElement, App, Bounds, ClipboardItem, Context, Corners, DispatchPhase, DragMoveEvent,
     ElementInputHandler, EntityInputHandler, FocusHandle, FontStyle, FontWeight, HighlightStyle,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Render,
-    ScrollStrategy, SharedString, StyledText, Task, TextStyle, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, Window, canvas, px, uniform_list,
+    ScrollDelta, ScrollEvent, ScrollStrategy, SharedString, StyledText, Task, TextStyle,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, Window, canvas, point, px, size,
+    uniform_list,
 };
+
+use crate::canvas_view::{CanvasView, PAN_KEY_PX, PAN_PAGE_PX, WHEEL_LINE_PX};
 use mouse::ClickKind;
 use theme::ThemeColors;
 use ui::prelude::*;
@@ -108,6 +111,18 @@ struct MouseDrag {
 /// 拖选 drag 载荷类型（`on_drag` / `on_drag_move` 配对标识；值本身无语义）。
 #[derive(Clone, Copy)]
 struct EditorDrag;
+
+/// #133 任务 1：canvas 平移拖拽会话（mousedown 落锚 → drag_move 平移
+/// → 窗口级 mouseup 收尾）。
+#[derive(Clone, Copy, Debug)]
+struct CanvasPanDrag {
+    last: gpui::Point<Pixels>,
+}
+
+/// #133 任务 1：canvas 平移 drag 载荷类型（与 EditorDrag 同构——
+/// `on_drag` / `on_drag_move` 配对标识）。
+#[derive(Clone, Copy)]
+struct CanvasDrag;
 
 /// r42 阶段 E：命令面板状态。
 #[derive(Clone, Debug)]
@@ -339,6 +354,12 @@ pub struct Editor {
     pdf: Option<PdfPayload>,
     /// xlsx 转换产物（G6：行模型 + 工作表树 + 属性；`None` = 非 xlsx 态）。
     xlsx: Option<XlsxPayload>,
+    /// canvas 画布视图态（#133 任务 1：会话 + 渲染模型 + 视口 + 光栅
+    /// 缓存；`None` = 非 canvas 态——自由 2D 不走行模型管线，渲染分派
+    /// 见 [`Self::render_canvas_area`]）。
+    canvas: Option<CanvasView>,
+    /// canvas 平移拖拽会话（#133 任务 1；`None` = 非拖拽中）。
+    canvas_drag: Option<CanvasPanDrag>,
 }
 
 impl Editor {
@@ -402,6 +423,8 @@ impl Editor {
             docx_last_plan: None,
             pdf: None,
             xlsx: None,
+            canvas: None,
+            canvas_drag: None,
         };
         this.refresh_caches();
         // 初始聚焦由 ShellApp::new 完成（需要 window 上下文）。
@@ -453,6 +476,8 @@ impl Editor {
             docx_last_plan: None,
             pdf: None,
             xlsx: None,
+            canvas: None,
+            canvas_drag: None,
         };
         this.refresh_caches();
         this
@@ -516,6 +541,8 @@ impl Editor {
             docx_last_plan: None,
             pdf: None,
             xlsx: None,
+            canvas: None,
+            canvas_drag: None,
         };
         // 编辑门禁接线：桥本体归 Editor（保存时取回写计划），Buffer 持钩子
         // 句柄（锁定行拒改 + 行归属重排——Buffer 唯一变更入口处生效）。
@@ -569,6 +596,8 @@ impl Editor {
             docx_last_plan: None,
             pdf: Some(payload),
             xlsx: None,
+            canvas: None,
+            canvas_drag: None,
         };
         this.refresh_caches();
         this
@@ -621,6 +650,61 @@ impl Editor {
             docx_last_plan: None,
             pdf: None,
             xlsx: Some(payload),
+            canvas: None,
+            canvas_drag: None,
+        };
+        this.refresh_caches();
+        this
+    }
+
+    /// 打开 canvas 画布文档（#133 任务 1）：CanvasSession 会话 + 视口
+    /// 位面（只读——编辑 UI 属 B 路线后续任务，会话命令通路已备）。
+    /// 行模型留空（自由 2D 不走 uniform_list——渲染分派见
+    /// [`Self::render_canvas_area`]）。
+    pub fn new_canvas(path: PathBuf, view: CanvasView, cx: &mut Context<Self>) -> Self {
+        let buffer = Buffer::from_plain_text("");
+        let display_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未命名".to_string());
+        let line_count = buffer.line_count();
+        let mut this = Self {
+            buffer,
+            file_path: Some(path),
+            display_name: SharedString::from(display_name),
+            font_size: DEFAULT_FONT_SIZE,
+            indent_unit: IndentUnit::from_setting(
+                crate::settings::load_indent_unit()
+                    .as_deref()
+                    .unwrap_or("4"),
+            ),
+            focus: cx.focus_handle(),
+            find_focus: cx.focus_handle(),
+            find: None,
+            find_saved: FindState::default(),
+            scroll: UniformListScrollHandle::new(),
+            // canvas 无围栏语义——fence 恒 false（同 docx/pdf/xlsx 口径）。
+            fence_cache: vec![false; line_count],
+            fence_lang_cache: vec![None; line_count],
+            display_map: DisplayMap::default(),
+            last_text_width: RefCell::new(None),
+            cursors: Cursors::single(Point::new(0, 0)),
+            palette: None,
+            goto: None,
+            marked: None,
+            row_bounds: Rc::new(RefCell::new(Vec::new())),
+            drag: None,
+            autoscroll_target: None,
+            autoscroll_task: None,
+            mouse_log: false,
+            read_only: true,
+            docx: None,
+            docx_edit: None,
+            docx_last_plan: None,
+            pdf: None,
+            xlsx: None,
+            canvas: Some(view),
+            canvas_drag: None,
         };
         this.refresh_caches();
         this
@@ -830,6 +914,8 @@ impl Editor {
             "pdf"
         } else if self.xlsx.is_some() {
             "xlsx"
+        } else if self.canvas.is_some() {
+            "canvas"
         } else {
             "md"
         }
@@ -1619,6 +1705,17 @@ impl Editor {
         let ctrl = ks.modifiers.control || ks.modifiers.platform;
         let shift = ks.modifiers.shift;
         let key = ks.key.to_lowercase();
+
+        // #133 任务 1：canvas 态键域——视口命令（缩放/平移），其余键
+        // 整段消费（行模型导航/编辑/查找/跳行语义不适用自由画布；命令
+        // 面板 v1 未接——登记于 canvas_view 模块文档）。stop_propagation：
+        // Ctrl+=/-/0 与 shell 字号键（F6）同键位——视口命令消费后止
+        // 冒泡，防字号二次响应（烟雾实测抓到，font-size 证据行为证）。
+        if self.canvas.is_some() {
+            self.dispatch_canvas_key(&key, ctrl, cx);
+            cx.stop_propagation();
+            return;
+        }
 
         // r42 阶段 E：Ctrl+Shift+P 开/关命令面板（toggle）。
         if ctrl && shift && key == "p" {
@@ -2974,6 +3071,215 @@ impl Editor {
             })
     }
 
+    // ------------------------------------------------------------------
+    // #133 任务 1：canvas 画布渲染面（全彩位面 + 视口交互）
+    // ------------------------------------------------------------------
+
+    /// canvas 编辑区：位面绘制 + 视口交互。
+    ///
+    /// 路线 A′（svg() 元素是单色 alpha 蒙版通道——见 canvas_view 模块
+    /// 文档的源码依据）：`RasterRenderer` 光栅化 → `RenderImage` →
+    /// `Window::paint_image`（绘制期四边形定位——平移不重光栅，缩放
+    /// 惰性重光栅，缓存键不含 pan）。
+    ///
+    /// 交互：滚轮平移 / Ctrl+滚轮缩放（围绕视图中心）/ 左键拖拽平移 /
+    /// Ctrl+= · Ctrl+- · Ctrl+0 / 方向键 · PageUp · PageDown（键域见
+    /// [`Self::dispatch_canvas_key`]）。
+    fn render_canvas_area(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let focused = self.focus.is_focused(window);
+        let entity = cx.entity();
+        let weak = entity.downgrade();
+        let up_entity = entity.clone();
+        let shapes = self.canvas.as_ref().map(|c| c.shape_count()).unwrap_or(0);
+
+        div()
+            .id("canvas-surface")
+            .size_full()
+            .relative()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::dispatch_key))
+            .on_scroll(cx.listener(Self::dispatch_canvas_scroll))
+            // 左键拖拽 = 视口平移（拖选语义不适用画布态）。
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::canvas_mouse_down))
+            .on_drag(CanvasDrag, |_, _, _, cx| cx.new(|_| DragGhost))
+            .on_drag_move::<CanvasDrag>(cx.listener(Self::canvas_drag_move))
+            .child(
+                canvas(
+                    move |bounds, _, _| bounds,
+                    move |bounds, _, window, cx| {
+                        // 窗口级 mouseup 收尾（任意位置抬起结束平移——循
+                        // IME 钩的 paint 期注册先例）。
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _window, cx| {
+                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                                up_entity.update(cx, |this, cx| this.end_canvas_drag(cx));
+                            }
+                        });
+                        // 位面绘制（缓存命中直取；未命中在本帧光栅化——
+                        // 平移只挪四边形，缩放/内容变才重建）。
+                        let Some(entity) = weak.upgrade() else {
+                            return;
+                        };
+                        let this = entity.read(cx);
+                        let Some(view) = this.canvas.as_ref() else {
+                            return;
+                        };
+                        let Some((image, geom)) =
+                            view.raster_for(bounds.size, window.scale_factor())
+                        else {
+                            return;
+                        };
+                        let image_bounds = Bounds {
+                            origin: bounds.origin + point(px(geom.x as f32), px(geom.y as f32)),
+                            size: size(px(geom.w as f32), px(geom.h as f32)),
+                        };
+                        let _ = window.paint_image(
+                            bounds,
+                            image_bounds,
+                            Corners::default(),
+                            image,
+                            0,
+                            false,
+                        );
+                    },
+                )
+                .size_full(),
+            )
+            // 空画布提示（零图元不空白屏——显式说明）。
+            .when(shapes == 0, |el| {
+                el.child(
+                    div()
+                        .id("canvas-empty-hint")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .flex()
+                        .justify_center()
+                        .py_4()
+                        .text_size(px(12.))
+                        .text_color(colors.text_muted)
+                        .child("空画布（0 图元）——.canvas 会话已装载，编辑面属 B 路线后续任务"),
+                )
+            })
+            .when(!focused, |el| {
+                el.child(
+                    div()
+                        .id("canvas-unfocused-hint")
+                        .absolute()
+                        .top_0()
+                        .right_0()
+                        .px_2()
+                        .py_1()
+                        .text_size(px(11.))
+                        .text_color(colors.text_muted)
+                        .child("点击画布区以聚焦"),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// #133：canvas 态键域（视口命令）。Ctrl+= / Ctrl+- / Ctrl+0 缩放
+    /// 与重置；方向键 / PageUp·PageDown 平移。其余键消费（只读画布
+    /// 无编辑面——防行模型命令误触）。
+    fn dispatch_canvas_key(&mut self, key: &str, ctrl: bool, cx: &mut Context<Self>) {
+        let Some(view) = self.canvas.as_mut() else {
+            return;
+        };
+        if ctrl {
+            match key {
+                "=" | "+" => view.zoom_in(),
+                "-" => view.zoom_out(),
+                "0" => view.reset_viewport(),
+                _ => {}
+            }
+        } else {
+            match key {
+                "left" => view.pan(PAN_KEY_PX, 0.0),
+                "right" => view.pan(-PAN_KEY_PX, 0.0),
+                "up" => view.pan(0.0, PAN_KEY_PX),
+                "down" => view.pan(0.0, -PAN_KEY_PX),
+                "pageup" => view.pan(0.0, PAN_PAGE_PX),
+                "pagedown" => view.pan(0.0, -PAN_PAGE_PX),
+                _ => {}
+            }
+        }
+        cx.notify();
+    }
+
+    /// #133：canvas 滚轮——Ctrl+滚轮缩放（围绕视图中心，每 40px 一档
+    /// ×1.1），其余平移（正 delta.y = 内容下移 = 看上方内容——平台
+    /// 归一化方向）。
+    fn dispatch_canvas_scroll(
+        &mut self,
+        event: &ScrollEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = self.canvas.as_mut() else {
+            return;
+        };
+        let (dx, dy) = match event.delta {
+            ScrollDelta::Pixels(p) => (p.x.as_f32(), p.y.as_f32()),
+            ScrollDelta::Lines(l) => (l.x * WHEEL_LINE_PX, l.y * WHEEL_LINE_PX),
+        };
+        if event.modifiers.control || event.modifiers.platform {
+            view.zoom_wheel(dy / WHEEL_LINE_PX);
+        } else {
+            view.pan(dx, dy);
+        }
+        cx.notify();
+    }
+
+    /// #133：canvas mousedown——聚焦 + 起平移拖拽会话。
+    fn canvas_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus, cx);
+        self.canvas_drag = Some(CanvasPanDrag {
+            last: event.position,
+        });
+    }
+
+    /// #133：canvas 拖拽平移（内容 1:1 跟手——屏幕逻辑 px）。
+    fn canvas_drag_move(
+        &mut self,
+        event: &DragMoveEvent<CanvasDrag>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(drag) = self.canvas_drag.as_mut() else {
+            return;
+        };
+        let pos = event.event.position;
+        let dx = pos.x - drag.last.x;
+        let dy = pos.y - drag.last.y;
+        drag.last = pos;
+        if let Some(view) = self.canvas.as_mut() {
+            view.pan(dx.as_f32(), dy.as_f32());
+        }
+        cx.notify();
+    }
+
+    /// #133：canvas 拖拽收尾（窗口级 mouseup——paint 期注册）。
+    fn end_canvas_drag(&mut self, cx: &mut Context<Self>) {
+        if self.canvas_drag.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// #133：canvas 烟雾探针行（`--smoke-canvas` 断言通道——图形数量
+    /// + 视口参数）。
+    pub fn canvas_smoke_probe(&self) -> Vec<String> {
+        self.canvas
+            .as_ref()
+            .map(|c| c.smoke_probe_lines())
+            .unwrap_or_default()
+    }
+
     /// uniform_list 可见行批量渲染。
     fn render_lines(
         &mut self,
@@ -3545,7 +3851,13 @@ impl Render for Editor {
             .size_full()
             .bg(cx.theme().colors().background)
             .when(find_open, |el| el.child(self.render_find_bar(window, cx)))
-            .child(self.render_editor_area(window, cx))
+            // #133 任务 1：canvas 态分派——自由 2D 画布不走行模型管线
+            //（uniform_list）；全彩位面渲染见 render_canvas_area。
+            .child(if self.canvas.is_some() {
+                self.render_canvas_area(window, cx).into_any_element()
+            } else {
+                self.render_editor_area(window, cx).into_any_element()
+            })
     }
 }
 

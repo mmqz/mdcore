@@ -73,6 +73,18 @@ zlog = { path = "../third_party/zed/crates/zlog" }
 # 重导出消费，不单独列依赖）。GPL-3.0-or-later——记账见 PROVENANCE
 # r42 节（开源整体 GPL 无冲突；闭源时需替换）。
 text = { path = "../third_party/zed/crates/text" }
+# #133 任务 1：canvas 画布视图依赖（path 接入，类型零泄漏面不变）
+# ——会话恢复/读模型（CanvasSession::restore/objects）+ 渲染面
+# （CanvasRendering::from_session + export_svg）+ 落盘面
+# （authoritative_snapshot，yrs 二进制快照）。引擎纯 Rust 零 gpui
+# 依赖，接入面同 mdc-office-io/mdc-pdf 口径。
+mdc-canvas = { path = "../crates/canvas" }
+# #133 任务 1：canvas 位面通道的图像容器（image 的 Frame/ImageBuffer
+# 构造 RGBA 帧 + smallvec 帧容器——RenderImage::new 入参；R↔B 字节序
+# 交换见 canvas_view::rgba_to_bgra——RenderImage 是 BGRA 字节序）。均
+# gpui 闭包既有 crate（image 0.25 / smallvec 1.16），零新增编译面。
+image = { version = "0.25", default-features = false }
+smallvec = "1"
 
 [dev-dependencies]
 # 烟雾夹具书签注入（测试面独占——不进 shipped 依赖图；版本与 mdc-pdf
