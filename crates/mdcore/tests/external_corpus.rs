@@ -191,10 +191,25 @@ fn save_baseline(b: &L1Baseline) {
 
 #[test]
 fn l1_external_corpus_gate() {
-    let spec_text = std::fs::read_to_string(corpus_root().join("commonmark/spec.txt"))
-        .expect("spec.txt in corpus (TR-2B)");
-    let good_text = std::fs::read_to_string(corpus_root().join("markdown-it/good.txt"))
-        .expect("good.txt in corpus (TR-2B)");
+    // 环境门（issue #89 纪律）：外部语料不在仓（test-artifacts/ 被 gitignore），
+    // CI / 新克隆上必然缺失。缺件 = SKIP（响亮横幅），不是业务 FAIL。
+    // 判据：外部语料属「环境依赖」类别，与 poppler/tesseract 同性质。
+    let spec_path = corpus_root().join("commonmark/spec.txt");
+    let good_path = corpus_root().join("markdown-it/good.txt");
+    for mp in [&spec_path, &good_path] {
+        if !mp.exists() {
+            eprintln!();
+            eprintln!("====================================================================");
+            eprintln!("SKIP: l1_external_corpus_gate");
+            eprintln!("reason: CORPUS_MISSING: {}", mp.display());
+            eprintln!("（外部语料缺件，非业务失败——issue #89 口径：依赖缺失不得伪装成业务 FAIL）");
+            eprintln!("补件指引: 拉 CommonMark spec.txt + markdown-it good.txt 到 test-artifacts/external-corpus/");
+            eprintln!("====================================================================");
+            return;
+        }
+    }
+    let spec_text = std::fs::read_to_string(&spec_path).expect("spec.txt readable");
+    let good_text = std::fs::read_to_string(&good_path).expect("good.txt readable");
     let spec_cases = parse_spec_examples(&spec_text);
     let good_cases = parse_good_txt(&good_text);
     // TR-2B 口径锚：spec 655 / markdown-it 652（数量漂移 = 语料被动过，

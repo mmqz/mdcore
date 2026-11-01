@@ -91,6 +91,18 @@ fn zip_valid(bytes: &[u8]) -> bool {
 
 #[test]
 fn l2_external_corpus_pandoc_export_gate() {
+    // 环境门（issue #89 纪律）：外部语料不在仓（test-artifacts/ 被 gitignore），
+    // CI / 新克隆上必然缺失。缺件 = SKIP（响亮横幅），不是业务 FAIL。
+    if !corpus_root().join("pandoc").exists() {
+        eprintln!();
+        eprintln!("====================================================================");
+        eprintln!("SKIP: l2_external_corpus_pandoc_export_gate");
+        eprintln!("reason: CORPUS_MISSING: {}", corpus_root().join("pandoc").display());
+        eprintln!("（外部语料缺件，非业务失败——issue #89 口径：依赖缺失不得伪装成业务 FAIL）");
+        eprintln!("补件指引: 拉 pandoc 导出的 .markdown/.txt 语料到 test-artifacts/external-corpus/pandoc/");
+        eprintln!("====================================================================");
+        return;
+    }
     let dir = corpus_root().join("pandoc");
     let mut files: Vec<String> = std::fs::read_dir(&dir)
         .expect("pandoc corpus dir")
