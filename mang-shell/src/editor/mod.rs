@@ -578,6 +578,8 @@ impl Editor {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "未命名".to_string());
         let line_count = buffer.line_count();
+        // docx 无代码语义——括号匹配语言恒 None（同 canvas/pdf/xlsx 口径）。
+        let bracket_lang = None;
         let mut this = Self {
             buffer,
             file_path: Some(path),
@@ -766,6 +768,9 @@ impl Editor {
             // canvas 无围栏语义——fence 恒 false（同 docx/pdf/xlsx 口径）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            // #132 任务1：括号匹配缓存（canvas 无语言语义——恒 None）。
+            bracket_cache: BracketCache::default(),
+            bracket_lang: None,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
