@@ -226,6 +226,28 @@ pub fn load_editable(path: &Path) -> Result<EditablePayload, String> {
     };
     let engine_paras = engine.paragraphs().len();
     let port = DocxEnginePort { editor: engine };
+    // #156 门 0：sdt 包裹**表格** → 整篇降级只读。宽面块序丢弃整个 sdt
+    // 容器（含表），引擎栅格却含它的单元格段落——块序↔栅格对位不可信，
+    // 错位写回风险不可接受（宁缺毋错）。纯段落 sdt 不受此门限制（盲区
+    // 跳过，可编辑）。真实触发面：标书导出链的 TOC = sdt 包两段（无表），
+    // 可编辑；Word 原生「目录内容控件」带缓存条目时同理。
+    let sdt_all = port.sdt_paragraphs();
+    if let Some(i) = sdt_all.iter().find(|i| {
+        port.table_cells()
+            .iter()
+            .any(|t| t.iter().any(|r| r.contains(i)))
+    }) {
+        let mut fallback = convert(&doc);
+        fallback.source = Some(bytes);
+        fallback.notice = Some(format!(
+            "结构化内容控件（w:sdt）包裹表格（段落 {i} 起的表不在宽面块序）——降级为只读，避免栅格错位写回"
+        ));
+        return Ok(EditablePayload {
+            payload: fallback,
+            bridge: None,
+            port: None,
+        });
+    }
     let payload = convert_editable(&doc, &port);
     // 段落序对账（候选段落全集——含空段落/锁定段落，它们不入投影表）：
     // 行模型段落数必须等于窄面段数，否则块归属会错位。
@@ -237,11 +259,13 @@ pub fn load_editable(path: &Path) -> Result<EditablePayload, String> {
     // 权威坐标为准**（宽面栅格是展开形，与 w:tc 数不等——见
     // [`ConvertCtx::push_table`]），文本框仍按宽面块模型数。
     let width_paragraphs = width_paragraph_total_engine(&doc.blocks, &payload.tables);
-    if width_paragraphs != engine_paras {
+    if width_paragraphs + sdt_all.len() != engine_paras {
         let mut fallback = convert(&doc);
         fallback.source = Some(bytes);
         fallback.notice = Some(format!(
-            "宽面段落数 {width_paragraphs} 与引擎 {engine_paras} 不一致（块模型/XML 扫描口径分歧）——降级为只读"
+            "宽面段落数 {}（+sdt 盲区 {}）与引擎 {engine_paras} 不一致（块模型/XML 扫描口径分歧）——降级为只读",
+            width_paragraphs,
+            sdt_all.len()
         ));
         return Ok(EditablePayload {
             payload: fallback,
@@ -410,6 +434,41 @@ impl DocxPort for DocxEnginePort {
     fn table_cells(&self) -> Vec<Vec<Vec<usize>>> {
         self.editor.table_cells()
     }
+
+    fn sdt_paragraphs(&self) -> Vec<usize> {
+        self.editor
+            .paragraphs()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.in_sdt)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn fields(&self) -> Vec<mdc_office_io::docx_edit::FieldInfo> {
+        self.editor.fields()
+    }
+
+    fn set_field_value(
+        &mut self,
+        para: usize,
+        field_idx: usize,
+        value: &str,
+    ) -> Result<(), String> {
+        self.editor
+            .set_field_value(para, field_idx, value)
+            .map_err(|e| e.to_string())
+    }
+
+    fn comments(&self) -> Vec<mdc_office_io::docx_edit::CommentInfo> {
+        self.editor.comments()
+    }
+
+    fn set_comment_text(&mut self, id: usize, text: &str) -> Result<(), String> {
+        self.editor
+            .set_comment_text(id, text)
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// #115：可编辑行模型（**真实引擎面**——从字节起走完整链：宽面块序 +
@@ -463,6 +522,9 @@ fn convert_inner(doc: &docx::DocxDocument, port: Option<&dyn DocxPort>) -> DocxP
         engine_paras: port.map(|p| p.paragraph_count()).unwrap_or(0),
         // 引擎权威栅格（#115 表格编辑）——一次取，转换期只读。
         engine_tables: port.map(|p| p.table_cells()).unwrap_or_default(),
+        // #156：sdt 盲区段清单（升序——宽面结构性不可见；装载门已保证
+        // 无 sdt 包表格形态，这里只需顺序跳过）。
+        sdt_ahead: port.map(|p| p.sdt_paragraphs()).unwrap_or_default(),
         ..ConvertCtx::default()
     };
     for block in &doc.blocks {
@@ -479,6 +541,9 @@ fn convert_inner(doc: &docx::DocxDocument, port: Option<&dyn DocxPort>) -> DocxP
             }
         }
     }
+    // #156：尾部 sdt 盲区段（最后一块之后）——游标收尾跳过，否则
+    // candidates 会短缺、门 3 误判降级。
+    ctx.advance_past_sdt();
     let editable = port.is_some();
     ctx.push_aux_appendix(editable, &out.props);
 
@@ -553,6 +618,12 @@ struct ConvertCtx<'a> {
     cell_paragraphs: Vec<usize>,
     /// #115：未入行流但仍是 w:p 的段落数（表格单元格）——段落序对账用。
     aux_paragraphs: usize,
+    /// #156：sdt 盲区段游标（升序待跳过清单——引擎可见、宽面结构性
+    /// 不可见的段落；宽面块模型丢弃 `w:sdt` 内容，顺序游标必须显式跳过
+    /// 它们才能与引擎原文坐标系对齐。背景见 `DocxPort::sdt_paragraphs`）。
+    sdt_ahead: Vec<usize>,
+    /// #156：已跳过的 sdt 盲区段数（诊断/证据行）。
+    sdt_blind_seen: usize,
     /// #115 表格编辑：引擎权威栅格（表 → 行 → 栅格列 → 段落号），
     /// 建 ctx 时一次性取（`DocxPort::table_cells`）。
     engine_tables: Vec<Vec<Vec<usize>>>,
@@ -562,11 +633,26 @@ struct ConvertCtx<'a> {
 }
 
 impl ConvertCtx<'_> {
+    /// #156：跳过 sdt 盲区段（宽面结构性不可见）——空投影/兜底 + 游标
+    /// 推进；不入行流（无行）。盲区段永不归属任何行 → `compute` 恒判
+    /// 「未动」→ 零 set → 引擎字节保真（sdt 容器与域脚手原样透传）。
+    fn advance_past_sdt(&mut self) {
+        while self.sdt_ahead.first().is_some_and(|&p| p == self.next_para) {
+            let p = self.next_para;
+            self.proj.insert(p, String::new());
+            self.fallback.insert(p, String::new());
+            self.sdt_blind_seen += 1;
+            self.next_para += 1;
+            self.sdt_ahead.remove(0);
+        }
+    }
+
     /// 文本框段落统计（不入行流——第一版只读；只做段落序对账）。
     fn skip_textbox(&mut self, tb: &docx::TextBoxData) {
         for inner in &tb.blocks {
             match inner {
                 Block::Paragraph(_) => {
+                    self.advance_past_sdt();
                     let para = self.next_para;
                     self.next_para += 1;
                     self.proj.insert(para, String::new());
@@ -576,6 +662,7 @@ impl ConvertCtx<'_> {
                 Block::Table(t) => {
                     for row in &t.rows {
                         for _ in row {
+                            self.advance_past_sdt();
                             let para = self.next_para;
                             self.next_para += 1;
                             self.proj.insert(para, String::new());
@@ -656,6 +743,7 @@ impl ConvertCtx<'_> {
     ///
     /// 单元序号 = [`LineBlock::Para::idx`]；回写时正文按 \n 连接还原。
     fn push_paragraph(&mut self, p: &docx::ParagraphData) {
+        self.advance_past_sdt();
         let para = self.next_para;
         self.next_para += 1;
 
@@ -831,6 +919,10 @@ impl ConvertCtx<'_> {
         self.tables_seen += 1;
         // 引擎栅格（权威坐标）；`None` = 本表不可栅格化（整表只读）。
         let grid = self.engine_tables.get(table_index).cloned();
+        // #156：sdt 盲区段可能横在本表与前一块之间——先跳过再栅格跳跃
+        // （栅格跳跃是 max 语义，盲区段若在此后才会被后续 advance 跳过；
+        // 在此先跳是为了不把盲区段漏进「本表首格」的对齐）。
+        self.advance_past_sdt();
         // 段落游标以引擎栅格为准（扩展格多出来的段落也在栅格里）。
         if let Some(g) = &grid {
             if let Some(hi) = g.iter().flatten().copied().max() {

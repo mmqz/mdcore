@@ -27,6 +27,13 @@
 //!                               把 FILE2 换入编辑区（Ctrl+O 对话框回调
 //!                               同通道；对话框本体需真机/portal，沙箱
 //!                               以此钩子验证替换链）
+//! mang-shell --smoke-docx-bid OUT  #156 标书 docx 端到端烟雾：与启动
+//!                               FILE（ai-bid-research e2e 生成的标书
+//!                               docx）组合——四面貌编辑（段落/表格单元
+//!                               格/域/批注）+ 另存 OUT；断言
+//!                               smoke-docx-bid: 证据行 + 三段验证（A 非
+//!                               目标部件字节恒等 / B 六表七件 /
+//!                               C LibreOffice 开档）
 //! mang-shell --version         版本号
 //! ```
 //!
@@ -120,6 +127,17 @@ fn main() {
         .position(|a| a == "--smoke-save-as")
         .and_then(|i| args.get(i + 1))
         .cloned();
+    // #156：标书 docx 端到端烟雾（--smoke-docx-bid OUT——与启动 FILE
+    // （ai-bid-research e2e 生成的标书 docx）组合：3.5s 四面貌编辑
+    // （段落/表格单元格/域/批注——Editor::docx_bid_smoke_edits 真实链
+    // 取证）+ 4.5s 另存到 OUT（保留原档作三段验证对比基准）。断言
+    // smoke-docx-bid: 证据行 + saved-as（docx 字节）+ 落盘内容外部校验
+    // （A 字节对比 / B 结构 / C LibreOffice）。
+    let smoke_docx_bid = args
+        .iter()
+        .position(|a| a == "--smoke-docx-bid")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
     // F7：git 面板烟雾（--smoke-git-diff——与 --smoke-workspace 组合：
     // 4.5s 打开首个改动的 diff 只读标签；断言 git: 证据行 + diff: 标签）。
     let smoke_git_diff = args.iter().any(|a| a == "--smoke-git-diff");
@@ -200,6 +218,7 @@ fn main() {
                 "--smoke-open",
                 "--smoke-workspace",
                 "--smoke-save-as",
+                "--smoke-docx-bid",
                 "--rpc-sock",
             ]
             .iter()
@@ -457,6 +476,45 @@ fn main() {
                 })
                 .detach();
             }
+
+            // #156：标书 docx 端到端烟雾——四面貌编辑 + 另存（真实应用态）。
+            if let Some(target) = smoke_docx_bid {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    // 3.5s：编辑器装载完成（与其它烟雾钩子同节奏）。
+                    cx.background_executor()
+                        .timer(Duration::from_millis(3500))
+                        .await;
+                    let edits_ok = cx
+                        .update(|cx| {
+                            handle.update(cx, |shell, _window, cx| {
+                                shell.editor().is_some_and(|ed| {
+                                    ed.update(cx, |ed, _| ed.docx_bid_smoke_edits())
+                                })
+                            })
+                        })
+                        .unwrap_or(false);
+                    // 4.5s：另存到 OUT（docx 字节——save_active_as 与
+                    // Ctrl+Shift+S 对话框回调同链；原档不动）。
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1000))
+                        .await;
+                    let _ = cx.update(|cx| {
+                        handle.update(cx, |shell, _window, cx| {
+                            shell.save_active_as(std::path::PathBuf::from(target.clone()), cx);
+                        })
+                    });
+                    // save_active_as 无返回值——落盘在场即证据
+                    //（saved-as:（docx 字节）证据行由 Editor::save_as 打出）。
+                    let saved = std::path::Path::new(&target).exists();
+                    eprintln!(
+                        "smoke-docx-bid: save {} (edits={edits_ok}) → {target}",
+                        if saved { "ok" } else { "FAILED" }
+                    );
+                })
+                .detach();
+            }
+
 
             // G1：查找替换烟雾（--smoke-find-replace——与启动 FILE 组合）。
             // 序列（全部经完整键派发管线）：

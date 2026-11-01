@@ -126,14 +126,18 @@ fn mount(bytes: &[u8]) -> Result<(docx_doc::DocxPayload, DocxEnginePort, DocxBri
         payload.projections.entry(i).or_default();
         payload.fallbacks.entry(i).or_default();
     }
-    // 三面对账：宽面文档序段落数 = 行模型候选数 = 引擎 w:p 数。任一不等
-    // → 降级（宽面块模型与 document.xml 扫描口径分歧：文本框嵌套表等）。
-    // 表格部分用引擎权威栅格数（见 width_paragraph_count 文档）。
+    // 三面对账：宽面文档序段落数（+#156 sdt 盲区）= 行模型候选数 =
+    // 引擎 w:p 数。任一不等 → 降级（宽面块模型与 document.xml 扫描口径
+    // 分歧：文本框嵌套表等）。表格部分用引擎权威栅格数（见
+    // width_paragraph_count 文档）。sdt 盲区 = 引擎可见、宽面结构性丢弃
+    // 的段落（docx-rs `StructuredDataTag`——与 `docx_doc::load_editable`
+    // 门 1 同口径：`width + sdt == engine` 才放行）。
     let engine_tables = mdc_office_io::docx_edit::DocxEditor::open(bytes)
         .map(|e| e.table_cells())
         .unwrap_or_default();
+    let sdt_blind = port.sdt_paragraphs().len();
     let width = width_paragraph_count(&doc, Some(&engine_tables));
-    if payload.candidates != engine_paras || width != engine_paras {
+    if payload.candidates != engine_paras || width + sdt_blind != engine_paras {
         let tables = payload.props.tables;
         let textboxes = payload.props.textboxes;
         let kind = if tables > 0 && textboxes == 0 {
