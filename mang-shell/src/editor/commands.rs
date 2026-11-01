@@ -86,6 +86,11 @@ impl Cmd {
             Cmd::DocStart => "doc_start",
             Cmd::DocEnd => "doc_end",
             Cmd::ToggleFold => "toggle_fold",
+            // #132 任务3：折叠命令族（rebase 时补——main 的 id() 早于本分支变体）。
+            Cmd::FoldCurrent => "fold_current",
+            Cmd::UnfoldCurrent => "unfold_current",
+            Cmd::FoldAll => "fold_all",
+            Cmd::UnfoldAll => "unfold_all",
             Cmd::OpenFind => "open_find",
             Cmd::OpenReplace => "open_replace",
             Cmd::GotoLine => "goto_line",

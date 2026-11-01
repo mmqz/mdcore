@@ -1,0 +1,88 @@
+/// #132-3：折叠状态读写（`folds` 键：`{"<文件路径>": [起始行, ...]}`）。
+///
+/// 语义：**按文件记住「折叠头行的行号集合」**（0 基）。存头行而非区间，
+/// 是因为区间尾行在编辑后会漂移；头行在同一块没被编辑时相对稳定，
+/// 恢复时由调用方按当前文本重算区间尾（算不出就丢弃该条——宁缺毋错）。
+///
+/// 容量：每文件最多 [`FOLD_PERSIST_CAP`] 条、全局最多
+/// [`FOLD_FILE_CAP`] 个文件（超限丢最旧写入的那个键，避免配置文件
+/// 无限增长）。
+pub const FOLD_PERSIST_CAP: usize = 200;
+/// 全局最多记住多少个文件的折叠状态。
+pub const FOLD_FILE_CAP: usize = 64;
+
+pub fn save_folds(key: &str, heads: &[usize]) {
+    if let Some(dir) = config_dir() {
+        save_folds_in(&dir, key, heads);
+    }
+}
+
+pub fn load_folds(key: &str) -> Vec<usize> {
+    let Some(dir) = config_dir() else {
+        return Vec::new();
+    };
+    load_folds_in(&dir, key)
+}
+
+fn save_folds_in(dir: &Path, key: &str, heads: &[usize]) {
+    // 空键 = 未命名文档：不持久化（无稳定身份）。
+    if key.is_empty() {
+        return;
+    }
+    let mut value = load_from(dir);
+    if value.get("folds").is_none_or(|v| !v.is_object()) {
+        value["folds"] = serde_json::json!({});
+    }
+    let Some(map) = value["folds"].as_object_mut() else {
+        return;
+    };
+    if heads.is_empty() {
+        // 全展开 = 清掉该文件的记录（不积空数组垃圾）。
+        map.remove(key);
+    } else {
+        let mut sorted: Vec<usize> = heads.iter().copied().take(FOLD_PERSIST_CAP).collect();
+        sorted.sort_unstable();
+        sorted.dedup();
+        map.insert(
+            key.to_string(),
+            serde_json::Value::Array(
+                sorted
+                    .into_iter()
+                    .map(|h| serde_json::Value::from(h as u64))
+                    .collect(),
+            ),
+        );
+        // 容量控制：超限时丢掉最旧写入的**别的**文件（Map 保插入序）。
+        if map.len() > FOLD_FILE_CAP
+            && let Some(oldest) = map.keys().find(|k| k.as_str() != key).cloned()
+        {
+            map.remove(&oldest);
+        }
+    }
+    save_to(dir, &value);
+}
+
+fn load_folds_in(dir: &Path, key: &str) -> Vec<usize> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    let value = load_from(dir);
+    let Some(arr) = value
+        .get("folds")
+        .and_then(|f| f.get(key))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<usize> = arr
+        .iter()
+        .filter_map(|v| v.as_u64())
+        .map(|v| v as usize)
+        .take(FOLD_PERSIST_CAP)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn remember_workspace_in(dir: &Path, root: &Path) {

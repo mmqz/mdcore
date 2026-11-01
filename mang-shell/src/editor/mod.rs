@@ -777,6 +777,7 @@ impl Editor {
             // canvas 无围栏语义——fence 恒 false（同 docx/pdf/xlsx 口径）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            ctrl_k_pending: false,
             // #132 任务1：括号匹配缓存（canvas 无语言语义——恒 None）。
             bracket_cache: BracketCache::default(),
             bracket_lang: None,
