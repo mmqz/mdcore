@@ -164,7 +164,7 @@ c = Client.connect(reconnect=True,            # 断线自动重连（默认开�
 
 ```bash
 cd sdk/python
-uv sync --extra dev
+uv sync               # dev 工具（pytest/mypy/ruff/black）随 dependency-groups 默认装入
 uv run pytest          # 单测（mock socket，不需要真编辑器）
 uv run mypy mang_rpc tests
 uv run ruff check .
