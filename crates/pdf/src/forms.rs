@@ -64,6 +64,144 @@ use crate::security::Limits;
 // 类型面
 // ---------------------------------------------------------------------------
 
+/// `/Ff` 域标志位（ISO 32000-1 Table 221）。只建模校验相关的位。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FieldFlags(u32);
+
+impl FieldFlags {
+    /// 从原始 `/Ff` 整数值构造。
+    pub fn from_raw(raw: i64) -> Self { FieldFlags(raw as u32) }
+    /// 原始整数值（写回时原样保留）。
+    pub fn raw(self) -> u32 { self.0 }
+    /// bit0：只读。
+    pub fn is_read_only(self) -> bool { self.0 & 1 != 0 }
+    /// bit1：必填。
+    pub fn is_required(self) -> bool { self.0 & 2 != 0 }
+    /// bit2：不导出。
+    pub fn is_no_export(self) -> bool { self.0 & 4 != 0 }
+}
+
+/// 校验错误类别。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorKind {
+    /// 必填未填（`/Ff` bit1）。
+    Required,
+    /// 超过 `/MaxLen`。
+    TooLong,
+    /// 不匹配格式规则（`/AA /F` 的 JavaScript——本版**不产生**，
+    /// 见 [`PdfForm::validate`] 的诚实边界说明）。
+    PatternMismatch,
+    /// 不在 `/Opt` 选项集内。
+    InvalidChoice,
+}
+
+impl ErrorKind {
+    /// 稳定机器码（日志/闸门面）。
+    pub fn code(&self) -> &'static str {
+        match self {
+            ErrorKind::Required => "FIELD_REQUIRED",
+            ErrorKind::TooLong => "FIELD_TOO_LONG",
+            ErrorKind::PatternMismatch => "FIELD_PATTERN_MISMATCH",
+            ErrorKind::InvalidChoice => "FIELD_INVALID_CHOICE",
+        }
+    }
+}
+
+/// 单条校验错误。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FieldError {
+    /// 域全名。
+    pub field: String,
+    /// 错误类别。
+    pub kind: ErrorKind,
+    /// 人类可读说明（面向投标经办人）。
+    pub message: String,
+}
+
+/// 整表校验结果。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ValidationResult {
+    /// 全部通过。
+    pub valid: bool,
+    /// 错误清单（域名字典序——确定性输出）。
+    pub errors: Vec<FieldError>,
+}
+
+impl ValidationResult {
+    /// 一次性人类可读回报。
+    pub fn to_message(&self) -> String {
+        if self.valid {
+            "表单校验通过".to_string()
+        } else {
+            format!(
+                "表单校验未通过（{} 处）：{}",
+                self.errors.len(),
+                self.errors
+                    .iter()
+                    .map(|e| format!("{}：{}", e.field, e.message))
+                    .collect::<Vec<_>>()
+                    .join("；")
+            )
+        }
+    }
+}
+
+/// 文本对齐（`/Q`：0 左 1 中 2 右）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Alignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl Alignment {
+    /// `/Q` 整数值。
+    pub fn to_q(self) -> i64 {
+        match self {
+            Alignment::Left => 0,
+            Alignment::Center => 1,
+            Alignment::Right => 2,
+        }
+    }
+    /// 从 `/Q` 反解析（未知按左对齐）。
+    pub fn from_q(q: i64) -> Self {
+        match q {
+            1 => Alignment::Center,
+            2 => Alignment::Right,
+            _ => Alignment::Left,
+        }
+    }
+}
+
+/// 外观定制参数。只影响生成的 `/AP` 外观流与 `/DA`/`/Q` 字典字段；不改值。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldAppearance {
+    /// 字号（pt）。
+    pub font_size: f32,
+    /// 字体名（`Helv` = Helvetica 内置）。
+    pub font_name: String,
+    /// 对齐。
+    pub alignment: Alignment,
+    /// 文字颜色（0~255 三通道）。
+    pub text_color: (u8, u8, u8),
+    /// 背景色（None = 不画背景）。
+    pub background: Option<(u8, u8, u8)>,
+}
+
+impl Default for FieldAppearance {
+    fn default() -> Self {
+        FieldAppearance {
+            font_size: 10.0,
+            font_name: "Helv".to_string(),
+            alignment: Alignment::Left,
+            text_color: (0, 0, 0),
+            background: None,
+        }
+    }
+}
 /// 表单域类型（issue #116 草图形状；`kind()` 给出稳定机器名）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormField {
@@ -153,8 +291,10 @@ struct RawField {
     name: String,
     /// 解析出的模型。
     model: FormField,
-    /// Widget 对象（可能 == field_id；纯域树节点无 Widget 时为 None）。
+    /// Widget 对象（**跨页同名域会有多个**）。
     widget_ids: Vec<ObjectId>,
+    /// `/Ff` 标志位。
+    flags: FieldFlags,
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +316,8 @@ pub struct PdfForm {
     appearance_jobs: BTreeMap<String, AppearanceJob>,
     /// 注入的 TTF 字节（中文 CIDFont 嵌入源）。
     font: Option<Vec<u8>>,
+    /// 外观覆盖（set_appearance 登记；生成外观流时套用）。
+    appearance_overrides: BTreeMap<String, FieldAppearance>,
     /// 是否发现了 CJK 值（决定是否需要外观/告警）。
     report: FillReport,
     /// 打开的限额（沿用 crate 纪律——`PdfForm::limits()` 读取）。
@@ -260,6 +402,7 @@ impl PdfForm {
             dirty: BTreeMap::new(),
             appearance_jobs: BTreeMap::new(),
             font: None,
+            appearance_overrides: BTreeMap::new(),
             report: FillReport::default(),
             limits,
         })
@@ -400,10 +543,29 @@ fn walk_field_tree(
             } else {
                 kids.clone()
             };
-            out.insert(
-                full_name.clone(),
-                RawField { field_id: id, name: full_name, model, widget_ids: widgets },
-            );
+            // 跨页同名域合并：同一 /T 在多页各挂一份 Widget（reportlab 这类
+            // 生成器建两个独立对象，不是 /Kids 树）。语义上是同一字段。
+            match out.get_mut(&full_name) {
+                Some(existing) => {
+                    for w in widgets {
+                        if !existing.widget_ids.contains(&w) {
+                            existing.widget_ids.push(w);
+                        }
+                    }
+                }
+                None => {
+                    out.insert(
+                        full_name.clone(),
+                        RawField {
+                            field_id: id,
+                            name: full_name,
+                            model,
+                            widget_ids: widgets,
+                            flags: FieldFlags::from_raw(ff),
+                        },
+                    );
+                }
+            }
         }
     } else if !kids.is_empty() {
         // 容器（无 /FT）：继续向下
@@ -670,7 +832,12 @@ impl PdfForm {
                     self.report.unchanged += 1;
                     return Ok(());
                 }
-                self.write_field_dict(raw.field_id, b"V", encode_pdf_text(value));
+                let encoded = encode_pdf_text(value);
+                // 跨页同名域：值必须写进每个 Widget。
+                self.write_field_dict(raw.field_id, b"V", encoded.clone());
+                for wid in &raw.widget_ids {
+                    self.write_field_dict(*wid, b"V", encoded.clone());
+                }
                 let max_len = *max_len;
                 if let Some(m) = self.fields.get_mut(name) {
                     m.model = FormField::Text {
@@ -681,6 +848,9 @@ impl PdfForm {
                 }
                 self.note_cjk(name, value);
                 self.queue_appearance(name, raw.field_id);
+                for wid in &raw.widget_ids {
+                    self.queue_appearance(name, *wid);
+                }
                 self.report.changed += 1;
                 Ok(())
             }
@@ -910,13 +1080,27 @@ impl PdfForm {
         let mut built = 0usize;
         for (name, job) in jobs {
             let Some(model) = self.fields.get(&name).map(|r| r.model.clone()) else { continue };
-            let FormField::Text { value, .. } = model else { continue };
+            let value = match &model {
+                FormField::Text { value, .. } => value.clone(),
+                FormField::Choice { selected, .. } => selected.join(","),
+                _ => continue,
+            };
+            let styled = self.appearance_overrides.get(&name).cloned();
             let w = (job.rect[2] - job.rect[0]).abs().max(1.0);
             let h = (job.rect[3] - job.rect[1]).abs().max(1.0);
-            let fs = (h * 0.62).clamp(4.0, 72.0);
+            let fs = match &styled {
+                Some(a) => (a.font_size as f64).clamp(1.0, h.max(1.0)),
+                None => (h * 0.62).clamp(4.0, 72.0),
+            };
             let mut ap = match (&font, value.is_ascii()) {
                 (Some(ttf), false) => cid_appearance(ttf, &value, w, h, fs)?,
-                _ => simple_appearance(&value, w, h, fs),
+                _ => {
+                    let (align, color, bg) = match &styled {
+                        Some(a) => (a.alignment, a.text_color, a.background),
+                        None => (Alignment::Left, (0, 0, 0), None),
+                    };
+                    simple_appearance_styled(&value, w, h, fs, align, color, bg)
+                }
             };
             ap.dict.set("BBox", bbox(w, h));
             let ap_id = self.doc.add_object(ap);
@@ -981,14 +1165,52 @@ pub(crate) fn encode_pdf_text(s: &str) -> Object {
     }
 }
 
-/// 简单字体外观流（Helvetica，仅 ASCII 有意义）。
-fn simple_appearance(value: &str, w: f64, h: f64, fs: f64) -> lopdf::Stream {
+/// 带样式的外观流（字号/对齐/颜色/背景）。
+///
+/// 对齐按**字符数近似**定位（ASCII 记 0.5 em、其余 1.0 em）——精确排版
+/// 需要字体度量表（hmtx），[`crate::generate`] 已登记该限制（R2 面）；
+/// 表单一格文字量小，近似足够。
+fn simple_appearance_styled(
+    value: &str,
+    w: f64,
+    h: f64,
+    fs: f64,
+    align: Alignment,
+    text_color: (u8, u8, u8),
+    background: Option<(u8, u8, u8)>,
+) -> lopdf::Stream {
     let esc = value
         .replace('\\', "\\\\")
         .replace('(', "\\(")
         .replace(')', "\\)");
-    let content = format!("q BT /Helv {fs} Tf 2 {} Td ({esc}) Tj ET Q", (h - fs) / 2.0);
-    let mut s = lopdf::Stream::new(dictionary! {}, content.into_bytes());
+    let em_width: f64 = value
+        .chars()
+        .map(|c| if c.is_ascii() { 0.5 } else { 1.0 })
+        .sum();
+    let text_w = em_width * fs;
+    let x = match align {
+        Alignment::Left => 2.0,
+        Alignment::Center => ((w - text_w) / 2.0).max(2.0),
+        Alignment::Right => (w - text_w - 2.0).max(2.0),
+    };
+    let y = (h - fs) / 2.0;
+    let (r, g, b) = text_color;
+    let mut ops = String::new();
+    if let Some((br, bg, bb)) = background {
+        ops.push_str(&format!(
+            "q {:.3} {:.3} {:.3} rg 0 0 {w:.2} {h:.2} re f Q\n",
+            br as f32 / 255.0,
+            bg as f32 / 255.0,
+            bb as f32 / 255.0
+        ));
+    }
+    ops.push_str(&format!(
+        "q BT /Helv {fs} Tf {:.3} {:.3} {:.3} rg {x:.2} {y:.2} Td ({esc}) Tj ET Q",
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0
+    ));
+    let mut s = lopdf::Stream::new(dictionary! {}, ops.into_bytes());
     s.dict.set("Type", "XObject");
     s.dict.set("Subtype", "Form");
     s.dict.set("BBox", bbox(w, h));
@@ -1003,7 +1225,8 @@ fn simple_appearance(value: &str, w: f64, h: f64, fs: f64) -> lopdf::Stream {
         }),
     }));
     s
-}/// CIDFont 外观流（Type0 / Identity-H）——中文域值的正确落点。
+}
+/// CIDFont 外观流（Type0 / Identity-H）——中文域值的正确落点。
 ///
 /// 与 [`crate::generate`] 同源：复用其 TTF 解析与 Type0 字体字典构造，
 /// 只是把内容从「整页文本」换成「一个域框里的一行字」。
@@ -1232,7 +1455,244 @@ impl PdfForm {
             .map_err(|e| FormError::Save(format!("扁平化保存失败：{e}")))?;
         Ok(out)
     }
-}/// 某 Widget 挂在哪个页（/Annots 反查）。
+}// ---------------------------------------------------------------------------
+// 任务 1：校验
+// ---------------------------------------------------------------------------
+
+impl PdfForm {
+    /// 整表校验（必填 / 超长 / 选项集）。
+    ///
+    /// # 校验范围（**诚实边界**）
+    ///
+    /// | 规则 | 来源 | 本版 |
+    /// |---|---|---|
+    /// | 必填 | `/Ff` bit1 | ✅ |
+    /// | 超长 | `/MaxLen` | ✅ |
+    /// | 选项集 | `/Ch /Opt` | ✅ |
+    /// | 格式 | `/AA /F` 的 JavaScript | ⚠️ **不做** |
+    ///
+    /// 格式校验（`/AA /F`）是一段 **JavaScript**（`AFNumber_Format`、
+    /// `AFDate_FormatEx` 等）。执行任意 JS 需要嵌入式解释器——本 crate
+    /// 明确不接 JS（见 [`crate::engine`] 的 S1.1 纪律）。
+    ///
+    /// 所以 [`ErrorKind::PatternMismatch`] **在本版不会被本函数产生**；
+    /// 它保留在枚举里是为了接口稳定性。**与其猜一个正则，不如如实说
+    /// 「这一项我们没验」。**
+    ///
+    /// 只读域（`/Ff` bit0）不参与校验——它们本就不可填，报「必填未填」
+    /// 只会误导（真实投标函里只读域通常是自动计算字段）。
+    pub fn validate(&self) -> ValidationResult {
+        let mut errors = Vec::new();
+        for (name, raw) in &self.fields {
+            if raw.flags.is_read_only() {
+                continue;
+            }
+            match &raw.model {
+                FormField::Text { value, max_len, .. } => {
+                    if raw.flags.is_required() && value.trim().is_empty() {
+                        errors.push(FieldError {
+                            field: name.clone(),
+                            kind: ErrorKind::Required,
+                            message: "必填项未填写".into(),
+                        });
+                    }
+                    if let Some(max) = max_len {
+                        let used = pdf_text_len(value);
+                        if used > *max {
+                            errors.push(FieldError {
+                                field: name.clone(),
+                                kind: ErrorKind::TooLong,
+                                message: format!("超出长度限制 {max}，当前 {used}"),
+                            });
+                        }
+                    }
+                }
+                FormField::Choice { selected, options, .. } => {
+                    if raw.flags.is_required() && selected.is_empty() {
+                        errors.push(FieldError {
+                            field: name.clone(),
+                            kind: ErrorKind::Required,
+                            message: "必选项未选择".into(),
+                        });
+                    }
+                    if !options.is_empty() {
+                        for v in selected {
+                            if !options.iter().any(|o| o == v) {
+                                errors.push(FieldError {
+                                    field: name.clone(),
+                                    kind: ErrorKind::InvalidChoice,
+                                    message: format!("选择项「{v}」不在可选范围内"),
+                                });
+                            }
+                        }
+                    }
+                }
+                // 复选框的「必填」在 PDF 里没有标准位（/Ff bit1 对 Btn 是
+                // Reserved）。不猜语义，跳过。
+                FormField::Checkbox { .. } => {}
+                FormField::Radio { .. } => {}
+                // 签名字段由 signature 模块管。
+                FormField::Signature { .. } => {}
+            }
+        }
+        errors.sort_by(|a, b| a.field.cmp(&b.field).then(a.kind.code().cmp(b.kind.code())));
+        ValidationResult { valid: errors.is_empty(), errors }
+    }
+
+    /// 某域的标志位（校验/接线方可读）。
+    pub fn flags(&self, name: &str) -> Option<FieldFlags> {
+        self.fields.get(name).map(|r| r.flags)
+    }
+
+    /// **仅供测试/诊断**：绕过校验直接把原始值写进域字典。
+    ///
+    /// 用途：构造「文档里已经有非法值」的状态，验证 [`PdfForm::validate`]
+    /// 的第二道防线（别的工具写进了超 `/MaxLen` 的值）。生产不要用。
+    #[doc(hidden)]
+    pub fn force_raw_value(&mut self, name: &str, value: &str) {
+        let Some(raw) = self.fields.get(name).cloned() else { return };
+        let encoded = encode_pdf_text(value);
+        self.write_field_dict(raw.field_id, b"V", encoded.clone());
+        for wid in &raw.widget_ids {
+            self.write_field_dict(*wid, b"V", encoded.clone());
+        }
+        if let Some(m) = self.fields.get_mut(name) {
+            let max_len = match &m.model {
+                FormField::Text { max_len, .. } => *max_len,
+                _ => None,
+            };
+            m.model = FormField::Text {
+                name: name.to_string(),
+                value: value.to_string(),
+                max_len,
+            };
+        }
+    }
+}
+
+/// PDF 文本长度口径：`/MaxLen` 以**字节**计（UTF-16BE 时中文占 2 字节，
+/// 非 BMP 字符占 4 字节——与 Acrobat 判定一致）。
+fn pdf_text_len(s: &str) -> usize {
+    s.chars()
+        .map(|c| {
+            if (c as u32) < 0x80 {
+                1
+            } else if (c as u32) <= 0xFFFF {
+                2
+            } else {
+                4
+            }
+        })
+        .sum()
+}
+
+// ---------------------------------------------------------------------------
+// 任务 2：外观定制
+// ---------------------------------------------------------------------------
+
+impl PdfForm {
+    /// 设置某域外观（字号/字体/对齐/颜色/背景）。
+    ///
+    /// 写三处：域 `/DA`+`/Q`、`/MK /BG` 背景、以及注入字体时登记外观重建。
+    /// 非文本/选择域返回 [`FormError::WrongFieldType`]——复选框外观是图形
+    /// 不是文本串，改字号没有意义。
+    pub fn set_appearance(&mut self, field: &str, app: FieldAppearance) -> Result<(), FormError> {
+        let raw = self
+            .fields
+            .get(field)
+            .cloned()
+            .ok_or_else(|| FormError::FieldNotFound(field.to_string()))?;
+        if !matches!(raw.model, FormField::Text { .. } | FormField::Choice { .. }) {
+            return Err(FormError::WrongFieldType {
+                name: field.to_string(),
+                expected: "text/choice",
+                actual: raw.model.kind().to_string(),
+            });
+        }
+        if !(app.font_size.is_finite() && app.font_size > 0.0 && app.font_size <= 300.0) {
+            return Err(FormError::InvalidValue {
+                name: field.to_string(),
+                reason: format!("字号 {} 非法（应在 (0, 300]）", app.font_size),
+            });
+        }
+        self.check_writable(&raw)?;
+
+        let (r, g, b) = app.text_color;
+        let da = format!(
+            "/{} {} Tf {:.3} {:.3} {:.3} rg",
+            app.font_name,
+            app.font_size,
+            r as f32 / 255.0,
+            g as f32 / 255.0,
+            b as f32 / 255.0
+        );
+        self.write_field_dict(
+            raw.field_id,
+            b"DA",
+            Object::String(da.into_bytes(), lopdf::StringFormat::Literal),
+        );
+        self.write_field_dict(raw.field_id, b"Q", Object::Integer(app.alignment.to_q()));
+
+        if let Some((br, bg, bb)) = app.background {
+            let colors = Object::Array(vec![
+                Object::Real(br as f32 / 255.0),
+                Object::Real(bg as f32 / 255.0),
+                Object::Real(bb as f32 / 255.0),
+            ]);
+            let base = self.doc.get_dictionary(raw.field_id).cloned().unwrap_or_default();
+            let mut mk = match base.get(b"MK").ok() {
+                Some(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            mk.set(b"BG".to_vec(), colors);
+            self.write_field_dict(raw.field_id, b"MK", Object::Dictionary(mk));
+        }
+
+        let widgets = raw.widget_ids.clone();
+        for wid in &widgets {
+            self.write_field_dict(*wid, b"Q", Object::Integer(app.alignment.to_q()));
+        }
+
+        self.appearance_overrides.insert(field.to_string(), app);
+        if self.font.is_some() {
+            for wid in &widgets {
+                self.queue_appearance(field, *wid);
+            }
+        }
+        self.report.changed += 1;
+        Ok(())
+    }
+
+    /// 读当前外观参数。
+    ///
+    /// 本会话 `set_appearance` 登记的值优先——它在 `dirty` 里还没落盘，
+    /// 直接读 `self.doc` 会拿到旧字典（实测踩坑：读回字号仍是默认 10）。
+    pub fn appearance(&self, field: &str) -> Option<FieldAppearance> {
+        if let Some(app) = self.appearance_overrides.get(field) {
+            return Some(app.clone());
+        }
+        let raw = self.fields.get(field)?;
+        let base = self.doc.get_dictionary(raw.field_id).ok()?;
+        let mut app = FieldAppearance::default();
+        if let Some(da) = dict_text(base, b"DA") {
+            let mut it = da.split_whitespace();
+            if let Some(name) = it.next() {
+                app.font_name = name.trim_start_matches('/').to_string();
+            }
+            if let Some(size) = it.next() {
+                if let Ok(v) = size.parse::<f32>() {
+                    app.font_size = v;
+                }
+            }
+        }
+        if let Ok(q) = base.get(b"Q").and_then(|o| o.as_i64()) {
+            app.alignment = Alignment::from_q(q);
+        }
+        Some(app)
+    }
+}
+
+/// 某 Widget 挂在哪个页（/Annots 反查）。
 fn find_page_with_annot(doc: &Document, id: ObjectId) -> Option<u32> {
     doc.get_pages().into_iter().find_map(|(n, pid)| {
         let p = doc.get_dictionary(pid).ok()?;
