@@ -1854,6 +1854,21 @@ fn perf_rope_edit_find_2m_chars() {
 
 #[cfg(test)]
 mod g1_find_replace_tests {
+
+    #[test]
+    fn batch_replace_undo_restores_exact_text() {
+        use super::*;
+        let mut b = Buffer::from_plain_text("foo one\nfoo two");
+        let edits = vec![
+            (Point::new(0, 0), Point::new(0, 3), "bar".to_string()),
+            (Point::new(1, 0), Point::new(1, 3), "bar".to_string()),
+        ];
+        assert_eq!(b.replace_batch(edits), 2);
+        assert_eq!(b.to_plain_text(), "bar one\nbar two");
+        assert!(b.undo());
+        println!("undo后: {:?}", b.to_plain_text());
+        assert_eq!(b.to_plain_text(), "foo one\nfoo two", "undo 精确回原");
+    }
     use super::*;
 
     fn p(line: usize, col: usize) -> Point {

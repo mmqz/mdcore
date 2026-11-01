@@ -3145,6 +3145,7 @@ dependencies = [
  "lopdf",
  "mdc-office-io",
  "mdc-pdf",
+ "regex",
  "serde",
  "serde_json",
  "text",

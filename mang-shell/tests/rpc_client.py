@@ -38,9 +38,14 @@
 
   5. #134 编辑器命令序列（rpc_smoke.sh 消费——run_command 真实
      分派 + list_commands 清单 + get_outline 标题树 + apply_format
-     md 包裹与 undo 回滚）::
+     md 包裹与 undo 回滚；战场为 $WS/cmd.md）::
 
-       ./rpc_client.py SOCK --smoke-cmd FILE2
+       ./rpc_client.py SOCK --smoke-cmd FILE
+
+  6. #134 批量替换序列（rpc_smoke.sh 消费——跨文件双通道 + 正则 $1
+     + per-file 计数 + undo 全批回滚）::
+
+       ./rpc_client.py SOCK --smoke-batch WORKSPACE
 """
 
 import json
@@ -635,14 +640,15 @@ def run_smoke_fs(sock, ws):
     )
 
 
-def run_smoke_cmd(sock, file2):
+def run_smoke_cmd(sock, file):
     """#134 任务 2：编辑器命令面——run_command / list_commands /
     get_outline / apply_format（真实 socket 断言）。
 
-    file2 = 干净文本战场（mouse_smoke.md——#111 序列已复原它；
-    本序列的 apply_format 只在 Buffer 内不改盘，收尾 undo 回滚）。
+    file = 独立干净战场（rpc_smoke.sh 的 $WS/cmd.md——首行标题供
+    get_outline；避开 FILE2 的合成键入残留；本序列的 apply_format
+    只在 Buffer 内不改盘，收尾 undo 回滚）。
     """
-    file2 = os.path.abspath(file2)
+    file = os.path.abspath(file)
     n = 0
 
     def cmd(payload):
@@ -670,7 +676,7 @@ def run_smoke_cmd(sock, file2):
     assert undo_item["title"], undo_item
 
     # ---- 2. run_command：doc_end 真移动光标（get_state 对照）----
-    r = cmd({"id": 2, "cmd": "open_file", "path": file2})
+    r = cmd({"id": 2, "cmd": "open_file", "path": file})
     assert r["already_open"] is False, r
     r = cmd({"id": 3, "cmd": "run_command", "name": "doc_end"})
     assert r["ran"] is True and r["command"] == "doc_end", r
@@ -681,13 +687,13 @@ def run_smoke_cmd(sock, file2):
     # 未知名拒绝（引导 list_commands）
     cmd_err({"id": 5, "cmd": "run_command", "name": "bogus_cmd"}, "list_commands")
 
-    # ---- 3. get_outline：mouse_smoke.md 首行是 "# mang 编辑器冒烟样例" ----
+    # ---- 3. get_outline：cmd.md 首行是 "# cmd battlefield" ----
     r = cmd({"id": 6, "cmd": "get_outline"})
     assert r["count"] >= 1, r
     first = r["entries"][0]
     assert first["level"] == 1, first
     assert first["line"] == 0, first
-    assert "冒烟" in first["text"], first
+    assert "battlefield" in first["text"], first
 
     # ---- 4. apply_format：加粗/斜体 + undo 回滚（char 计数链）----
     r = cmd({"id": 7, "cmd": "get_state"})
@@ -733,6 +739,125 @@ def run_smoke_cmd(sock, file2):
         f"rpc-smoke-cmd: client sequence passed（{n} 命令：run_command "
         f"真实移动 + list_commands 清单 + outline 首标题 + apply_format "
         f"char 链 + undo 回滚）"
+    )
+
+
+def run_smoke_batch(sock, ws):
+    """#134 任务 3：batch_replace——跨文件双通道 + 正则 + per-file
+    计数 + undo 语义（真实 socket 断言）。
+
+    ws = 烟雾工作区根（rpc_smoke.sh 预置 batch/ 夹具：b1.md 两处 foo /
+    b2.md 一处 foo / b3.md 无命中）。
+    """
+    ws = os.path.abspath(ws)
+    n = 0
+
+    def cmd(payload):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is True, f"命令失败：{payload} -> {resp}"
+        return resp["result"]
+
+    def cmd_err(payload, needle):
+        nonlocal n
+        n += 1
+        resp = send(sock, payload)
+        assert resp.get("ok") is False, f"应失败却成功：{payload} -> {resp}"
+        assert needle in resp.get("error", ""), f"错误应含 {needle!r}：{resp}"
+        return resp
+
+    def file_result(r, rel):
+        return next(f for f in r["files"] if f["path"].endswith(rel))
+
+    # ---- 1. 打开 b1（buffer 通道战场；b2/b3 保持关闭走 disk 通道）----
+    r = cmd({"id": 1, "cmd": "open_file", "path": os.path.join(ws, "batch/b1.md")})
+    assert r["already_open"] is False, r
+    r = cmd({"id": 2, "cmd": "get_state"})
+    b1_chars = r["active"]["char_count"]
+
+    # ---- 2. 字面替换：跨三文件，双通道各自计数 ----
+    r = cmd(
+        {
+            "id": 3,
+            "cmd": "batch_replace",
+            "files": ["batch/b1.md", "batch/b2.md", "batch/b3.md"],
+            "pattern": "foo",
+            "replacement": "bar",
+        }
+    )
+    assert r["total_replacements"] == 3, r
+    assert r["files_changed"] == 2, r
+    b1 = file_result(r, "batch/b1.md")
+    b2 = file_result(r, "batch/b2.md")
+    b3 = file_result(r, "batch/b3.md")
+    assert b1["via"] == "buffer" and b1["count"] == 2, b1
+    assert b2["via"] == "disk" and b2["count"] == 1, b2
+    assert b3["count"] == 0 and b3.get("note") == "无命中", b3
+
+    # ---- 3. disk 通道真落盘 / buffer 通道不落盘（双通道语义实测）----
+    r = cmd({"id": 4, "cmd": "read_file", "path": "batch/b2.md"})
+    assert r["text"] == "bar single\n", r
+    r = cmd({"id": 5, "cmd": "read_file", "path": "batch/b1.md"})
+    assert r["text"] == "foo one\nfoo two\n", "buffer 通道只改 Buffer 不落盘"
+    r = cmd({"id": 6, "cmd": "get_state"})
+    assert r["active"]["modified"] is True, "b1 的 Buffer 已改（未保存）"
+
+    # ---- 4. undo 一次回滚 b1 全批（一条 undo = 该文件全部替换）----
+    r = cmd({"id": 7, "cmd": "undo"})
+    assert r["undid"] is True, r
+    r = cmd({"id": 8, "cmd": "get_state"})
+    assert r["active"]["char_count"] == b1_chars, f"undo 应回滚全批：{r}"
+    cmd({"id": 9, "cmd": "save"})  # 幂等归位（盘=buffer）
+    cmd({"id": 10, "cmd": "close_file", "path": os.path.join(ws, "batch/b1.md")})
+
+    # ---- 5. 正则替换（$1 捕获展开，disk 通道）----
+    r = cmd(
+        {
+            "id": 11,
+            "cmd": "batch_replace",
+            "files": ["batch/b2.md"],
+            "pattern": r"bar (\w+)",
+            "replacement": "BAR_$1",
+            "is_regex": True,
+        }
+    )
+    b2 = file_result(r, "batch/b2.md")
+    assert b2["via"] == "disk" and b2["count"] == 1, r
+    r = cmd({"id": 12, "cmd": "read_file", "path": "batch/b2.md"})
+    assert r["text"] == "BAR_single\n", f"$1 展开实测：{r}"
+
+    # ---- 6. 错误面：沙箱外 skipped / 坏正则顶层拒 / 空清单拒 ----
+    r = cmd(
+        {
+            "id": 13,
+            "cmd": "batch_replace",
+            "files": ["/etc/passwd"],
+            "pattern": "root",
+            "replacement": "x",
+        }
+    )
+    f0 = r["files"][0]
+    assert f0["via"] == "skipped" and "工作区" in f0.get("error", ""), r
+    cmd_err(
+        {
+            "id": 14,
+            "cmd": "batch_replace",
+            "files": ["batch/b3.md"],
+            "pattern": "(",
+            "replacement": "x",
+            "is_regex": True,
+        },
+        "正则编译失败",
+    )
+    cmd_err(
+        {"id": 15, "cmd": "batch_replace", "files": [], "pattern": "x", "replacement": "y"},
+        "清单为空",
+    )
+
+    print(
+        f"rpc-smoke-batch: client sequence passed（{n} 命令：跨文件双通道 "
+        f"+ per-file 计数 + buffer/disk 落盘语义 + undo 全批回滚 + 正则 $1 + 错误面）"
     )
 
 
@@ -792,6 +917,19 @@ def main():
             sys.exit(1)
         except RuntimeError as e:
             print(f"rpc-smoke-cmd: FAIL —— {e}", file=sys.stderr)
+            sys.exit(3)
+        return
+    if rest[0] == "--smoke-batch":
+        if len(rest) != 2:
+            print("用法：rpc_client.py SOCK --smoke-batch WORKSPACE", file=sys.stderr)
+            sys.exit(2)
+        try:
+            run_smoke_batch(sock, rest[1])
+        except AssertionError as e:
+            print(f"rpc-smoke-batch: FAIL —— {e}", file=sys.stderr)
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f"rpc-smoke-batch: FAIL —— {e}", file=sys.stderr)
             sys.exit(3)
         return
     payload = build_payload(rest)

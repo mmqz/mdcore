@@ -13,7 +13,9 @@
 #      reload 同步 + rename 标签迁移 + delete 自动关标签（--smoke-fs，
 #      应用以 --smoke-workspace 启动）；#134 任务 2：编辑器命令面
 #      run_command / list_commands / get_outline / apply_format
-#      （--smoke-cmd）。真实 unix socket 通信（非进程内自测）。
+#      （--smoke-cmd）；#134 任务 3：跨文件批量替换 batch_replace
+#      （buffer/disk 双通道 + 正则 $1 + per-file 计数 + undo 全批回滚，
+#      --smoke-batch）。真实 unix socket 通信（非进程内自测）。
 #   2. 应用侧证据行（rpc.log）——"rpc: listening at" + "rpc: 事件泵已
 #      启动" + "rpc: exec <cmd> ok=<bool>" + "rpc: client connected" +
 #      "rpc: doc-event push"（订阅广播主线程外证据）+ "workspace: <路径>"
@@ -58,11 +60,18 @@ FILE2="$PWD/tests/fixtures/mouse_smoke.md"
 
 # #134：FS 序列战场——独立工作区夹具（不碰 FILE1/FILE2 的烟雾链）。
 WS="$OUT/ws"
-mkdir -p "$WS/src" "$WS/docs/deep"
+mkdir -p "$WS/src" "$WS/docs/deep" "$WS/batch"
 printf '# smoke workspace\n' > "$WS/readme.md"
 printf 'fn main() { println!("a"); }\n' > "$WS/src/a.rs"
 printf "b original\n" > "$WS/src/b.md"
 printf '# deep note\n' > "$WS/docs/deep/note.md"
+# #134 任务 3：batch_replace 夹具（b1 两处 foo / b2 一处 / b3 无命中）
+printf 'foo one\nfoo two\n' > "$WS/batch/b1.md"
+printf 'foo single\n' > "$WS/batch/b2.md"
+printf 'no match here\n' > "$WS/batch/b3.md"
+# #134 任务 2：smoke-cmd 战场（独立干净文件——避开 FILE2 的合成键入
+# 残留：smoke2 结束时 FILE2 的 Buffer 仍含 user-typed 内容未保存）
+printf '# cmd battlefield\n\nplain body line for format tests\n' > "$WS/cmd.md"
 
 # 选空闲显示号（PID 基准避开残留 Xvfb 锁——锁存在即换号；带锁但
 # 服务器已死的场景由锁清理责任方处理，这里不碰）。
@@ -146,12 +155,35 @@ python3 tests/rpc_client.py "$SOCK" --smoke "$FILE1" "$FILE2"
 # 2b. #111 扩展面（15 命令 + 订阅 + 双向回显 + 多客户端；内部等待
 #     user-type 键入事件——最长 ~9s）
 python3 tests/rpc_client.py "$SOCK" --smoke2 "$FILE1" "$FILE2"
+# #134 修复：等合成键入链收尾再进后续段——2 核负载下 60ms/键的节奏
+# 会拖长，与 smoke-fs/cmd/batch 的编辑序列交错（实测：迟到的键落入
+# 后续战场文档 +1 char、undo 栈混入键入记录——两轮分别炸 batch/cmd 段）。
+# 后续段落的战场语义要求键入链彻底完成。
+USER_TYPE_DONE=""
+for _ in $(seq 1 200); do
+  if grep -q "user-type-smoke: script done" "$OUT/rpc.log" 2>/dev/null; then
+    USER_TYPE_DONE=1
+    break
+  fi
+  if ! kill -0 "$APP_PID" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if [ -z "$USER_TYPE_DONE" ]; then
+  echo "FAIL: 合成键入链未完成（后续段落的编辑序列无法与之隔离）"
+  tail -5 "$OUT/rpc.log" || true
+  exit 1
+fi
+echo "[rpc-smoke] 合成键入链已完成（后续段与键入隔离）"
 # 2c. #134 FS 面（7 命令 + 沙箱 + reload 同步 + rename 迁移 + delete 关标签）
 python3 tests/rpc_client.py "$SOCK" --smoke-fs "$WS"
 # 2d. #134 任务 2 编辑器命令面（run_command/list_commands/get_outline/apply_format）
-python3 tests/rpc_client.py "$SOCK" --smoke-cmd "$FILE2"
+python3 tests/rpc_client.py "$SOCK" --smoke-cmd "$WS/cmd.md"
+# 2e. #134 任务 3 批量替换（跨文件双通道 + 正则 + per-file 计数 + undo）
+python3 tests/rpc_client.py "$SOCK" --smoke-batch "$WS"
 
-# 等应用自然退出（--smoke-sec 30；四段客户端序列 + 订阅等待 ~19s，余量充足）
+# 等应用自然退出（--smoke-sec 30；五段客户端序列 + 订阅等待 ~21s，余量充足）
 wait "$APP_PID" || {
   echo "FAIL: 应用退出码非零"
   tail -20 "$OUT/rpc.log" || true
@@ -160,8 +192,8 @@ wait "$APP_PID" || {
 
 # 通道 3：应用侧证据行 + quit reached
 EXEC_N=$(grep -c "rpc: exec" "$OUT/rpc.log" || true)
-if [ "$EXEC_N" -lt 40 ]; then
-  echo "FAIL: 'rpc: exec' 证据行不足（$EXEC_N < 40）"
+if [ "$EXEC_N" -lt 60 ]; then
+  echo "FAIL: 'rpc: exec' 证据行不足（$EXEC_N < 60）"
   exit 1
 fi
 grep -q "rpc: client connected" "$OUT/rpc.log" || {
@@ -201,4 +233,4 @@ grep -q "smoke: quit reached" "$OUT/rpc.log" || {
   exit 1
 }
 
-echo "rpc-smoke: PASS（exec ${EXEC_N} + doc-event ${EVENT_N} 证据行 + reloaded ${RELOAD_N} + 四段客户端全链 + quit reached）"
+echo "rpc-smoke: PASS（exec ${EXEC_N} + doc-event ${EVENT_N} 证据行 + reloaded ${RELOAD_N} + 五段客户端全链 + quit reached）"

@@ -762,6 +762,12 @@ impl ShellApp {
             .is_some_and(|tab| tab.editor.read(cx).can_reload_from_disk())
     }
 
+    /// #134：指定标签的编辑器实体（batch_replace 对**非活动**标签的
+    /// Buffer 操作面——`editor()` 只给活动标签）。
+    pub fn tab_editor(&self, idx: usize) -> Option<&Entity<Editor>> {
+        self.tabs.get(idx).map(|tab| &tab.editor)
+    }
+
     /// #134：rename 后的标签身份迁移（磁盘已改名——按「索引 → 新路径」
     /// 计划逐一更新 `TabItem.path` + `Editor::adopt_path`；不写盘、不动
     /// Buffer）。计划由调用方在 rename **前**采集（旧路径还能 canonicalize
