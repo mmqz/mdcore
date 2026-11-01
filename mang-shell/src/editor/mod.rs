@@ -47,6 +47,8 @@
 //! - IME 候选框定位 `bounds_for_range` 返回 `None`（精化登记阶段 7）
 
 pub mod buffer;
+// #132 任务 2：Buffer 的正则查找面（分离 impl——不碰 buffer.rs 主体）。
+mod buffer_find;
 pub mod commands;
 pub mod display_map; // r42 阶段 B（#68）：buffer <-> 显示行列映射（软换行 + 折叠）
 pub mod docx_doc;

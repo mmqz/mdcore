@@ -172,7 +172,9 @@ fn char_to_byte(s: &str, col: usize) -> usize {
 }
 
 /// 字节偏移 → char 索引（G1 批量编辑光标逆换算；越界 clamp 末尾）。
-fn byte_to_char(s: &str, byte_col: usize) -> usize {
+///
+/// `pub(crate)`：#132 正则查找面（`buffer_find` 分离 impl）复用同一坐标口径。
+pub(crate) fn byte_to_char(s: &str, byte_col: usize) -> usize {
     s.char_indices().take_while(|(b, _)| *b < byte_col).count()
 }
 
