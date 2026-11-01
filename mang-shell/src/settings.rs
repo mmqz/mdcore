@@ -474,6 +474,9 @@ mod tests {
         assert_eq!(load_folds_in(&dir, "/ws/a.md"), vec![0, 3, 7], "排序去重");
         assert_eq!(load_folds_in(&dir, "/ws/b.md"), vec![1], "按文件隔离");
         assert_eq!(load_folds_in(&dir, "/ws/c.md"), Vec::<usize>::new(), "未知文件空");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// #132：查找历史键往返 + 截断语义（超 20 条由消费方截——本层如实存）。
     #[test]
     fn find_history_roundtrip_and_coexist() {
