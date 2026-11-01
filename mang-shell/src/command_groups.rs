@@ -65,7 +65,7 @@ pub fn group_of(cmd: Cmd) -> Group {
         Undo | Redo | SelectAll | OpenFind | OpenReplace => Group::Edit,
         MoveLeft | MoveRight | MoveUp | MoveDown | WordLeft | WordRight | MoveHome | MoveEnd
         | DocStart | DocEnd | GotoLine => Group::Navigate,
-        ToggleFold => Group::View,
+        ToggleFold | FoldCurrent | UnfoldCurrent | FoldAll | UnfoldAll => Group::View,
     }
 }
 
