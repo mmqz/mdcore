@@ -34,6 +34,7 @@ use theme::Theme;
 use ui::prelude::*;
 
 use crate::activity_bar;
+use crate::context_menu::{self, ContextMenu, MenuItem, Rect as MenuRect};
 use crate::document::{self, OpenOutcome};
 use crate::editor::Editor;
 use crate::file_tree::FileTree;
@@ -143,6 +144,22 @@ pub struct ShellApp {
     font_size: f32,
     /// F1：提示横幅（打开失败 / 类型不支持 / 对话框不可用等面向用户消息）。
     notice_board: NoticeBoard,
+    /// #63 打磨：右键菜单（None = 未打开）。位置是**触发时**的窗口坐标，
+    /// 摆放（边缘翻转/夹紧）在渲染期按当前窗口尺寸算——菜单开着时窗口被
+    /// 改变大小，位置依然合法。
+    context_menu: Option<ContextMenu>,
+    /// #63 打磨：右键菜单来源（决定动作 id 派发到哪套处理器）。
+    context_menu_origin: MenuOrigin,
+}
+
+/// 右键菜单来源（决定同一动作 id 派发到哪套处理器）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MenuOrigin {
+    /// 编辑器区右键（剪切/复制/粘贴/查找…）。
+    #[default]
+    Editor,
+    /// 文件树右键（新建/重命名/删除/在资源管理器显示）。
+    FileTree,
 }
 
 /// F1：提示横幅状态机（纯逻辑——代际/清除语义单测钉定）。
@@ -304,6 +321,8 @@ impl ShellApp {
             base_theme,
             font_size,
             notice_board: NoticeBoard::default(),
+            context_menu: None,
+            context_menu_origin: MenuOrigin::default(),
         };
         // 初始焦点：有文档 → 编辑器（键入/编辑即时可用）；空态 →
         // shell 根域（Ctrl+O 等空态键位经 root→shell 根路径可达——
@@ -521,6 +540,110 @@ impl ShellApp {
     pub fn toggle_right(&mut self, cx: &mut Context<Self>) {
         self.right_open = !self.right_open;
         cx.notify();
+    }
+
+    // ── #63 打磨：右键菜单 ─────────────────────────────────────
+
+    /// 在窗口坐标 `pos` 处弹出编辑器右键菜单。
+    ///
+    /// `has_selection` / `read_only` 决定各项可用性（灰显而非消失）。
+    /// 位置只记录；真正的边缘翻转在渲染期按当前窗口尺寸算。
+    pub fn open_editor_context_menu(
+        &mut self,
+        pos: context_menu::Point,
+        has_selection: bool,
+        read_only: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(ContextMenu::new(
+            context_menu::editor_menu(has_selection, read_only),
+            pos,
+        ));
+        self.context_menu_origin = MenuOrigin::Editor;
+        cx.notify();
+    }
+
+    /// 在窗口坐标 `pos` 处弹出文件树右键菜单。
+    pub fn open_file_tree_context_menu(
+        &mut self,
+        pos: context_menu::Point,
+        is_dir: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(ContextMenu::new(
+            context_menu::file_tree_menu(is_dir),
+            pos,
+        ));
+        self.context_menu_origin = MenuOrigin::FileTree;
+        cx.notify();
+    }
+
+    /// 关闭右键菜单（Esc / 点空白 / 执行完动作）。
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// 菜单当前是否打开（渲染期判定）。
+    pub fn context_menu_open(&self) -> bool {
+        self.context_menu.is_some()
+    }
+
+    /// 执行一个菜单动作（按 id 派发）。
+    ///
+    /// 未接线的 id 只写证据通道并关菜单——**不 panic 也不静默**：
+    /// 灰显项本来就点不到，能点到却没接线的项说明菜单配错了，
+    /// stderr 留痕比默默吞掉好。
+    pub fn activate_context_menu_item(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        let origin = self.context_menu_origin;
+        self.context_menu = None;
+        match (origin, id) {
+            // 编辑器动作：能直接落到编辑器 API 的走 API，其余转到命令面。
+            (MenuOrigin::Editor, "ed-select-all") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::SelectAll, cx);
+            }
+            (MenuOrigin::Editor, "ed-find") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::OpenFind, cx);
+            }
+            (MenuOrigin::Editor, "ed-replace") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::OpenReplace, cx);
+            }
+            (MenuOrigin::Editor, "ed-goto") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::GotoLine, cx);
+            }
+            (MenuOrigin::Editor, "ed-fold") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::ToggleFold, cx);
+            }
+            (MenuOrigin::Editor, "ed-cut") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::Cut, cx);
+            }
+            (MenuOrigin::Editor, "ed-copy") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::Copy, cx);
+            }
+            (MenuOrigin::Editor, "ed-paste") => {
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::Paste, cx);
+            }
+            // 文件树动作：本批只接「在资源管理器中显示」，其余登记为未接线。
+            (MenuOrigin::FileTree, "ft-reveal") => {
+                if let Some(ws) = self.workspace.as_ref() {
+                    let root = ws.read(cx).root().to_path_buf();
+                    cx.reveal_path(&root);
+                }
+            }
+            (_, other) => {
+                eprintln!("context-menu: 未接线的动作 {other}");
+            }
+        }
+        cx.notify();
+    }
+
+    /// 把命令派发到当前编辑器（无编辑器时空操作）。
+    fn dispatch_editor_cmd(&mut self, cmd: crate::editor::commands::Cmd, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor().cloned() else {
+            return;
+        };
+        editor.update(cx, |ed, cx| ed.exec_command_from_shell(cmd, cx));
     }
 
     /// F1/F3：打开文件（Ctrl+O 对话框 / 文件树点击 / 最近列表共用

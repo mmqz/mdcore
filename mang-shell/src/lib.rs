@@ -22,3 +22,16 @@ pub mod editor;
 /// 外壳设置面（编辑器构造读缩进单位/面板宽度——src/settings.rs 同源）。
 #[path = "settings.rs"]
 pub mod settings;
+/// 右键菜单数据/几何面（#63 打磨项）：纯数据，零 GPUI 依赖——菜单摆放
+/// 算法（边缘翻转/夹紧）必须能脱离窗口单测，见模块文档。
+#[path = "context_menu.rs"]
+pub mod context_menu;
+
+/// 状态栏信息面（git 分支/编码/换行符/选中字数）：纯函数，零 GPUI
+/// 依赖——全部对着字节与目录写断言。
+#[path = "status_info.rs"]
+pub mod status_info;
+
+/// 命令面板分组/最近使用（#63 打磨项）：纯数据，零 GPUI 依赖。
+#[path = "command_groups.rs"]
+pub mod command_groups;

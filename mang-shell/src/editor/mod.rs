@@ -2608,6 +2608,68 @@ impl Editor {
         ));
         out
     }
+    /// #63 打磨：从外壳（右键菜单）派发不需要窗口的命令。
+    ///
+    /// 为什么不把 exec_command 变 pub：那里一半分支要 Window（开查找条要
+    /// 聚焦输入域）。菜单点击发生在 shell 上下文，拿不到编辑器窗口；能派发
+    /// 的是「纯 buffer 操作」这一类——正好是菜单里除查找/替换/跳行之外的全部。
+    pub fn exec_menu_command(&mut self, cmd: Cmd, cx: &mut Context<Self>) {
+        match cmd {
+            Cmd::SelectAll => self.select_all(cx),
+            Cmd::Undo => {
+                self.undo_edit();
+                cx.notify();
+            }
+            Cmd::Redo => {
+                self.redo_edit();
+                cx.notify();
+            }
+            Cmd::ToggleFold => {
+                let line = self.buffer.cursor().line;
+                self.toggle_fold_at(line);
+                cx.notify();
+            }
+            _ => {}
+        }
+    }
+
+    /// #63 打磨：菜单「剪切」——复制选区后删除（只读态无操作）。
+    pub fn menu_cut(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+        let text = self.buffer.selection_text();
+        if text.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.replace_selection_text("", cx);
+        cx.notify();
+    }
+
+    /// #63 打磨：菜单「复制」。
+    pub fn menu_copy(&mut self, cx: &mut Context<Self>) {
+        self.copy_selection(cx);
+    }
+
+    /// #63 打磨：菜单「粘贴」——读剪贴板写入选区位（只读态无操作）。
+    pub fn menu_paste(&mut self, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let Some(text) = item.text() else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        self.replace_selection_text(&text, cx);
+        cx.notify();
+    }
+
     /// 复制选区（无选区无操作）。
     fn copy_selection(&mut self, cx: &mut Context<Self>) {
         let text = self.buffer.selection_text();
