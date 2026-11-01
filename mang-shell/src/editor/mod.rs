@@ -2615,7 +2615,12 @@ impl Editor {
     /// 的是「纯 buffer 操作」这一类——正好是菜单里除查找/替换/跳行之外的全部。
     pub fn exec_menu_command(&mut self, cmd: Cmd, cx: &mut Context<Self>) {
         match cmd {
-            Cmd::SelectAll => self.select_all(cx),
+            Cmd::SelectAll => {
+                // Editor 没有 select_all 方法——全选是 buffer 面的操作
+                // （同 exec_command 的 Cmd::SelectAll 分支口径）。
+                self.buffer.select_all();
+                cx.notify();
+            }
             Cmd::Undo => {
                 self.undo_edit();
                 cx.notify();

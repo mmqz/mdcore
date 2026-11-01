@@ -616,13 +616,21 @@ impl ShellApp {
                 self.dispatch_editor_cmd(crate::editor::commands::Cmd::ToggleFold, cx);
             }
             (MenuOrigin::Editor, "ed-cut") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::Cut, cx);
+                // 剪贴板动作走 Editor 的菜单方法（Cmd 枚举无这三项——
+                // 它们是剪贴板动作，不是可登记的编辑器命令）。
+                if let Some(editor) = self.editor().cloned() {
+                    editor.update(cx, |ed, cx| ed.menu_cut(cx));
+                }
             }
             (MenuOrigin::Editor, "ed-copy") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::Copy, cx);
+                if let Some(editor) = self.editor().cloned() {
+                    editor.update(cx, |ed, cx| ed.menu_copy(cx));
+                }
             }
             (MenuOrigin::Editor, "ed-paste") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::Paste, cx);
+                if let Some(editor) = self.editor().cloned() {
+                    editor.update(cx, |ed, cx| ed.menu_paste(cx));
+                }
             }
             // 文件树动作：本批只接「在资源管理器中显示」，其余登记为未接线。
             (MenuOrigin::FileTree, "ft-reveal") => {
@@ -643,7 +651,7 @@ impl ShellApp {
         let Some(editor) = self.editor().cloned() else {
             return;
         };
-        editor.update(cx, |ed, cx| ed.exec_command_from_shell(cmd, cx));
+        editor.update(cx, |ed, cx| ed.exec_menu_command(cmd, cx));
     }
 
     /// F1/F3：打开文件（Ctrl+O 对话框 / 文件树点击 / 最近列表共用
