@@ -63,6 +63,12 @@ mod doc_events;
 #[cfg(unix)]
 mod rpc;
 mod settings;
+// UI 打磨（右键菜单 + 状态栏增强 + 命令面板分组）
+mod command_groups;
+mod context_menu;
+mod context_menu_view;
+mod palette_view;
+mod status_info;
 mod shell;
 mod status_bar;
 mod tab_bar;
