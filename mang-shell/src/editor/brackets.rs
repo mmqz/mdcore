@@ -61,12 +61,18 @@ fn classify(c: char) -> Option<(u8, Dir)> {
     }
 }
 
-/// 一行拆成「字符 + 该字符是否可视作括号」（字符串/注释内的不算）。
+/// 一行拆成「字符 + 该字符是否可视作括号」（字符串/注释内的不算），
+/// 一并返回该行行尾围栏态——同一次高亮的产物（`Doc::new` 复用，
+/// 省一遍重复扫描）。
 ///
 /// 归属判定直接用 G5 的行级 token：落在 `Str`/`Comment` run 内的字符置
 /// `false`。其余类别一律 `true`——括号本身不在任何 token run 里（扫描器
 /// 不产括号 token），所以「不在 Str/Comment 内」即「真括号」。
-fn bracket_chars(line: &str, fence: FenceState) -> Vec<(char, bool)> {
+///
+/// 注意返回的 `fence_at_end` 是**所传 `fence` 行首态相对**的语义
+/// （见 [`FenceWalker::advance`]）——调用方拿它推进围栏时必须保证
+/// 行首态就是 walker 自身视角。
+fn bracket_chars(line: &str, fence: FenceState) -> (Vec<(char, bool)>, bool) {
     let chars: Vec<char> = line.chars().collect();
     let h = highlight::highlight_line_ex(line, fence);
     let excluded = |i: usize| {
@@ -74,15 +80,23 @@ fn bracket_chars(line: &str, fence: FenceState) -> Vec<(char, bool)> {
             .iter()
             .any(|(r, k)| matches!(k, TokenKind::Str | TokenKind::Comment) && r.contains(&i))
     };
-    chars
+    let out = chars
         .into_iter()
         .enumerate()
         .map(|(i, c)| (c, classify(c).is_some() && !excluded(i)))
-        .collect()
+        .collect();
+    (out, h.fence_at_end)
 }
 
 /// 围栏态推进（与 [`highlight::highlight_line_ex`] 的 `fence_at_end`
 /// 以及 `Editor::refresh_caches` 的推进口径同源）。
+///
+/// `advance` 收到的 `fence_at_end` 必须是**以 walker 自身行首态**评估
+/// 的值：围栏外（Outside）行首下 true = 本行开了围栏；栏内（CodeBlock）
+/// 行首下 false = 本行闭合围栏。传入别的行首态算出的值会误判——典型
+/// 陷阱：whole_lang 把正文行首态覆盖成 CodeBlock 后，普通代码行的
+/// 行尾值恒 true（「仍在栏内」），直接喂进来会让 walker 凭空入栏
+/// （#151 CI 失败的根因，见 [`Doc::new`] 的推进注释）。
 struct FenceWalker {
     fence: bool,
     lang: Option<highlight::CodeLang>,
@@ -122,18 +136,36 @@ struct Doc {
 impl Doc {
     /// `whole_lang`：整篇文本的代码语言（`.rs`/`.py`/`.ts` 直接打开时
     /// 无围栏可依，正文按该语言做字符串/注释识别）。围栏态仍然优先。
+    ///
+    /// 围栏推进必须以 **walker 自身视角**评估行尾态：`fence_at_end` 是
+    /// 行首态相对的——Outside 行首下 true = 本行开围栏；CodeBlock 行首
+    /// 下 true = 行尾仍在栏内（普通代码行恒 true）。修复前这里直接把
+    /// whole_lang 覆盖态（CodeBlock）的行尾值喂给 walker，源码文件第 0
+    /// 行就把 walker 误置成「已入栏（无语言）」，此后全部正文行退化为
+    /// `CodeBlock(None)`=整行 BlockCode——字符串/注释排除整体失效
+    /// （#151 CI 失败：`(1,14)` 期望 `None` 实得 `Unmatched{(1,13)}`）。
     fn new(text: &str, whole_lang: Option<highlight::CodeLang>) -> Self {
         let mut lines = Vec::new();
         let mut walker = FenceWalker::new();
         for raw in text.split('\n') {
             let line = raw.strip_suffix('\r').unwrap_or(raw);
+            let walker_state = walker.state();
             let state = match whole_lang {
                 Some(lang) if !walker.fence => FenceState::CodeBlock(Some(lang)),
-                _ => walker.state(),
+                _ => walker_state,
             };
-            lines.push(bracket_chars(line, state));
-            let h = highlight::highlight_line_ex(line, state);
-            walker.advance(line, h.fence_at_end);
+            let (chars, fence_at_end) = bracket_chars(line, state);
+            lines.push(chars);
+            let walker_fence_at_end = if state == walker_state {
+                // 无覆盖（md 文件 / 真围栏内的行）：本次高亮的行首态
+                // 就是 walker 视角，行尾值直接可用。
+                fence_at_end
+            } else {
+                // whole_lang 覆盖（栏外源码正文行）：是否开围栏只看
+                // 行形态（Outside 行首态下行尾值的全部语义）。
+                highlight::opens_fence(line)
+            };
+            walker.advance(line, walker_fence_at_end);
         }
         Doc { lines }
     }
@@ -547,6 +579,64 @@ mod tests {
         for c in ['<', 'a', '（', '）', '「', '」'] {
             assert!(!is_bracket_char(c), "{c} 不应属括号语法集");
         }
+    }
+
+    // ---------------- whole_lang（文件级语言，无围栏） ----------------
+
+    #[test]
+    fn whole_lang_string_and_comment_excluded_from_line_one() {
+        // 回归（#151 CI 失败）：修复前 Doc::new 用 whole_lang 覆盖态的
+        // 行尾值推进围栏 walker——源码文件第 0 行（普通代码行在
+        // CodeBlock 行首态下恒 true）即把 walker 误置为「已入栏（无
+        // 语言）」，此后所有行退化为整行 BlockCode，字符串/注释排除
+        // 整体失效。
+        let t = "fn main() {\n    let s = \"(\";\n    let a = 1; // (]\n}";
+        let rust = Some(highlight::CodeLang::Rust);
+        // 字符串内的 '('（行 1——回归点：曾误报 Unmatched{(1,13)}）。
+        assert_eq!(find_match_lang(t, (1, 14), rust), BracketMatch::None);
+        assert_eq!(find_match_lang(t, (1, 13), rust), BracketMatch::None);
+        // 注释内的 '(' / ']'（行 2——首行之后仍然生效）。
+        assert_eq!(find_match_lang(t, (2, 19), rust), BracketMatch::None);
+        assert_eq!(find_match_lang(t, (2, 18), rust), BracketMatch::None);
+        // 对照：首行之后的真实括号照常匹配。
+        let t2 = "fn main() {\n    f(a);\n}";
+        assert_eq!(
+            find_match_lang(t2, (1, 6), rust),
+            BracketMatch::Matched { open: (1, 5), close: (1, 7) }
+        );
+    }
+
+    #[test]
+    fn whole_lang_crlf_source_file() {
+        // CRLF 行尾（Windows 检出/保存形态）——'\r' 剥除后与 LF 同语义
+        // （本地 Windows 验证形态的回归钉；raw-string 字面量随源文件行尾
+        // 漂移的问题与此无关——那要用显式 \n 写测试文本）。
+        let t = "fn main() {\r\n    let s = \"(\";\r\n}";
+        let rust = Some(highlight::CodeLang::Rust);
+        assert_eq!(find_match_lang(t, (1, 14), rust), BracketMatch::None);
+        assert_eq!(
+            find_match_lang(t, (0, 11), rust),
+            BracketMatch::Matched { open: (0, 10), close: (2, 0) }
+        );
+    }
+
+    #[test]
+    fn fence_inside_whole_lang_file_keeps_fence_priority() {
+        // .rs 正文里嵌的 md 围栏：围栏语言优先于 whole_lang（登记语义），
+        // 且闭栏后回到 whole_lang——修复不得改变这条优先级。
+        // 0: "fn main() {"     whole_lang=Rust（普通代码行——不动 walker）
+        // 1: "```rust"         开围栏（walker 视角：栏外行形态 → 入栏）
+        // 2: "let s = \"(\";"  栏内 Rust——字符串排除
+        // 3: "```"             闭围栏（walker 视角：栏内 → 出栏）
+        // 4: "let u = (1);"    回到 whole_lang=Rust——真实括号匹配
+        let t = "fn main() {\n```rust\nlet s = \"(\";\n```\nlet u = (1);";
+        let rust = Some(highlight::CodeLang::Rust);
+        assert_eq!(find_match_lang(t, (2, 10), rust), BracketMatch::None);
+        assert_eq!(find_match_lang(t, (2, 9), rust), BracketMatch::None);
+        assert_eq!(
+            find_match_lang(t, (4, 9), rust),
+            BracketMatch::Matched { open: (4, 8), close: (4, 10) }
+        );
     }
 
     #[test]

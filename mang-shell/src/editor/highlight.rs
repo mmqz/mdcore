@@ -211,6 +211,19 @@ pub fn fence_lang_of(line: &str) -> Option<CodeLang> {
     CodeLang::parse(tag)
 }
 
+/// 该行（**围栏外行首态**）是否为围栏形态行——即 [`highlight_line_ex`]
+/// 在 `FenceState::Outside` 行首态下 `fence_at_end` 的全部语义
+/// （开围栏标记：``` / ~~~，前导空白 ≤ 3）。
+///
+/// 围栏推进方在正文行的行首态被文件级语言覆盖成 `CodeBlock` 时
+/// （brackets 的 whole_lang 路径），应**用它**取「本行是否开围栏」，
+/// 而不是拿覆盖态高亮的行尾值——`fence_at_end` 是行首态相对的：
+/// CodeBlock 行首下普通代码行恒 true（「仍在栏内」），会被误读成
+/// 「本行开了围栏」（#151 CI 失败的根因）。
+pub fn opens_fence(line: &str) -> bool {
+    fence_marker(line).is_some()
+}
+
 /// G5：一行代码的粗高亮（无 tree-sitter——**单趟左到右扫描器**，
 /// 按起位裁决：注释 → 字符串 → 关键字/数字，先到先占；char 索引区间）。
 /// 未标注语言 `None` → 整行 BlockCode（既有语义零漂移）。
