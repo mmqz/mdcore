@@ -47,10 +47,6 @@ serde = { version = "1.0", features = ["derive"] }
 # 此处只在清单里显式声明，**零新增 crate / 零 lock 变更**）。
 regex = "1.13"
 async-channel = "2.5"
-# #134 任务 3（BatchReplace）：跨文件正则替换。regex 1.13.1 已在
-# Cargo.lock 传递闭包（gpui 线共用）——升直接依赖零新增 crate（与
-# #104 的 serde_json 同口径）。
-regex = "1.13"
 async-net = "2.0"
 futures-lite = "2.6"
 # 批 3（#68）：docx 只读渲染引擎依赖（path 接入，类型零泄漏面不变）
