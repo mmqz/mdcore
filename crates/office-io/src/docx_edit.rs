@@ -131,6 +131,45 @@ pub struct FieldInfo {
     pub editable: bool,
 }
 
+/// 脚注条目（[`DocxEditor::footnotes`] 返回——id + 内容 + 引用位置）。
+///
+/// 分隔符条目（`w:type=separator`/`continuationSeparator`——惯例
+/// id -1/0）不入列（与读面 [`crate::docx`] `FootnoteData` 同口径：
+/// 呈现辅助件非内容）。`anchor_para` = 正文 `w:footnoteReference`
+/// 所在段落号（文档序扁平坐标系；None = 孤儿脚注：footnotes.xml
+/// 在场而正文无引用）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FootnoteInfo {
+    /// 脚注 id（`w:footnote/@w:id`）。
+    pub id: usize,
+    /// 脚注内容（条目内全部 `w:t` 拼接——跨段/跨表；`w:footnoteRef`
+    /// 引用编号等非文本节点不入）。
+    pub text: String,
+    /// 引用位置（正文段落号；孤儿 = None）。
+    pub anchor_para: Option<usize>,
+    /// 内容段落数（诊断面——多段脚注编辑后段落壳保留，见
+    /// [`DocxEditor::set_footnote_text`] 行为登记）。
+    pub paras: usize,
+}
+
+/// 批注条目（[`DocxEditor::comments`] 返回——id + 作者 + 内容）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentInfo {
+    /// 批注 id（`w:comment/@w:id`——与正文锚 `commentRangeStart`/
+    /// `commentReference` 同源）。
+    pub id: usize,
+    /// 作者（`w:comment/@w:author`——缺省空串）。
+    pub author: String,
+    /// 日期（`w:comment/@w:date`——缺省 None）。
+    pub date: Option<String>,
+    /// 批注内容（条目内全部 `w:t` 拼接）。
+    pub text: String,
+    /// 锚定段落号（正文 `commentRangeStart` 首现段；孤儿 = None）。
+    pub anchor_para: Option<usize>,
+    /// 内容段落数（诊断面）。
+    pub paras: usize,
+}
+
 /// 修订策略（坑④「按配置处理」的配置面）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevisionPolicy {
@@ -212,6 +251,15 @@ pub struct DocxEditor {
     fields_idx: Vec<FieldScan>,
     /// 待落账域编辑（与 fields_idx 等长平行数组；None = 未编辑）。
     field_edits: Vec<Option<String>>,
+    /// #141 批注脚注：两部件（footnotes.xml / comments.xml——在场
+    /// 则扫描，缺席 = None = 该面空集恒保真透传）。
+    notes: NoteParts,
+    /// 正文锚（`w:footnoteReference`/`commentRangeStart` → 段落号）。
+    note_anchors: NoteAnchors,
+    /// 待落账脚注编辑（与 `notes.footnotes.entries` 平行；None = 未编辑）。
+    pending_footnotes: Vec<Option<String>>,
+    /// 待落账批注编辑（与 `notes.comments.entries` 平行）。
+    pending_comments: Vec<Option<String>>,
 }
 
 impl DocxEditor {
@@ -256,8 +304,11 @@ impl DocxEditor {
                 }));
             }
         }
-        let (paragraphs, tables, fields_idx) = scan_paragraphs(&xml)?;
+        let (paragraphs, tables, fields_idx, note_anchors) = scan_paragraphs(&xml)?;
+        let notes = NoteParts::scan(&mut za)?;
         let n = paragraphs.len();
+        let pending_footnotes = notes.pending_len(NotePartKind::Footnotes);
+        let pending_comments = notes.pending_len(NotePartKind::Comments);
         Ok(Self {
             bytes: bytes.to_vec(),
             doc_xml: xml,
@@ -267,6 +318,10 @@ impl DocxEditor {
             tables,
             field_edits: vec![None; fields_idx.len()],
             fields_idx,
+            note_anchors,
+            pending_footnotes,
+            pending_comments,
+            notes,
         })
     }
 
@@ -361,6 +416,29 @@ impl DocxEditor {
             .collect()
     }
 
+    // #141 批注脚注（加性扩展——部件级编辑面）
+    // -----------------------------------------------------------------------
+
+    /// 列出脚注（id + 内容 + 引用位置）。
+    ///
+    /// 分隔符条目（separator/continuationSeparator 惯例 -1/0）不入列
+    /// （与读面 [`crate::docx`] `FootnoteData` 同口径）。部件缺席
+    /// （无 word/footnotes.xml）= 空集——该面保真透传。
+    pub fn footnotes(&self) -> Vec<FootnoteInfo> {
+        let Some(part) = &self.notes.footnotes else {
+            return Vec::new();
+        };
+        part.entries
+            .iter()
+            .map(|e| FootnoteInfo {
+                id: e.id,
+                text: e.text.clone(),
+                anchor_para: self.note_anchors.footnote.get(&e.id).copied(),
+                paras: e.paras,
+            })
+            .collect()
+    }
+
     /// 更新域的显示值（只改结果区 `w:t`；fldChar/instrText/separate/end
     /// 五段结构零接触——域在 Word/LibreOffice 里仍是活域）。
     ///
@@ -419,6 +497,99 @@ impl DocxEditor {
         Ok(())
     }
 
+    /// 列出批注（id + 作者 + 内容）。
+    ///
+    /// `anchor_para` = 正文 `commentRangeStart`/`commentReference` 首现
+    /// 段落号；孤儿批注（comments.xml 在场而正文无锚）= None。
+    pub fn comments(&self) -> Vec<CommentInfo> {
+        let Some(part) = &self.notes.comments else {
+            return Vec::new();
+        };
+        part.entries
+            .iter()
+            .map(|e| CommentInfo {
+                id: e.id,
+                author: e.author.clone(),
+                date: e.date.clone(),
+                text: e.text.clone(),
+                anchor_para: self.note_anchors.comment.get(&e.id).copied(),
+                paras: e.paras,
+            })
+            .collect()
+    }
+
+    /// 更新脚注文本（`id` = `footnotes()` 给出的 id）。
+    ///
+    /// 手术规则：条目内**首个** `w:t` 换新值（`xml:space`/实体转义/
+    /// `\t`→tab/`\n`→br——与 `set_paragraph_text` 同口径），其余
+    /// `w:t` 节点移除（run 壳与段落壳保留——最少侵入；多段脚注
+    /// 编辑后残余空段占行，Word 显示 = 新文本单段）。
+    /// `w:footnoteRef`（页底编号）零接触。
+    ///
+    /// 拒改面（typed `DocxError::InvalidInput`）：id 不存在 / 条目
+    /// 无文本节点（空内容无法置值——不发明内容区）/ 新值含 XML 1.0
+    /// 非法控制字符或非字符。
+    pub fn set_footnote_text(&mut self, id: usize, text: &str) -> Result<(), DocxError> {
+        self.set_note_text(NotePartKind::Footnotes, id, text)
+    }
+
+    /// 更新批注文本（`id` = `comments()` 给出的 id；作者/日期不动）。
+    ///
+    /// 手术规则与拒改面同 [`DocxEditor::set_footnote_text`]；
+    /// `w:annotationRef` 零接触，正文锚（commentRangeStart/
+    /// commentReference）在 document.xml 不动。
+    pub fn set_comment_text(&mut self, id: usize, text: &str) -> Result<(), DocxError> {
+        self.set_note_text(NotePartKind::Comments, id, text)
+    }
+
+    /// 两部件共用置值内派。
+    fn set_note_text(
+        &mut self,
+        kind: NotePartKind,
+        id: usize,
+        text: &str,
+    ) -> Result<(), DocxError> {
+        let (part, pending) = self.note_slot_mut(kind)?;
+        let Some(part) = part else {
+            return Err(DocxError::InvalidInput(format!(
+                "note id {id}: part absent (no word/{part_name} — nothing to edit)",
+                part_name = match kind {
+                    NotePartKind::Footnotes => "footnotes.xml",
+                    NotePartKind::Comments => "comments.xml",
+                }
+            )));
+        };
+        let pos = part
+            .entries
+            .iter()
+            .position(|e| e.id == id)
+            .ok_or_else(|| {
+                DocxError::InvalidInput(format!(
+                    "note id {id} not found — use footnotes()/comments() for actual ids"
+                ))
+            })?;
+        if part.entries[pos].wt_spans.is_empty() {
+            return Err(DocxError::InvalidInput(format!(
+                "note id {id}: empty content region (no w:t) refuses edit \
+                 — refusing to invent content"
+            )));
+        }
+        check_note_text(kind, id, text)?;
+        pending[pos] = Some(text.to_string());
+        Ok(())
+    }
+
+    /// 部件+待落账数组双槽借用。
+    fn note_slot_mut(
+        &mut self,
+        kind: NotePartKind,
+    ) -> Result<(Option<&mut NotePart>, &mut Vec<Option<String>>), DocxError> {
+        Ok(match kind {
+            NotePartKind::Footnotes => (self.notes.footnotes.as_mut(), &mut self.pending_footnotes),
+            NotePartKind::Comments => (self.notes.comments.as_mut(), &mut self.pending_comments),
+        })
+    }
+
     // -----------------------------------------------------------------------
     // #115 表格编辑（加性扩展——只读查表，不改既有语义）
     // -----------------------------------------------------------------------
@@ -467,7 +638,7 @@ impl DocxEditor {
         })
     }
 
-    /// 保存（一次性落账全部待编辑——段落文本与域显示值两类；
+    /// 保存（一次性落账全部待编辑——段落文本、域显示值、脚注/批注三类；
     /// 幂等——同状态重复调用产出相同字节）。
     pub fn save_to_vec(&self) -> Result<Vec<u8>, DocxError> {
         let new_xml = apply_all_edits(
@@ -477,7 +648,16 @@ impl DocxEditor {
             &self.fields_idx,
             &self.field_edits,
         )?;
-        repack_document_part(&self.bytes, new_xml.as_bytes())
+        // #141 脚注/批注部件：有编辑则手术，无编辑透传 None。
+        let new_footnotes =
+            apply_note_edits(self.notes.footnotes.as_ref(), &self.pending_footnotes);
+        let new_comments = apply_note_edits(self.notes.comments.as_ref(), &self.pending_comments);
+        repack_parts(
+            &self.bytes,
+            new_xml.as_bytes(),
+            new_footnotes.as_deref().map(str::as_bytes),
+            new_comments.as_deref().map(str::as_bytes),
+        )
     }
 }
 
@@ -754,17 +934,6 @@ fn field_kind_from_instr(instr: &str) -> FieldKind {
     }
 }
 
-/// 取任意命名属性（无前缀变体同名同认——`val`/`fldCharType`/`instr`）。
-fn attr_named(e: &quick_xml::events::BytesStart<'_>, want: &str) -> Option<String> {
-    for a in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(a.key.local_name().as_ref()).into_owned();
-        if key == want {
-            return Some(String::from_utf8_lossy(a.value.as_ref()).into_owned());
-        }
-    }
-    None
-}
-
 /// 域新值防线（与 check_edit_text 同口径——坐标面换域）。
 fn check_field_text(para: usize, field_idx: usize, text: &str) -> Result<(), DocxError> {
     for c in text.chars() {
@@ -784,13 +953,227 @@ fn check_field_text(para: usize, field_idx: usize, text: &str) -> Result<(), Doc
     Ok(())
 }
 
-/// scan_paragraphs 返回形（段落表 / 表格栅格 / 域索引）。
-type ScanTuple = (Vec<ParagraphRef>, Vec<TableGrid>, Vec<FieldScan>);
+/// 取任意命名属性（无前缀变体同名同认——`id`/`type`/`author`/`date`/
+/// `fldCharType`/`instr`；与 attr_val 同构——#140 域事件与 #141 note
+/// 部件/正文锚共用）。
+fn attr_named(e: &quick_xml::events::BytesStart<'_>, want: &str) -> Option<String> {
+    for a in e.attributes().flatten() {
+        let key = String::from_utf8_lossy(a.key.local_name().as_ref()).into_owned();
+        if key == want {
+            return Some(String::from_utf8_lossy(a.value.as_ref()).into_owned());
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// #141 批注脚注：footnotes.xml / comments.xml 部件扫描与锚
+// ---------------------------------------------------------------------------
+
+/// 部件判别（footnotes / comments）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotePartKind {
+    Footnotes,
+    Comments,
+}
+
+/// 条目（`w:footnote` / `w:comment`）——原文坐标系（部件 xml 内）。
+#[derive(Debug)]
+struct NoteEntry {
+    id: usize,
+    /// `w:comment/@w:author`（footnotes 恒空串）。
+    author: String,
+    /// `w:comment/@w:date`（footnotes 恒 None）。
+    date: Option<String>,
+    /// 条目内全部 `w:t` 拼接（跨段/跨表；`w:footnoteRef`/
+    /// `w:annotationRef` 引用编号非文本节点不入）。
+    text: String,
+    /// 文本节点域（部件 xml 坐标系——编辑锚：首 Replace / 余 Remove）。
+    wt_spans: Vec<(usize, usize)>,
+    /// 段落数（诊断面）。
+    paras: usize,
+}
+
+/// 单部件（原文 + 条目索引）。
+#[derive(Debug)]
+struct NotePart {
+    xml: String,
+    entries: Vec<NoteEntry>,
+}
+
+/// 两部件组（缺席 = None——该面空集，save 时恒保真透传）。
+#[derive(Debug, Default)]
+struct NoteParts {
+    footnotes: Option<NotePart>,
+    comments: Option<NotePart>,
+}
+
+/// 正文锚（document.xml 坐标系——id → 段落号）。
+#[derive(Debug, Default)]
+struct NoteAnchors {
+    footnote: std::collections::HashMap<usize, usize>,
+    comment: std::collections::HashMap<usize, usize>,
+}
+
+impl NoteParts {
+    /// 待落账数组长度（平行数组分配用）。
+    fn pending_len(&self, kind: NotePartKind) -> Vec<Option<String>> {
+        let n = match (kind, &self.footnotes, &self.comments) {
+            (NotePartKind::Footnotes, Some(p), _) => p.entries.len(),
+            (NotePartKind::Comments, _, Some(p)) => p.entries.len(),
+            _ => 0,
+        };
+        vec![None; n]
+    }
+
+    /// 读部件（在场则扫描条目；缺席 = None）。
+    fn scan(za: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>) -> Result<Self, DocxError> {
+        Ok(Self {
+            footnotes: Self::scan_part(za, "word/footnotes.xml", NotePartKind::Footnotes)?,
+            comments: Self::scan_part(za, "word/comments.xml", NotePartKind::Comments)?,
+        })
+    }
+
+    fn scan_part(
+        za: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>,
+        name: &'static str,
+        kind: NotePartKind,
+    ) -> Result<Option<NotePart>, DocxError> {
+        let mut zf = match za.by_name(name) {
+            Ok(zf) => zf,
+            Err(_) => return Ok(None),
+        };
+        let mut xml = String::new();
+        zf.read_to_string(&mut xml).map_err(|e| {
+            DocxError::Container(io::ReadError::InvalidPart {
+                part: name.to_string(),
+                detail: format!("read/UTF-8 failed: {e}"),
+            })
+        })?;
+        let entries = scan_note_entries(&xml, kind)?;
+        Ok(Some(NotePart { xml, entries }))
+    }
+}
+
+/// 部件单趟扫描：`w:footnote`/`w:comment` 条目开闭 + 条目内 `w:t`
+/// 收集（节点域 + 内容拼接；同 scan_paragraphs 的 wt_open 模式）。
+///
+/// 分隔符条目（`@w:type` 在场——separator/continuationSeparator 惯例
+/// id -1/0）与 `@w:id` 非 usize 条目不入列（呈现辅助件非内容——与
+/// 读面 `FootnoteData` 同口径）；其内容不收（不开条目上下文）。
+fn scan_note_entries(xml: &str, kind: NotePartKind) -> Result<Vec<NoteEntry>, DocxError> {
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let bytes = xml.as_bytes();
+    let mut out: Vec<NoteEntry> = Vec::new();
+    // 开放条目索引（out 下标）；同一时刻至多一个（条目不嵌套）。
+    let mut open_entry: Option<usize> = None;
+    let mut wt_open: Option<(usize, usize)> = None;
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = local_name(&e);
+                match name.as_str() {
+                    "footnote" | "comment" => {
+                        // 条目开：@w:type 在场 = 分隔符惯例；@w:id 非
+                        // usize（含 -1）= 畸形惯例——均不入列。
+                        let has_type = attr_named(&e, "type").is_some();
+                        let id = attr_named(&e, "id").and_then(|v| v.trim().parse::<usize>().ok());
+                        if has_type || id.is_none() {
+                            open_entry = None;
+                        } else {
+                            out.push(NoteEntry {
+                                id: id.unwrap_or(usize::MAX),
+                                author: attr_named(&e, "author").unwrap_or_default(),
+                                date: attr_named(&e, "date"),
+                                text: String::new(),
+                                wt_spans: Vec::new(),
+                                paras: 0,
+                            });
+                            open_entry = Some(out.len() - 1);
+                        }
+                    }
+                    "p" => {
+                        if let Some(i) = open_entry {
+                            out[i].paras += 1;
+                        }
+                    }
+                    "t" => {
+                        let node_start = fwd_to_lt(bytes, pos_before);
+                        let content_open = fwd_to_gt(bytes, reader.buffer_position() as usize);
+                        wt_open = Some((node_start, content_open));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let name = local_name(&e);
+                match name.as_str() {
+                    "p" => {
+                        // 自闭合空段：计段不收文本（无子事件）。
+                        if let Some(i) = open_entry {
+                            out[i].paras += 1;
+                        }
+                    }
+                    "t" => {} // 自闭合空 w:t：零内容不收。
+                    _ => {}
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = local_name_end(&e);
+                match name.as_str() {
+                    "footnote" | "comment" => open_entry = None,
+                    "t" => {
+                        if let (Some(i), Some((node_start, open))) = (open_entry, wt_open.take()) {
+                            let end = fwd_to_gt(bytes, reader.buffer_position() as usize);
+                            let close_start = back_to_lt(bytes, end);
+                            if close_start >= open {
+                                let raw = &xml[open..close_start];
+                                let decoded = quick_xml::escape::unescape(raw).map_err(|e| {
+                                    DocxError::Container(io::ReadError::InvalidPart {
+                                        part: "notes part".to_string(),
+                                        detail: format!("text entity decode failed: {e}"),
+                                    })
+                                })?;
+                                if !decoded.is_empty() {
+                                    out[i].text.push_str(decoded.as_ref());
+                                    out[i].wt_spans.push((node_start, end));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(e) => {
+                return Err(DocxError::Container(io::ReadError::InvalidPart {
+                    part: "notes part".to_string(),
+                    detail: format!("note scan failed: {e}"),
+                }));
+            }
+        }
+    }
+    let _ = kind; // 判别仅用于诊断预留（两部件条目模型同构）。
+    Ok(out)
+}
+
+/// scan_paragraphs 返回形（段落表 / 表格栅格 / 域索引 / 正文锚——
+/// #140 与 #141 各加一元）。
+type ScanTuple = (
+    Vec<ParagraphRef>,
+    Vec<TableGrid>,
+    Vec<FieldScan>,
+    NoteAnchors,
+);
 
 fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
     let mut reader = quick_xml::Reader::from_str(xml);
     let bytes = xml.as_bytes();
     let mut out: Vec<ParagraphRef> = Vec::new();
+    // #141 正文锚：note 引用/批注锦 id → 段落号（首现 or_insert）。
+    let mut note_anchors = NoteAnchors::default();
     // 开启中的段落（内层最尾——文本/旗标只记 innermost；嵌套文本框段落
     // 各自独立索引，外层不吃内层文本）。
     let mut para_stack: Vec<usize> = Vec::new();
@@ -1035,6 +1418,28 @@ fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
                             _ => unreachable!(),
                         }
                     }
+                    "footnoteReference" | "endnoteReference" | "commentRangeStart"
+                    | "commentReference"
+                        if !para_stack.is_empty() =>
+                    {
+                        // #141 锚：正文引用/批注锚 id → 段落号（首现
+                        // or_insert；id 非 usize 畸形忽略。endnote 锚
+                        // 不收集——尾注部件不在编辑面，原样透传）。
+                        if let (Some(&p), Some(id)) = (
+                            para_stack.last(),
+                            attr_named(&e, "id").and_then(|v| v.trim().parse::<usize>().ok()),
+                        ) {
+                            match name.as_str() {
+                                "footnoteReference" => {
+                                    note_anchors.footnote.entry(id).or_insert(p);
+                                }
+                                "commentRangeStart" | "commentReference" => {
+                                    note_anchors.comment.entry(id).or_insert(p);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     "ins" | "del" | "moveFrom" | "moveTo" if !para_stack.is_empty() => {
                         if let Some(&i) = para_stack.last() {
                             out[i].revision = true;
@@ -1156,7 +1561,7 @@ fn scan_paragraphs(xml: &str) -> Result<ScanTuple, DocxError> {
             }
         }
     }
-    Ok((out, tables, fbuild.finish()))
+    Ok((out, tables, fbuild.finish(), note_anchors))
 }
 
 /// 表栅格扫描累积态（扫描期）。
@@ -1302,6 +1707,60 @@ fn check_edit_text(idx: usize, text: &str) -> Result<(), DocxError> {
         }
     }
     Ok(())
+}
+
+/// #141 脚注/批注新值防线（与 check_edit_text 同口径——坐标面换 note id）。
+fn check_note_text(kind: NotePartKind, id: usize, text: &str) -> Result<(), DocxError> {
+    let what = match kind {
+        NotePartKind::Footnotes => "footnote",
+        NotePartKind::Comments => "comment",
+    };
+    for c in text.chars() {
+        let cp = c as u32;
+        if matches!(c, '\u{FFFE}' | '\u{FFFF}') {
+            return Err(DocxError::InvalidInput(format!(
+                "{what} id {id}: new text contains XML noncharacter U+{cp:04X}"
+            )));
+        }
+        if cp < 0x20 && !matches!(c, '\t' | '\n' | '\r') {
+            return Err(DocxError::InvalidInput(format!(
+                "{what} id {id}: new text contains control character U+{cp:04X} (XML 1.0 illegal; allowed: \\t \\n \\r as tab/br)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// #141 脚注/批注落账：条目内首 `w:t` Replace 新值（`emit_text_payload`
+/// 同口径）、余 `w:t` Remove；`w:footnoteRef`/`w:annotationRef`/段落壳
+/// 零接触。无任何编辑 = None（透传）。ops 坐标 = 部件 xml 坐标系
+/// （条目互不嵌套、不同条目 `w:t` 域互斥——splice fail-closed 兜底）。
+fn apply_note_edits(part: Option<&NotePart>, pending: &[Option<String>]) -> Option<String> {
+    let part = part?;
+    if pending.iter().all(|p| p.is_none()) {
+        return None;
+    }
+    let mut ops: Vec<OpRec> = Vec::new();
+    for (entry, val) in part.entries.iter().zip(pending.iter()) {
+        let Some(value) = val.as_deref() else {
+            continue;
+        };
+        if let Some((&first, rest)) = entry.wt_spans.split_first() {
+            ops.push(OpRec {
+                start: first.0,
+                end: first.1,
+                op: Op::Replace(emit_text_payload(value)),
+            });
+            for &(s, e) in rest {
+                ops.push(OpRec {
+                    start: s,
+                    end: e,
+                    op: Op::Remove,
+                });
+            }
+        }
+    }
+    Some(splice(&part.xml, 0, ops).expect("note surgery ops disjoint"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1759,7 +2218,14 @@ fn splice(slice: &str, base: usize, mut ops: Vec<OpRec>) -> Result<String, DocxE
 // 同构先例；word/document.xml 在场 fail-closed）
 // ---------------------------------------------------------------------------
 
-fn repack_document_part(bytes: &[u8], document_xml: &[u8]) -> Result<Vec<u8>, DocxError> {
+/// #141 多部件重打包：document.xml 恒替换（在场检查既有）；footnotes/
+/// comments 有编辑则替换，否则与全部非目标部件一起逐字节透传。
+fn repack_parts(
+    bytes: &[u8],
+    document_xml: &[u8],
+    footnotes_xml: Option<&[u8]>,
+    comments_xml: Option<&[u8]>,
+) -> Result<Vec<u8>, DocxError> {
     use std::io::Write as _;
     let cursor = std::io::Cursor::new(bytes);
     let mut archive =
@@ -1773,21 +2239,33 @@ fn repack_document_part(bytes: &[u8], document_xml: &[u8]) -> Result<Vec<u8>, Do
                 .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
             entry.name().to_string()
         };
-        if name == "word/document.xml" {
+        let replacement: Option<&[u8]> = if name == "word/document.xml" {
             has_document = true;
-            writer
-                .start_file(name.clone(), zip::write::SimpleFileOptions::default())
-                .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
-            writer
-                .write_all(document_xml)
-                .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+            Some(document_xml)
+        } else if name == "word/footnotes.xml" {
+            footnotes_xml
+        } else if name == "word/comments.xml" {
+            comments_xml
         } else {
-            let entry = archive
-                .by_index_raw(i)
-                .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
-            writer
-                .raw_copy_file(entry)
-                .map_err(|e| DocxError::Io(format!("zip copy: {e}")))?;
+            None
+        };
+        match replacement {
+            Some(data) => {
+                writer
+                    .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                    .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
+                writer
+                    .write_all(data)
+                    .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+            }
+            None => {
+                let entry = archive
+                    .by_index_raw(i)
+                    .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
+                writer
+                    .raw_copy_file(entry)
+                    .map_err(|e| DocxError::Io(format!("zip copy: {e}")))?;
+            }
         }
     }
     if !has_document {
@@ -2930,5 +3408,356 @@ xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><w:body
         assert!(!fs[0].editable);
         let err = ed.set_field_value(0, 0, "x").unwrap_err();
         assert!(err.to_string().contains("empty result region"), "{err}");
+    }
+
+    // ── #141 批注脚注（footnotes/comments/set_*_text）─────────────
+
+    /// notes 部件包 CONTENT_TYPES（footnotes/comments 两 Override）。
+    const CONTENT_TYPES_NOTES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/><Override PartName=\"/word/footnotes.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/><Override PartName=\"/word/comments.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml\"/></Types>";
+
+    /// notes 部件关系（footnotes/comments 两 Relationship——与黄金例
+    /// 生成器同构）。
+    const DOC_RELS_NOTES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\" Target=\"footnotes.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments\" Target=\"comments.xml\"/></Relationships>";
+
+    /// build_docx 的 notes 加形：footnotes.xml / comments.xml 两部件在场。
+    fn build_docx_notes(body: &str, footnotes: &str, comments: &str) -> Vec<u8> {
+        use std::io::Write as _;
+        let document = document_wrap(body);
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, data) in [
+            ("[Content_Types].xml", CONTENT_TYPES_NOTES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/_rels/document.xml.rels", DOC_RELS_NOTES),
+            ("word/document.xml", &document),
+            ("word/footnotes.xml", footnotes),
+            ("word/comments.xml", comments),
+        ] {
+            w.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            w.write_all(data.as_bytes()).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    /// notes 部件原文（三实体脚注 + 孤儿 + 双批注——测试共用）。
+    fn fixture_footnotes_xml() -> String {
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            // 分隔符惯例（-1/0）——不入列。
+            "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>",
+            "<w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>",
+            // id=1：单段双 w:t（多 span 形）。
+            "<w:footnote w:id=\"1\"><w:p><w:r><w:footnoteRef/></w:r>",
+            "<w:r><w:t>脚注一：机房</w:t></w:r><w:r><w:t>建设标准</w:t></w:r></w:p></w:footnote>",
+            // id=2：双段。
+            "<w:footnote w:id=\"2\"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t>脚注二第一段</w:t></w:r></w:p>",
+            "<w:p><w:r><w:t>脚注二第二段</w:t></w:r></w:p></w:footnote>",
+            // id=3：孤儿（正文无引用）。
+            "<w:footnote w:id=\"3\"><w:p><w:r><w:t>孤儿脚注</w:t></w:r></w:p></w:footnote>",
+            "</w:footnotes>"
+        ).into()
+    }
+
+    fn fixture_comments_xml() -> String {
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:comment w:id=\"701\" w:author=\"作者甲\" w:date=\"2026-11-01T09:00:00Z\">",
+            "<w:p><w:r><w:annotationRef/></w:r><w:r><w:t>批注甲</w:t></w:r></w:p></w:comment>",
+            "<w:comment w:id=\"702\" w:author=\"作者乙\">",
+            "<w:p><w:r><w:t>批注乙第一段</w:t></w:r></w:p>",
+            "<w:p><w:r><w:t>批注乙第二段</w:t></w:r></w:p></w:comment>",
+            "</w:comments>"
+        )
+        .into()
+    }
+
+    /// 正文（段0：脚注1+批注701 锚；段1：脚注2 锚 + 尾注引用不入锚；
+    /// 段2：普通段）。
+    fn notes_body() -> String {
+        concat!(
+            "<w:p><w:r><w:t>正文一</w:t></w:r><w:commentRangeStart w:id=\"701\"/>",
+            "<w:r><w:footnoteReference w:id=\"1\"/></w:r><w:commentRangeEnd w:id=\"701\"/>",
+            "<w:r><w:commentReference w:id=\"701\"/></w:r></w:p>",
+            "<w:p><w:r><w:footnoteReference w:id=\"2\"/></w:r>",
+            "<w:r><w:endnoteReference w:id=\"9\"/></w:r></w:p>",
+            "<w:p><w:r><w:t>普通段</w:t></w:r></w:p>"
+        )
+        .into()
+    }
+
+    fn part_text(bytes: &[u8], name: &str) -> String {
+        String::from_utf8(part_bytes(bytes, name)).unwrap()
+    }
+
+    /// 列出面：实体入列 / 分隔符不入 / 锚坐标系 / 孤儿 None。
+    #[test]
+    fn notes_list_shapes_anchors_separator_exclusion() {
+        let bytes = build_docx_notes(
+            &notes_body(),
+            &fixture_footnotes_xml(),
+            &fixture_comments_xml(),
+        );
+        let ed = DocxEditor::open(&bytes).unwrap();
+        // 正文段序只含 document.xml 段落（notes 部件内容段不进——部件级）。
+        assert_eq!(ed.paragraphs().len(), 3);
+        // 脚注：三实体（id 1/2/3）；分隔符 -1/0 不入列。
+        let fns = ed.footnotes();
+        assert_eq!(fns.len(), 3, "分隔符不入列: {fns:?}");
+        assert_eq!(
+            (
+                fns[0].id,
+                fns[0].text.as_str(),
+                fns[0].anchor_para,
+                fns[0].paras
+            ),
+            (1, "脚注一：机房建设标准", Some(0), 1),
+            "多 span 拼接 + 锚段0: {fns:?}"
+        );
+        assert_eq!(
+            (
+                fns[1].id,
+                fns[1].text.as_str(),
+                fns[1].anchor_para,
+                fns[1].paras
+            ),
+            (2, "脚注二第一段脚注二第二段", Some(1), 2),
+            "双段拼接 + 锚段1: {fns:?}"
+        );
+        assert_eq!(
+            (
+                fns[2].id,
+                fns[2].text.as_str(),
+                fns[2].anchor_para,
+                fns[2].paras
+            ),
+            (3, "孤儿脚注", None, 1),
+            "孤儿脚注 anchor None（正文无引用）: {fns:?}"
+        );
+        // 批注：701 锚段0（commentRangeStart 首现）；702 孤儿 None。
+        let cms = ed.comments();
+        assert_eq!(cms.len(), 2, "{cms:?}");
+        assert_eq!(
+            (
+                cms[0].id,
+                cms[0].author.as_str(),
+                cms[0].date.as_deref(),
+                cms[0].text.as_str(),
+                cms[0].anchor_para
+            ),
+            (
+                701,
+                "作者甲",
+                Some("2026-11-01T09:00:00Z"),
+                "批注甲",
+                Some(0)
+            ),
+            "{cms:?}"
+        );
+        assert_eq!(
+            (
+                cms[1].id,
+                cms[1].author.as_str(),
+                cms[1].date.as_deref(),
+                cms[1].text.as_str(),
+                cms[1].anchor_para,
+                cms[1].paras
+            ),
+            (702, "作者乙", None, "批注乙第一段批注乙第二段", None, 2),
+            "孤儿批注 + 无日期属性: {cms:?}"
+        );
+        // endnoteReference（id 9）不入任何锚——尾注部件不在编辑面。
+        // （可观察面：footnotes 列表无 9 号条目——上方已断言 3 实体。）
+    }
+
+    /// 编辑面：首 w:t Replace（xml:space/转义同口径）、余 w:t Remove、
+    /// run/段落壳保留、footnoteRef/annotationRef/属性零接触。
+    #[test]
+    fn notes_edit_first_replace_rest_removed_shells_kept() {
+        let bytes = build_docx_notes(
+            &notes_body(),
+            &fixture_footnotes_xml(),
+            &fixture_comments_xml(),
+        );
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        ed.set_footnote_text(2, "新脚注二 & <续>").unwrap();
+        ed.set_comment_text(702, "新批注乙").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        // footnotes.xml：首 w:t 换新值（xml:space 恒带 + 实体转义）。
+        let fx = part_text(&saved, "word/footnotes.xml");
+        assert!(
+            fx.contains("<w:t xml:space=\"preserve\">新脚注二 &amp; &lt;续&gt;</w:t>"),
+            "首 span 换新值（转义同口径）: {fx}"
+        );
+        // 余 w:t 移除；run 壳/段落壳保留（最小侵入——空段占行）。
+        assert!(!fx.contains("脚注二第一段"), "span1 旧值消失");
+        assert!(!fx.contains("脚注二第二段"), "span2 已移除");
+        assert!(
+            fx.contains("<w:p><w:r></w:r></w:p>"),
+            "残余空段壳保留: {fx}"
+        );
+        // footnoteRef / 分隔符 / 未编辑条目零接触。
+        assert!(fx.contains("<w:footnoteRef/>"), "页底编号零接触: {fx}");
+        assert!(
+            fx.contains("<w:footnote w:type=\"separator\" w:id=\"-1\">"),
+            "分隔符条目原样: {fx}"
+        );
+        assert!(fx.contains("脚注一：机房"), "未编辑条目原文零接触: {fx}");
+        // comments.xml：作者属性不动 + 新值在场 + 余 span 移除。
+        let cm = part_text(&saved, "word/comments.xml");
+        assert!(cm.contains("w:author=\"作者乙\""), "作者零接触: {cm}");
+        assert!(
+            cm.contains("<w:t xml:space=\"preserve\">新批注乙</w:t>"),
+            "{cm}"
+        );
+        assert!(
+            !cm.contains("批注乙第一段") && !cm.contains("批注乙第二段"),
+            "{cm}"
+        );
+        assert!(
+            cm.contains("<w:p><w:r></w:r></w:p>"),
+            "批注残余空段壳: {cm}"
+        );
+        // reopen：新值可读（显示面）+ 段数壳不变 + 幂等链。
+        let ed2 = DocxEditor::open(&saved).unwrap();
+        let fns2 = ed2.footnotes();
+        assert_eq!(fns2[1].text, "新脚注二 & <续>", "reopen 解转义: {fns2:?}");
+        assert_eq!(fns2[1].paras, 2, "段落壳保留——段数不变");
+        let cms2 = ed2.comments();
+        assert_eq!(cms2[1].text, "新批注乙");
+        assert_eq!(cms2[1].paras, 2);
+        assert_eq!(
+            ed2.save_to_vec().unwrap(),
+            saved,
+            "reopen 再 save 同字节（幂等链）"
+        );
+    }
+
+    /// 拒改面：部件缺席 / 未知 id / 空内容区 / 控制字符与非字符防线；
+    /// 合法 \t\n 走 tab/br 发射（emit_text_payload 同口径）。
+    #[test]
+    fn notes_rejections_and_tab_br_emission() {
+        // 部件缺席：空集 + typed 拒（不发明部件/内容）。
+        let plain = build_docx("<w:p><w:r><w:t>正文</w:t></w:r></w:p>");
+        let mut ed0 = DocxEditor::open(&plain).unwrap();
+        assert!(ed0.footnotes().is_empty() && ed0.comments().is_empty());
+        let e1 = ed0.set_footnote_text(1, "x").unwrap_err();
+        assert!(e1.to_string().contains("part absent"), "{e1}");
+        let e2 = ed0.set_comment_text(1, "x").unwrap_err();
+        assert!(e2.to_string().contains("part absent"), "{e2}");
+        // save 不发明部件（namelist 不变）。
+        let names = |b: &[u8]| {
+            zip::ZipArchive::new(std::io::Cursor::new(b))
+                .unwrap()
+                .file_names()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&ed0.save_to_vec().unwrap()), names(&plain));
+        // 在场部件：空内容区（只有 footnoteRef 无 w:t）拒编辑。
+        let footnotes = concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:footnote w:id=\"1\"><w:p><w:r><w:footnoteRef/></w:r></w:p></w:footnote>",
+            "</w:footnotes>"
+        );
+        let comments = fixture_comments_xml();
+        let bytes = build_docx_notes(&notes_body(), footnotes, &comments);
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        let fns = ed.footnotes();
+        assert_eq!(fns.len(), 1, "{fns:?}");
+        assert_eq!(fns[0].text, "");
+        let e3 = ed.set_footnote_text(1, "x").unwrap_err();
+        assert!(e3.to_string().contains("empty content region"), "{e3}");
+        // 未知 id。
+        let e4 = ed.set_footnote_text(9, "x").unwrap_err();
+        assert!(e4.to_string().contains("not found"), "{e4}");
+        let e5 = ed.set_comment_text(999, "x").unwrap_err();
+        assert!(e5.to_string().contains("not found"), "{e5}");
+        // 控制字符 / 非字符。
+        let e6 = ed.set_comment_text(701, "a\u{0001}b").unwrap_err();
+        assert!(e6.to_string().contains("control character"), "{e6}");
+        let e7 = ed.set_comment_text(701, "\u{FFFF}").unwrap_err();
+        assert!(e7.to_string().contains("noncharacter"), "{e7}");
+        // 合法 \t\n → tab/br 发射（与 set_paragraph_text 同口径）。
+        ed.set_comment_text(701, "甲\t乙\n丙").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let cm = part_text(&saved, "word/comments.xml");
+        assert!(
+            cm.contains("<w:t xml:space=\"preserve\">甲</w:t><w:tab/><w:t xml:space=\"preserve\">乙</w:t><w:br/><w:t xml:space=\"preserve\">丙</w:t>"),
+            "tab/br 发射: {cm}"
+        );
+        // reopen：显示面 = w:t 拼接（tab/br 非 w:t 不入）。
+        let ed2 = DocxEditor::open(&saved).unwrap();
+        assert_eq!(ed2.comments()[0].text, "甲乙丙");
+    }
+
+    /// 透传面：无 notes 编辑 → 两部件逐字节透传；无文本编辑 →
+    /// document.xml 同字节。
+    #[test]
+    fn notes_transparency_without_edits() {
+        let bytes = build_docx_notes(
+            &notes_body(),
+            &fixture_footnotes_xml(),
+            &fixture_comments_xml(),
+        );
+        let ed = DocxEditor::open(&bytes).unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        assert_eq!(
+            part_text(&saved, "word/footnotes.xml"),
+            fixture_footnotes_xml()
+        );
+        assert_eq!(
+            part_text(&saved, "word/comments.xml"),
+            fixture_comments_xml()
+        );
+        assert_eq!(
+            part_text(&saved, "word/document.xml"),
+            String::from_utf8(part_bytes(&bytes, "word/document.xml")).unwrap()
+        );
+    }
+
+    /// 混合落账：域编辑 + 脚注编辑 + 批注编辑 + 普通段文本，一次 save
+    /// 四面全中（#140 与 #141 共用一条流水线——合并后的核心不变量）。
+    #[test]
+    fn notes_fields_text_mixed_one_save() {
+        let body = format!(
+            "<w:p>{bb}{ii}{ss}{rr}{ee}<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>\
+             <w:p><w:r><w:t>旧正文</w:t></w:r></w:p>",
+            bb = fld_begin(),
+            ii = instr(" PAGE \\* MERGEFORMAT "),
+            ss = fld_sep(),
+            rr = wt("3"),
+            ee = fld_end()
+        );
+        let bytes = build_docx_notes(&body, &fixture_footnotes_xml(), &fixture_comments_xml());
+        let mut ed = DocxEditor::open(&bytes).unwrap();
+        // 域段拒整段替换（既有防线在 notes 在场时同样生效）。
+        assert!(ed.set_paragraph_text(0, "x").is_err());
+        ed.set_field_value(0, 0, "7").unwrap();
+        ed.set_footnote_text(1, "新脚注一").unwrap();
+        ed.set_comment_text(701, "新批注甲").unwrap();
+        ed.set_paragraph_text(1, "新正文").unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        // document.xml：域五段原样 + 域新值 + 文本新值。
+        let xml = saved_document_xml(&saved);
+        assert!(xml.contains(r#"<w:fldChar w:fldCharType="begin"/>"#));
+        assert!(xml.contains("PAGE \\* MERGEFORMAT"));
+        assert!(xml.contains(r#"<w:t xml:space="preserve">7</w:t>"#));
+        assert!(xml.contains(r#"<w:t xml:space="preserve">新正文</w:t>"#));
+        assert!(!xml.contains(">3</w:t>") && !xml.contains("旧正文"));
+        // footnotes.xml：脚注新值；comments.xml：批注新值。
+        assert!(part_text(&saved, "word/footnotes.xml").contains("新脚注一"));
+        assert!(part_text(&saved, "word/comments.xml").contains("新批注甲"));
+        // reopen：四面全中。
+        let ed2 = DocxEditor::open(&saved).unwrap();
+        assert_eq!(ed2.fields()[0].display_value, "7");
+        assert_eq!(ed2.footnotes()[0].text, "新脚注一");
+        assert_eq!(ed2.comments()[0].text, "新批注甲");
+        assert_eq!(ed2.comments()[0].author, "作者甲");
+        assert_eq!(ed2.paragraph_text(1), "新正文");
+        // 幂等。
+        assert_eq!(ed2.save_to_vec().unwrap(), saved);
     }
 }
