@@ -18,6 +18,10 @@
 //!                               滚轮）过 Window::dispatch_event 完整
 //!                               派发管线，命中结果由 Editor 日志输出
 //!                               （需同时带 FILE——空态无编辑区）
+//! mang-shell --smoke-canvas    #133 canvas 视口烟雾：与 --smoke-sec +
+//!                               启动 .canvas FILE 组合——3.5s 合成
+//!                               Ctrl+= 放大 → 滚轮平移，各步后探针
+//!                               取证（stderr 证据行 canvas-viewport:）
 //! mang-shell --smoke-open FILE2  F1 替换管线烟雾：与 --smoke-sec 组合——
 //!                               开窗 2.5s 后经 ShellApp::open_document
 //!                               把 FILE2 换入编辑区（Ctrl+O 对话框回调
@@ -45,6 +49,7 @@ use gpui_platform::application;
 
 mod activity_bar;
 mod assets;
+mod canvas_view;
 mod document;
 mod editor;
 mod file_tree;
@@ -144,6 +149,11 @@ fn main() {
         .position(|a| a == "--smoke-zoom")
         .and_then(|i| args.get(i + 1))
         .and_then(|v| v.parse::<f32>().ok());
+    // #133 任务 1：canvas 视口烟雾（--smoke-canvas——与启动 .canvas
+    // FILE + --smoke-sec 组合：3.5s 合成 Ctrl+= 放大 → 4.5s 合成滚轮
+    // 平移，各步后探针取证；断言 canvas-viewport: 证据行（zoom/pan
+    // 变化）+ canvas-objects: + quit reached）。
+    let smoke_canvas = args.iter().any(|a| a == "--smoke-canvas");
     // F2：工作区烟雾钩子（--smoke-workspace DIR）。
     let smoke_workspace = args
         .iter()
@@ -387,6 +397,22 @@ fn main() {
                             shell.apply_font_size(gpui::px(size), cx);
                         })
                     });
+                })
+                .detach();
+            }
+
+            // #133 任务 1：canvas 视口烟雾（完整键/滚轮派发管线 +
+            // 真实应用态探针取证）。
+            if smoke_canvas {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    // 3.5s Ctrl+= 放大（1.25）→ 探针。
+                    dispatch_key(&handle, cx, 3500, "=", true, false, None).await;
+                    probe_canvas_viewport(&handle, cx).await;
+                    // 4.5s 滚轮平移：向下 3 行（X11 约定负 y）= pan_y -120。
+                    dispatch_scroll(&handle, cx, 1000, 0.0, -3.0).await;
+                    probe_canvas_viewport(&handle, cx).await;
+                    eprintln!("canvas-smoke: script done (ctrl+= → probe → wheel → probe)");
                 })
                 .detach();
             }
@@ -893,4 +919,56 @@ async fn run_mouse_script(window: &gpui::WindowHandle<shell::ShellApp>, cx: &mut
     step(window, cx, 300, move_to(500., 770.)).await;
     step(window, cx, 200, move_to(500., 830.)).await;
     step(window, cx, 900, up_at(500., 830.)).await;
+}
+
+// ---------------------------------------------------------------------------
+// #133 任务 1：canvas 视口烟雾辅助（--smoke-canvas）
+// ---------------------------------------------------------------------------
+
+/// 合成滚轮事件（与真实事件同派发路径——update_window 闭包 +
+/// `Window::dispatch_event` 完整管线；X11 约定：向下滚 = 负 y）。
+async fn dispatch_scroll(
+    window: &gpui::WindowHandle<shell::ShellApp>,
+    cx: &mut gpui::AsyncApp,
+    delay_ms: u64,
+    lines_x: f32,
+    lines_y: f32,
+) {
+    use gpui::{PlatformInput, ScrollDelta, ScrollEvent, point, px};
+    cx.background_executor()
+        .timer(Duration::from_millis(delay_ms))
+        .await;
+    let event = PlatformInput::Scroll(ScrollEvent {
+        position: point(px(640.), px(400.)),
+        delta: ScrollDelta::Lines(point(lines_x, lines_y)),
+        ..Default::default()
+    });
+    let any_handle: gpui::AnyWindowHandle = (*window).into();
+    let result = cx.update_window(any_handle, |_, window, cx| {
+        window.dispatch_event(event, cx);
+    });
+    if let Err(err) = &result {
+        eprintln!("dispatch_scroll: update_window 失败: {err}");
+    }
+}
+
+/// canvas 视口探针（真实应用态取证——活动编辑器 → 视口/图元证据行，
+/// stderr 断言通道：`canvas-viewport:` / `canvas-objects:`）。
+async fn probe_canvas_viewport(
+    window: &gpui::WindowHandle<shell::ShellApp>,
+    cx: &mut gpui::AsyncApp,
+) {
+    let lines: Vec<String> = cx.update(|cx| {
+        window
+            .update(cx, |shell, _window, cx| {
+                shell
+                    .editor()
+                    .map(|ed| ed.read(cx).canvas_smoke_probe())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    });
+    for line in lines {
+        eprintln!("{line}");
+    }
 }

@@ -9,6 +9,8 @@
 //!   页分隔 + 页码标签——见 [`crate::editor::pdf_doc`]；100MB 前置门）
 //! - `.xlsx` → **只读渲染**（G6：mdc-office-io 读面 → 行模型，工作表
 //!   树 + 列字母/行号网格——见 [`crate::editor::xlsx_doc`]）
+//! - `.canvas` → **画布视图**（#133 任务 1：yrs 快照 → CanvasSession
+//!   → 全彩位面 + 视口——见 [`crate::canvas_view`]）
 //! - 其余 → `Unsupported`（空态提示）
 //!
 //! 大小写不敏感匹配扩展名；读取失败返回 `OpenError`（空态呈现原因）。
@@ -17,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{App, AppContext, Entity};
 
+use crate::canvas_view::{self, CanvasView};
 use crate::editor::Editor;
 use crate::editor::docx_doc::{self, DocxPayload, EditablePayload};
 use crate::editor::pdf_doc::{self, PdfPayload};
@@ -38,6 +41,9 @@ pub enum OpenedDocument {
     ReadOnlyPdf { path: PathBuf, payload: PdfPayload },
     /// xlsx 只读渲染（G6）：office-io 读面 + 行模型转换产物。
     ReadOnlyXlsx { path: PathBuf, payload: XlsxPayload },
+    /// canvas 画布视图（#133 任务 1：yrs 快照装载 + 视口位面——只读；
+    /// 路线 A′ 依据见 canvas_view 模块文档）。
+    Canvas { path: PathBuf, view: CanvasView },
     /// 不支持的扩展名。
     Unsupported { path: PathBuf },
     /// 读取失败（IO 错误 / 超大等）。
@@ -91,6 +97,18 @@ pub fn open(path: &Path) -> OpenedDocument {
             Ok(payload) => OpenedDocument::ReadOnlyXlsx {
                 path: path.to_path_buf(),
                 payload,
+            },
+            Err(message) => OpenedDocument::OpenError {
+                path: path.to_path_buf(),
+                message,
+            },
+        },
+        // #133 任务 1：canvas 画布（yrs 权威快照；空文件 = 空会话——
+        // 新文件语义。52MB 输入门在引擎 restore 层，同 mdc-collab 口径）。
+        "canvas" => match canvas_view::CanvasView::load(path) {
+            Ok(view) => OpenedDocument::Canvas {
+                path: path.to_path_buf(),
+                view,
             },
             Err(message) => OpenedDocument::OpenError {
                 path: path.to_path_buf(),
@@ -202,6 +220,11 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
             );
             OpenOutcome::Opened(cx.new(|cx| Editor::new_xlsx(path, payload, cx)))
         }
+        // #133 证据通道：启动日志一行（对象/图元/内容/视口 + 只读标记）。
+        OpenedDocument::Canvas { path, view } => {
+            eprintln!("{}", view.open_evidence(&path));
+            OpenOutcome::Opened(cx.new(|cx| Editor::new_canvas(path, view, cx)))
+        }
         OpenedDocument::Unsupported { path } => OpenOutcome::Unsupported {
             message: unsupported_message(&path),
             path,
@@ -220,10 +243,10 @@ fn unsupported_message(path: &Path) -> String {
         .unwrap_or_default();
     match ext.as_str() {
         "xlsm" | "xls" => {
-            "电子表格旧/宏格式（.xlsm/.xls）渲染面未接——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf/.xlsx（只读）"
+            "电子表格旧/宏格式（.xlsm/.xls）渲染面未接——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf/.xlsx/.canvas（只读）"
                 .to_string()
         }
-        _ => "暂不支持的文件类型——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf/.xlsx（只读）".to_string(),
+        _ => "暂不支持的文件类型——支持 .md/.markdown/.txt（可编辑）与 .docx/.pdf/.xlsx/.canvas（只读）".to_string(),
     }
 }
 
@@ -258,6 +281,32 @@ mod tests {
     #[test]
     fn unsupported_message_ext_case_insensitive() {
         assert!(unsupported_message(Path::new("X.XLS")).contains("渲染面未接"));
+    }
+
+    /// #133 任务 1：canvas 分派接线——夹具经 `open` 落 Canvas（对象/
+    /// 图元计数 + 视口初值；夹具由 `gen_smoke_canvas`（ignored）生成
+    /// 入库——真实会话命令链 → yrs 权威快照）。
+    #[test]
+    fn open_dispatches_canvas_to_view_payload() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/smoke.canvas");
+        match open(std::path::Path::new(path)) {
+            OpenedDocument::Canvas { view, .. } => {
+                let (total, nodes, edges, groups) = view.object_counts();
+                assert_eq!((total, nodes, edges, groups), (9, 6, 2, 1));
+                assert_eq!(view.shape_count(), 8, "分组不画，成员各自成图元");
+                assert_eq!(
+                    view.viewport(),
+                    canvas_view::Viewport::default(),
+                    "初值 = 适配居中"
+                );
+            }
+            OpenedDocument::Unsupported { .. } | OpenedDocument::OpenError { .. } => {
+                panic!(
+                    "夹具缺失或不可读：先跑 `cargo test gen_smoke_canvas -- --ignored` 生成；夹具必须进仓"
+                )
+            }
+            _ => panic!("canvas 分派应落 Canvas（实得其他形态）"),
+        }
     }
 
     /// G6：xlsx 分派接线——夹具经 `open` 落 ReadOnlyXlsx（载荷含

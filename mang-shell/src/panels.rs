@@ -204,12 +204,14 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, width: Pixels, cx: &App) -> 
                     "pdf" => "只读（pdf 文本层 → 行模型）".to_string(),
                     "docx" => "只读（docx 块序 → 行模型）".to_string(),
                     "xlsx" => "只读（xlsx 读面 → 行模型）".to_string(),
+                    "canvas" => "只读（canvas 会话 → 位面渲染）".to_string(),
                     _ => "源文本（md）".to_string(),
                 },
                 match ed.doc_kind() {
                     "pdf" => "mdc-pdf（pdfium chromium/8086 non-V8）".to_string(),
                     "docx" => "mdc-office-io（docx-rs）".to_string(),
                     "xlsx" => "mdc-office-io（calamine）".to_string(),
+                    "canvas" => "mdc-canvas（yrs 会话 + RasterRenderer）".to_string(),
                     _ => "mdcore 0.1.0".to_string(),
                 },
             )

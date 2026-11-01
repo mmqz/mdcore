@@ -7,6 +7,11 @@
 #![allow(dead_code, unused_imports)]
 #![allow(clippy::all)]
 
+/// #133 任务 1：canvas 画布视图（会话装载 + 视口 + 光栅位面——纯逻辑
+/// 面单测复用；GPUI 绘制接线在 editor::render_canvas_area）。
+#[path = "canvas_view.rs"]
+pub mod canvas_view;
+
 /// 文档事件面（#111 订阅模式——buffer 的 revision/pending 依赖它）。
 #[path = "doc_events.rs"]
 pub mod doc_events;
