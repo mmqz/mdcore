@@ -1,0 +1,64 @@
+[project]
+name = "mang-mcp"
+version = "0.1.0"
+description = "mang-shell 编辑器的 MCP server——Claude/ChatGPT 等宿主直接操控编辑器（11 工具，stdio）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "mdcore contributors" }]
+keywords = ["mang-shell", "mdcore", "mcp", "model-context-protocol", "claude"]
+dependencies = [
+    "mcp>=1.2,<2",  # v1 API（任务书草图口径：FastMCP）；v2 已改名 MCPServer，迁移另行评估
+    "mang-rpc>=0.1.0",
+]
+
+[project.scripts]
+mang-mcp = "mang_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "mypy>=1.10",
+    "ruff>=0.6",
+    "black>=24.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mang_mcp"]
+
+# 仓库内开发时 mang-rpc 指到相邻目录（uv 特有；pip 发布时按 PyPI 版本解析）。
+# editable：SDK 源码改动即时生效（PR #149 与本 PR 是叠加栈，联调频繁）。
+[tool.uv.sources]
+mang-rpc = { path = "../python", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
