@@ -11,7 +11,11 @@ keywords = ["mang-shell", "mdcore", "editor", "rpc", "ai"]
 # 运行时零第三方依赖——纯标准库（socket / json / dataclasses / typing）。
 dependencies = []
 
-[project.optional-dependencies]
+# 开发工具放 dependency-groups（PEP 735）而非 optional-dependencies（extras）：
+# 裸 `uv sync` 默认装 dev 组——`uv run pytest` 不会静默回退到 PATH 上的系统
+# pytest（那会缺本包的 editable 安装，报 ModuleNotFoundError 误导排障）。
+# 与 sdk/mcp 一致；运行时依赖仍为空。
+[dependency-groups]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
