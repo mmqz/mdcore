@@ -196,6 +196,9 @@ fn n3_acceptance_400k_vs_python_reference() {
     let committed = std::fs::read_to_string(&fixture).unwrap_or_else(|e| {
         panic!("读夹具 {fixture:?} 失败：{e}（验收夹具入库为验收文本的钉定面）")
     });
+    // 行尾归一化：夹具入库 LF、Windows 检出 CRLF（.gitattributes 未标记），
+    // 生成器产出 LF——直接比字节在 Windows 上恒定漂移。比较【逻辑内容】。
+    let committed = committed.replace("\r\n", "\n");
     assert_eq!(
         md, committed,
         "生成器与入库夹具漂移：如为有意变更，以 MDCORE_N3_REGEN=1 重跑本测试刷新夹具，\

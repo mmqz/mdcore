@@ -62,6 +62,9 @@ struct L1Baseline {
 /// spec.txt example 块解析（32 反引号围栏——TR-2B 驱动逐行同构）。
 fn parse_spec_examples(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
+    // 行尾归一化：闭合围栏判定用 len==32、分块锚用固定串，
+    // CRLF 下都会失配（用例数 655→0）。先归一化再看。
+    let text = text.replace("\r\n", "\n");
     let mut section = String::new();
     let lines: Vec<&str> = text.split('\n').collect();
     let mut i = 0;
@@ -88,7 +91,11 @@ fn parse_spec_examples(text: &str) -> Vec<(String, String)> {
             i += 1;
             while i < lines.len() {
                 let l = lines[i];
-                if l.len() == 32 && l.as_bytes().iter().all(|&b| b == b'`') {
+                // 闭合围栏：允许尾部 \r（语料原样 CRLF，git 入库转 LF——
+                // 本地是 CRLF、CI 是 LF，两种都要认，否则闭合永不命中，
+                // 整个文件被当成一个 example，用例数掉到 0。)
+                let lb = l.trim_end_matches('\r');
+                if lb.len() == 32 && lb.as_bytes().iter().all(|&b| b == b'`') {
                     break;
                 }
                 body.push(l);
@@ -108,6 +115,9 @@ fn parse_spec_examples(text: &str) -> Vec<(String, String)> {
 /// good.txt 解析（42 波浪线分块——TR-2B 驱动逐行同构）。
 fn parse_good_txt(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
+    // 行尾归一化（见 parse_spec_examples 注释）：语料 CRLF/LF 两种形态都要能
+    // 解析——分块锚是 "\n~~~~\n"，CRLF 下永远不匹配（用例数会掉到 0）。
+    let text = text.replace("\r\n", "\n");
     for block in text.split("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n") {
         let lines: Vec<&str> = block.split('\n').collect();
         let dots: Vec<usize> = lines
@@ -191,10 +201,28 @@ fn save_baseline(b: &L1Baseline) {
 
 #[test]
 fn l1_external_corpus_gate() {
-    let spec_text = std::fs::read_to_string(corpus_root().join("commonmark/spec.txt"))
-        .expect("spec.txt in corpus (TR-2B)");
-    let good_text = std::fs::read_to_string(corpus_root().join("markdown-it/good.txt"))
-        .expect("good.txt in corpus (TR-2B)");
+    // 环境门（issue #89 纪律）：外部语料不在仓（test-artifacts/ 被 gitignore），
+    // CI / 新克隆上必然缺失。缺件 = SKIP（响亮横幅），不是业务 FAIL。
+    // 判据：外部语料属「环境依赖」类别，与 poppler/tesseract 同性质。
+    let spec_path = corpus_root().join("commonmark/spec.txt");
+    let good_path = corpus_root().join("markdown-it/good.txt");
+    for mp in [&spec_path, &good_path] {
+        // 判据：文件存在 ≠ 内容有效（CI 上可能被 gitignore 成空占位）。
+        // 用「≥ 1KB」作为有效语料门槛——spec.txt 实际 ~250KB，good.txt ~120KB。
+        let ok = std::fs::metadata(mp).map(|m| m.len() > 1024).unwrap_or(false);
+        if !ok {
+            eprintln!();
+            eprintln!("====================================================================");
+            eprintln!("SKIP: l1_external_corpus_gate");
+            eprintln!("reason: CORPUS_MISSING_OR_EMPTY: {}", mp.display());
+            eprintln!("（外部语料缺件或空占位，非业务失败——issue #89 口径）");
+            eprintln!("补件指引: 拉 CommonMark spec.txt + markdown-it good.txt 到 test-artifacts/external-corpus/");
+            eprintln!("====================================================================");
+            return;
+        }
+    }
+    let spec_text = std::fs::read_to_string(&spec_path).expect("spec.txt readable");
+    let good_text = std::fs::read_to_string(&good_path).expect("good.txt readable");
     let spec_cases = parse_spec_examples(&spec_text);
     let good_cases = parse_good_txt(&good_text);
     // TR-2B 口径锚：spec 655 / markdown-it 652（数量漂移 = 语料被动过，

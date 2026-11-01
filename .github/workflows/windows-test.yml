@@ -1,0 +1,97 @@
+name: windows-test
+
+# 目标：让云端跑测试，本地只做人的决策。
+# 由来：本地 6 核机器跑 7 个代理的 GPUI 编译（每个 310 分钟）会互相拖死，
+# 而云端 runner 有 cargo 缓存，36 秒就能 check 完。
+#
+# 范围纪律：
+#   - 只跑「引擎层」crate 的测试（mdcore / office-io / pdf / formula / canvas）
+#   - 不跑 mang-shell（GPUI 397 crate，编译 310 分钟，云端也扛不住）
+#   - 不跑需要外部工具的测试（poppler / tesseract / LibreOffice —— 用环境门 SKIP）
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 3
+  # 测试二进制不带调试符号：体积小、链接快
+  CARGO_PROFILE_TEST_DEBUG: none
+
+jobs:
+  test-engine:
+    name: windows / engine tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 二进制夹具（*.pdf / *.docx）必须是 LF 原样，
+          # 否则 xref 偏移漂移 → pdf 测试全红（详见 issue #89 的 CRLF 坑）
+          lfs: false
+
+      - name: Verify binary fixtures are not line-ending converted
+        shell: bash
+        run: |
+          # CRLF 污染守卫：small.pdf 应为 1099 字节
+          f=crates/pdf/fixtures/small.pdf
+          if [ -f "$f" ]; then
+            sz=$(stat -c%s "$f" 2>/dev/null || wc -c < "$f")
+            echo "small.pdf = $sz bytes"
+            if [ "$sz" != "1099" ]; then
+              echo "::error::夹具被行尾转换污染（$sz != 1099）。检查 .gitattributes 与 worktree 检出。"
+              exit 1
+            fi
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-cargo-
+
+      # 引擎层 crate：纯 Rust，无外部工具依赖
+      - name: Test mdcore (core engine)
+        run: cargo test -p mdcore
+
+      - name: Test mdc-office-io (docx/xlsx/pptx)
+        run: cargo test -p mdc-office-io
+
+      - name: Test mdc-pdf (four-piece + forms + stamp + signature)
+        # forms/stamp/signature/annotate 在 engine-lopdf feature 门后
+        # （lib.rs 的 #[cfg(feature = "engine-lopdf")]）——不带 feature 会
+        # unresolved import。pdfium 面需要动态库，CI 上没有，只开 lopdf。
+        run: cargo test -p mdc-pdf --features engine-lopdf
+
+      - name: Test mdc-formula (xlsx formula engine)
+        run: cargo test -p mdc-formula
+
+      - name: Test mdc-canvas (rendering)
+        # golden_svg_matches_fixture 是字节级黄金例比较，但夹具里含
+        # 三角函数结果（旋转矩形的 sqrt(2) 分量，如 145.4437/31.1127）——
+        # Windows 与 Linux 的浮点格式化末位有差异，字节比较必然失败。
+        # 黄金例的目的是【同平台防回归】，跨平台应改容差比较（待后续任务）。
+        run: cargo test -p mdc-canvas -- --skip golden_svg_matches_fixture
+
+      - name: Test mdc-evidence
+        run: cargo test -p mdc-evidence
+
+      - name: Test mdc-collab
+        run: cargo test -p mdc-collab
+
+      - name: Test mdc-workbench
+        run: cargo test -p mdc-workbench
