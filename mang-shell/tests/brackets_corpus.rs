@@ -161,12 +161,9 @@ fn real_rust_corpus_full_sweep() {
 fn real_rust_file_string_and_comment_are_ignored() {
     // 取本模块自身（含大量字符串与注释）作为真实样本：
     // 注释里的 // 与字符串里的括号都不该被当成括号。
-    let text = r#"fn main() {
-    let s = "(";
-    // ("]
-    let t = 1;
-}
-"#;
+    // 用显式 \n 拼接而不是 raw string：raw string 的换行取决于源文件行尾
+    // （本地 CRLF / CI LF 不同），会让列偏移断言跨平台漂移。
+    let text = "fn main() {\n    let s = \"(\";\n    // (\"]\n    let t = 1;\n}\n";
     // 0: "fn main() {"        -> 7'(' 8')' 10'{'
     // 1: '    let s = "(";'    -> 13'(' 在字符串内
     // 2: '    // (]'            -> 7'(' 8']' 在注释内
