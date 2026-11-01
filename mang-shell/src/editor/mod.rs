@@ -46,6 +46,7 @@
 //! - 保存为同步 `fs::write`（P2-5 异步化设计已有，暂不接线）
 //! - IME 候选框定位 `bounds_for_range` 返回 `None`（精化登记阶段 7）
 
+pub mod brackets; // #132 任务 1：括号匹配（纯逻辑；渲染在 Editor 样式层）
 pub mod buffer;
 pub mod commands;
 pub mod display_map; // r42 阶段 B（#68）：buffer <-> 显示行列映射（软换行 + 折叠）
@@ -250,6 +251,64 @@ fn outdent_line_edit(
 }
 
 // ---------------------------------------------------------------------------
+// #132 任务 1：文件级代码语言推断
+// ---------------------------------------------------------------------------
+
+/// 文件级代码语言：扩展名优先（`.rs`/`.py`/`.ts`/`.js`），无扩展名或
+/// 未知扩展名时按内容特征兜底（[`brackets::infer_code_lang`]）。
+/// markdown（`.md`）恒 `None`——md 的字符串语义走围栏，不走文件级。
+fn bracket_lang_for(path: Option<&Path>, content: &str) -> Option<highlight::CodeLang> {
+    if let Some(p) = path {
+        let ext = p
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        match ext.as_str() {
+            "rs" => return Some(highlight::CodeLang::Rust),
+            "py" => return Some(highlight::CodeLang::Python),
+            "js" | "ts" | "tsx" | "jsx" => return Some(highlight::CodeLang::Js),
+            // .md 及其它已知的纯文本面：不给代码语言（围栏语义接管）。
+            "md" | "markdown" | "txt" | "log" | "toml" | "yaml" | "yml" => return None,
+            _ => {}
+        }
+    }
+    brackets::infer_code_lang(content)
+}
+// ---------------------------------------------------------------------------
+// #132 任务 1：括号匹配缓存
+// ---------------------------------------------------------------------------
+
+/// 括号匹配缓存：键 = (文档版本, 主光标)；键变才重算（渲染层逐行读取，
+/// 未变时是纯查表）。
+#[derive(Clone, Copy, Debug, Default)]
+struct BracketCache {
+    /// 缓存键（`None` = 尚未计算）。
+    key: Option<(u64, (usize, usize))>,
+    /// 缓存值。
+    value: Option<brackets::BracketMatch>,
+}
+
+impl BracketCache {
+    /// 取主光标下的匹配结果（键不变时命中缓存）。
+    #[allow(clippy::too_many_arguments)]
+    fn get(
+        &mut self,
+        revision: u64,
+        cursor: (usize, usize),
+        text: &str,
+        lang: Option<highlight::CodeLang>,
+    ) -> brackets::BracketMatch {
+        let want = (revision, cursor);
+        if self.key != Some(want) {
+            self.value = Some(brackets::find_match_lang(text, cursor, lang));
+            self.key = Some(want);
+        }
+        self.value.unwrap_or(brackets::BracketMatch::None)
+    }
+
+}
+
+// ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
 
@@ -307,6 +366,13 @@ pub struct Editor {
     /// G5：每行所属围栏块的语言标注（`Some(lang)` = 行首处于带语言
     /// 标注的围栏内；`None` = 围栏外/无标注块——与 fence_cache 并行）。
     fence_lang_cache: Vec<Option<highlight::CodeLang>>,
+    /// #132 任务 1：括号匹配缓存（键 = 文档版本 + 主光标；键变即重算）。
+    /// 渲染层每行读取——缓存键不变时零扫描，避免逐行重新扫全文。
+    bracket_cache: BracketCache,
+    /// #132 任务 1：文件级代码语言（`.rs`/`.py`/`.ts` 直接打开时按该语言
+    /// 识别字符串/注释——这类文件没有 md 围栏可依）。构造时按扩展名
+    /// 定，内容推断兜底。
+    bracket_lang: Option<highlight::CodeLang>,
     /// r42 阶段 B：buffer <-> 显示行列映射（软换行 + 折叠）。
     /// 断点回填基准宽 = 上一帧行 bounds 宽（RefCell——render_lines 里
     /// 在 row_bounds clear 前采样）。
@@ -382,6 +448,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = Buffer::from_plain_text(&content);
+        let bracket_lang = bracket_lang_for(path.as_deref(), &content);
         let display_name = match &path {
             Some(p) => p
                 .file_name()
@@ -406,6 +473,8 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
             fence_lang_cache: Vec::new(),
+            bracket_cache: BracketCache::default(),
+            bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -435,6 +504,7 @@ impl Editor {
     /// 滚动全复用），样式 span 与标题树由 [`docx_doc`] 预计算承载。
     pub fn new_docx(path: PathBuf, payload: DocxPayload, cx: &mut Context<Self>) -> Self {
         let buffer = Buffer::from_plain_text(&payload.text);
+        let bracket_lang = None;
         let display_name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -459,6 +529,8 @@ impl Editor {
             // 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            bracket_cache: BracketCache::default(),
+            bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -506,6 +578,8 @@ impl Editor {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "未命名".to_string());
         let line_count = buffer.line_count();
+        // docx 无代码语义——括号匹配语言恒 None（同 canvas/pdf/xlsx 口径）。
+        let bracket_lang = None;
         let mut this = Self {
             buffer,
             file_path: Some(path),
@@ -523,6 +597,8 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            bracket_cache: BracketCache::default(),
+            bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -555,6 +631,7 @@ impl Editor {
     /// 批 1-2 管线全复用），样式 span（页分隔行）与书签树/页表由
     /// [`pdf_doc`] 预计算承载；页码标签走 [`Self::page_label`]。
     pub fn new_pdf(path: PathBuf, payload: PdfPayload, cx: &mut Context<Self>) -> Self {
+        let bracket_lang = None;
         let buffer = Buffer::from_plain_text(&payload.text);
         let display_name = path
             .file_name()
@@ -579,6 +656,8 @@ impl Editor {
             // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            bracket_cache: BracketCache::default(),
+            bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -608,6 +687,7 @@ impl Editor {
     /// 回退）与工作表树由 [`xlsx_doc`] 预计算承载；只读门禁同
     /// docx/pdf 口径。
     pub fn new_xlsx(path: PathBuf, payload: XlsxPayload, cx: &mut Context<Self>) -> Self {
+        let bracket_lang = None;
         let buffer = Buffer::from_plain_text(&payload.text);
         let display_name = path
             .file_name()
@@ -634,6 +714,8 @@ impl Editor {
             // refresh_caches 在 xlsx 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            bracket_cache: BracketCache::default(),
+            bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -686,6 +768,9 @@ impl Editor {
             // canvas 无围栏语义——fence 恒 false（同 docx/pdf/xlsx 口径）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            // #132 任务1：括号匹配缓存（canvas 无语言语义——恒 None）。
+            bracket_cache: BracketCache::default(),
+            bracket_lang: None,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
@@ -2246,6 +2331,73 @@ impl Editor {
         out
     }
 
+    /// #132 任务 1：探针用全文取用（烟雾断言找括号位置——只读）。
+    pub fn buffer_text_for_probe(&self) -> String {
+        self.buffer.to_plain_text()
+    }
+
+    /// #132 任务 1：探针用光标设置（buffer 坐标；clamp 到合法范围——
+    /// 与用户移动同一状态面 `Buffer::set_cursor`）。
+    pub fn set_cursor_for_probe(&mut self, point: (usize, usize)) {
+        let line = point.0.min(self.buffer.line_count().saturating_sub(1));
+        let col = point.1.min(self.buffer.line_len(line));
+        self.buffer.set_cursor(Point::new(line, col));
+    }
+    /// #132 任务 1：括号匹配烟雾探针——经真实应用态取主光标下的匹配
+    /// 判定 + 该判定按渲染层同款口径（`styled_runs_for_line` 的
+    /// bracket_cols 分支）展开成的逐行样式摘要。每次调用先强制重算
+    /// （`invalidate`），保证证据来自当前光标而非陈旧缓存。
+    pub fn bracket_evidence(&self) -> Vec<String> {
+        if self.read_only || self.docx.is_some() || self.pdf.is_some() || self.xlsx.is_some() {
+            return vec!["bracket: (read-only doc — no bracket semantics)".to_string()];
+        }
+        let cursor = self.buffer.cursor();
+        let text = self.buffer.to_plain_text();
+        let m = brackets::find_match_lang(&text, (cursor.line, cursor.col), self.bracket_lang);
+        let mut out = Vec::new();
+        let (shape, marks) = match m {
+            brackets::BracketMatch::Matched { open, close } => {
+                (
+                    format!("matched open={:?} close={:?}", open, close),
+                    vec![(open, false), (close, false)],
+                )
+            }
+            brackets::BracketMatch::Unmatched { pos } => {
+                (format!("unmatched pos={pos:?}"), vec![(pos, true)])
+            }
+            brackets::BracketMatch::None => {
+                ("none".to_string(), Vec::new())
+            }
+        };
+        out.push(format!(
+            "bracket: cursor=({},{}) {}",
+            cursor.line, cursor.col, shape
+        ));
+        for (pos, unmatched) in marks {
+            let ch = self.buffer.line(pos.0).chars().nth(pos.1).unwrap_or('?');
+            let (bg, tag) = if unmatched {
+                ("version_control_deleted/red", "UNMATCHED")
+            } else {
+                ("editor_document_highlight_bracket_background", "MATCHED")
+            };
+            out.push(format!(
+                "bracket: L{}:{} {ch:?} {tag} bg={bg}",
+                pos.0, pos.1
+            ));
+        }
+        // 渲染口径交叉核对：本行 bracket_cols 展开结果与上面一致。
+        let cols = brackets::highlight_cols_lang(
+            &text,
+            (cursor.line, cursor.col),
+            cursor.line,
+            self.bracket_lang,
+        );
+        out.push(format!(
+            "bracket: render-cols line={} cols={:?}",
+            cursor.line, cols
+        ));
+        out
+    }
     /// 复制选区（无选区无操作）。
     fn copy_selection(&mut self, cx: &mut Context<Self>) {
         let text = self.buffer.selection_text();
@@ -3395,6 +3547,24 @@ impl Editor {
             .filter(|(a, h)| a != h)
             .map(|(a, h)| if a <= h { *a..*h } else { *h..*a })
             .collect();
+        // #132 任务 1：主光标下的括号匹配（缓存——版本/光标不变时零扫描）。
+        // 只读态（docx/pdf/xlsx）无括号语法语义，恒不标记；多光标同秒不取。
+        let bracket_marks: Option<brackets::BracketMatch> = if self.read_only
+            || self.docx.is_some()
+            || self.pdf.is_some()
+            || self.xlsx.is_some()
+        {
+            None
+        } else {
+            let text = self.buffer.to_plain_text();
+            let cp = cursor;
+            Some(self.bracket_cache.get(
+                self.buffer.revision(),
+                (cp.line, cp.col),
+                &text,
+                self.bracket_lang,
+            ))
+        };
         (visible.start..visible.end)
             .map(|row| {
                 // r42：display row → (buffer 行, 段)；折叠行 seg=FOLD_SEG
@@ -3442,6 +3612,7 @@ impl Editor {
                     &find_hits,
                     query_len,
                     marked.clone(),
+                    bracket_marks,
                     &colors,
                 );
                 // 光标行高亮按 buffer 行（主光标行；软换行后所有段同亮）
@@ -3571,7 +3742,7 @@ impl Editor {
     }
 
     /// 行内样式 runs 合成：语法 token + 选区 + 查找命中 + IME 预编辑下划线
-    /// （char 索引 → 逐 char 风格合成 → byte 区间压缩输出）。
+    /// + #132 括号匹配（char 索引 → 逐 char 风格合成 → byte 区间压缩输出）。
     #[allow(clippy::too_many_arguments)]
     fn styled_runs_for_line(
         &self,
@@ -3582,6 +3753,7 @@ impl Editor {
         find_hits: &[(Point, bool)],
         query_len: usize,
         marked: Option<Range<usize>>,
+        brackets: Option<brackets::BracketMatch>,
         colors: &ThemeColors,
     ) -> Vec<(Range<usize>, HighlightStyle)> {
         let chars: Vec<char> = line.chars().collect();
@@ -3614,6 +3786,24 @@ impl Editor {
             .filter(|(m, _)| m.line == line_idx)
             .map(|(m, active)| (m.col..(m.col + query_len).min(n), *active))
             .collect();
+        // #132 任务 1：本行参与括号高亮的 char 列 + 是否「不匹配」（标红）。
+        // 匹配对 = 两列同色高亮；不匹配 = 单列红底。
+        let (bracket_cols, bracket_unmatched): (Vec<usize>, bool) = match brackets {
+            Some(brackets::BracketMatch::Matched { open, close }) => {
+                let mut v = Vec::new();
+                if open.0 == line_idx {
+                    v.push(open.1);
+                }
+                if close.0 == line_idx {
+                    v.push(close.1);
+                }
+                (v, false)
+            }
+            Some(brackets::BracketMatch::Unmatched { pos }) if pos.0 == line_idx => {
+                (vec![pos.1], true)
+            }
+            _ => (Vec::new(), false),
+        };
         // IME 预编辑（全文 UTF16 区间的近似渲染：覆盖整段的下划线——
         // 精确 char 映射由 utf16_to_point 换算，此处简化为行内 span）。
         let marked_range = marked;
@@ -3639,6 +3829,20 @@ impl Editor {
                         colors.editor_document_highlight_read_background
                     });
                     break;
+                }
+            }
+            // #132 任务 1：括号匹配高亮（匹配 = 主题 bracket 底色 + 强调
+            // 色加粗；不匹配 = 红底——主题语义色 editor_document_highlight_
+            // bracket_background（匹配）与 version_control_deleted（红）。
+            if bracket_cols.contains(&i) {
+                if bracket_unmatched {
+                    s.background_color = Some(colors.version_control_deleted);
+                    s.color = Some(colors.text);
+                    s.font_weight = Some(FontWeight::BOLD);
+                } else {
+                    s.background_color = Some(colors.editor_document_highlight_bracket_background);
+                    s.color = Some(colors.text_accent);
+                    s.font_weight = Some(FontWeight::BOLD);
                 }
             }
             // 选区底色（最高优先；多选区任一命中）。
