@@ -93,7 +93,9 @@ fn zip_valid(bytes: &[u8]) -> bool {
 fn l2_external_corpus_pandoc_export_gate() {
     // 环境门（issue #89 纪律）：外部语料不在仓（test-artifacts/ 被 gitignore），
     // CI / 新克隆上必然缺失。缺件 = SKIP（响亮横幅），不是业务 FAIL。
-    if !corpus_root().join("pandoc").exists() {
+    let dir_path = corpus_root().join("pandoc");
+    let dir_ok = std::fs::read_dir(&dir_path).map(|d| d.count() > 0).unwrap_or(false);
+    if !dir_ok {
         eprintln!();
         eprintln!("====================================================================");
         eprintln!("SKIP: l2_external_corpus_pandoc_export_gate");

@@ -64,7 +64,9 @@ fn save_l3(cases: usize, imported: usize, failed: &[String]) {
 fn l3_external_corpus_poi_docx_gate() {
     // 环境门（issue #89 纪律）：外部语料不在仓（test-artifacts/ 被 gitignore），
     // CI / 新克隆上必然缺失。缺件 = SKIP（响亮横幅），不是业务 FAIL。
-    if !corpus_root().join("poi").exists() {
+    let dir_path = corpus_root().join("poi");
+    let dir_ok = std::fs::read_dir(&dir_path).map(|d| d.count() > 0).unwrap_or(false);
+    if !dir_ok {
         eprintln!();
         eprintln!("====================================================================");
         eprintln!("SKIP: l3_external_corpus_poi_docx_gate");

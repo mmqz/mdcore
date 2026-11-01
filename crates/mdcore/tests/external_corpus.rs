@@ -197,12 +197,15 @@ fn l1_external_corpus_gate() {
     let spec_path = corpus_root().join("commonmark/spec.txt");
     let good_path = corpus_root().join("markdown-it/good.txt");
     for mp in [&spec_path, &good_path] {
-        if !mp.exists() {
+        // 判据：文件存在 ≠ 内容有效（CI 上可能被 gitignore 成空占位）。
+        // 用「≥ 1KB」作为有效语料门槛——spec.txt 实际 ~250KB，good.txt ~120KB。
+        let ok = std::fs::metadata(mp).map(|m| m.len() > 1024).unwrap_or(false);
+        if !ok {
             eprintln!();
             eprintln!("====================================================================");
             eprintln!("SKIP: l1_external_corpus_gate");
-            eprintln!("reason: CORPUS_MISSING: {}", mp.display());
-            eprintln!("（外部语料缺件，非业务失败——issue #89 口径：依赖缺失不得伪装成业务 FAIL）");
+            eprintln!("reason: CORPUS_MISSING_OR_EMPTY: {}", mp.display());
+            eprintln!("（外部语料缺件或空占位，非业务失败——issue #89 口径）");
             eprintln!("补件指引: 拉 CommonMark spec.txt + markdown-it good.txt 到 test-artifacts/external-corpus/");
             eprintln!("====================================================================");
             return;
