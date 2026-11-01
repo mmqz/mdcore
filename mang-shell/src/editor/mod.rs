@@ -1532,6 +1532,33 @@ impl Editor {
         Some(self.buffer.cursor())
     }
 
+    /// #134：指定行的文本（batch_replace 的命中收集面——含尾部空白、
+    /// 不含换行符；越界返回空串，与 `Buffer::line` 同口径）。
+    pub fn buffer_line(&self, i: usize) -> String {
+        self.buffer.line(i)
+    }
+
+    /// #134：批量应用替换编辑（RPC `batch_replace` 的 buffer 面——
+    /// 命中集一次 `replace_batch`，**一条 undo 撤该文件全批**）。
+    /// edits 契约：互不重叠（[`Buffer::replace_batch`] 的调用方契约；
+    /// rpc 侧 collect 层按非重叠口径产出）。返回应用的编辑数。
+    pub fn apply_batch_replacements(
+        &mut self,
+        edits: &[(Point, Point, String)],
+        cx: &mut Context<Self>,
+    ) -> usize {
+        if self.read_only || self.docx_edit.is_some() || edits.is_empty() {
+            return 0;
+        }
+        let n = self.buffer.replace_batch(edits.to_vec());
+        if n > 0 {
+            self.sync_cursors_from_buffer();
+            self.after_edit();
+            cx.notify();
+        }
+        n
+    }
+
     /// 文档变更后的缓存刷新（fence 状态 + 查找匹配 + 断点失效）。
     fn refresh_caches(&mut self) {
         // r42 阶段 B：编辑后断点全部失效（被编辑行的断点需重算；

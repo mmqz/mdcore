@@ -306,6 +306,18 @@ pub enum ControlCommand {
         range: (PointWire, PointWire),
         format: crate::editor::FormatKind,
     },
+
+    // ---------------- #134 任务 3：批量操作 ----------------
+    /// 跨文件批量替换（沙箱内；已打开文本标签走 Buffer 一条 undo 全批，
+    /// 未打开文件直接改盘；返回每文件改动数）。
+    #[serde(rename = "batch_replace")]
+    BatchReplace {
+        files: Vec<String>,
+        pattern: String,
+        replacement: String,
+        #[serde(default)]
+        is_regex: bool,
+    },
 }
 
 /// 点位线上形态（`{"line": n, "col": n}`——与响应 `point_json` 同构）。
@@ -351,6 +363,7 @@ impl ControlCommand {
             ControlCommand::ListCommands => "list_commands",
             ControlCommand::GetOutline => "get_outline",
             ControlCommand::ApplyFormat { .. } => "apply_format",
+            ControlCommand::BatchReplace { .. } => "batch_replace",
         }
     }
 }
@@ -930,6 +943,13 @@ fn execute_command(
         ControlCommand::ApplyFormat { range, format } => {
             cmd_apply_format(shell, cx, range.0, range.1, *format)
         }
+        // ---------------- #134 任务 3：批量操作 ----------------
+        ControlCommand::BatchReplace {
+            files,
+            pattern,
+            replacement,
+            is_regex,
+        } => cmd_batch_replace(shell, cx, files, pattern, replacement, *is_regex),
     }
 }
 
@@ -1736,6 +1756,289 @@ fn cmd_apply_format(
     }
 }
 
+// ---------------------------------------------------------------------------
+// #134 任务 3：批量替换（纯函数 collect 层——单测主战场）
+// ---------------------------------------------------------------------------
+
+/// 单个命中（行列/长度均 char 口径——与 Buffer 的 Point 语义一致；
+/// `repl` 已展开：正则的 $1 捕获引用在收集时即展开）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReplaceHit {
+    line: usize,
+    col: usize,
+    len: usize,
+    repl: String,
+}
+
+/// 字面模式命中收集（非重叠——`str::find` 循环推进同口径；命中
+/// 不跨行：按行喂入）。空模式拒绝。
+fn collect_literal_hits(
+    lines: &[String],
+    pattern: &str,
+    replacement: &str,
+) -> Result<Vec<ReplaceHit>, String> {
+    if pattern.is_empty() {
+        return Err("空模式拒绝——pattern 必须非空".into());
+    }
+    let mut out = Vec::new();
+    for (li, line) in lines.iter().enumerate() {
+        let mut from = 0;
+        while let Some(off) = line[from..].find(pattern) {
+            let byte_start = from + off;
+            out.push(ReplaceHit {
+                line: li,
+                col: line[..byte_start].chars().count(),
+                len: pattern.chars().count(),
+                repl: replacement.to_string(),
+            });
+            from = byte_start + pattern.len();
+        }
+    }
+    Ok(out)
+}
+
+/// 正则命中收集（每行 `captures_iter`；空匹配跳过——`a*` 型模式在
+/// 每处空转，不产生有意义的编辑；`$1` 捕获引用用 `caps.expand` 展开）。
+fn collect_regex_hits(lines: &[String], re: &regex::Regex, template: &str) -> Vec<ReplaceHit> {
+    let mut out = Vec::new();
+    for (li, line) in lines.iter().enumerate() {
+        for caps in re.captures_iter(line) {
+            let whole = caps.get(0).expect("组 0 恒在");
+            if whole.as_str().is_empty() {
+                continue;
+            }
+            let mut repl = String::new();
+            caps.expand(template, &mut repl);
+            out.push(ReplaceHit {
+                line: li,
+                col: line[..whole.start()].chars().count(),
+                len: whole.as_str().chars().count(),
+                repl,
+            });
+        }
+    }
+    out
+}
+
+/// 磁盘文本的行级替换（未打开文件的 disk 通道——**倒序应用**：命中
+/// 在原文上收集，先替换行尾方向的命中使前序坐标不漂移；尾换行保
+/// 真；命中不跨行使行级替换与全文替换等价）。
+fn replace_text_lines(hits: &[ReplaceHit], lines: &mut [String]) {
+    for h in hits.iter().rev() {
+        let line = &mut lines[h.line];
+        let start: usize = line
+            .char_indices()
+            .nth(h.col)
+            .map(|(b, _)| b)
+            .unwrap_or(line.len());
+        let end: usize = line[start..]
+            .char_indices()
+            .nth(h.len)
+            .map(|(b, _)| start + b)
+            .unwrap_or(line.len());
+        line.replace_range(start..end, &h.repl);
+    }
+}
+
+/// `batch_replace` 文件数上限（防一次命令扫穿整个仓库把响应撑爆）。
+const BATCH_MAX_FILES: usize = 200;
+
+/// `batch_replace` 单文件命中上限（超出即该文件报错——批量操作要么
+/// 全做要么明确失败，不静默截断）。
+const BATCH_MAX_HITS_PER_FILE: usize = 10_000;
+
+// ---------------------------------------------------------------------------
+// #134 任务 3：批量替换（主线程薄编排——buffer/disk 双通道）
+// ---------------------------------------------------------------------------
+
+fn cmd_batch_replace(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    files: &[String],
+    pattern: &str,
+    replacement: &str,
+    is_regex: bool,
+) -> Result<serde_json::Value, String> {
+    if files.is_empty() {
+        return Err("文件清单为空".into());
+    }
+    if files.len() > BATCH_MAX_FILES {
+        return Err(format!(
+            "文件数超上限（{} > {BATCH_MAX_FILES}）——分批提交",
+            files.len()
+        ));
+    }
+    let root = workspace_root_of(shell, cx)?;
+    let re = if is_regex {
+        Some(regex::Regex::new(pattern).map_err(|e| format!("正则编译失败：{e}"))?)
+    } else {
+        None
+    };
+    if !is_regex && pattern.is_empty() {
+        return Err("空模式拒绝——pattern 必须非空".into());
+    }
+
+    let mut file_results: Vec<serde_json::Value> = Vec::with_capacity(files.len());
+    let mut total = 0usize;
+    let mut files_changed = 0usize;
+    for file in files {
+        let (count, mut v) =
+            batch_replace_one(shell, cx, &root, file, pattern, replacement, re.as_ref());
+        if count > 0 {
+            total += count;
+            files_changed += 1;
+        } else {
+            // 统一补 skipped 标记（count=0 且无 error = 无命中）
+            if v.get("error").is_none() {
+                v["note"] = serde_json::json!("无命中");
+            }
+        }
+        file_results.push(v);
+    }
+    Ok(serde_json::json!({
+        "total_replacements": total,
+        "files_changed": files_changed,
+        "files": file_results,
+        // undo 语义：via=buffer 的文件一次 undo 撤该文件全批；via=disk
+        // 直接改盘不可 undo（AI 可先 open 全部文件再 batch 获得整批可撤销）。
+        "undo_hint": "已打开文件（via=buffer）一条 undo 撤该文件全批；磁盘直改（via=disk）不可 undo",
+    }))
+}
+
+/// 单文件替换（cmd_batch_replace 的子步骤）。返回 `(命中数, 结果 JSON)`。
+fn batch_replace_one(
+    shell: &mut ShellApp,
+    cx: &mut Context<ShellApp>,
+    root: &Path,
+    file: &str,
+    pattern: &str,
+    replacement: &str,
+    re: Option<&regex::Regex>,
+) -> (usize, serde_json::Value) {
+    let path = match resolve_sandboxed(root, Path::new(file)) {
+        Ok(p) => p,
+        Err(err) => return (0, batch_file_error(file, &err)),
+    };
+    // 已打开 → buffer 通道（一条 undo + 事件流；标签即使非活动也能改）
+    if let Some(idx) = open_tab_by_canonical(shell, &path) {
+        if !shell.tab_can_reload(idx, cx) {
+            return (
+                0,
+                batch_file_error(file, "只读渲染态 / docx 行模型态——先 close_file 再批量替换"),
+            );
+        }
+        let Some(editor) = shell.tab_editor(idx).cloned() else {
+            return (0, batch_file_error(file, "标签实体不可达"));
+        };
+        // 收集命中（buffer 行 → 命中集 → Point 编辑集）
+        let hits = editor.update(cx, |ed, _| {
+            let lines: Vec<String> = (0..ed.line_count()).map(|i| ed.buffer_line(i)).collect();
+            match re {
+                Some(re) => collect_regex_hits(&lines, re, replacement),
+                None => collect_literal_hits(&lines, pattern, replacement).unwrap_or_default(),
+            }
+        });
+        if hits.len() > BATCH_MAX_HITS_PER_FILE {
+            return (
+                0,
+                batch_file_error(
+                    file,
+                    &format!(
+                        "命中数超上限（{} > {BATCH_MAX_HITS_PER_FILE}）——拒绝执行",
+                        hits.len()
+                    ),
+                ),
+            );
+        }
+        let edits: Vec<(Point, Point, String)> = hits
+            .iter()
+            .map(|h| {
+                (
+                    Point::new(h.line, h.col),
+                    Point::new(h.line, h.col + h.len),
+                    h.repl.clone(),
+                )
+            })
+            .collect();
+        let applied = editor.update(cx, |ed, cx| ed.apply_batch_replacements(&edits, cx));
+        return (
+            applied,
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "count": applied,
+                "via": "buffer",
+            }),
+        );
+    }
+    // 未打开 → disk 通道（读盘 → 行级替换 → 有变更写回；不可 undo）
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(err) => return (0, batch_file_error(file, &format!("读取失败：{err}"))),
+    };
+    let text = match String::from_utf8(bytes) {
+        Ok(t) => t,
+        Err(_) => return (0, batch_file_error(file, "非 UTF-8 文本——不支持批量替换")),
+    };
+    let trailing_newline = text.ends_with('\n');
+    let body = text.strip_suffix('\n').unwrap_or(&text);
+    let mut lines: Vec<String> = body.split('\n').map(str::to_string).collect();
+    let hits = match re {
+        Some(re) => collect_regex_hits(&lines, re, replacement),
+        None => match collect_literal_hits(&lines, pattern, replacement) {
+            Ok(h) => h,
+            Err(err) => return (0, batch_file_error(file, &err)),
+        },
+    };
+    if hits.len() > BATCH_MAX_HITS_PER_FILE {
+        return (
+            0,
+            batch_file_error(
+                file,
+                &format!(
+                    "命中数超上限（{} > {BATCH_MAX_HITS_PER_FILE}）——拒绝执行",
+                    hits.len()
+                ),
+            ),
+        );
+    }
+    if hits.is_empty() {
+        return (
+            0,
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "count": 0,
+                "via": "disk",
+            }),
+        );
+    }
+    replace_text_lines(&hits, &mut lines);
+    let mut new_text = lines.join("\n");
+    if trailing_newline {
+        new_text.push('\n');
+    }
+    if let Err(err) = std::fs::write(&path, &new_text) {
+        return (0, batch_file_error(file, &format!("写回失败：{err}")));
+    }
+    (
+        hits.len(),
+        serde_json::json!({
+            "path": path.display().to_string(),
+            "count": hits.len(),
+            "via": "disk",
+        }),
+    )
+}
+
+/// 单文件错误结果（沙箱拒绝/IO/形态拒绝——count=0 + error）。
+fn batch_file_error(file: &str, err: &str) -> serde_json::Value {
+    serde_json::json!({
+        "path": file,
+        "count": 0,
+        "via": "skipped",
+        "error": err,
+    })
+}
+
 /// 全量状态（get_state 的 result 载荷）。
 fn state_json(shell: &ShellApp, cx: &Context<ShellApp>) -> serde_json::Value {
     let tabs: Vec<serde_json::Value> = (0..shell.tab_count())
@@ -2386,6 +2689,141 @@ mod tests {
             .name(),
             "apply_format"
         );
+    }
+
+    #[test]
+    fn parse_batch_replace_roundtrip() {
+        let (id, cmd) = parse_command(
+            r#"{"id":30,"cmd":"batch_replace","files":["a.rs","b.rs"],"pattern":"foo","replacement":"bar"}"#,
+        );
+        assert_eq!(id, Some(30));
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::BatchReplace {
+                files: vec!["a.rs".into(), "b.rs".into()],
+                pattern: "foo".into(),
+                replacement: "bar".into(),
+                is_regex: false,
+            })
+        );
+        // is_regex 显式 true + 空 files 数组形态合法（cmd 层拒）
+        let (_, cmd) = parse_command(
+            r#"{"cmd":"batch_replace","files":[],"pattern":"f(\\w+)","replacement":"x$1","is_regex":true}"#,
+        );
+        assert_eq!(
+            cmd,
+            Ok(ControlCommand::BatchReplace {
+                files: vec![],
+                pattern: "f(\\w+)".into(),
+                replacement: "x$1".into(),
+                is_regex: true,
+            })
+        );
+        // 字段错误：缺 pattern / files 类型错
+        let (_, cmd) = parse_command(r#"{"cmd":"batch_replace","files":["a"],"replacement":"b"}"#);
+        assert!(cmd.is_err());
+        let (_, cmd) =
+            parse_command(r#"{"cmd":"batch_replace","files":"a","pattern":"x","replacement":"y"}"#);
+        assert!(cmd.is_err());
+        assert_eq!(
+            ControlCommand::BatchReplace {
+                files: vec![],
+                pattern: String::new(),
+                replacement: String::new(),
+                is_regex: false,
+            }
+            .name(),
+            "batch_replace"
+        );
+    }
+
+    // ---------------- #134 任务 3：collect 层（单测主战场） ----------------
+
+    #[test]
+    fn literal_hits_multiline_and_cjk_cols() {
+        let lines = vec![
+            "foo and foo".to_string(),
+            "中文 foo 混排".to_string(),
+            "无命中".to_string(),
+        ];
+        let hits = collect_literal_hits(&lines, "foo", "X").unwrap();
+        assert_eq!(hits.len(), 3, "{hits:?}");
+        // 英文行两个命中：col 0 / col 8；非重叠推进
+        assert_eq!(
+            hits[0],
+            ReplaceHit {
+                line: 0,
+                col: 0,
+                len: 3,
+                repl: "X".into()
+            }
+        );
+        assert_eq!(
+            hits[1],
+            ReplaceHit {
+                line: 0,
+                col: 8,
+                len: 3,
+                repl: "X".into()
+            }
+        );
+        // CJK 行："foo" 前是 2 汉字 + 1 空格 = 3 chars → char 列 3
+        //（字节偏移 7——char 列口径与 Buffer 一致，中文每字 1 列）
+        assert_eq!(hits[2].line, 1);
+        assert_eq!(hits[2].col, 3, "char 列口径：{:?}", hits[2]);
+        assert_eq!(hits[2].len, 3);
+    }
+
+    #[test]
+    fn literal_hits_non_overlapping_and_empty_pattern() {
+        // "aaa" 查 "aa"：只命中 col 0（替换推进后剩余不足）
+        let lines = vec!["aaa".to_string()];
+        let hits = collect_literal_hits(&lines, "aa", "").unwrap();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        // 空模式拒绝
+        assert!(collect_literal_hits(&lines, "", "x").is_err());
+    }
+
+    #[test]
+    fn regex_hits_groups_and_empty_match_skip() {
+        let lines = vec!["fn foo() {}".to_string(), "fn bar() {}".to_string()];
+        let re = regex::Regex::new("fn (\\w+)").unwrap();
+        // 组引用后跟字母时必须用 ${1} 花括号界定（$1_impl 会被解析为
+        // 命名组“1_impl”→ 不存在 → 空展开）
+        let hits = collect_regex_hits(&lines, &re, "fn ${1}_impl");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].repl, "fn foo_impl", "$1 捕获展开");
+        assert_eq!(hits[1].repl, "fn bar_impl");
+        assert_eq!(hits[0].col, 0);
+        assert_eq!(hits[0].len, 6, "fn foo = 6 chars");
+
+        // 空匹配跳过：a* 在 "b" 上每处空命中——不产生编辑
+        let lines = vec!["b".to_string()];
+        let re = regex::Regex::new("a*").unwrap();
+        let hits = collect_regex_hits(&lines, &re, "X");
+        assert!(hits.is_empty(), "空命中不产生编辑：{hits:?}");
+    }
+
+    #[test]
+    fn replace_text_lines_in_place() {
+        let mut lines = vec!["foo x foo".to_string(), "tail".to_string()];
+        let hits = collect_literal_hits(&lines, "foo", "BAR").unwrap();
+        replace_text_lines(&hits, &mut lines);
+        assert_eq!(lines[0], "BAR x BAR");
+        assert_eq!(lines[1], "tail", "无命中行不动");
+
+        // CJK 替换（char 域正确性）
+        let mut lines = vec!["中文foo混排".to_string()];
+        let hits = collect_literal_hits(&lines, "foo", "（替换）").unwrap();
+        replace_text_lines(&hits, &mut lines);
+        assert_eq!(lines[0], "中文（替换）混排");
+
+        // 正则 $1 展开后的就地替换
+        let mut lines = vec!["price: 100; price: 250".to_string()];
+        let re = regex::Regex::new("price: (\\d+)").unwrap();
+        let hits = collect_regex_hits(&lines, &re, "cost: $1");
+        replace_text_lines(&hits, &mut lines);
+        assert_eq!(lines[0], "cost: 100; cost: 250");
     }
 
     /// 沙箱测试夹具：进程唯一临时工作区（G3 全局污染教训——不共享
