@@ -95,3 +95,51 @@ jobs:
 
       - name: Test mdc-workbench
         run: cargo test -p mdc-workbench
+
+  # mang-shell 是【独立 workspace】（依赖 third_party/zed 的 gpui 32 crate /
+  # 157K LOC），主仓的 cargo test 覆盖不到。这里单独建 job。
+  #
+  # 用 windows-latest 而不是 ubuntu：
+  #   · GPUI Windows 走 D3D11，不需要 GTK/alsa/xkbcommon 一堆系统库
+  #   · 本地开发验证就是 Windows，环境一致
+  test-shell:
+    name: windows / mang-shell (GPUI 编辑器)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + target (mang-shell 独立 workspace)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            mang-shell/target/
+          key: ${{ runner.os }}-shell-${{ hashFiles('mang-shell/Cargo.lock', 'third_party/zed/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-shell-
+
+      - name: cargo check (mang-shell 全目标)
+        working-directory: mang-shell
+        run: cargo check --all-targets
+
+      - name: cargo test --lib (编辑器逻辑 + docx/pdf/xlsx 映射)
+        working-directory: mang-shell
+        # perf 门槛测试在 4 核 runner 上会抖动——单线程跑（本地单跑 0.12s 稳定）。
+        run: cargo test --lib -- --test-threads=1
+
+      - name: cargo test (集成测试：docx 往返/端到端/语料)
+        working-directory: mang-shell
+        # 跳过两个「重/环境敏感」的语料测试：
+        #   · real_rust_corpus_full_sweep —— 扫描全仓 .rs（11 分钟），CI 太慢
+        #   · real_rust_file_string_and_comment_are_ignored —— CI 环境失败待查
+        #     （本地过、CI 挂；已排除行尾因素，疑高版本 rustc 的 highlight 行为差异）
+        # 只跳过「扫全仓 .rs」的重测试（11 分钟，CI 太慢）。
+        # real_rust_file_string_and_comment_are_ignored 已在 #157 修好（Doc::new 围栏态），不再跳过。
+        run: cargo test --tests -- --test-threads=1 --skip real_rust_corpus_full_sweep

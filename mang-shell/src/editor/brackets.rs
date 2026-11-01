@@ -127,13 +127,27 @@ impl Doc {
         let mut walker = FenceWalker::new();
         for raw in text.split('\n') {
             let line = raw.strip_suffix('\r').unwrap_or(raw);
+            // whole_lang（代码文件：.rs/.py/.ts 直接打开）时整篇都是同一语言，
+            // 【没有 markdown 围栏语义】——每行都用该语言，且不推进围栏状态机。
+            //
+            // 曾经的 bug（#157）：只判 `!walker.fence` 决定是否用 whole_lang，
+            // 然后无条件 walker.advance。highlight_line_ex 在 CodeBlock 分支返回
+            // fence_at_end = !closes——对普通代码行恒为 true。于是【第一行】就把
+            // fence 置真、lang 变成 fence_lang_of(第一行)=None；从此所有行退化为
+            // CodeBlock(None)，highlight_code_line 见 lang=None 直接整行 BlockCode，
+            // 行内字符串不再被识别 → 字符串里的括号被当成真括号。
+            //
+            // 症状：find_match_lang("    let s = \"(\";", (1,14), Some(Rust)) 返回
+            // Unmatched 而非 None——即把字符串里的 '(' 当成了真括号。
             let state = match whole_lang {
-                Some(lang) if !walker.fence => FenceState::CodeBlock(Some(lang)),
-                _ => walker.state(),
+                Some(lang) => FenceState::CodeBlock(Some(lang)),
+                None => walker.state(),
             };
             lines.push(bracket_chars(line, state));
-            let h = highlight::highlight_line_ex(line, state);
-            walker.advance(line, h.fence_at_end);
+            if whole_lang.is_none() {
+                let h = highlight::highlight_line_ex(line, state);
+                walker.advance(line, h.fence_at_end);
+            }
         }
         Doc { lines }
     }
