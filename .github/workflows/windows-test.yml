@@ -72,7 +72,10 @@ jobs:
         run: cargo test -p mdc-office-io
 
       - name: Test mdc-pdf (four-piece + forms + stamp + signature)
-        run: cargo test -p mdc-pdf
+        # forms/stamp/signature/annotate 在 engine-lopdf feature 门后
+        # （lib.rs 的 #[cfg(feature = "engine-lopdf")]）——不带 feature 会
+        # unresolved import。pdfium 面需要动态库，CI 上没有，只开 lopdf。
+        run: cargo test -p mdc-pdf --features engine-lopdf
 
       - name: Test mdc-formula (xlsx formula engine)
         run: cargo test -p mdc-formula
