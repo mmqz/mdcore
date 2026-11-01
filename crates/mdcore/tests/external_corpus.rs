@@ -62,6 +62,9 @@ struct L1Baseline {
 /// spec.txt example 块解析（32 反引号围栏——TR-2B 驱动逐行同构）。
 fn parse_spec_examples(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
+    // 行尾归一化：闭合围栏判定用 len==32、分块锚用固定串，
+    // CRLF 下都会失配（用例数 655→0）。先归一化再看。
+    let text = text.replace("\r\n", "\n");
     let mut section = String::new();
     let lines: Vec<&str> = text.split('\n').collect();
     let mut i = 0;
