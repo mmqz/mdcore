@@ -265,6 +265,13 @@ impl ShellApp {
                 vec![TabItem { path, editor }]
             })
             .unwrap_or_default();
+        // #179（#188 接线）：启动标签注入宿主句柄（右键菜单触发器的
+        // 跨实体通道——与下述 open_document_tab / open_readonly_tab
+        // 同一注入面，三入口全覆盖）。
+        let shell_weak = cx.entity().downgrade();
+        for tab in &tabs {
+            tab.editor.update(cx, |ed, _| ed.set_shell(shell_weak.clone()));
+        }
         // F4：窗口关闭前确认钩子（平台 X 钮/OS 关闭——四后端均接线
         // on_should_close；cx.quit 不经此路）。脏标签存在 → 拦截本次
         // 关闭 + 弹确认框；确认后保存/放弃再 cx.quit。
@@ -559,6 +566,10 @@ impl ShellApp {
             return self.activate_tab_focus(idx, cx);
         }
         let editor = cx.new(|cx| Editor::new_readonly(Some(path.clone()), content, cx));
+        // #179（#188 接线）：只读标签同样注入宿主句柄（右键菜单对只读
+        // 态有灰显语义——剪切/粘贴/替换灰显，复制/查找/跳行可用）。
+        let shell_weak = cx.entity().downgrade();
+        editor.update(cx, |ed, _| ed.set_shell(shell_weak));
         let focus = editor.read(cx).focus_handle().clone();
         self.tabs.push(TabItem { path, editor });
         self.active = self.tabs.len() - 1;
@@ -785,6 +796,11 @@ impl ShellApp {
         }
         match document::open_editor(&path, cx) {
             OpenOutcome::Opened(editor) => {
+                // #179（#188 接线）：挂入标签前注入宿主句柄（编辑区右键
+                // 菜单触发器——document.rs 的 cx 是 &mut App 拿不到
+                // shell，构造后补注）。
+                let shell_weak = cx.entity().downgrade();
+                editor.update(cx, |ed, _| ed.set_shell(shell_weak));
                 let focus = editor.read(cx).focus_handle().clone();
                 self.tabs.push(TabItem {
                     path: path.clone(),
