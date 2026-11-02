@@ -467,6 +467,7 @@ fn emit_block(
     id: NodeId,
     w: &mut DocxWriter,
     quote_depth: usize,
+    images: &ImageTable,
 ) -> Result<(), ExportError> {
     let node = tree.node(id);
     let text = node.text.to_string();
@@ -474,7 +475,7 @@ fn emit_block(
         // 虚根透明递归（top_level 已绕过；op 面禁止 Document 子块——防御）
         BlockKind::Document => {
             for &c in &node.children {
-                emit_block(tree, c, w, quote_depth)?;
+                emit_block(tree, c, w, quote_depth, images)?;
             }
         }
         BlockKind::Heading => {
@@ -487,8 +488,27 @@ fn emit_block(
             }
         }
         BlockKind::Paragraph => {
-            let (clean, marks) = effective_inline(&text, &node.marks);
-            emit_rich_paragraphs(w, &clean, &marks, quote_depth)
+            // P1 #190：图片行直通——整块单行 + `![alt](src)` 形 + src
+            // 命中资源表 → [`DocxWriter::image`]（内嵌 PNG，显式尺寸）。
+            // 识别在 `effective_inline` 之前（原始字面量——图片是块级
+            // 面，行内 marks 不适用）；alt 不发射（OOXML 图注/alt-text
+            // 是独立面，office-io image() 不暴露——登记）。未命中 src /
+            // 多行块 / 嵌套括号形 → 原文本路径（字面量原样，降级登记
+            // 见模块文档）。
+            let mut emitted_image = false;
+            if !text.contains('\n') {
+                if let Some((_, src)) = image_line(&text) {
+                    if let Some(img) = images.get(src) {
+                        w.image(&img.png, img.width_px, img.height_px)
+                            .map_err(|e| map_error(&e))?;
+                        emitted_image = true;
+                    }
+                }
+            }
+            if !emitted_image {
+                let (clean, marks) = effective_inline(&text, &node.marks);
+                emit_rich_paragraphs(w, &clean, &marks, quote_depth);
+            }
         }
         BlockKind::CodeBlock => {
             // 双通道等宽（t20 消解）；lang/fence 降级登记见模块文档。
@@ -513,7 +533,7 @@ fn emit_block(
                 emit_rich_paragraphs(w, &clean, &marks, d);
             }
             for &c in &node.children {
-                emit_block(tree, c, w, d)?;
+                emit_block(tree, c, w, d, images)?;
             }
         }
         BlockKind::ListItem => {
@@ -540,7 +560,7 @@ fn emit_block(
                     .map_err(|e| map_error(&e))?;
             }
             for &c in &node.children {
-                emit_block(tree, c, w, quote_depth)?;
+                emit_block(tree, c, w, quote_depth, images)?;
             }
         }
         BlockKind::ThematicBreak => {
@@ -555,8 +575,11 @@ fn emit_block(
 /// 显式降级（模块文档映射表），映射层永不报错；错误面 = 引擎写/打包。
 pub fn export_docx_core(tree: &BlockTree) -> Result<Vec<u8>, ExportError> {
     let mut w = DocxWriter::new();
+    // P1 #190：无 options 面 = 空图片表（图片行降级为字面量文本——
+    // 与既有行为逐字节一致，图片只在 styled 面资源表供给）。
+    let empty: ImageTable = ImageTable::new();
     for &child in tree.top_level() {
-        emit_block(tree, child, &mut w, 0)?;
+        emit_block(tree, child, &mut w, 0, &empty)?;
     }
     w.save_to_vec().map_err(|e| map_error(&e))
 }
@@ -867,6 +890,140 @@ fn parse_hf_slot(
     }
 }
 
+// ---------------------------------------------------------------- P1 #190：图片资源表
+
+/// PNG 标准签名（RFC 2083——与 office-io `DocxWriter::image` 同源常量；
+/// 本层前置验保证拒绝路径零副作用：资源表全部校验完才开始发射，
+/// 引擎侧签名校验保留为双保险）。
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// P1 #190：图片资源（解码后字节 + 显式像素尺寸——office-io `image()`
+/// 无尺寸推断面，要求显式 px；EMU 换算引擎内建 `from_px` = px × 9525
+/// @96dpi）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageSpec {
+    pub png: Vec<u8>,
+    pub width_px: u32,
+    pub height_px: u32,
+}
+
+/// P1 #190：图片资源表（src 键 → 资源；Markdown 图片行 `![alt](src)`
+/// 的 src 命中表键即发射内嵌图片）。查表面（只 get 不遍历——序无关）。
+pub type ImageTable = std::collections::HashMap<String, ImageSpec>;
+
+/// 标准 base64 解码（RFC 4648 字母表 + padding——零三方依赖：
+/// Cargo.lock 零 diff 纪律下的最小实现）。非法字符 / 缺 padding /
+/// padding 后跟数据 → 错误消息（含字节偏移——调用方可定位）。URL-safe
+/// 变体（`-`/`_`）不支持（JS 侧 `btoa` 产标准字母表）。
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let s = s.trim();
+    if !s.len().is_multiple_of(4) {
+        return Err(format!(
+            "length {} not a multiple of 4 (missing padding?)",
+            s.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    let mut padding_seen = false;
+    for (i, ch) in s.bytes().enumerate() {
+        if ch == b'=' {
+            padding_seen = true;
+            continue;
+        }
+        if padding_seen {
+            return Err(format!("data after padding at byte {i}"));
+        }
+        let v = ALPHABET
+            .iter()
+            .position(|&a| a == ch)
+            .ok_or_else(|| format!("invalid character {:?} at byte {i}", ch as char))?
+            as u32;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
+/// P1 #190：`images` 顶层键 → [`ImageTable`]（缺省/null = 空表——零
+/// 命中，图片行全部降级为字面量文本，字节稳定）。每项 =
+/// `{"png_base64": str, "width_px": 1.., "height_px": 1..}`：
+/// base64 解码 / PNG 签名 / 尺寸正数全部**前置验**（`docx_options`
+/// ——拒绝路径零副作用纪律：发射中途拒会留半成品状态面）。
+fn parse_images(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Result<ImageTable, ExportError> {
+    let mut table = ImageTable::new();
+    let v = match obj.get("images") {
+        None | Some(serde_json::Value::Null) => return Ok(table),
+        Some(v) => v
+            .as_object()
+            .ok_or_else(|| options_err("images", "must be an object".into()))?,
+    };
+    for (src, spec) in v {
+        let path = format!("images.{src}");
+        let o = spec
+            .as_object()
+            .ok_or_else(|| options_err(&path, "must be an object".into()))?;
+        for k in o.keys() {
+            if !matches!(k.as_str(), "png_base64" | "width_px" | "height_px") {
+                return Err(options_err(
+                    &path,
+                    format!("unknown field `{k}` (allowed: png_base64, width_px, height_px)"),
+                ));
+            }
+        }
+        let b64 = req_str(o, &path, "png_base64")?;
+        let png = base64_decode(&b64)
+            .map_err(|e| options_err(&path, format!("`png_base64` decode failed: {e}")))?;
+        if png.len() < 8 || png[..8] != PNG_SIGNATURE {
+            return Err(options_err(
+                &path,
+                format!(
+                    "`png_base64` is not a PNG (signature mismatch, {} bytes)",
+                    png.len()
+                ),
+            ));
+        }
+        let width_px = req_int(o, &path, "width_px", 1, u32::MAX as i64)? as u32;
+        let height_px = req_int(o, &path, "height_px", 1, u32::MAX as i64)? as u32;
+        table.insert(
+            src.clone(),
+            ImageSpec {
+                png,
+                width_px,
+                height_px,
+            },
+        );
+    }
+    Ok(table)
+}
+
+/// P1 #190：Markdown 图片行解析（`![alt](src)` 整行形）。
+///
+/// v0 行级解析器（markdown.rs）把图片行落为**独立单行 Paragraph**，
+/// text 原文保留字面量——图片信息已在树里，本函数在导出层识别
+/// （零树改动的接线路径；BlockKind 无 image 变体的替代面）。
+/// 严格形：行首 `![` + 恰一个 `](` + 行尾 `)`；alt 可空、src 非空
+/// 且不含 `()`（CommonMark 内联图片语法的最小无歧义子集——嵌套
+/// 括号形不识别，降级为文本行）。
+fn image_line(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("![")?;
+    let close = rest.find("](")?;
+    let alt = &rest[..close];
+    let src = rest[close + 2..].strip_suffix(')')?;
+    if src.is_empty() || src.contains('(') || src.contains(')') || alt.contains(']') {
+        return None;
+    }
+    Some((alt, src))
+}
+
 /// 解析后的导出格式选项（已构造为 office-io 公开类型——值域校验
 /// 延迟到 save 漏斗 V9）。
 pub struct StyleOptions {
@@ -881,6 +1038,9 @@ pub struct StyleOptions {
     pub header: Option<HeaderFooterSpec>,
     /// P1 #190：页脚六槽位（同上）。
     pub footer: Option<HeaderFooterSpec>,
+    /// P1 #190：图片资源表（空表 = 零命中——图片行降级为字面量
+    /// 文本，字节稳定）。
+    pub images: ImageTable,
 }
 
 /// options JSON → [`StyleOptions`]（形状校验层；JsValue-free 原生可测）。
@@ -893,12 +1053,12 @@ pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
     for key in obj.keys() {
         if !matches!(
             key.as_str(),
-            "typography" | "page_geometry" | "toc" | "anonymize" | "header" | "footer"
+            "typography" | "page_geometry" | "toc" | "anonymize" | "header" | "footer" | "images"
         ) {
             return Err(options_err(
                 "$",
                 format!(
-                    "unknown field `{key}` (allowed: typography, page_geometry, toc, anonymize, header, footer)"
+                    "unknown field `{key}` (allowed: typography, page_geometry, toc, anonymize, header, footer, images)"
                 ),
             ));
         }
@@ -1038,6 +1198,9 @@ pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
     let header = parse_hf_slot(obj, "header")?;
     let footer = parse_hf_slot(obj, "footer")?;
 
+    // P1 #190：图片资源表（缺省 = 空表——零命中，字节稳定）。
+    let images = parse_images(obj)?;
+
     Ok(StyleOptions {
         typography,
         page_geometry,
@@ -1045,6 +1208,7 @@ pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
         anonymize,
         header,
         footer,
+        images,
     })
 }
 
@@ -1094,7 +1258,7 @@ pub fn export_docx_styled_core(
         )]);
     }
     for &child in tree.top_level() {
-        emit_block(tree, child, &mut w, 0)?;
+        emit_block(tree, child, &mut w, 0, &opts.images)?;
     }
     let bytes = w.save_to_vec().map_err(|e| map_error(&e))?;
     // W-2：匿名化后处理（暗标 G3/R-11——docProps 元数据清零，正文
@@ -2720,8 +2884,7 @@ mod tests {
         let back = read_docx_from_bytes(&bytes).expect("read back");
         assert_eq!(back.headers.len(), 3, "页眉三槽");
         assert_eq!(back.footers.len(), 3, "页脚三槽");
-        let variants =
-            |v: &[HeaderFooterData]| v.iter().map(|d| d.variant).collect::<Vec<_>>();
+        let variants = |v: &[HeaderFooterData]| v.iter().map(|d| d.variant).collect::<Vec<_>>();
         assert!(variants(&back.headers).contains(&HeaderFooterVariant::Default));
         assert!(variants(&back.headers).contains(&HeaderFooterVariant::First));
         assert!(variants(&back.headers).contains(&HeaderFooterVariant::Even));
@@ -2808,5 +2971,171 @@ mod tests {
             .expect("bare empty slot ok");
         let back2 = read_docx_from_bytes(&bare_empty).expect("read back 2");
         assert_eq!(back2.headers.len(), 1, "空默认槽挂接");
+    }
+
+    // ------------------------------------------------------------ P1 #190：图片
+
+    /// P1 #190 测试夹具：1×1 PNG（与 docx_import.rs `PNG_1X1` 同源字节
+    /// ——office-io image() 已验证合法的最小 PNG）的 base64 形。
+    const PNG_1X1_B64: &str =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGIAAQAABQABDQottAAAAABJRU5ErkJggg==";
+
+    /// P1 #190 测试夹具：images 资源表 JSON（单资源 cert.png @ 800×600）。
+    fn images_options(extra: &str) -> String {
+        format!(
+            r#"{{
+                "images": {{
+                    "cert.png": {{
+                        "png_base64": "{PNG_1X1_B64}",
+                        "width_px": 800,
+                        "height_px": 600
+                    }}
+                }}
+                {extra}
+            }}"#
+        )
+    }
+
+    /// P1 #190-E6：Markdown 图片行 → docx 内嵌图片（验收④：`![alt](src)`
+    /// 命中资源表 → word/media 部件 + 正文 a:blip 引用 + 读回 images
+    /// 资产清单 body_uses ≥1）。
+    #[test]
+    fn p1_img_markdown_line_embeds_png() {
+        let tree = markdown_to_tree("前文段落\n\n![资质证书](cert.png)\n\n后文段落\n");
+        let bytes = export_docx_styled_core(&tree, &images_options("")).expect("image export");
+        // 正文 document.xml：a:blip 引用 + extent 在场
+        let doc = part_xml(&bytes, "word/document.xml");
+        assert!(doc.contains("a:blip"), "内嵌图片引用在场");
+        assert!(doc.contains("drawing"), "drawing 容器在场");
+        // 前后文不受影响（图片行替换为图片，其余段落原样）
+        let back = read_docx_from_bytes(&bytes).expect("read back");
+        let texts: Vec<String> = paras(&back.blocks).iter().map(|p| p.text()).collect();
+        assert!(texts.contains(&"前文段落".to_string()));
+        assert!(texts.contains(&"后文段落".to_string()));
+        // 图片行字面量不再以文本形态出现（被图片替换）
+        assert!(
+            !texts.iter().any(|t| t.contains("cert.png")),
+            "图片行不入文本面"
+        );
+        // 读回资产清单（验收④全环：office-io 读面 images）——部件名
+        // 经读回资产取（docx-rs 媒体 id 全局计数，跨测试并行序不钉死）
+        assert_eq!(back.images.len(), 1, "媒体资产恰一");
+        let asset = &back.images[0];
+        assert!(
+            asset.part_name.starts_with("word/media/") && asset.part_name.ends_with(".png"),
+            "media 部件命名形: {}",
+            asset.part_name
+        );
+        assert!(asset.body_uses >= 1, "正文引用计数 ≥1");
+        assert_eq!(asset.bytes.len(), 67, "字节原样（1×1 PNG）");
+        // 部件字节与读回资产一致（容器面双源核验）
+        let part = mdc_office_io::docx::docx_part_bytes(&bytes, &asset.part_name)
+            .expect("media part present");
+        assert_eq!(part, asset.bytes, "zip 部件字节 = 读回资产字节");
+    }
+
+    /// P1 #190-E7：尺寸按 width_px/height_px 换算 EMU（验收⑤——引擎
+    /// from_px = px × 9525 @96dpi：800→7620000、600→5715000）。
+    #[test]
+    fn p1_img_dimensions_emu_scaling() {
+        let tree = markdown_to_tree("![](cert.png)\n");
+        let bytes = export_docx_styled_core(&tree, &images_options("")).expect("export");
+        let doc = part_xml(&bytes, "word/document.xml");
+        assert!(
+            doc.contains(r#"cx="7620000""#) && doc.contains(r#"cy="5715000""#),
+            "EMU 尺寸在场（800×600 px → 7620000×5715000 EMU）: {doc}"
+        );
+    }
+
+    /// P1 #190-E8：未命中 src 降级为字面量文本行（与无 images 键
+    /// 逐字节一致——资源表供给与消费解耦：不命中零影响，字节稳定）。
+    #[test]
+    fn p1_img_miss_degrades_to_literal_text() {
+        let tree = markdown_to_tree("![资质证书](other.png)\n");
+        let with_table = export_docx_styled_core(&tree, &images_options(""))
+            .expect("table present but src missed");
+        let without = export_docx_styled_core(&tree, "{}").expect("no table");
+        assert_eq!(
+            with_table, without,
+            "src 未命中 ≡ 无资源表（降级字面量，字节一致）"
+        );
+        // 降级文本可读回（字面量原样）
+        let back = read_docx_from_bytes(&with_table).expect("read back");
+        assert!(
+            paras(&back.blocks)
+                .iter()
+                .any(|p| p.text() == "![资质证书](other.png)"),
+            "字面量原样读回"
+        );
+        // 图片行识别的严格形：嵌套括号 / 缺 src / 非 `![` 前缀 → 文本行
+        for md in ["![a](b(c).png)", "![]()", "文本 ![a](cert.png) 行中"] {
+            let t = markdown_to_tree(md);
+            let b = export_docx_styled_core(&t, &images_options("")).expect("strict form");
+            assert!(read_docx_from_bytes(&b).is_ok(), "{md}: 降级产物结构完整");
+        }
+    }
+
+    /// P1 #190-E9：资源表拒收面（验收⑥完备性——base64 坏 / 非 PNG
+    /// 签名 / 零尺寸 / 未知字段 → `docx_options` 前置拒，发射零副作用）。
+    #[test]
+    fn p1_img_resource_table_rejects() {
+        let tree = markdown_to_tree("![a](cert.png)\n");
+        let cases: Vec<(&str, String)> = vec![
+            (
+                "bad base64 char",
+                r#"{"images": {"cert.png": {"png_base64": "!!!not-base64!!!", "width_px": 1, "height_px": 1}}}"#.into(),
+            ),
+            (
+                "bad base64 length",
+                r#"{"images": {"cert.png": {"png_base64": "aGVsbG8", "width_px": 1, "height_px": 1}}}"#.into(),
+            ),
+            (
+                "not png signature",
+                r#"{"images": {"cert.png": {"png_base64": "aGVxsG8gd29ybGQh", "width_px": 1, "height_px": 1}}}"#.into(),
+            ),
+            (
+                "zero width",
+                format!(
+                    r#"{{"images": {{"cert.png": {{"png_base64": "{PNG_1X1_B64}", "width_px": 0, "height_px": 1}}}}}}"#
+                ),
+            ),
+            (
+                "zero height",
+                format!(
+                    r#"{{"images": {{"cert.png": {{"png_base64": "{PNG_1X1_B64}", "width_px": 1, "height_px": 0}}}}}}"#
+                ),
+            ),
+            (
+                "unknown field",
+                format!(
+                    r#"{{"images": {{"cert.png": {{"png_base64": "{PNG_1X1_B64}", "width_px": 1, "height_px": 1, "alt": "x"}}}}}}"#
+                ),
+            ),
+            (
+                "missing base64",
+                r#"{"images": {"cert.png": {"width_px": 1, "height_px": 1}}}"#.into(),
+            ),
+            (
+                "images not object",
+                r#"{"images": [1]}"#.into(),
+            ),
+        ];
+        for (name, json) in cases {
+            let e =
+                export_docx_styled_core(&tree, &json).expect_err(&format!("{name}: must reject"));
+            assert_eq!(e.code, "docx_options", "{name}: {e:?}");
+        }
+    }
+
+    /// P1 #190-E10：estimate 面容忍 images 键（分页预估不参与——图片
+    /// 高度面无通用估算口径，登记；options 形状与导出面单一真源共享）。
+    #[test]
+    fn p1_img_estimate_tolerates_images_key() {
+        let tree = markdown_to_tree("![a](cert.png)\n段落。\n");
+        let est = estimate_pages_core(&tree, &images_options("")).expect("estimate ok");
+        assert!(est.contains("pages"), "预估出参结构完整: {est}");
+        // 顶层白名单拒收面不受影响（images 必须是对象）
+        let e = estimate_pages_core(&tree, r#"{"images": 5}"#).expect_err("must reject");
+        assert_eq!(e.code, "docx_options");
     }
 }
