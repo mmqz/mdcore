@@ -90,11 +90,11 @@ fn fn_body(file: &str, decl: &str) -> String {
     let start = file.find(decl).unwrap_or_else(|| {
         panic!("静态锚点缺失：源码里找不到 `{decl}`——函数被改名/删除？接线检查失效，请同步测试")
     });
-    let body_open = file
-        .find('{', start)
+    let body_open = file[start..]
+        .find('{')
         .unwrap_or_else(|| panic!("`{decl}` 后无函数体开括号"));
     let bytes = file.as_bytes();
-    let mut i = body_open;
+    let mut i = start + body_open;
     let mut depth = 0usize;
     let mut in_str = false;
     let mut escaped = false;
@@ -115,7 +115,7 @@ fn fn_body(file: &str, decl: &str) -> String {
         } else if c == b'}' {
             depth -= 1;
             if depth == 0 {
-                return file[body_open..=i].to_string();
+                return file[start + body_open..=i].to_string();
             }
         }
         i += 1;
