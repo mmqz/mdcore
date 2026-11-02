@@ -38,10 +38,13 @@ use crate::context_menu::{self, ContextMenu, MenuItem, Rect as MenuRect};
 use crate::context_menu_view;
 use crate::document::{self, OpenOutcome};
 use crate::editor::Editor;
+// #182：设置面板的缩进单位状态（editor::buffer 的纯枚举——面板/标签共用）。
+use crate::editor::buffer::IndentUnit;
 use crate::file_tree::FileTree;
 use crate::git_panel::GitPanel;
 use crate::panels;
 use crate::recent::RecentStore;
+use crate::settings_panel;
 use crate::status_bar;
 use crate::tab_bar::{self, TabItem};
 use crate::theme_switch;
@@ -133,6 +136,9 @@ pub struct ShellApp {
     git_panel: Option<Entity<GitPanel>>,
     /// F7：左栏视图（文件树 / git——图标条切换）。
     git_view: bool,
+    /// #182：右栏视图（属性/来源 ↔ 设置——图标条设置钮切换；
+    /// 右栏折叠开关打开时恒回属性视图）。
+    settings_view: bool,
     /// F2：Ctrl+K 和弦待续期（None = 无和弦进行中）。
     chord_until: Option<Instant>,
     /// F4：确认框（脏标签关闭/退出前确认；None = 无进行中）。
@@ -153,6 +159,10 @@ pub struct ShellApp {
     /// F6：编辑器字号（px，8-32——Ctrl+=/-/0 缩放；应用到全部标签；
     /// 持久化）。
     font_size: f32,
+    /// #182：缩进单位运行时值（设置面板展示/写入的单一状态源——
+    /// 新建标签仍从 settings 读，两处同源不漂移；持久化走
+    /// `settings::indent_unit` 既有键，零新增存储）。
+    indent_unit: IndentUnit,
     /// F1：提示横幅（打开失败 / 类型不支持 / 对话框不可用等面向用户消息）。
     notice_board: NoticeBoard,
     /// #63 打磨：右键菜单（None = 未打开）。位置是**触发时**的窗口坐标，
@@ -327,6 +337,7 @@ impl ShellApp {
             workspace,
             git_panel: None,
             git_view: false,
+            settings_view: false,
             chord_until: None,
             confirm: None,
             confirm_focus,
@@ -335,6 +346,10 @@ impl ShellApp {
             theme_mode,
             base_theme,
             font_size,
+            indent_unit: crate::settings::load_indent_unit()
+                .as_deref()
+                .map(IndentUnit::from_setting)
+                .unwrap_or_default(),
             notice_board: NoticeBoard::default(),
             context_menu: None,
             context_menu_origin: MenuOrigin::default(),
@@ -552,9 +567,26 @@ impl ShellApp {
         Some(focus)
     }
 
-    /// 折叠/展开右栏（属性/来源）。图标条底部开关触发。
+    /// 折叠/展开右栏（属性/来源）。图标条底部开关触发。#182：展开
+    /// 时回属性/来源视图（设置视图是设置钮的专属入口——两入口各管
+    /// 各的视图，不互相穿透）。
     pub fn toggle_right(&mut self, cx: &mut Context<Self>) {
         self.right_open = !self.right_open;
+        if self.right_open {
+            self.settings_view = false;
+        }
+        cx.notify();
+    }
+
+    /// #182：切到设置视图（图标条 `act-settings` 触发——已开且在设置
+    /// 视图时折叠右栏，再开切回；与 toggle_git 同构）。
+    pub fn toggle_settings(&mut self, cx: &mut Context<Self>) {
+        if self.right_open && self.settings_view {
+            self.right_open = false;
+        } else {
+            self.right_open = true;
+            self.settings_view = true;
+        }
         cx.notify();
     }
 
@@ -1221,6 +1253,45 @@ impl ShellApp {
         .detach();
     }
 
+    /// #182：设置主题模式（设置面板三态钮触发——立即应用 + 持久化；
+    /// 与 Ctrl+T 循环同一生效链，不重写主题逻辑）。
+    pub fn set_theme_mode(&mut self, mode: &'static str, cx: &mut Context<Self>) {
+        if self.theme_mode == mode {
+            return;
+        }
+        self.theme_mode = mode;
+        theme_switch::apply_mode(mode, &self.base_theme, cx);
+        crate::settings::save_theme_mode(mode);
+        eprintln!("theme: {}（{mode}）", theme_switch::mode_label(mode));
+        cx.notify();
+    }
+
+    /// #182：设置缩进单位（设置面板三态钮触发——持久化 + 应用到全部
+    /// 已开标签；新建标签从 settings 读，两处同源）。
+    pub fn set_indent_unit_all(&mut self, unit: IndentUnit, cx: &mut Context<Self>) {
+        if self.indent_unit == unit {
+            return;
+        }
+        self.indent_unit = unit;
+        crate::settings::save_indent_unit(unit.setting_key());
+        for tab in &self.tabs {
+            tab.editor.update(cx, |ed, _| ed.set_indent_unit(unit));
+        }
+        eprintln!("indent-unit: {}", unit.setting_key());
+        cx.notify();
+    }
+
+    /// #182：重置左右栏宽度（设置面板「重置默认」钮触发——恢复缺省宽
+    /// + 持久化；与拖拽收尾 finish_panel_drag 同一存储面）。
+    pub fn reset_panel_widths(&mut self, cx: &mut Context<Self>) {
+        self.left_width = panels::LEFT_PANEL_WIDTH;
+        self.right_width = panels::RIGHT_PANEL_WIDTH;
+        let (left, right) = (f32::from(self.left_width), f32::from(self.right_width));
+        crate::settings::save_panel_widths(left, right);
+        eprintln!("panel-reset: left {left} right {right} (persist)");
+        cx.notify();
+    }
+
     /// F6：循环主题（Ctrl+T——system → light → dark → system；
     /// 应用 + 持久化 + 通知）。
     pub fn cycle_theme(&mut self, cx: &mut Context<Self>) {
@@ -1534,6 +1605,7 @@ impl Render for ShellApp {
                         self.left_open,
                         self.git_view,
                         self.right_open,
+                        self.settings_view,
                         cx,
                     ))
                     .when(self.left_open, |el| {
@@ -1553,11 +1625,25 @@ impl Render for ShellApp {
                     .when(self.right_open, |el| {
                         // G4：右栏左缘 4px 拖拽热区
                         el.child(self.panel_resize_handle(PanelSide::Right, cx))
-                            .child(panels::right_panel(
-                                self.editor().cloned().as_ref(),
-                                self.right_width,
-                                cx,
-                            ))
+                            // #182：右栏双视图——设置面板（图标条设置钮
+                            // 入口）/ 属性・来源（缺省）。
+                            .child(if self.settings_view {
+                                settings_panel::settings_panel(
+                                    self.theme_mode,
+                                    self.font_size,
+                                    self.indent_unit,
+                                    self.right_width,
+                                    cx,
+                                )
+                                .into_any_element()
+                            } else {
+                                panels::right_panel(
+                                    self.editor().cloned().as_ref(),
+                                    self.right_width,
+                                    cx,
+                                )
+                                .into_any_element()
+                            })
                     }),
             )
             // F1：提示横幅（状态栏上方一条——有消息时才渲染）。

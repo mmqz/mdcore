@@ -70,6 +70,8 @@ mod doc_events;
 #[cfg(unix)]
 mod rpc;
 mod settings;
+// #182：设置面板（右栏视图——settings.rs 数据层的 UI 壳）。
+mod settings_panel;
 // UI 打磨（右键菜单 + 状态栏增强 + 命令面板分组）
 mod command_groups;
 mod context_menu;
