@@ -177,6 +177,9 @@ fn heading_tree(
 /// 属性面——批 3；pdf 态：页/字符/书签/扫描件——批 4）。
 pub fn right_panel(editor: Option<&Entity<Editor>>, width: Pixels, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
+    // #167：编辑器状态行按**真实态**呈现（is_read_only），不再无条件写
+    // 「只读」——可编辑 docx（#115 链路）标「可编辑」，降级只读标原因
+    // （docx_notice 行）。pdf/xlsx/canvas 无编辑引擎，只读是设计事实。
     let (name, chars, modified, mode, engine) = match editor {
         Some(ed) => {
             let ed = ed.read(cx);
@@ -191,9 +194,15 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, width: Pixels, cx: &App) -> 
                     "无未保存修改".to_string()
                 },
                 match ed.doc_kind() {
-                    "pdf" => "只读（pdf 文本层 → 行模型）".to_string(),
-                    "docx" => "只读（docx 块序 → 行模型）".to_string(),
-                    "xlsx" => "只读（xlsx 读面 → 行模型）".to_string(),
+                    "pdf" => "只读（pdf 文本层 → 行模型；无 pdf 编辑引擎）".to_string(),
+                    "docx" => {
+                        if ed.is_read_only() {
+                            "只读（docx 块序 → 行模型；降级——见降级说明）".to_string()
+                        } else {
+                            "可编辑（docx 段落 ↔ 引擎；锁定行只读）".to_string()
+                        }
+                    }
+                    "xlsx" => "只读（xlsx 读面 → 行模型；无原位编辑引擎）".to_string(),
                     "canvas" => "只读（canvas 会话 → 位面渲染）".to_string(),
                     _ => "源文本（md）".to_string(),
                 },
@@ -214,7 +223,7 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, width: Pixels, cx: &App) -> 
             "—".to_string(),
         ),
     };
-    // docx 实测属性面（批 3）。
+    // docx 实测属性面（批 3；#167 补可编辑段/锁定段计数——状态诚实面）。
     let docx_rows: Vec<(String, String)> = match editor {
         Some(ed) => ed
             .read(cx)
@@ -240,11 +249,19 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, width: Pixels, cx: &App) -> 
                     ),
                     ("文本框".into(), format!("{}（平铺渲染）", p.textboxes)),
                     ("兼容警告".into(), format!("{}", p.warnings)),
+                    // #167：编辑面计数（可编辑态的「锁定行只读」不再是黑箱）。
+                    (
+                        "可编辑段 / 锁定段".into(),
+                        format!("{} / {}", p.editable_paragraphs, p.locked_paragraphs),
+                    ),
                 ]
             })
             .unwrap_or_default(),
         None => vec![],
     };
+    // #167：docx 降级说明（只读原因面向用户呈现——此前只在 stderr）。
+    let docx_notice: Option<String> =
+        editor.and_then(|ed| ed.read(cx).docx_notice().map(String::from));
     // pdf 实测属性面（批 4）。
     let pdf_rows: Vec<(String, String)> = match editor {
         Some(ed) => ed
@@ -332,6 +349,10 @@ pub fn right_panel(editor: Option<&Entity<Editor>>, width: Pixels, cx: &App) -> 
             let v = v.clone();
             property_row_owned(k, v)
         }))
+        // #167：docx 降级说明行（原因可见——不再只写 stderr）。
+        .when_some(docx_notice, |el, notice| {
+            el.child(property_row_owned("降级说明".into(), notice))
+        })
         .child(
             Label::new("块级锚定 / 边注 / 证据来源随 #68 阶段 4 接线")
                 .size(LabelSize::XSmall)

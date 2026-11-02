@@ -613,8 +613,7 @@ impl ShellApp {
     ///
     /// 未接线的 id 只写证据通道并关菜单——**不 panic 也不静默**：
     /// 灰显项本来就点不到，能点到却没接线的项说明菜单配错了，
-    /// stderr 留痕比默默吞掉好（防御网：当前 editor_menu / file_tree_menu
-    /// 全部动作均已接线，此臂只在未来新增菜单项漏接时触发）。
+    /// stderr 留痕比默默吞掉好。
     pub fn activate_context_menu_item(
         &mut self,
         id: &'static str,
@@ -627,7 +626,10 @@ impl ShellApp {
         self.context_menu_target = None;
         match (origin, id) {
             // 编辑器命令动作：统一走 run_command（键位 / 命令面板 / 图标条
-            // 搜索钮同一分派路径——与 #165 同款修法，两分支含同构变更）。
+            // 搜索钮同一分派路径）。#165 前经 exec_menu_command 的
+            // `_ => {}` 静默吞掉 OpenFind/OpenReplace/GotoLine——菜单
+            // 「查找/替换/跳转到行」是死项；现在窗口引用随点击 listener
+            // 传入，全命令可达（exec_menu_command 已删——见其原址注释）。
             (MenuOrigin::Editor, "ed-select-all") => {
                 self.dispatch_editor_cmd(crate::editor::commands::Cmd::SelectAll, window, cx);
             }
@@ -708,9 +710,11 @@ impl ShellApp {
         cx.notify();
     }
 
-    /// 把命令派发到当前编辑器（无编辑器时空操作）。#165/#166：带窗口
-    /// ——与键位/命令面板同链 `Editor::run_command`（开查找条要聚焦
-    /// 输入域，需要 Window）。
+    /// 把命令派发到当前编辑器（无编辑器时空操作）。#165：带窗口——
+    /// 与键位/命令面板同链 `Editor::run_command`（开查找条要聚焦
+    /// 输入域，需要 Window）。旧 exec_menu_command 无窗路径已删：
+    /// 其「菜单点击拿不到窗口」的前提不成立——on_click 的 listener
+    /// 本就携带 window，只是当时被 `_window` 忽略了。
     fn dispatch_editor_cmd(
         &mut self,
         cmd: crate::editor::commands::Cmd,

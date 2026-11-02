@@ -567,7 +567,9 @@ impl Editor {
     ///
     /// 降级（`payload.bridge = None`：超门限 / 引擎严格门拒 / 段落序
     /// 对账失败）→ 走 [`Self::new_docx`] 只读态，原因进 `docx.notice`
-    /// （状态栏 + 属性面板 + 启动日志三处呈现）。
+    /// （呈现面：启动日志 stderr + 属性面板「降级说明」行——后者
+    /// #167 补上；早先注释声称「状态栏 + 属性面板 + 启动日志三处呈现」
+    /// 不实，当时只有 stderr）。
     pub fn new_docx_editable(path: PathBuf, item: EditablePayload, cx: &mut Context<Self>) -> Self {
         let EditablePayload {
             payload,
@@ -988,6 +990,12 @@ impl Editor {
     /// docx 文档属性（右栏属性面板；`None` = md 可编辑态）。
     pub fn docx_props(&self) -> Option<&DocxProps> {
         self.docx.as_ref().map(|d| &d.props)
+    }
+
+    /// #167：docx 降级说明（装载门未过时的面向用户原因——属性面板
+    /// 「降级说明」行消费；`None` = 可编辑态或非 docx）。
+    pub fn docx_notice(&self) -> Option<&str> {
+        self.docx.as_ref().and_then(|d| d.notice.as_deref())
     }
 
     /// pdf 文档属性（右栏属性面板；批 4）。
@@ -2735,13 +2743,13 @@ impl Editor {
         ));
         out
     }
-    // #165/#166：exec_menu_command（无窗受限命令面）已删——原注释称
-    // 「菜单点击发生在 shell 上下文，拿不到编辑器窗口」，实测不成立：
-    // on_click 的 listener 本就携带 window（此前被 `_window` 忽略）。
-    // 外壳菜单命令现统一走 `run_command`（见 shell.rs 的
-    // dispatch_editor_cmd），与本方法原覆盖面完全同语义，且不再静默
-    // 吞掉 OpenFind/OpenReplace/GotoLine——那正是右键菜单
-    // 「查找/替换/跳转到行」曾是死项的根因。
+    // #165：exec_menu_command（无窗受限命令面）已删——原注释称「菜单点击
+    // 发生在 shell 上下文，拿不到编辑器窗口」，实测不成立：on_click 的
+    // listener 本就携带 window（此前被 `_window` 忽略）。外壳菜单命令现
+    // 统一走 `run_command`（见 shell.rs 的 dispatch_editor_cmd），与本
+    // 方法覆盖面完全同语义（SelectAll/Undo/Redo/ToggleFold 分支逐一
+    // 对应 exec_command 同名分支），且不再静默吞掉 OpenFind/OpenReplace/
+    // GotoLine——那正是右键菜单「查找/替换/跳转到行」曾是死项的根因。
 
     /// #63 打磨：菜单「剪切」——复制选区后删除（只读态无操作）。
     pub fn menu_cut(&mut self, cx: &mut Context<Self>) {
