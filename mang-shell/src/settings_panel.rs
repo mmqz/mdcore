@@ -99,9 +99,7 @@ pub fn settings_panel(
                     theme_mode == theme_switch::MODE_LIGHT,
                     hover,
                     selected,
-                    cx.listener(|this, _, _, cx| {
-                        this.set_theme_mode(theme_switch::MODE_LIGHT, cx)
-                    }),
+                    cx.listener(|this, _, _, cx| this.set_theme_mode(theme_switch::MODE_LIGHT, cx)),
                 ))
                 .child(choice_button(
                     "sg-theme-dark",
@@ -109,9 +107,7 @@ pub fn settings_panel(
                     theme_mode == theme_switch::MODE_DARK,
                     hover,
                     selected,
-                    cx.listener(|this, _, _, cx| {
-                        this.set_theme_mode(theme_switch::MODE_DARK, cx)
-                    }),
+                    cx.listener(|this, _, _, cx| this.set_theme_mode(theme_switch::MODE_DARK, cx)),
                 )),
         ))
         // ── 编辑器 ─────────────────────────────────────────
@@ -168,9 +164,7 @@ pub fn settings_panel(
                     indent_unit == IndentUnit::Spaces4,
                     hover,
                     selected,
-                    cx.listener(|this, _, _, cx| {
-                        this.set_indent_unit_all(IndentUnit::Spaces4, cx)
-                    }),
+                    cx.listener(|this, _, _, cx| this.set_indent_unit_all(IndentUnit::Spaces4, cx)),
                 ))
                 .child(choice_button(
                     "sg-indent-2",
@@ -178,9 +172,7 @@ pub fn settings_panel(
                     indent_unit == IndentUnit::Spaces2,
                     hover,
                     selected,
-                    cx.listener(|this, _, _, cx| {
-                        this.set_indent_unit_all(IndentUnit::Spaces2, cx)
-                    }),
+                    cx.listener(|this, _, _, cx| this.set_indent_unit_all(IndentUnit::Spaces2, cx)),
                 ))
                 .child(choice_button(
                     "sg-indent-tab",
@@ -207,15 +199,11 @@ pub fn settings_panel(
 
 /// 分组标题（外观/编辑器/布局——panels.rs 分组头同形态）。
 fn group_header(id: &'static str, title: &str) -> impl IntoElement {
-    h_flex()
-        .id(id)
-        .mt(GROUP_MARGIN)
-        .mb(px(4.))
-        .child(
-            Label::new(title.to_string())
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
+    h_flex().id(id).mt(GROUP_MARGIN).mb(px(4.)).child(
+        Label::new(title.to_string())
+            .size(LabelSize::Small)
+            .color(Color::Muted),
+    )
 }
 
 /// 「标签 + 控件」行（标签定宽对齐，控件靠左跟随）。
