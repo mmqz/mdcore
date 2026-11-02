@@ -595,25 +595,34 @@ impl ShellApp {
     /// 未接线的 id 只写证据通道并关菜单——**不 panic 也不静默**：
     /// 灰显项本来就点不到，能点到却没接线的项说明菜单配错了，
     /// stderr 留痕比默默吞掉好。
-    pub fn activate_context_menu_item(&mut self, id: &'static str, cx: &mut Context<Self>) {
+    pub fn activate_context_menu_item(
+        &mut self,
+        id: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let origin = self.context_menu_origin;
         self.context_menu = None;
         match (origin, id) {
-            // 编辑器动作：能直接落到编辑器 API 的走 API，其余转到命令面。
+            // 编辑器命令动作：统一走 run_command（键位 / 命令面板 / 图标条
+            // 搜索钮同一分派路径）。#165 前经 exec_menu_command 的
+            // `_ => {}` 静默吞掉 OpenFind/OpenReplace/GotoLine——菜单
+            // 「查找/替换/跳转到行」是死项；现在窗口引用随点击 listener
+            // 传入，全命令可达（exec_menu_command 已删——见其原址注释）。
             (MenuOrigin::Editor, "ed-select-all") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::SelectAll, cx);
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::SelectAll, window, cx);
             }
             (MenuOrigin::Editor, "ed-find") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::OpenFind, cx);
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::OpenFind, window, cx);
             }
             (MenuOrigin::Editor, "ed-replace") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::OpenReplace, cx);
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::OpenReplace, window, cx);
             }
             (MenuOrigin::Editor, "ed-goto") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::GotoLine, cx);
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::GotoLine, window, cx);
             }
             (MenuOrigin::Editor, "ed-fold") => {
-                self.dispatch_editor_cmd(crate::editor::commands::Cmd::ToggleFold, cx);
+                self.dispatch_editor_cmd(crate::editor::commands::Cmd::ToggleFold, window, cx);
             }
             (MenuOrigin::Editor, "ed-cut") => {
                 // 剪贴板动作走 Editor 的菜单方法（Cmd 枚举无这三项——
@@ -646,12 +655,21 @@ impl ShellApp {
         cx.notify();
     }
 
-    /// 把命令派发到当前编辑器（无编辑器时空操作）。
-    fn dispatch_editor_cmd(&mut self, cmd: crate::editor::commands::Cmd, cx: &mut Context<Self>) {
+    /// 把命令派发到当前编辑器（无编辑器时空操作）。#165：带窗口——
+    /// 与键位/命令面板同链 `Editor::run_command`（开查找条要聚焦
+    /// 输入域，需要 Window）。旧 exec_menu_command 无窗路径已删：
+    /// 其「菜单点击拿不到窗口」的前提不成立——on_click 的 listener
+    /// 本就携带 window，只是当时被 `_window` 忽略了。
+    fn dispatch_editor_cmd(
+        &mut self,
+        cmd: crate::editor::commands::Cmd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(editor) = self.editor().cloned() else {
             return;
         };
-        editor.update(cx, |ed, cx| ed.exec_menu_command(cmd, cx));
+        editor.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
     }
 
     /// F1/F3：打开文件（Ctrl+O 对话框 / 文件树点击 / 最近列表共用
