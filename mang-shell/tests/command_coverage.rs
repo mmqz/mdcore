@@ -290,13 +290,13 @@ fn key_evidence(display: &str) -> Vec<String> {
     for chord in display.split(' ') {
         let main = chord.split('+').next_back().unwrap_or(chord);
         let name = match main {
-            "←" => "left",
-            "→" => "right",
-            "↑" => "up",
-            "↓" => "down",
+            "←" => "left".to_string(),
+            "→" => "right".to_string(),
+            "↑" => "up".to_string(),
+            "↓" => "down".to_string(),
             other => other.to_lowercase(),
         };
-        out.push(name.to_string());
+        out.push(name);
     }
     out
 }
