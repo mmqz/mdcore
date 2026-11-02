@@ -109,8 +109,8 @@ pub fn context_menu_overlay(
                 );
                 if *enabled {
                     let action_id = *id;
-                    row = row.on_click(cx.listener(move |this, _, _window, cx| {
-                        this.activate_context_menu_item(action_id, cx);
+                    row = row.on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_context_menu_item(action_id, window, cx);
                     }));
                 }
                 list = list.child(row);

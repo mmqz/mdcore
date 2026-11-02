@@ -2735,35 +2735,13 @@ impl Editor {
         ));
         out
     }
-    /// #63 打磨：从外壳（右键菜单）派发不需要窗口的命令。
-    ///
-    /// 为什么不把 exec_command 变 pub：那里一半分支要 Window（开查找条要
-    /// 聚焦输入域）。菜单点击发生在 shell 上下文，拿不到编辑器窗口；能派发
-    /// 的是「纯 buffer 操作」这一类——正好是菜单里除查找/替换/跳行之外的全部。
-    pub fn exec_menu_command(&mut self, cmd: Cmd, cx: &mut Context<Self>) {
-        match cmd {
-            Cmd::SelectAll => {
-                // Editor 没有 select_all 方法——全选是 buffer 面的操作
-                // （同 exec_command 的 Cmd::SelectAll 分支口径）。
-                self.buffer.select_all();
-                cx.notify();
-            }
-            Cmd::Undo => {
-                self.undo_edit();
-                cx.notify();
-            }
-            Cmd::Redo => {
-                self.redo_edit();
-                cx.notify();
-            }
-            Cmd::ToggleFold => {
-                let line = self.buffer.cursor().line;
-                self.toggle_fold_at(line);
-                cx.notify();
-            }
-            _ => {}
-        }
-    }
+    // #165/#166：exec_menu_command（无窗受限命令面）已删——原注释称
+    // 「菜单点击发生在 shell 上下文，拿不到编辑器窗口」，实测不成立：
+    // on_click 的 listener 本就携带 window（此前被 `_window` 忽略）。
+    // 外壳菜单命令现统一走 `run_command`（见 shell.rs 的
+    // dispatch_editor_cmd），与本方法原覆盖面完全同语义，且不再静默
+    // 吞掉 OpenFind/OpenReplace/GotoLine——那正是右键菜单
+    // 「查找/替换/跳转到行」曾是死项的根因。
 
     /// #63 打磨：菜单「剪切」——复制选区后删除（只读态无操作）。
     pub fn menu_cut(&mut self, cx: &mut Context<Self>) {
