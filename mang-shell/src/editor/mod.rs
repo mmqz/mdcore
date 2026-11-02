@@ -87,6 +87,8 @@ use crate::canvas_view::{CanvasView, PAN_KEY_PX, PAN_PAGE_PX, WHEEL_LINE_PX};
 // 本接线接活）。RecentRing 会话态随 Editor 存续，不落盘。
 use crate::command_groups::RecentRing;
 use crate::palette_view;
+// #179（#188 接线）：编辑器区右键菜单——坐标类型 + 上抛回调。
+use crate::context_menu;
 use mouse::ClickKind;
 use theme::ThemeColors;
 use ui::prelude::*;
@@ -442,7 +444,19 @@ pub struct Editor {
     canvas: Option<CanvasView>,
     /// canvas 平移拖拽会话（#133 任务 1；`None` = 非拖拽中）。
     canvas_drag: Option<CanvasPanDrag>,
+    /// #179（#188 接线）：右键菜单上抛回调（`None` = 无宿主——单测/
+    /// 独立构造，右键只移光标不弹菜单）。为什么是回调而不是
+    /// WeakEntity<ShellApp>：editor 是 lib+bin 共用源码，而 lib 目标
+    /// （集成测试面，见 lib.rs）不含 shell 模块树——类型上不许直引
+    /// ShellApp；闭包在 shell.rs 侧构造时捕获弱句柄（#166 file_tree
+    /// 的同款模式，注入面见 ShellApp 的三个挂入口）。
+    menu_opener: Option<MenuOpener>,
 }
+
+/// #179：右键菜单上抛回调（shell 注入——闭包内持 ShellApp 弱句柄）。
+/// 参数：(窗口坐标, 是否有选区, 是否只读)；在编辑器的右键 listener
+/// 里同步调用，菜单状态落在 shell 上（ed-* 动作派发回 shell）。
+pub type MenuOpener = Box<dyn Fn(context_menu::Point, bool, bool, &mut App) + 'static>;
 
 impl Editor {
     /// 打开文档：`path` 为 `None` 时是未命名新文档。
@@ -512,6 +526,7 @@ impl Editor {
             xlsx: None,
             canvas: None,
             canvas_drag: None,
+            menu_opener: None,
         };
         this.refresh_caches();
         // 初始聚焦由 ShellApp::new 完成（需要 window 上下文）。
@@ -570,6 +585,7 @@ impl Editor {
             xlsx: None,
             canvas: None,
             canvas_drag: None,
+            menu_opener: None,
         };
         this.refresh_caches();
         this
@@ -643,6 +659,7 @@ impl Editor {
             xlsx: None,
             canvas: None,
             canvas_drag: None,
+            menu_opener: None,
         };
         // 编辑门禁接线：桥本体归 Editor（保存时取回写计划），Buffer 持钩子
         // 句柄（锁定行拒改 + 行归属重排——Buffer 唯一变更入口处生效）。
@@ -703,6 +720,7 @@ impl Editor {
             xlsx: None,
             canvas: None,
             canvas_drag: None,
+            menu_opener: None,
         };
         this.refresh_caches();
         this
@@ -762,6 +780,7 @@ impl Editor {
             xlsx: Some(payload),
             canvas: None,
             canvas_drag: None,
+            menu_opener: None,
         };
         this.refresh_caches();
         this
@@ -820,6 +839,7 @@ impl Editor {
             xlsx: None,
             canvas: Some(view),
             canvas_drag: None,
+            menu_opener: None,
         };
         this.refresh_caches();
         this
@@ -2937,6 +2957,12 @@ impl Editor {
         self.mouse_log = on;
     }
 
+    /// #179（#188 接线）：注入右键菜单上抛回调（挂入标签时由 ShellApp
+    /// 调——重复注入后写覆盖前值，幂等）。
+    pub fn set_menu_opener(&mut self, opener: MenuOpener) {
+        self.menu_opener = Some(opener);
+    }
+
     /// 编辑区 mousedown 分派（`click_count` 原生归一：单击定位 / Shift
     /// 扩展 / 双击选词 / 三击选行——词/行边界纯逻辑见 [`mouse`]）。
     fn dispatch_mouse_down(
@@ -3002,6 +3028,55 @@ impl Editor {
             );
         }
         cx.notify();
+    }
+
+    /// #179（#188 接线）：编辑区右键——弹上下文菜单（ed-* 八个动作
+    /// 处理器在 shell 早已接好，此前 UI 无入口）。
+    ///
+    /// 光标语义（Zed 的做法）：右键落点**不在选区内**时先把光标移过去
+    /// （菜单动作面向新落点——粘贴/跳行以落点为准）；在选区内则保持
+    /// 选区（剪切/复制作用于选区）。无宿主（单测/独立构造）只移光标。
+    fn dispatch_context_menu(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus, cx);
+        let hit = self.hit_test(event.position, window);
+        // 落点在选区 [start, end) 内 → 保持选区；否则光标移到落点。
+        let in_selection = self
+            .buffer
+            .selection()
+            .is_some_and(|sel| sel.start <= hit && hit < sel.end);
+        if !in_selection {
+            self.buffer.set_cursor(hit);
+            self.sync_cursors_from_buffer();
+        }
+        if self.mouse_log {
+            println!(
+                "mouse: right ({}, {}) -> line {}, col {} (in_selection={})",
+                event.position.x,
+                event.position.y,
+                hit.line + 1,
+                hit.col + 1,
+                in_selection
+            );
+        }
+        let has_selection = self
+            .buffer
+            .selection()
+            .is_some_and(|sel| sel.start < sel.end);
+        let read_only = self.read_only;
+        let pos = context_menu::Point::new(event.position.x.as_f32(), event.position.y.as_f32());
+        // 无宿主（单测/独立构造）只移光标不弹菜单；有宿主经回调上抛
+        //（闭包里是 shell.open_editor_context_menu——菜单状态与
+        // ed-* 动作派发面都在 shell）。
+        if let Some(opener) = self.menu_opener.as_deref() {
+            opener(pos, has_selection, read_only, cx);
+        } else {
+            cx.notify();
+        }
     }
 
     /// 拖选扩展（`on_drag_move`：锚不动、光标头跟随鼠标；扩展粒度按
@@ -3474,6 +3549,9 @@ impl Editor {
             .on_key_down(cx.listener(Self::dispatch_key))
             // 批 2：mousedown 分派（单击定位 / Shift 扩展 / 双击词 / 三击行）。
             .on_mouse_down(MouseButton::Left, cx.listener(Self::dispatch_mouse_down))
+            // #179（#188 接线）：右键弹上下文菜单（ed-* 八个动作的 UI
+            // 入口——此前只有文件树右键接了，编辑区右键无反应）。
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::dispatch_context_menu))
             // 批 2：拖选（drag 会话内 move 事件全量回调——含元素外；
             // `DragMoveEvent.bounds` 不用，行定位走每帧行 bounds 记录）。
             .on_drag(EditorDrag, |_, _, _, cx| cx.new(|_| DragGhost))

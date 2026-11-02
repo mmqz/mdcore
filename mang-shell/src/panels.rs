@@ -60,6 +60,11 @@ pub fn clamp_panel_width(left: bool, width: f32) -> f32 {
 
 /// 左栏：工作区文件树（F2——真实目录懒加载/虚拟化，占剩余高度）+
 /// 首组「打开的文档」+ docx/pdf「文档结构」树。
+///
+/// #183 A-3（#188）：`git_view` 双视图路由——true 渲染 GitPanel 本体
+/// （改动/历史双视图 + 刷新钮；图标条 act-git 入口），false 渲染文件树。
+/// 此前形参收了 git_panel/git_view 却从不使用——左栏恒为文件树，
+/// git_panel.rs 560 行本体不可见，属「已实现未接线」。
 pub fn left_panel(
     editor: Option<&Entity<Editor>>,
     workspace: Option<&Entity<FileTree>>,
@@ -96,26 +101,47 @@ pub fn left_panel(
         .bg(colors.panel_background)
         .p(PANEL_PADDING)
         .gap_1()
-        // F2：工作区文件树占剩余高度（uniform_list 内部滚动/虚拟化）
-        // ——移除面板级 overflow_y_scroll 防双层滚动互踩；无工作区时
-        // 自然高度内容（打开的文档/结构树）不溢出。
+        // 栏头随视图切换（VS Code 语义：资源管理器 / 源代码管理）。
         .child(
-            Label::new("资源管理器")
-                .size(LabelSize::Small)
-                .color(ui::Color::Muted)
-                .mb(HEADER_MARGIN),
+            Label::new(if git_view {
+                "源代码管理"
+            } else {
+                "资源管理器"
+            })
+            .size(LabelSize::Small)
+            .color(ui::Color::Muted)
+            .mb(HEADER_MARGIN),
         )
-        .when_some(workspace, |el, tree| el.child(tree.clone()))
-        .child(tree_group(
-            "tg-docs",
-            "打开的文档",
-            true,
-            &open_docs,
-            hover,
-            colors.element_selected,
-        ))
-        .when_some((!headings.is_empty()).then_some(()), |el, _| {
-            el.child(heading_tree("tg-outline", &headings, editor, hover))
+        // #183 A-3（#188）：git 视图——GitPanel 本体占剩余高度（自带
+        // overflow_y_scroll 的列表体；实体 clone 挂载，改动/历史点击/
+        // 刷新钮均在其 Render 内已接）。未开工作区时呈现引导提示，
+        // 不回退文件树（act-git 的点击意图明确是看 git）。
+        .when(git_view, |el| {
+            el.when_some(git_panel, |el, panel| el.child(panel.clone()))
+                .when(git_panel.is_none(), |el| {
+                    el.child(
+                        Label::new("未打开工作区（Ctrl+K Ctrl+O）")
+                            .size(LabelSize::Small)
+                            .color(ui::Color::Muted),
+                    )
+                })
+        })
+        // 文件树视图（缺省）：F2 工作区树占剩余高度（uniform_list 内部
+        // 滚动/虚拟化——面板级 overflow_y_scroll 已移除防双层滚动互踩；
+        // 无工作区时自然高度内容不溢出）。
+        .when(!git_view, |el| {
+            el.when_some(workspace, |el, tree| el.child(tree.clone()))
+                .child(tree_group(
+                    "tg-docs",
+                    "打开的文档",
+                    true,
+                    &open_docs,
+                    hover,
+                    colors.element_selected,
+                ))
+                .when_some((!headings.is_empty()).then_some(()), |el, _| {
+                    el.child(heading_tree("tg-outline", &headings, editor, hover))
+                })
         })
 }
 

@@ -1,9 +1,23 @@
 //! 底部状态栏（#63 Lead 布局 + #68 阶段 1 文档状态联动 + F2 工作区）。
 //!
 //! 左：文档状态（文件名 + 修改标记 ● + 行,列 + 字数——无文档时「就绪」）
-//! + 工作区路径（F2——打开文件夹后显示，`~` 缩写/超长截前保尾）；
-//! 右：版本与许可标识。背景色差（title_bar_background）区分主编辑区，
+//! + 工作区路径（F2——打开文件夹后显示，`~` 缩写/超长截前保尾）
+//! + 选中字数（#188 接线——有选区才显示）；
+//! 右：git 分支 / 文件编码 / 换行符（#188 接线——各自可判定才显示）
+//! + 版本与许可标识。背景色差（title_bar_background）区分主编辑区，
 //! 无 1px 边框。
+//!
+//! #188 接线说明：四项信息的数据层在 [`crate::status_info`]（纯函数，
+//! 各自带单测——detect_eol / detect_encoding / format_selection /
+//! find_git_root + git_branch_at），本模块此前零消费（状态栏只用
+//! Editor 自带标签）。接线保持纯函数不动，只在渲染期组串：
+//!
+//! | 项 | 数据来源 | 缺省（不显示） |
+//! |---|---|---|
+//! | 选中字数 | 编辑器选区（selection_points + selection_text） | 无选区 |
+//! | git 分支 | 工作区根向上找 .git（无工作区回退文件目录） | 非 git 仓库 |
+//! | 编码 | 源文件字节（md 态——容器格式无编码语义） | 读不到/判不出 |
+//! | 换行符 | 源文件字节扫描（md 态） | 无换行 |
 
 use gpui::{App, Entity, Pixels, px};
 use ui::prelude::*;
@@ -11,6 +25,7 @@ use ui::{Label, LabelSize};
 
 use crate::editor::Editor;
 use crate::file_tree::workspace_display;
+use crate::status_info;
 
 /// 状态栏高度（px）。
 pub const STATUS_BAR_HEIGHT: Pixels = px(24.);
@@ -27,6 +42,52 @@ pub fn status_bar(
         .as_deref()
         .map(workspace_display)
         .map(|ws| format!("  ·  工作区 {ws}"));
+    // #188：选区标签（无选区 = None 不占位）。
+    let selection_label = match editor {
+        Some(ed) => {
+            let e = ed.read(cx);
+            let info = e.selection_points().and_then(|(start, end)| {
+                status_info::selection_info(&e.selection_text(), start.line, end.line)
+            });
+            status_info::format_selection(info)
+        }
+        None => None,
+    };
+    // #188：git 分支（工作区优先；无工作区回退文件所在目录——单文件
+    // 打开也能看见分支）。find_git_root 只读目录不启子进程。
+    let branch_label = {
+        let start = workspace
+            .as_deref()
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| {
+                editor
+                    .and_then(|ed| ed.read(cx).file_path())
+                    .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+            });
+        start
+            .and_then(|start| status_info::find_git_root(&start))
+            .and_then(|root| status_info::git_branch_at(&root))
+            .map(|branch| format!(" {branch}"))
+    };
+    // #188：编码 + 换行符（md 态源文件——docx/pdf/xlsx/canvas 是容器
+    // 格式，字节级编码/换行语义不适用，不显示；未落盘草稿无字节面）。
+    let (encoding_label, eol_label) = match editor {
+        Some(ed) => {
+            let e = ed.read(cx);
+            if e.doc_kind() == "md" {
+                match e.file_path().map(std::fs::read) {
+                    Some(Ok(bytes)) => (
+                        status_info::detect_encoding(&bytes).map(|enc| enc.label().to_string()),
+                        status_info::detect_eol(&bytes).map(|eol| eol.label().to_string()),
+                    ),
+                    _ => (None, None),
+                }
+            } else {
+                (None, None)
+            }
+        }
+        None => (None, None),
+    };
     let left = match editor {
         Some(ed) => {
             let ed = ed.read(cx);
@@ -57,6 +118,11 @@ pub fn status_bar(
         Some(ws) => format!("{left}{ws}"),
         None => left,
     };
+    // #188：选区串在左段尾部（与字数同族——文档内容面）。
+    let left = match selection_label {
+        Some(sel) => format!("{left}  ·  {sel}"),
+        None => left,
+    };
 
     h_flex()
         .id("status-bar")
@@ -74,6 +140,30 @@ pub fn status_bar(
         .child(
             h_flex()
                 .gap_3()
+                // #188：git 分支（如  main）——非 git 目录不占位。
+                .when_some(branch_label, |el, branch| {
+                    el.child(
+                        Label::new(branch)
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted),
+                    )
+                })
+                // #188：文件编码（UTF-8 / GBK / …）——判不出不占位。
+                .when_some(encoding_label, |el, enc| {
+                    el.child(
+                        Label::new(enc)
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted),
+                    )
+                })
+                // #188：换行符（LF / CRLF / 混合换行）——无换行不占位。
+                .when_some(eol_label, |el, eol| {
+                    el.child(
+                        Label::new(eol)
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted),
+                    )
+                })
                 .child(
                     Label::new("mdcore 0.1.0")
                         .size(LabelSize::XSmall)

@@ -265,6 +265,16 @@ impl ShellApp {
                 vec![TabItem { path, editor }]
             })
             .unwrap_or_default();
+        // #179（#188 接线）：启动标签注入右键菜单回调（editor 侧不引
+        // ShellApp 类型——lib 目标不含 shell 模块树；弱句柄在此捕获，
+        // #166 file_tree 同款模式。与下述 open_document_tab /
+        // open_readonly_tab 同一注入面，三入口全覆盖）。
+        let shell_weak = cx.entity().downgrade();
+        for tab in &tabs {
+            tab.editor.update(cx, |ed, _| {
+                ed.set_menu_opener(menu_opener_for(shell_weak.clone()));
+            });
+        }
         // F4：窗口关闭前确认钩子（平台 X 钮/OS 关闭——四后端均接线
         // on_should_close；cx.quit 不经此路）。脏标签存在 → 拦截本次
         // 关闭 + 弹确认框；确认后保存/放弃再 cx.quit。
@@ -559,6 +569,12 @@ impl ShellApp {
             return self.activate_tab_focus(idx, cx);
         }
         let editor = cx.new(|cx| Editor::new_readonly(Some(path.clone()), content, cx));
+        // #179（#188 接线）：只读标签同样注入右键菜单回调（菜单对只读
+        // 态有灰显语义——剪切/粘贴/替换灰显，复制/查找/跳行可用）。
+        let shell_weak = cx.entity().downgrade();
+        editor.update(cx, |ed, _| {
+            ed.set_menu_opener(menu_opener_for(shell_weak));
+        });
         let focus = editor.read(cx).focus_handle().clone();
         self.tabs.push(TabItem { path, editor });
         self.active = self.tabs.len() - 1;
@@ -633,11 +649,6 @@ impl ShellApp {
             self.context_menu_target = None;
             cx.notify();
         }
-    }
-
-    /// 菜单当前是否打开（渲染期判定）。
-    pub fn context_menu_open(&self) -> bool {
-        self.context_menu.is_some()
     }
 
     /// 执行一个菜单动作（按 id 派发）。#166：带窗口——文件树「打开」
@@ -785,6 +796,12 @@ impl ShellApp {
         }
         match document::open_editor(&path, cx) {
             OpenOutcome::Opened(editor) => {
+                // #179（#188 接线）：挂入标签前注入右键菜单回调（document.rs
+                // 的 cx 是 &mut App 拿不到 shell，构造后补注）。
+                let shell_weak = cx.entity().downgrade();
+                editor.update(cx, |ed, _| {
+                    ed.set_menu_opener(menu_opener_for(shell_weak));
+                });
                 let focus = editor.read(cx).focus_handle().clone();
                 self.tabs.push(TabItem {
                     path: path.clone(),
@@ -1727,6 +1744,19 @@ fn dir_for_new(target: &Path) -> PathBuf {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| target.to_path_buf())
     }
+}
+
+/// #179（#188 接线）：编辑器右键菜单上抛回调的工厂——ShellApp 弱句柄
+/// 在**这里**捕获（editor 是 lib+bin 共用源码，lib 目标不含 shell
+/// 模块树，类型上不许直引；闭包做类型擦除的跨实体通道，#166
+/// file_tree 的弱句柄模式同款）。三个挂入口共用：
+/// ShellApp::new / open_document_tab / open_readonly_tab。
+fn menu_opener_for(shell: gpui::WeakEntity<ShellApp>) -> crate::editor::MenuOpener {
+    Box::new(move |pos, has_selection, read_only, cx| {
+        let _ = shell.update(cx, |shell, cx| {
+            shell.open_editor_context_menu(pos, has_selection, read_only, cx)
+        });
+    })
 }
 
 /// F4：确认框模态遮罩（半透明背景全屏 + 居中卡片 + 三钮）。遮罩
