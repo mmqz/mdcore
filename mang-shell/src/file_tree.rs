@@ -18,17 +18,21 @@
 //!   双保险。
 //!
 //! 交互：单击目录 = 展开/折叠；单击文件 = 经 `ShellApp::open_document`
-//! 打开（F1 通道复用）；右键 = 在文件管理器中显示（`reveal_path`——
-//! 文件行揭示其所在目录）。
+//! 打开（F1 通道复用）；右键 = 上下文菜单（#166 接线——新建/打开/
+//! 重命名/删除/在资源管理器中显示；菜单本体在 `context_menu.rs`，动作
+//! 派发在 `shell.rs`）。
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui::{App, Context, IntoElement, MouseButton, Render, WeakEntity, px, uniform_list};
+use gpui::{
+    App, Context, IntoElement, MouseButton, MouseDownEvent, Render, WeakEntity, px, uniform_list,
+};
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
+use crate::context_menu;
 use crate::shell::ShellApp;
 
 /// 目录条目。
@@ -144,6 +148,42 @@ impl TreeState {
         }
     }
 
+    /// #166：fs 变更后重读目录清单（右键新建/重命名/删除后同步）。
+    /// 目录未缓存则无操作——未展开过的目录本就无清单，展开时现读。
+    pub fn reload(&mut self, dir: &Path) {
+        if self.listings.contains_key(dir) {
+            self.listings
+                .insert(dir.to_path_buf(), Rc::new(list_dir(dir)));
+        }
+    }
+
+    /// #166：丢弃已删除目录的展开态与清单缓存（连同其下所有已缓存
+    /// 子路径——前缀匹配）。文件路径调用无副作用（无展开态/清单命中）。
+    pub fn forget_subtree(&mut self, dir: &Path) {
+        self.expanded.retain(|p| !p.starts_with(dir));
+        self.listings.retain(|p, _| !p.starts_with(dir));
+    }
+
+    /// #166：确保文件的各级父目录（工作区内）全部展开 + 清单就绪
+    /// （新建/重命名后让目标行可见——折叠着的父目录里新文件看不见）。
+    pub fn expand_to(&mut self, file: &Path) {
+        let mut ancestors = Vec::new();
+        let mut cur = file.parent();
+        while let Some(dir) = cur {
+            ancestors.push(dir.to_path_buf());
+            if dir == self.root {
+                break;
+            }
+            cur = dir.parent();
+        }
+        for dir in ancestors.into_iter().rev() {
+            if dir.starts_with(&self.root) {
+                self.ensure_listing(&dir);
+                self.expanded.insert(dir);
+            }
+        }
+    }
+
     fn ensure_listing(&mut self, dir: &Path) {
         if !self.listings.contains_key(dir) {
             self.listings
@@ -223,6 +263,21 @@ impl FileTree {
     pub fn set_active_file(&mut self, path: Option<PathBuf>) {
         self.state.set_active_file(path);
     }
+
+    /// #166：fs 变更后重读目录清单（转发到状态机）。
+    pub fn reload(&mut self, dir: &Path) {
+        self.state.reload(dir);
+    }
+
+    /// #166：丢弃已删除目录的展开态与缓存（转发到状态机）。
+    pub fn forget_subtree(&mut self, dir: &Path) {
+        self.state.forget_subtree(dir);
+    }
+
+    /// #166：展开到文件（转发到状态机）。
+    pub fn expand_to(&mut self, file: &Path) {
+        self.state.expand_to(file);
+    }
 }
 
 impl Render for FileTree {
@@ -262,7 +317,6 @@ impl FileTree {
         let indent = px(4. + row.depth as f32 * 14.);
         let is_dir = row.is_dir;
         let path = row.path.clone();
-        let path_for_reveal = row.path.clone();
 
         let (chevron, icon) = if is_dir {
             (
@@ -280,6 +334,9 @@ impl FileTree {
         } else {
             (IconName::ChevronRight, IconName::File)
         };
+
+        // #166：右键目标（目录本身 / 文件所在目录）与菜单位置随行携带。
+        let path_for_menu = row.path.clone();
 
         h_flex()
             .id(gpui::SharedString::from(format!(
@@ -317,19 +374,18 @@ impl FileTree {
                     }
                 }),
             )
-            // 右键：在文件管理器中显示（文件行揭示所在目录）。
+            // 右键：上下文菜单（#166 接线——菜单在 shell 状态上，位置取
+            // 按下点的窗口坐标；动作派发回 shell 的 activate_context_menu_item）。
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |_, _, _, cx| {
-                    let target = if is_dir {
-                        path_for_reveal.clone()
-                    } else {
-                        path_for_reveal
-                            .parent()
-                            .map(|p| p.to_path_buf())
-                            .unwrap_or_else(|| path_for_reveal.clone())
-                    };
-                    cx.reveal_path(&target);
+                cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                    let pos = context_menu::Point::new(
+                        event.position.x.as_f32(),
+                        event.position.y.as_f32(),
+                    );
+                    let _ = this.shell.update(cx, |shell, cx| {
+                        shell.open_file_tree_context_menu(pos, path_for_menu.clone(), is_dir, cx)
+                    });
                 }),
             )
             .child(
@@ -500,5 +556,104 @@ mod tests {
             "截前保尾：{display}"
         );
         assert!(display.chars().count() <= 57, "长度受控：{display}");
+    }
+
+    // -----------------------------------------------------------------------
+    // #166：fs 变更同步面（右键新建/重命名/删除后的树状态维护）。
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reload_picks_up_created_file() {
+        let dir = temp_fixture("reload");
+        let mut tree = TreeState::new(dir.clone());
+        assert!(!list_dir_names(&tree, &dir).contains(&"n.md".to_string()));
+        std::fs::write(dir.join("n.md"), "n").unwrap();
+        // reload 前：缓存清单还是旧的（懒加载语义——磁盘变了树不知道）。
+        assert!(!list_dir_names(&tree, &dir).contains(&"n.md".to_string()));
+        tree.reload(&dir);
+        assert!(
+            list_dir_names(&tree, &dir).contains(&"n.md".to_string()),
+            "reload 后新文件可见"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reload_on_uncached_dir_is_noop() {
+        let dir = temp_fixture("reload-nocache");
+        let mut tree = TreeState::new(dir.clone());
+        let sub = dir.join("sub");
+        assert!(!tree.listing_loaded(&sub));
+        // 未展开目录无缓存——reload 不应凭空建缓存（展开时才现读）。
+        tree.reload(&sub);
+        assert!(!tree.listing_loaded(&sub), "无缓存目录 reload 零副作用");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn forget_subtree_drops_expansion_and_cache() {
+        let dir = temp_fixture("forget");
+        let mut tree = TreeState::new(dir.clone());
+        let sub = dir.join("sub");
+        tree.toggle(&sub); // 展开 sub → 清单缓存 + deep 可见
+        assert!(tree.listing_loaded(&sub));
+        assert!(
+            visible_names(&tree).contains(&"deep".to_string()),
+            "前置：sub 展开中"
+        );
+        tree.forget_subtree(&sub);
+        assert!(!tree.listing_loaded(&sub), "sub 清单缓存丢弃");
+        assert!(!tree.expanded.contains(&sub), "sub 展开态丢弃");
+        assert!(
+            !visible_names(&tree).contains(&"deep".to_string()),
+            "子目录行随展开态消失"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn expand_to_reveals_file_in_collapsed_dir() {
+        let dir = temp_fixture("expand-to");
+        let mut tree = TreeState::new(dir.clone());
+        let deep_file = dir.join("sub").join("deep").join("d.md");
+        assert!(
+            !visible_names(&tree).contains(&"d.md".to_string()),
+            "前置：sub 折叠，深层文件不可见"
+        );
+        tree.expand_to(&deep_file);
+        let names = visible_names(&tree);
+        assert!(names.contains(&"d.md".to_string()), "各级父目录展开后可见");
+        assert!(names.contains(&"deep".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn expand_to_ignores_paths_outside_root() {
+        let dir = temp_fixture("expand-outside");
+        let mut tree = TreeState::new(dir.clone());
+        // 工作区外的路径：不得把工作区外的目录展开/缓存（前缀守卫）。
+        tree.expand_to(Path::new("/elsewhere/x.md"));
+        assert!(
+            tree.visible_rows()
+                .iter()
+                .all(|r| r.depth == 0 || r.path.starts_with(&dir)),
+            "工作区外路径零影响"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 当前可见行名集（断言辅助）。
+    fn visible_names(tree: &TreeState) -> Vec<String> {
+        tree.visible_rows().iter().map(|r| r.name.clone()).collect()
+    }
+
+    /// 目录当前缓存清单名集（断言辅助）。
+    fn list_dir_names(tree: &TreeState, dir: &Path) -> Vec<String> {
+        // 未缓存目录返回空（调用方仅对已缓存目录使用）。
+        tree.visible_rows()
+            .iter()
+            .filter(|r| r.path.parent() == Some(dir))
+            .map(|r| r.name.clone())
+            .collect()
     }
 }

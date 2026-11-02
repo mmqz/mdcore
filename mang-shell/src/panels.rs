@@ -4,11 +4,17 @@
 //! #68 阶段 1 接线：左栏文件树首组呈现当前打开文档（真实数据），
 //! docx 文档第二组呈现「文档结构」标题树（批 3——层级缩进 + 点击
 //! 跳转，#68 阶段 3.1 docx 面提前落地）；pdf 同组呈现书签树（批 4
-//! ——页号前缀 + 点击跳页分隔行）；磁盘目录树随阶段 2 接线。
+//! ——页号前缀 + 点击跳页分隔行）；磁盘目录树随 F2 工作区落位。
 //! 右栏属性面板：md 态文件名/字数联动；docx 态引擎实测属性面
 //! （块/段/表/图/页眉页脚/批注/警告——批 3）；pdf 态引擎实测属性面
 //! （页/字符/书签/扫描件——批 4）。面板边框一律背景色差（Lead：
 //! 用背景色差代替 1px 边框）。
+//!
+//! #166：原「导入（阶段 2 接线）」「导出（阶段 5 接线）」两个占位组
+//! 已移除——零子行、零点击处理，括号里明写「阶段 N 接线」即有意留白。
+//! 按 #166 判定表归档②（不该出现在界面）：真实导入/导出功能属标书
+//! 业务面（#171 裁决：标书侧后端未迁移前不接入），等能力就位再随
+//! 功能一起回来，不先摆死节点。
 
 use gpui::{App, Entity, Hsla, MouseButton, Pixels, px};
 use ui::prelude::*;
@@ -111,22 +117,6 @@ pub fn left_panel(
         .when_some((!headings.is_empty()).then_some(()), |el, _| {
             el.child(heading_tree("tg-outline", &headings, editor, hover))
         })
-        .child(tree_group(
-            "tg-import",
-            "导入（阶段 2 接线）",
-            false,
-            &[],
-            hover,
-            colors.element_selected,
-        ))
-        .child(tree_group(
-            "tg-export",
-            "导出（阶段 5 接线）",
-            false,
-            &[],
-            hover,
-            colors.element_selected,
-        ))
 }
 
 /// 结构树（批 3 docx 标题树 + 批 4 pdf 书签树）：层级缩进 +

@@ -35,6 +35,7 @@ use ui::prelude::*;
 
 use crate::activity_bar;
 use crate::context_menu::{self, ContextMenu, MenuItem, Rect as MenuRect};
+use crate::context_menu_view;
 use crate::document::{self, OpenOutcome};
 use crate::editor::Editor;
 use crate::file_tree::FileTree;
@@ -53,13 +54,20 @@ const CHORD_WINDOW: Duration = Duration::from_secs(2);
 /// 选中项、Tab/←/→ 循环、Esc 直接取消。
 const CONFIRM_BUTTONS: [&str; 3] = ["保存", "不保存", "取消"];
 
-/// F4：待确认动作（脏标签关闭 / 退出）。
+/// #166：删除确认按钮（0 删除 / 1 取消）——与 CONFIRM_BUTTONS 分列：
+/// 按钮集属于动作语义（保存三选 / 删除二选），不是全局常量。
+const DELETE_BUTTONS: [&str; 2] = ["删除", "取消"];
+
+/// F4：待确认动作（脏标签关闭 / 退出 / #166 文件树删除）。
 #[derive(Clone, Debug)]
 enum ConfirmAction {
     /// 关闭 `idx` 标签（它有未保存修改）。
     CloseTab { idx: usize },
     /// 退出应用（存在未保存修改的标签）。
     Quit,
+    /// #166：永久删除文件树目标（确认后不可恢复——无回收站 API，
+    /// gpui 闭包未暴露 trash 面）。
+    DeletePath { path: PathBuf },
 }
 
 /// F4：确认框状态。
@@ -99,8 +107,11 @@ struct ConfirmState {
     message: String,
     detail: String,
     action: ConfirmAction,
-    /// 选中按钮序（键盘循环 / 鼠标点击）。0=保存 1=不保存 2=取消。
+    /// 选中按钮序（键盘循环 / 鼠标点击）。语义随动作集不同：
+    /// 保存三选（0 保存 1 不保存 2 取消）/ 删除二选（0 删除 1 取消）。
     selected: usize,
+    /// #166：按钮文案集（按动作携带——不再全局固定三钮）。
+    buttons: Vec<&'static str>,
 }
 
 pub struct ShellApp {
@@ -150,6 +161,9 @@ pub struct ShellApp {
     context_menu: Option<ContextMenu>,
     /// #63 打磨：右键菜单来源（决定动作 id 派发到哪套处理器）。
     context_menu_origin: MenuOrigin,
+    /// #166：文件树右键目标（动作执行的路径面——新建/打开/重命名/删除/
+    /// 资源管理器揭示都需要知道右键的是哪一行）。
+    context_menu_target: Option<PathBuf>,
 }
 
 /// 右键菜单来源（决定同一动作 id 派发到哪套处理器）。
@@ -287,6 +301,7 @@ impl ShellApp {
                         detail: "退出前保存修改？".to_string(),
                         action: ConfirmAction::Quit,
                         selected: 0,
+                        buttons: CONFIRM_BUTTONS.to_vec(),
                     });
                     cx.notify();
                 });
@@ -323,6 +338,7 @@ impl ShellApp {
             notice_board: NoticeBoard::default(),
             context_menu: None,
             context_menu_origin: MenuOrigin::default(),
+            context_menu_target: None,
         };
         // 初始焦点：有文档 → 编辑器（键入/编辑即时可用）；空态 →
         // shell 根域（Ctrl+O 等空态键位经 root→shell 根路径可达——
@@ -563,24 +579,26 @@ impl ShellApp {
         cx.notify();
     }
 
-    /// 在窗口坐标 `pos` 处弹出文件树右键菜单。
+    /// 在窗口坐标 `pos` 处弹出文件树右键菜单（#166：`target` = 右键的
+    /// 行路径——动作执行面；目录本身 / 文件均可作目标）。
     pub fn open_file_tree_context_menu(
         &mut self,
         pos: context_menu::Point,
+        target: PathBuf,
         is_dir: bool,
         cx: &mut Context<Self>,
     ) {
-        self.context_menu = Some(ContextMenu::new(
-            context_menu::file_tree_menu(is_dir),
-            pos,
-        ));
+        self.context_menu = Some(ContextMenu::new(context_menu::file_tree_menu(is_dir), pos));
         self.context_menu_origin = MenuOrigin::FileTree;
+        self.context_menu_target = Some(target);
         cx.notify();
     }
 
-    /// 关闭右键菜单（Esc / 点空白 / 执行完动作）。
+    /// 关闭右键菜单（Esc / 点空白 / 执行完动作）。目标随菜单一起清
+    ///（#166——菜单关了，目标路径不再有效）。
     pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
         if self.context_menu.take().is_some() {
+            self.context_menu_target = None;
             cx.notify();
         }
     }
@@ -590,7 +608,8 @@ impl ShellApp {
         self.context_menu.is_some()
     }
 
-    /// 执行一个菜单动作（按 id 派发）。
+    /// 执行一个菜单动作（按 id 派发）。#166：带窗口——文件树「打开」
+    /// 要聚焦编辑区（与 #165 编辑器命令面的窗口诉求同源）。
     ///
     /// 未接线的 id 只写证据通道并关菜单——**不 panic 也不静默**：
     /// 灰显项本来就点不到，能点到却没接线的项说明菜单配错了，
@@ -602,7 +621,9 @@ impl ShellApp {
         cx: &mut Context<Self>,
     ) {
         let origin = self.context_menu_origin;
+        let target = self.context_menu_target.clone();
         self.context_menu = None;
+        self.context_menu_target = None;
         match (origin, id) {
             // 编辑器命令动作：统一走 run_command（键位 / 命令面板 / 图标条
             // 搜索钮同一分派路径）。#165 前经 exec_menu_command 的
@@ -641,11 +662,45 @@ impl ShellApp {
                     editor.update(cx, |ed, cx| ed.menu_paste(cx));
                 }
             }
-            // 文件树动作：本批只接「在资源管理器中显示」，其余登记为未接线。
+            // ----------------------------------------------------------
+            // #166：文件树动作（全部接线——不允许「点了只打日志」）。
+            // ----------------------------------------------------------
             (MenuOrigin::FileTree, "ft-reveal") => {
-                if let Some(ws) = self.workspace.as_ref() {
-                    let root = ws.read(cx).root().to_path_buf();
-                    cx.reveal_path(&root);
+                // 揭示目标本身（目录）或所在目录（文件）——原实现恒揭示
+                // 工作区根，与右键目标无关，#166 修正为目标面。
+                if let Some(target) = target {
+                    let reveal = if target.is_dir() {
+                        target
+                    } else {
+                        target.parent().map(|p| p.to_path_buf()).unwrap_or(target)
+                    };
+                    cx.reveal_path(&reveal);
+                }
+            }
+            (MenuOrigin::FileTree, "ft-open") => {
+                // 只对文件有效（菜单构建时目录项已灰显——防御面再验一道）。
+                if let Some(target) = target.filter(|p| !p.is_dir()) {
+                    self.open_document(target, window, cx);
+                }
+            }
+            (MenuOrigin::FileTree, "ft-new-file") => {
+                if let Some(target) = target {
+                    self.prompt_create_file(&target, window, cx);
+                }
+            }
+            (MenuOrigin::FileTree, "ft-new-folder") => {
+                if let Some(target) = target {
+                    self.prompt_create_folder(&target, window, cx);
+                }
+            }
+            (MenuOrigin::FileTree, "ft-rename") => {
+                if let Some(target) = target {
+                    self.prompt_rename_path(&target, window, cx);
+                }
+            }
+            (MenuOrigin::FileTree, "ft-delete") => {
+                if let Some(target) = target {
+                    self.confirm_delete_path(target, window, cx);
                 }
             }
             (_, other) => {
@@ -771,6 +826,7 @@ impl ShellApp {
                 detail: "关闭前保存？".to_string(),
                 action: ConfirmAction::CloseTab { idx: self.active },
                 selected: 0,
+                buttons: CONFIRM_BUTTONS.to_vec(),
             });
             // 模态接管焦点（编辑器隔离——可打印键不再入 buffer）。
             window.focus(&self.confirm_focus.clone(), cx);
@@ -835,6 +891,11 @@ impl ShellApp {
                     cx.quit();
                 }
                 1 => cx.quit(),
+                _ => {}
+            },
+            // #166：删除确认（0 删除 / 1 取消——默认停取消侧）。
+            ConfirmAction::DeletePath { path } => match choice {
+                0 => self.delete_path_confirmed(&path, window, cx),
                 _ => {}
             },
         }
@@ -939,6 +1000,193 @@ impl ShellApp {
             cx.notify();
         }
         n
+    }
+
+    // ------------------------------------------------------------------
+    // #166：文件树右键动作——fs 变更面（新建 / 重命名 / 删除 + 树同步）。
+    // 对话框统一走 gpui `prompt_for_new_path`（与另存为同源——闭包无
+    // 原生「输入名字」轻量框，命名面借用系统保存对话框）。
+    // ------------------------------------------------------------------
+
+    /// #166 ft-new-file：新建文件对话框（落点 = 目标目录 / 文件所在目录）。
+    fn prompt_create_file(&mut self, target: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let directory = dir_for_new(target);
+        let rx = cx.prompt_for_new_path(&directory, None);
+        cx.spawn_in(window, async move |this, cx| match rx.await {
+            Ok(Ok(Some(path))) => {
+                let _ = this.update_in(cx, |shell, window, cx| {
+                    shell.create_file(path, window, cx);
+                });
+            }
+            _ => {}
+        })
+        .detach();
+    }
+
+    /// #166 ft-new-folder：新建文件夹对话框（同源——返回路径即文件夹名，
+    /// 对话框按「保存」语义呈现，落盘面按目录建）。
+    fn prompt_create_folder(&mut self, target: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let directory = dir_for_new(target);
+        let rx = cx.prompt_for_new_path(&directory, None);
+        cx.spawn_in(window, async move |this, cx| match rx.await {
+            Ok(Ok(Some(path))) => {
+                let _ = this.update(cx, |shell, cx| shell.create_folder(path, cx));
+            }
+            _ => {}
+        })
+        .detach();
+    }
+
+    /// #166 ft-rename：重命名对话框（建议名 = 当前名；目标可移出原目录
+    /// ——对话框返回的完整路径即新路径）。
+    fn prompt_rename_path(&mut self, target: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let directory = target
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let suggested = target.file_name().map(|n| n.to_string_lossy().into_owned());
+        let old = target.to_path_buf();
+        let rx = cx.prompt_for_new_path(&directory, suggested.as_deref());
+        cx.spawn_in(window, async move |this, cx| match rx.await {
+            Ok(Ok(Some(new))) => {
+                let _ = this.update(cx, |shell, cx| shell.rename_path(old, new, cx));
+            }
+            _ => {}
+        })
+        .detach();
+    }
+
+    /// 新建文件落盘（空文件）+ 树同步 + 打开（F1 通道——聚焦/高亮复用）。
+    fn create_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        match std::fs::write(&path, "") {
+            Ok(()) => {
+                eprintln!("file-tree: 新建文件 {}", path.display());
+                self.sync_tree_after_fs(&path, false, cx);
+                self.open_document(path, window, cx);
+            }
+            Err(err) => {
+                self.show_notice(format!("新建文件失败（{}）：{err}", path.display()), cx);
+            }
+        }
+    }
+
+    /// 新建文件夹落盘（递归建路）+ 树同步。
+    fn create_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        match std::fs::create_dir_all(&path) {
+            Ok(()) => {
+                eprintln!("file-tree: 新建文件夹 {}", path.display());
+                self.sync_tree_after_fs(&path, false, cx);
+            }
+            Err(err) => {
+                self.show_notice(format!("新建文件夹失败（{}）：{err}", path.display()), cx);
+            }
+        }
+    }
+
+    /// 重命名落盘 + 打开标签路径迁移（apply_tab_renames 既有通道）+
+    /// 树同步（旧位丢弃 / 新位展开）+ 高亮跟随。
+    fn rename_path(&mut self, old: PathBuf, new: PathBuf, cx: &mut Context<Self>) {
+        if new == old {
+            return;
+        }
+        match std::fs::rename(&old, &new) {
+            Ok(()) => {
+                eprintln!("file-tree: 重命名 {} → {}", old.display(), new.display());
+                let plan: Vec<(usize, PathBuf)> = self
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.path == old)
+                    .map(|(i, _)| (i, new.clone()))
+                    .collect();
+                self.apply_tab_renames(&plan, cx);
+                self.sync_tree_after_fs(&old, true, cx);
+                self.sync_tree_after_fs(&new, false, cx);
+                self.sync_tree_active(cx);
+            }
+            Err(err) => {
+                self.show_notice(
+                    format!("重命名失败（{} → {}）：{err}", old.display(), new.display()),
+                    cx,
+                );
+            }
+        }
+    }
+
+    /// #166 ft-delete：删除确认（二选一——默认停「取消」：危险操作
+    /// 默认安全侧；Enter 直接确认需显式左移选中）。
+    fn confirm_delete_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let kind = if path.is_dir() { "文件夹" } else { "文件" };
+        eprintln!("confirm: 删除{kind}（{}）", path.display());
+        self.confirm = Some(ConfirmState {
+            message: format!("删除{kind}「{name}」"),
+            detail: "永久删除，不可恢复（不进回收站）。".to_string(),
+            action: ConfirmAction::DeletePath { path },
+            selected: 1,
+            buttons: DELETE_BUTTONS.to_vec(),
+        });
+        window.focus(&self.confirm_focus.clone(), cx);
+        cx.notify();
+    }
+
+    /// 确认后的删除执行（resolve_confirm 的 DeletePath 臂调用）：
+    /// 落盘删除 → 关闭指向该路径（或其下）的标签（内容已不存在，
+    /// 不再弹保存确认）→ 树同步。
+    fn delete_path_confirmed(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        match result {
+            Ok(()) => {
+                eprintln!("file-tree: 删除 {}", path.display());
+                // 从高往低调用避免序号漂移。
+                let mut i = self.tabs.len();
+                while i > 0 {
+                    i -= 1;
+                    if self.tabs[i].path.starts_with(path) {
+                        self.close_tab_no_confirm(i, window, cx);
+                    }
+                }
+                self.sync_tree_after_fs(path, true, cx);
+                self.sync_tree_active(cx);
+            }
+            Err(err) => {
+                self.show_notice(format!("删除失败（{}）：{err}", path.display()), cx);
+            }
+        }
+    }
+
+    /// fs 变更后的树同步：`changed` = 变更路径；`removed` = 已不存在
+    /// （丢弃展开态/缓存）否则展开到目标使其可见。父目录清单一律重读
+    /// （先刷新缓存再展开——expand_to 的 ensure_listing 不覆盖既有缓存）。
+    fn sync_tree_after_fs(&mut self, changed: &Path, removed: bool, cx: &mut Context<Self>) {
+        if let Some(ws) = self.workspace.as_ref().cloned() {
+            ws.update(cx, |tree, cx| {
+                if let Some(parent) = changed.parent() {
+                    tree.reload(parent);
+                }
+                if removed {
+                    tree.forget_subtree(changed);
+                } else {
+                    tree.expand_to(changed);
+                }
+                cx.notify();
+            });
+        }
+    }
+
+    /// 树高亮与当前活动标签对齐（删除/重命名后路径面可能已变）。
+    fn sync_tree_active(&mut self, cx: &mut Context<Self>) {
+        let active = self.tabs.get(self.active).map(|t| t.path.clone());
+        if let Some(ws) = self.workspace.as_ref().cloned() {
+            ws.update(cx, |tree, _| tree.set_active_file(active));
+        }
     }
 
     /// F4：Ctrl+Shift+S 另存为对话框（prompt_for_new_path——
@@ -1129,7 +1377,7 @@ impl ShellApp {
 }
 
 impl Render for ShellApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
         let title = self.title_with(cx);
         // G4：面板拖拽收尾监听用的实体句柄（canvas paint 闭包捕获——
@@ -1157,6 +1405,14 @@ impl Render for ShellApp {
                 let plain_ctrl = ctrl && !ks.modifiers.shift && !ks.modifiers.alt;
                 let key = ks.key.to_lowercase();
 
+                // #166：右键菜单 Esc 关闭（点空白由菜单遮罩承担；菜单与
+                // 确认框互斥——ft-delete 开确认时菜单已关）。放在确认框
+                // 模态拦截之前：两者不同时开，顺序无行为差，仅注释并归。
+                if key == "escape" && this.context_menu.is_some() {
+                    this.close_context_menu(cx);
+                    return;
+                }
+
                 // F4：确认框模态拦截（最高优先——开启时其余键位全部隔离）。
                 if this.confirm.is_some() {
                     match key.as_str() {
@@ -1171,20 +1427,20 @@ impl Render for ShellApp {
                         }
                         "tab" => {
                             if let Some(confirm) = this.confirm.as_mut() {
-                                confirm.selected = (confirm.selected + 1) % CONFIRM_BUTTONS.len();
+                                confirm.selected = (confirm.selected + 1) % confirm.buttons.len();
                                 cx.notify();
                             }
                         }
                         "left" => {
                             if let Some(confirm) = this.confirm.as_mut() {
-                                confirm.selected = (confirm.selected + CONFIRM_BUTTONS.len() - 1)
-                                    % CONFIRM_BUTTONS.len();
+                                confirm.selected = (confirm.selected + confirm.buttons.len() - 1)
+                                    % confirm.buttons.len();
                                 cx.notify();
                             }
                         }
                         "right" => {
                             if let Some(confirm) = this.confirm.as_mut() {
-                                confirm.selected = (confirm.selected + 1) % CONFIRM_BUTTONS.len();
+                                confirm.selected = (confirm.selected + 1) % confirm.buttons.len();
                                 cx.notify();
                             }
                         }
@@ -1309,7 +1565,7 @@ impl Render for ShellApp {
                 Some(message) => el.child(notice_bar(message, &colors)),
                 None => el,
             })
-            // F4：确认框模态（最后渲染最上层——半透明遮罩全屏拦截点按）。
+            // F4：确认框模态（半透明遮罩全屏拦截点按）。
             .map(|el| match &self.confirm {
                 Some(confirm) => el.child(confirm_overlay(confirm, &self.confirm_focus, cx)),
                 None => el,
@@ -1353,6 +1609,37 @@ impl Render for ShellApp {
                         },
                     )),
             )
+            // #166：右键菜单浮层——**链尾最上层**（后画的兄弟覆盖先画的：
+            // 若插在 status_bar 之前，弹向窗口底部的菜单会被状态栏盖住、
+            // 点击穿透成「关菜单」）。摆放几何按当前窗口尺寸算，窗口
+            // 改大小后仍合法；遮罩先画在菜单之下承接「点空白关闭」。
+            .map(|el| match &self.context_menu {
+                Some(menu) => {
+                    let bounds = window.bounds();
+                    let screen = MenuRect::new(
+                        0.,
+                        0.,
+                        bounds.size.width.as_f32(),
+                        bounds.size.height.as_f32(),
+                    );
+                    let rect = menu.layout(screen);
+                    el.child(context_menu_view::context_menu_overlay(menu, rect, cx))
+                }
+                None => el,
+            })
+    }
+}
+
+/// 右键目标作为「新建」落点目录：目录本身；文件则取所在目录
+///（#166 ft-new-file / ft-new-folder 共用）。
+fn dir_for_new(target: &Path) -> PathBuf {
+    if target.is_dir() {
+        target.to_path_buf()
+    } else {
+        target
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| target.to_path_buf())
     }
 }
 
@@ -1397,7 +1684,7 @@ fn confirm_overlay(
                         .id("confirm-buttons")
                         .gap_2()
                         .justify_end()
-                        .children(CONFIRM_BUTTONS.iter().enumerate().map(|(i, label)| {
+                        .children(confirm.buttons.iter().enumerate().map(|(i, label)| {
                             let selected = confirm.selected == i;
                             let selected_bg = colors.element_selected;
                             let hover_bg = colors.element_hover;
