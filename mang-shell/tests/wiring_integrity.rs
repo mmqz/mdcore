@@ -28,12 +28,17 @@
 //! （`context_menu.rs`），接线分支是静态可解析的 match arm——这条
 //! 是**双向强对账**。
 //!
-//! ## 红绿预期（#171 分工总览已预告）
+//! ## 红绿账（2026-11-02 全绿——协作模式验证成功）
 //!
-//! 本文件**初期带真红**：`act-search`/`act-settings`（#165）与
-//! `ft-new-file` 等五项（#166）由代理 A 接线——A 合入前这两条测试
-//! 保持红，是验收的一部分，不是测试写错。绝不允许 xfail 放过
-//! （#171：「那等于给断线发许可证」）。
+//! #171 预告的协作模式：「B 先写失败态 → A 接线后转绿」。已闭环：
+//!
+//! | 测试 | 初始 | 转绿依据 |
+//! |---|---|---|
+//! | `activity_bar_no_dead_buttons` | 🔴（act-search/act-settings 空闭包） | PR #172（#165）：搜索钮接 OpenFind、设置钮按「接不了就移除」铁律删除 |
+//! | `file_tree_context_menu_actions_all_wired` | 🔴（ft-* 五项无接线） | PR #174（#166）：触发器/浮层挂载/六动作全接 |
+//!
+//! 绝不允许 xfail 放过（#171：「那等于给断线发许可证」）——未来新断线
+//! 出现时，这两条测试会重新变红，那是它们的职责。
 //!
 //! ## 铁律
 //!
@@ -235,7 +240,9 @@ fn nearest_button_context(file: &str, closure_pos: usize) -> (String, String) {
 
 /// #165/#171：图标条不得有死按钮（空闭包）、「未接线——骨架」措辞。
 ///
-/// 当前真红项（A 接线前）：`act-search` / `act-settings`。
+/// 红绿史：初始红（act-search/act-settings 空闭包）→ PR #172（#165）
+/// 合入后绿：搜索钮接 Cmd::OpenFind，设置钮按「接不了就从界面移除」
+/// 铁律删除。
 #[test]
 fn activity_bar_no_dead_buttons() {
     let file = src("activity_bar.rs");
@@ -268,14 +275,18 @@ fn activity_bar_no_dead_buttons() {
         }
     }
 
-    // ③ 按钮基线：图标条至少 5 个按钮（文件树/git/搜索/设置/右栏开关）。
+    // ③ 按钮基线：图标条 4 个按钮（文件树/git/搜索/右栏开关）。
+    // #165 后设置钮被合法移除（无面板可接），基线 5→4 同步（PR #173
+    // 合入的旧基线在 main 上红了一条，本提交修复）——这不是放过
+    // 死按钮，而是锚定「现存按钮全部真实接线」这一事实；
+    // 未来新增/删除按钮时请同步本基线。
     let buttons = string_literals(&file)
         .into_iter()
         .filter(|(_, lit)| lit.starts_with("act-"))
         .count();
     assert!(
-        buttons >= 5,
-        "图标条按钮数 {buttons} < 5（按钮被移除时请同步本基线）"
+        buttons >= 4,
+        "图标条按钮数 {buttons} < 4（文件树/git/搜索/右栏开关——按钮被移除时请同步本基线）"
     );
 }
 
@@ -338,8 +349,9 @@ fn assert_menu_fully_wired(origin: &str, data_items: &[MenuItem]) {
 
 /// #166：文件树右键菜单动作全部接线。
 ///
-/// 当前真红项（A 接线前）：ft-new-file / ft-new-folder / ft-open /
-/// ft-rename / ft-delete（shell.rs:635 注释自证「本批只接 reveal」）。
+/// 红绿史：初始红（ft-new-file/ft-new-folder/ft-open/ft-rename/
+/// ft-delete 五项无接线分支）→ PR #174（#166）合入后绿：六动作全接、
+/// 导入导出死组移除。
 #[test]
 fn file_tree_context_menu_actions_all_wired() {
     assert_menu_fully_wired("MenuOrigin::FileTree", &file_tree_menu(true));
@@ -361,7 +373,13 @@ fn editor_context_menu_actions_all_wired() {
 // file_tree / tab_bar / title_bar / context_menu_view：交互接线存在性
 // ---------------------------------------------------------------------------
 
-/// 文件树行点击：左键打开文档（F1 通道）/ 右键资源管理器定位。
+/// 文件树行点击：左键打开文档（F1 通道）/ 右键开上下文菜单。
+///
+/// 右键语义随 #166 演进：旧接线是直接 `reveal_path`（资源管理器定位），
+/// PR #174 改为打开上下文菜单（`open_file_tree_context_menu`，携带
+/// 按下点坐标与目标路径），「在资源管理器中显示」成为菜单项
+/// ft-reveal——其可达性由 `file_tree_context_menu_actions_all_wired`
+/// 的数据面↔接线面对账保证（更强：菜单项缺失或未接都会被抓）。
 #[test]
 fn file_tree_row_clicks_wired() {
     let file = src("file_tree.rs");
@@ -375,8 +393,9 @@ fn file_tree_row_clicks_wired() {
         "文件树左键未接 F1 打开通道（open_document_tab）"
     );
     assert!(
-        body.contains("MouseButton::Right") && body.contains("reveal_path"),
-        "文件树右键未接资源管理器定位（reveal_path）"
+        body.contains("MouseButton::Right") && body.contains("open_file_tree_context_menu"),
+        "文件树右键未接上下文菜单（open_file_tree_context_menu）——\
+         ft-reveal 等六项菜单动作的入口"
     );
     assert!(
         dead_closures(&file).is_empty(),
