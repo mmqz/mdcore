@@ -35,3 +35,11 @@ pub mod status_info;
 /// 命令面板分组/最近使用（#63 打磨项）：纯数据，零 GPUI 依赖。
 #[path = "command_groups.rs"]
 pub mod command_groups;
+
+/// 命令面板的分组渲染（#183 A-3 接线）：数据装配（search → 分组 →
+/// 扁平序）+ 段标题/条目渲染组件。依赖面全在 lib 树内
+/// （command_groups + editor::commands + gpui/ui 渲染原语）——
+/// 与 canvas_view 同型进 lib，供 editor/mod.rs（lib+bin 共用源码）
+/// 的面板浮层消费。
+#[path = "palette_view.rs"]
+pub mod palette_view;

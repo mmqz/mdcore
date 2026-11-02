@@ -83,6 +83,10 @@ use gpui::{
 };
 
 use crate::canvas_view::{CanvasView, PAN_KEY_PX, PAN_PAGE_PX, WHEEL_LINE_PX};
+// #183 A-3：命令面板分组渲染（数据装配 + 段列表组件——此前零调用，
+// 本接线接活）。RecentRing 会话态随 Editor 存续，不落盘。
+use crate::command_groups::RecentRing;
+use crate::palette_view;
 use mouse::ClickKind;
 use theme::ThemeColors;
 use ui::prelude::*;
@@ -132,6 +136,9 @@ struct CanvasDrag;
 struct PaletteState {
     query: String,
     selected: usize,
+    /// #183 A-3：候选集 = 分组装配后的**扁平序**（最近使用段置顶 +
+    /// 分组内最近用过靠前——与渲染的段列表同一数据源，键盘 selected
+    /// 与可见行一一对应；不再用裸搜索序，否则选中项与所见行错位）。
     items: Vec<Cmd>,
 }
 
@@ -388,6 +395,11 @@ pub struct Editor {
     cursors: Cursors,
     /// r42 阶段 E：命令面板状态（`None` = 关闭；Ctrl+Shift+P 开）。
     palette: Option<PaletteState>,
+    /// #183 A-3：面板「最近使用」记录（会话态，不落盘——容量
+    /// [`palette_view::RECENT_CAPACITY`]；面板顶部「最近使用」段与
+    /// 分组内排序的数据源）。执行命令时 touch，与键盘/Ctrl+Shift+P
+    /// 入口无关的 RPC 执行不计（面板外的使用不是「面板最近」）。
+    palette_recent: RecentRing,
     /// G2：跳转到行输入框（`None` = 关闭；Ctrl+G 开）。
     goto: Option<GotoState>,
     /// IME 预编辑段（全文 UTF16 偏移区间）。
@@ -484,6 +496,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            palette_recent: RecentRing::new(palette_view::RECENT_CAPACITY),
             goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
@@ -541,6 +554,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            palette_recent: RecentRing::new(palette_view::RECENT_CAPACITY),
             goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
@@ -612,6 +626,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            palette_recent: RecentRing::new(palette_view::RECENT_CAPACITY),
             goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
@@ -672,6 +687,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            palette_recent: RecentRing::new(palette_view::RECENT_CAPACITY),
             goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
@@ -731,6 +747,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            palette_recent: RecentRing::new(palette_view::RECENT_CAPACITY),
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
             drag: None,
@@ -787,6 +804,7 @@ impl Editor {
             last_text_width: RefCell::new(None),
             cursors: Cursors::single(Point::new(0, 0)),
             palette: None,
+            palette_recent: RecentRing::new(palette_view::RECENT_CAPACITY),
             goto: None,
             marked: None,
             row_bounds: Rc::new(RefCell::new(Vec::new())),
@@ -1405,12 +1423,15 @@ impl Editor {
                 let cmd = pal.items.get(pal.selected).copied();
                 self.palette = None;
                 if let Some(c) = cmd {
+                    // #183 A-3：面板执行的命令记入最近使用（下次打开面板
+                    // 顶部「最近使用」段可见——分组渲染接线的记账面）。
+                    self.palette_recent.touch(c);
                     self.exec_command(c, window, cx);
                 }
             }
             "backspace" => {
                 pal.query.pop();
-                pal.items = commands::search(&pal.query);
+                Self::palette_refill(pal, &self.palette_recent);
                 pal.selected = 0;
             }
             _ => {
@@ -1422,12 +1443,24 @@ impl Editor {
                     && c.chars().all(|ch| !ch.is_control())
                 {
                     pal.query.push_str(c);
-                    pal.items = commands::search(&pal.query);
+                    Self::palette_refill(pal, &self.palette_recent);
                     pal.selected = 0;
                 }
             }
         }
         true
+    }
+
+    /// #183 A-3：候选集重算（分组装配后的扁平序——与渲染同一数据
+    /// 源，键盘 selected 与可见行一一对应）。
+    fn palette_refill(pal: &mut PaletteState, recent: &RecentRing) {
+        pal.items = Self::palette_flat_of(&pal.query, recent);
+    }
+
+    /// #183 A-3：查询 → 分组装配 → 扁平序（键入/打开时算；渲染期按
+    /// 段重算——同一纯函数链，结果一致）。
+    fn palette_flat_of(query: &str, recent: &RecentRing) -> Vec<Cmd> {
+        palette_view::palette_flat(&palette_view::palette_sections(query, recent))
     }
 
     /// 折叠 toggle（r42 阶段 D：Alt+F 与 gutter 指示物共用）——
@@ -2119,7 +2152,7 @@ impl Editor {
                 Some(PaletteState {
                     query: String::new(),
                     selected: 0,
-                    items: commands::search(""),
+                    items: Self::palette_flat_of("", &self.palette_recent),
                 })
             } else {
                 None
@@ -3508,25 +3541,14 @@ impl Editor {
                                 .child(div().text_color(colors.text_accent).child("> "))
                                 .child(div().child(format!("{}▏", pal.query))),
                         )
-                        .child(div().id("palette-list").flex().flex_col().children(
-                            pal.items.iter().take(8).enumerate().map(|(i, c)| {
-                                let sel = i == pal.selected;
-                                div()
-                                    .id(SharedString::from(format!("palette-item-{i}")))
-                                    .flex()
-                                    .justify_between()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_sm()
-                                    .when(sel, |e| e.bg(colors.element_hover))
-                                    .child(div().text_color(colors.text).child(c.title()))
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(colors.text_muted)
-                                            .child(c.default_key().unwrap_or("")),
-                                    )
-                            }),
+                        .child(palette_view::palette_list(
+                            // #183 A-3：分组渲染接活（段标题 + 条目 +
+                            // 快捷键）——此前平铺 pal.items 直渲，
+                            // palette_view 三函数零调用的死代码链。
+                            &palette_view::palette_sections(&pal.query, &self.palette_recent),
+                            pal.selected,
+                            8,
+                            cx,
                         ))
                         .child(
                             div()
