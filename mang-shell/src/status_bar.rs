@@ -46,11 +46,10 @@ pub fn status_bar(
     let selection_label = match editor {
         Some(ed) => {
             let e = ed.read(cx);
-            e.selection_points()
-                .and_then(|(start, end)| {
-                    status_info::selection_info(&e.selection_text(), start.line, end.line)
-                })
-                .and_then(status_info::format_selection)
+            let info = e.selection_points().and_then(|(start, end)| {
+                status_info::selection_info(&e.selection_text(), start.line, end.line)
+            });
+            status_info::format_selection(info)
         }
         None => None,
     };
