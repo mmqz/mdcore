@@ -36,6 +36,17 @@
 //! 模型见 [`docx_edit`] 模块文档；保真矩阵 = docs/docx-fidelity-matrix.md
 //! + tests/docx_roundtrip_matrix.rs（T2 同批）。
 //!
+//! ## XLSX 原位编辑（[`xlsx_edit`]，#177——xlsx 版 DocxEditor）
+//!
+//! 已有富工作簿的**单元格级**编辑面：门 1/2/3（恒严格）→
+//! workbook.xml/rels 表名解析 → sheet 部件单趟扫描建行/格索引 →
+//! 只改目标 `<c>` 元素（值三形态：文本恒 inlineStr/数字/布尔；
+//! 样式 `@s` 保留）→ 其余 XML 原样 + 非目标部件逐字节透传。公式格
+//! 拒改（v1 边界——不重算）；插行/插格/自闭合空表展开支持；
+//! dimension/spans hint 不更新（Excel 自算——宽容面）。
+//! C3 宣称面更新：**单元格级原位编辑 v1**（读-改-重建仍不宣称——
+//! 本面与其是正交路径：手术不重建）。
+
 //! ## 读路径门结构（[`io::read_book`]）
 //!
 //! 1. **门 1 声明值预扫**（[`io::prescan`]）：条目数 / 单条目尺寸 /
@@ -102,3 +113,4 @@ pub mod style;
 pub mod write;
 pub mod xlsx_chart;
 pub mod xlsx_condfmt;
+pub mod xlsx_edit;
