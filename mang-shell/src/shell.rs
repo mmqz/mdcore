@@ -651,11 +651,6 @@ impl ShellApp {
         }
     }
 
-    /// 菜单当前是否打开（渲染期判定）。
-    pub fn context_menu_open(&self) -> bool {
-        self.context_menu.is_some()
-    }
-
     /// 执行一个菜单动作（按 id 派发）。#166：带窗口——文件树「打开」
     /// 要聚焦编辑区（与 #165 编辑器命令面的窗口诉求同源）。
     ///
