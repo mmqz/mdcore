@@ -103,10 +103,14 @@ pub fn left_panel(
         .gap_1()
         // 栏头随视图切换（VS Code 语义：资源管理器 / 源代码管理）。
         .child(
-            Label::new(if git_view { "源代码管理" } else { "资源管理器" })
-                .size(LabelSize::Small)
-                .color(ui::Color::Muted)
-                .mb(HEADER_MARGIN),
+            Label::new(if git_view {
+                "源代码管理"
+            } else {
+                "资源管理器"
+            })
+            .size(LabelSize::Small)
+            .color(ui::Color::Muted)
+            .mb(HEADER_MARGIN),
         )
         // #183 A-3（#188）：git 视图——GitPanel 本体占剩余高度（自带
         // overflow_y_scroll 的列表体；实体 clone 挂载，改动/历史点击/

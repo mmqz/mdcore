@@ -456,8 +456,7 @@ pub struct Editor {
 /// #179：右键菜单上抛回调（shell 注入——闭包内持 ShellApp 弱句柄）。
 /// 参数：(窗口坐标, 是否有选区, 是否只读)；在编辑器的右键 listener
 /// 里同步调用，菜单状态落在 shell 上（ed-* 动作派发回 shell）。
-pub type MenuOpener =
-    Box<dyn Fn(context_menu::Point, bool, bool, &mut App) + 'static>;
+pub type MenuOpener = Box<dyn Fn(context_menu::Point, bool, bool, &mut App) + 'static>;
 
 impl Editor {
     /// 打开文档：`path` 为 `None` 时是未命名新文档。
@@ -3057,7 +3056,11 @@ impl Editor {
         if self.mouse_log {
             println!(
                 "mouse: right ({}, {}) -> line {}, col {} (in_selection={})",
-                event.position.x, event.position.y, hit.line + 1, hit.col + 1, in_selection
+                event.position.x,
+                event.position.y,
+                hit.line + 1,
+                hit.col + 1,
+                in_selection
             );
         }
         let has_selection = self
@@ -3065,10 +3068,7 @@ impl Editor {
             .selection()
             .is_some_and(|sel| sel.start < sel.end);
         let read_only = self.read_only;
-        let pos = context_menu::Point::new(
-            event.position.x.as_f32(),
-            event.position.y.as_f32(),
-        );
+        let pos = context_menu::Point::new(event.position.x.as_f32(), event.position.y.as_f32());
         // 无宿主（单测/独立构造）只移光标不弹菜单；有宿主经回调上抛
         //（闭包里是 shell.open_editor_context_menu——菜单状态与
         // ed-* 动作派发面都在 shell）。
