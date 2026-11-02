@@ -65,11 +65,10 @@
 //!   本模块测试 = 导出 XML 面直断言 + 既有文本面回归（文本零损）；
 //! - 导出的 heading 样式读回 = `Heading1`..`Heading9`（office-io 读面
 //!   样式 ID 透传）——全环断言见本模块测试；
-//! - 不暴露面（DocxWriter 能力中本切片未接线）：页眉/页脚槽位、PNG
-//!   图片（模型无图片块型——BlockKind 无 image 变体，非降级而是
-//!   无源可映射）、脚注、域——**例外**：W-1 目录域（TOC）经 options
-//!   开关接线（见下）；页码域（PAGE/NUMPAGES）仍不暴露（无页面装置
-//!   语义面）。
+//! - 不暴露面（DocxWriter 能力中本切片未接线）：脚注——**例外**：
+//!   W-1 目录域（TOC）经 options 开关接线（见下）；页眉/页脚槽位、
+//!   页码域（PAGE/NUMPAGES）与 PNG 图片经 P1 #190 options 接线
+//!   （见下节）；正文域仍不暴露（无页面装置语义面）。
 //!
 //! ## W-1/W-2 增量（2026-10-28，issue #29 阶段 A0）：options 两新键
 //!
@@ -99,6 +98,30 @@
 //!   错误映射：后处理失败（非 docx 伪产物/zip 面）经 [`map_error`]
 //!   归 `docx_build` 既有通道。
 //!
+//! ## P1 增量（2026-11-02，issue #190）：options 三新键——页眉/页脚/图片
+//!
+//! office-io 写面六槽位（`DocxWriter::header`/`first_header`/
+//! `even_header`/`footer`/`first_footer`/`even_footer`——重复调用原位
+//! 替换）与 `DocxWriter::image`（PNG-only，显式像素尺寸）能力已在，
+//! 本切片经 [`export_docx_styled`] options 接线（投标刚需：页眉 =
+//! 投标人/项目名/正副本标识，页脚 = 页码，图片 = 资质证书/业绩合同）。
+//! 三键缺省 = 零发射（与既有导出字节级一致——纯加性）。
+//!
+//! - `"header"` / `"footer"`：`{ "runs": [run...], "first_page":
+//!   {"runs": [...]}?, "even_page": {"runs": [...]}? }`——default 槽
+//!   必填；`first_page`/`even_page` 独立槽可选（缺省/null/false =
+//!   不设置；引擎自动置 titlePg / evenAndOddHeaders 激活位）。
+//!   run = `{"text", "bold"?, "italic"?}` 或 `{"field":
+//!   "page"|"numpages"}`（页码域——页眉页脚刚需面，text/field 互斥）。
+//!   形状错误 → `docx_options`（既有码）。
+//! - `"images"`：`{ <src>: {"png_base64", "width_px", "height_px"} }`
+//!   资源表——Markdown 图片行 `![alt](src)` 的 src 命中表键时发射
+//!   [`DocxWriter::image`]（单行 Paragraph 独立块——v0 行级解析器
+//!   图片行即独立段落块，零树改动；`![alt](src)` 字面量在树里）。
+//!   未命中 src / 非 PNG 签名 / base64 坏 → 见模块文档降级与拒收面。
+//!   识别在块发射层（`effective_inline` 之前——图片是块级面，marks
+//!   不适用）；多行块内图片行不识别（登记）。
+//!
 //! 纯内核（[`export_docx_core`]）不触碰 JsValue → 原生 cargo test
 //! 直测（写→`read_docx_from_bytes`→模型断言 + XML 面 zip 本地头遍历
 //! 直断言，t16/t17/t18 同款写读全环纪律）；wasm 壳由 wasm32 check +
@@ -108,8 +131,8 @@ use crate::WasmCore;
 #[cfg(test)]
 use mdc_office_io::docx::read_docx_from_bytes;
 use mdc_office_io::docx::{
-    anonymize_docx_props, DefaultTypography, DocxError, DocxWriter, LineRuleSpec, LineSpacingSpec,
-    ListKind, PageGeometry, RunSpec,
+    anonymize_docx_props, DefaultTypography, DocxError, DocxWriter, FieldSpec, LineRuleSpec,
+    LineSpacingSpec, ListKind, PageGeometry, RunSpec,
 };
 use mdcore::tree::{Attrs, BlockKind, BlockTree, MarkSpan, NodeId};
 use wasm_bindgen::prelude::*;
@@ -681,6 +704,169 @@ pub struct TocOptions {
     pub level_to: u8,
 }
 
+// ---------------------------------------------------------------- P1 #190：页眉/页脚槽位
+
+/// P1 #190：页眉/页脚槽位选项（六槽位 = default/first/even × 页眉/页脚）。
+///
+/// `default` 必填（空 runs 数组合法——空槽语义，如「首页页眉留空、
+/// 其余页有默认页眉」的 Word 惯用法）；`first`/`even` = None（缺省/
+/// null/false）时不发射对应槽，Some 时发射（引擎自动置 titlePg /
+/// evenAndOddHeaders 激活位——office-io `first_header`/`even_header`
+/// 文档口径）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeaderFooterSpec {
+    pub default: Vec<RunSpec>,
+    pub first: Option<Vec<RunSpec>>,
+    pub even: Option<Vec<RunSpec>>,
+}
+
+/// 可选布尔字段（P1 #190——run 的 bold/italic；缺省/null = false，
+/// 与 W-1 `toc.enabled` 的必填布尔 [`req_bool`] 相对）。
+fn opt_bool(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    field: &str,
+) -> Result<bool, ExportError> {
+    match obj.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(false),
+        Some(serde_json::Value::Bool(b)) => Ok(*b),
+        Some(other) => Err(options_err(
+            path,
+            format!("`{field}` must be a boolean, got {other}"),
+        )),
+    }
+}
+
+/// P1 #190：页眉/页脚 run 解析（`{"text", "bold"?, "italic"?}` 文本 run
+/// 或 `{"field": "page"|"numpages"}` 页码域 run——text/field 互斥）。
+///
+/// 域面只暴露 PAGE/NUMPAGES（页眉页脚刚需：页码定位）；TOC 域不在此
+/// 面（目录是文档体语义，经 W-1 `toc` 键——避免两通道同义）。run 内
+/// 未知键拒收（显式全量状态语义——与顶层白名单同纪律）。
+fn parse_hf_run(v: &serde_json::Value, path: &str) -> Result<RunSpec, ExportError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| options_err(path, "run must be an object".into()))?;
+    for key in obj.keys() {
+        if !matches!(key.as_str(), "text" | "bold" | "italic" | "field") {
+            return Err(options_err(
+                path,
+                format!("unknown run field `{key}` (allowed: text, bold, italic, field)"),
+            ));
+        }
+    }
+    // 域 run：{"field": "page"|"numpages"}——text/field 互斥（域 run 的
+    // 显示文本是渲染期计算面，混入 text 语义矛盾）。
+    if let Some(fv) = obj.get("field") {
+        let s = fv
+            .as_str()
+            .ok_or_else(|| options_err(path, format!("`field` must be a string, got {fv}")))?;
+        let field = match s {
+            "page" => FieldSpec::Page,
+            "numpages" => FieldSpec::NumPages,
+            other => {
+                return Err(options_err(
+                    path,
+                    format!("`field` must be page|numpages, got {other:?}"),
+                ))
+            }
+        };
+        if obj.get("text").is_some() {
+            return Err(options_err(
+                path,
+                "`field` and `text` are mutually exclusive".into(),
+            ));
+        }
+        return Ok(RunSpec {
+            field: Some(field),
+            ..RunSpec::text("")
+        });
+    }
+    // 文本 run：text 必填，bold/italic 可选。
+    let text = req_str(obj, path, "text")?;
+    Ok(RunSpec {
+        bold: opt_bool(obj, path, "bold")?,
+        italic: opt_bool(obj, path, "italic")?,
+        ..RunSpec::text(text)
+    })
+}
+
+/// P1 #190：runs 数组解析（`path` 定位到槽位——错误消息可指到
+/// `header.first_page.runs[2]` 级）。
+fn parse_hf_runs(v: Option<&serde_json::Value>, path: &str) -> Result<Vec<RunSpec>, ExportError> {
+    let arr = v
+        .ok_or_else(|| options_err(path, "missing required field `runs`".into()))?
+        .as_array()
+        .ok_or_else(|| options_err(path, "`runs` must be an array".into()))?;
+    arr.iter()
+        .enumerate()
+        .map(|(i, r)| parse_hf_run(r, &format!("{path}.runs[{i}]")))
+        .collect()
+}
+
+/// P1 #190：独立槽（first_page/even_page）解析——缺省/null/false = 不
+/// 设置；`{"runs": [...]}` = 设置；裸 true 拒（runs 无从谈起——形状
+/// 严格面）。
+fn parse_hf_variant_slot(
+    v: Option<&serde_json::Value>,
+    path: &str,
+) -> Result<Option<Vec<RunSpec>>, ExportError> {
+    match v {
+        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => Ok(None),
+        Some(serde_json::Value::Bool(true)) => Err(options_err(
+            path,
+            "bare `true` is not a valid shape (use {\"runs\": [...]} or false)".into(),
+        )),
+        Some(obj) => {
+            let path = format!("{path}.runs");
+            let o = obj
+                .as_object()
+                .ok_or_else(|| options_err(&path, "must be an object or false".into()))?;
+            for key in o.keys() {
+                if key != "runs" {
+                    return Err(options_err(
+                        &path,
+                        format!("unknown field `{key}` (allowed: runs)"),
+                    ));
+                }
+            }
+            parse_hf_runs(o.get("runs"), &path).map(Some)
+        }
+    }
+}
+
+/// P1 #190：`header`/`footer` 顶层键 → [`HeaderFooterSpec`]（缺省/null
+/// = None——零发射，字节稳定）。
+fn parse_hf_slot(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Option<HeaderFooterSpec>, ExportError> {
+    match obj.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(v) => {
+            let hf = v
+                .as_object()
+                .ok_or_else(|| options_err(key, "must be an object".into()))?;
+            for k in hf.keys() {
+                if !matches!(k.as_str(), "runs" | "first_page" | "even_page") {
+                    return Err(options_err(
+                        key,
+                        format!("unknown field `{k}` (allowed: runs, first_page, even_page)"),
+                    ));
+                }
+            }
+            let default = parse_hf_runs(hf.get("runs"), &format!("{key}.runs"))?;
+            let first = parse_hf_variant_slot(hf.get("first_page"), &format!("{key}.first_page"))?;
+            let even = parse_hf_variant_slot(hf.get("even_page"), &format!("{key}.even_page"))?;
+            Ok(Some(HeaderFooterSpec {
+                default,
+                first,
+                even,
+            }))
+        }
+    }
+}
+
 /// 解析后的导出格式选项（已构造为 office-io 公开类型——值域校验
 /// 延迟到 save 漏斗 V9）。
 pub struct StyleOptions {
@@ -691,6 +877,10 @@ pub struct StyleOptions {
     pub toc: Option<TocOptions>,
     /// W-2：true = 产物过 [`anonymize_docx_props`]（暗标 G3/R-11）。
     pub anonymize: bool,
+    /// P1 #190：页眉六槽位（None = 缺省——零发射，字节稳定）。
+    pub header: Option<HeaderFooterSpec>,
+    /// P1 #190：页脚六槽位（同上）。
+    pub footer: Option<HeaderFooterSpec>,
 }
 
 /// options JSON → [`StyleOptions`]（形状校验层；JsValue-free 原生可测）。
@@ -703,12 +893,12 @@ pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
     for key in obj.keys() {
         if !matches!(
             key.as_str(),
-            "typography" | "page_geometry" | "toc" | "anonymize"
+            "typography" | "page_geometry" | "toc" | "anonymize" | "header" | "footer"
         ) {
             return Err(options_err(
                 "$",
                 format!(
-                    "unknown field `{key}` (allowed: typography, page_geometry, toc, anonymize)"
+                    "unknown field `{key}` (allowed: typography, page_geometry, toc, anonymize, header, footer)"
                 ),
             ));
         }
@@ -844,18 +1034,24 @@ pub fn parse_style_options(json: &str) -> Result<StyleOptions, ExportError> {
         })?,
     };
 
+    // P1 #190：页眉/页脚六槽位（缺省 = 零发射——字节稳定）。
+    let header = parse_hf_slot(obj, "header")?;
+    let footer = parse_hf_slot(obj, "footer")?;
+
     Ok(StyleOptions {
         typography,
         page_geometry,
         toc,
         anonymize,
+        header,
+        footer,
     })
 }
 
 /// 编辑器核心块树 + 格式选项 → DOCX 字节。选项消费 = 写器两设置面
-/// （几何/排版）+ W-1 TOC 域段（内容块之前）+ W-2 匿名化后处理；
-/// 值域违规经 save 漏斗 V9 拒（错误码 `docx_invalid_input`）——形状
-/// 违规 [`parse_style_options`] 已拦。
+/// （几何/排版）+ P1 #190 页眉/页脚六槽位 + W-1 TOC 域段（内容块
+/// 之前）+ W-2 匿名化后处理；值域违规经 save 漏斗 V9 拒（错误码
+/// `docx_invalid_input`）——形状违规 [`parse_style_options`] 已拦。
 pub fn export_docx_styled_core(
     tree: &BlockTree,
     options_json: &str,
@@ -867,6 +1063,27 @@ pub fn export_docx_styled_core(
     }
     if let Some(t) = opts.typography {
         w.default_typography(t);
+    }
+    // P1 #190：页眉/页脚六槽位（office-io builder 面——section_property
+    // 级设置，与段落序无关；固定发射序 = 字节稳定）。发射先于 TOC 与
+    // 内容块（页眉页脚是页面装置面，非文档体序面）。
+    if let Some(hf) = &opts.header {
+        w.header(&hf.default);
+        if let Some(first) = &hf.first {
+            w.first_header(first);
+        }
+        if let Some(even) = &hf.even {
+            w.even_header(even);
+        }
+    }
+    if let Some(hf) = &opts.footer {
+        w.footer(&hf.default);
+        if let Some(first) = &hf.first {
+            w.first_footer(first);
+        }
+        if let Some(even) = &hf.even {
+            w.even_footer(even);
+        }
     }
     // W-1：TOC 域段居文档开头（内容块发射之前——Word 惯例：目录在
     // 正文前；Word/LO 打开后提示更新域生成真实目录）。
@@ -1034,7 +1251,9 @@ impl WasmCore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mdc_office_io::docx::{Block, ParagraphData, TableData};
+    use mdc_office_io::docx::{
+        Block, HeaderFooterData, HeaderFooterVariant, ParagraphData, TableData,
+    };
     use mdcore::markdown::markdown_to_tree;
 
     /// 直构单块树（marks/attrs 精确控制——op/html 导入面的模型等价物）。
@@ -2360,5 +2579,234 @@ mod tests {
         assert_eq!(xml.matches("<w:trPr />").count(), 2, "其余行保持原形");
         // 注入产物结构完整：引擎读面可解析。
         assert!(read_docx_from_bytes(&bytes).is_ok(), "注入产物可读回");
+    }
+
+    // ------------------------------------------------------------ P1 #190：页眉/页脚
+
+    /// P1 #190 辅助：zip 部件 XML 文本（`docx_part_bytes` 咖啡因包装
+    /// ——office-io 公开面，容器门内建）。
+    fn part_xml(bytes: &[u8], name: &str) -> String {
+        String::from_utf8(
+            mdc_office_io::docx::docx_part_bytes(bytes, name)
+                .unwrap_or_else(|| panic!("part {name} not found")),
+        )
+        .unwrap()
+    }
+
+    /// P1 #190-E1：页眉/页脚默认槽发射 + 页码域（issue #190 验收①②：
+    /// header/footer 含页码域；读回可见——office-io 读面 headers/
+    /// footers 槽位挂接 + 文本面）。
+    #[test]
+    fn p1_hf_default_slots_with_page_fields() {
+        let tree = markdown_to_tree("正文段落。\n");
+        let options = r#"{
+            "header": {
+                "runs": [
+                    {"text": "XX公司投标文件", "bold": true},
+                    {"text": "  第 "},
+                    {"field": "page"},
+                    {"text": " 页"}
+                ]
+            },
+            "footer": {
+                "runs": [
+                    {"text": "第 "}, {"field": "page"},
+                    {"text": " 页 / 共 "}, {"field": "numpages"}, {"text": " 页"}
+                ]
+            }
+        }"#;
+        let bytes = export_docx_styled_core(&tree, options).expect("styled export");
+        // 部件面：header1/footer1 在场 + 域指令 + 加粗位
+        let h1 = part_xml(&bytes, "word/header1.xml");
+        assert!(h1.contains("XX公司投标文件"), "页眉文本在场: {h1}");
+        assert!(h1.contains("<w:b />"), "页眉加粗位在场");
+        assert!(h1.contains("PAGE"), "页眉 PAGE 域在场");
+        let f1 = part_xml(&bytes, "word/footer1.xml");
+        assert!(f1.contains("页 / 共"), "页脚文本在场");
+        assert!(
+            f1.contains("PAGE") && f1.contains("NUMPAGES"),
+            "页脚双域在场"
+        );
+        // document.xml：槽位引用挂接（default 型）
+        let doc = part_xml(&bytes, "word/document.xml");
+        assert!(
+            doc.contains(r#"w:type="default""#) && doc.contains("headerReference"),
+            "默认页眉引用挂接"
+        );
+        assert!(doc.contains("footerReference"), "页脚引用挂接");
+        // 读回全环（验收⑦：office-io 读导出的 docx 能看到页眉页脚）
+        let back = read_docx_from_bytes(&bytes).expect("read back");
+        assert_eq!(back.headers.len(), 1, "默认页眉恰一槽");
+        assert_eq!(back.headers[0].variant, HeaderFooterVariant::Default);
+        let h_text: String = back.headers[0]
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => Some(p.text()),
+                _ => None,
+            })
+            .collect();
+        assert!(h_text.contains("XX公司投标文件"), "读回页眉文本: {h_text}");
+        assert_eq!(back.footers.len(), 1, "默认页脚恰一槽");
+        assert_eq!(back.footers[0].variant, HeaderFooterVariant::Default);
+        // 正文不受影响（页面装置面与文档体面正交）
+        assert!(paras(&back.blocks).iter().any(|p| p.text() == "正文段落。"));
+    }
+
+    /// P1 #190-E2：首页/偶数页独立槽（验收③）——titlePg +
+    /// evenAndOddHeaders 激活位由引擎自动置位；读回三槽 variant 齐。
+    #[test]
+    fn p1_hf_first_and_even_slots() {
+        let tree = markdown_to_tree("x\n");
+        let options = r#"{
+            "header": {
+                "runs": [{"text": "默认页眉"}],
+                "first_page": {"runs": [{"text": "首页页眉"}]},
+                "even_page": {"runs": [{"text": "偶数页页眉"}]}
+            },
+            "footer": {
+                "runs": [{"text": "默认页脚"}],
+                "first_page": {"runs": [{"text": "首页页脚"}]},
+                "even_page": {"runs": [{"text": "偶数页页脚"}]}
+            }
+        }"#;
+        let bytes = export_docx_styled_core(&tree, options).expect("styled export");
+        // 六部件在场（header1-3 + footer1-3——docx-rs 槽位递增命名）
+        for name in [
+            "word/header1.xml",
+            "word/header2.xml",
+            "word/header3.xml",
+            "word/footer1.xml",
+            "word/footer2.xml",
+            "word/footer3.xml",
+        ] {
+            assert!(
+                mdc_office_io::docx::docx_part_bytes(&bytes, name).is_some(),
+                "{name} 在场"
+            );
+        }
+        let all_hf = [
+            part_xml(&bytes, "word/header1.xml"),
+            part_xml(&bytes, "word/header2.xml"),
+            part_xml(&bytes, "word/header3.xml"),
+            part_xml(&bytes, "word/footer1.xml"),
+            part_xml(&bytes, "word/footer2.xml"),
+            part_xml(&bytes, "word/footer3.xml"),
+        ]
+        .concat();
+        for text in [
+            "默认页眉",
+            "首页页眉",
+            "偶数页页眉",
+            "默认页脚",
+            "首页页脚",
+            "偶数页页脚",
+        ] {
+            assert!(all_hf.contains(text), "{text} 在场");
+        }
+        // 激活位：document.xml titlePg + settings.xml evenAndOddHeaders
+        let doc = part_xml(&bytes, "word/document.xml");
+        assert!(doc.contains("titlePg"), "首页槽激活位 titlePg");
+        assert!(
+            doc.contains(r#"w:type="first""#) && doc.contains(r#"w:type="even""#),
+            "first/even 型引用挂接"
+        );
+        let settings = part_xml(&bytes, "word/settings.xml");
+        assert!(
+            settings.contains("evenAndOddHeaders"),
+            "偶数页槽激活位 evenAndOddHeaders"
+        );
+        // 读回：三槽 × 页眉/页脚，variant 齐
+        let back = read_docx_from_bytes(&bytes).expect("read back");
+        assert_eq!(back.headers.len(), 3, "页眉三槽");
+        assert_eq!(back.footers.len(), 3, "页脚三槽");
+        let variants =
+            |v: &[HeaderFooterData]| v.iter().map(|d| d.variant).collect::<Vec<_>>();
+        assert!(variants(&back.headers).contains(&HeaderFooterVariant::Default));
+        assert!(variants(&back.headers).contains(&HeaderFooterVariant::First));
+        assert!(variants(&back.headers).contains(&HeaderFooterVariant::Even));
+        assert!(variants(&back.footers).contains(&HeaderFooterVariant::First));
+    }
+
+    /// P1 #190-E3：缺省字节级一致（验收⑥——null 形态与缺省同义；
+    /// 空对象基线由 tr4_e2 钉定，此处补 header/footer 两键的 null 面）。
+    #[test]
+    fn p1_hf_null_keys_byte_equivalence() {
+        let tree = markdown_to_tree("para\n");
+        let plain = export_docx_core(&tree).expect("plain");
+        let nulls =
+            export_docx_styled_core(&tree, r#"{"header": null, "footer": null}"#).expect("nulls");
+        assert_eq!(plain, nulls, "null 键 ≡ 缺省（零发射，字节稳定）");
+        // false 形态的独立槽同义（first_page: false = 不设置）
+        let options = r#"{"header": {"runs": [], "first_page": false, "even_page": false}}"#;
+        let only_default = export_docx_styled_core(&tree, options).expect("only default slot");
+        let bare = export_docx_styled_core(&tree, r#"{"header": {"runs": []}}"#).expect("bare");
+        assert_eq!(only_default, bare, "false 独立槽 ≡ 缺省独立槽");
+    }
+
+    /// P1 #190-E4：形状错误面 `docx_options`（九面：非对象/缺 runs/
+    /// runs 非数组/run 非对象/run 缺 text/field 枚举外/text+field 互斥
+    /// /裸 true 独立槽/未知字段）——与既有形状错误同码可区分。
+    #[test]
+    fn p1_hf_shape_errors_docx_options() {
+        let tree = markdown_to_tree("x\n");
+        let cases: Vec<(&str, &str)> = vec![
+            ("non object", r#"{"header": 5}"#),
+            ("missing runs", r#"{"header": {}}"#),
+            ("runs not array", r#"{"header": {"runs": 5}}"#),
+            ("run not object", r#"{"footer": {"runs": ["str"]}}"#),
+            (
+                "run missing text",
+                r#"{"header": {"runs": [{"bold": true}]}}"#,
+            ),
+            (
+                "bad field value",
+                r#"{"footer": {"runs": [{"field": "date"}]}}"#,
+            ),
+            (
+                "text and field both",
+                r#"{"header": {"runs": [{"text": "a", "field": "page"}]}}"#,
+            ),
+            (
+                "bare true first_page",
+                r#"{"header": {"runs": [], "first_page": true}}"#,
+            ),
+            (
+                "unknown hf field",
+                r#"{"header": {"runs": [], "margins": 1}}"#,
+            ),
+            (
+                "unknown run field",
+                r#"{"header": {"runs": [{"text": "a", "mono": true}]}}"#,
+            ),
+        ];
+        for (name, json) in cases {
+            let e =
+                export_docx_styled_core(&tree, json).expect_err(&format!("{name}: must reject"));
+            assert_eq!(e.code, "docx_options", "{name}: {e:?}");
+        }
+    }
+
+    /// P1 #190-E5：空 runs 默认槽 = 空槽语义（发射空段落部件——
+    /// 「首页留空、其余页有默认页眉」的 Word 惯用法合法面）；与
+    /// 首页独立槽组合的真实用法。
+    #[test]
+    fn p1_hf_empty_default_slot_is_valid() {
+        let tree = markdown_to_tree("x\n");
+        // 首页页眉留空 + 其余页页眉有内容（Word 惯用法：封面页不显示页眉）
+        let options = r#"{
+            "header": {
+                "runs": [{"text": "正文页眉"}],
+                "first_page": {"runs": []}
+            }
+        }"#;
+        let bytes = export_docx_styled_core(&tree, options).expect("empty first slot ok");
+        let back = read_docx_from_bytes(&bytes).expect("read back");
+        assert_eq!(back.headers.len(), 2, "默认 + 首页两槽");
+        // 纯空默认槽（整档无页眉面——防御合法形）
+        let bare_empty = export_docx_styled_core(&tree, r#"{"header": {"runs": []}}"#)
+            .expect("bare empty slot ok");
+        let back2 = read_docx_from_bytes(&bare_empty).expect("read back 2");
+        assert_eq!(back2.headers.len(), 1, "空默认槽挂接");
     }
 }
