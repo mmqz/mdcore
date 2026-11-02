@@ -34,11 +34,14 @@ const BUTTON_GAP: Pixels = px(4.);
 /// 图标条四周内边距（px）。
 const BAR_PADDING: Pixels = px(8.);
 
-/// 渲染图标条。`left_open`/`right_open` 决定选中态与右栏开关钮图标方向。
+/// 渲染图标条。`left_open`/`right_open` 决定选中态与右栏开关钮图标方向；
+/// `git_view`/`settings_view` 是左右栏的当前视图（决定 git/设置钮的
+/// 选中态）。
 pub fn activity_bar(
     left_open: bool,
     git_view: bool,
     right_open: bool,
+    settings_view: bool,
     cx: &mut Context<ShellApp>,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
@@ -83,6 +86,18 @@ pub fn activity_bar(
                     editor.update(cx, |ed, cx| ed.run_command(Cmd::OpenFind, window, cx));
                 }
             }),
+        ))
+        // #182：设置钮回归（#172 曾按「无面板可接」移除——#182 纠正为
+        // 「该有但还没做 → 补实现」：设置面板落位，钮接真实行为——
+        // 右栏切到设置视图；已开且在设置视图时折叠，与 git 钮同构）。
+        .child(bar_button(
+            "act-settings",
+            IconName::Settings,
+            right_open && settings_view,
+            "设置",
+            colors.element_hover,
+            colors.element_selected,
+            cx.listener(|this, _, _, cx| this.toggle_settings(cx)),
         ))
         .child(div().flex_1())
         .child({
