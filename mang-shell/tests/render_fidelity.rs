@@ -185,7 +185,7 @@ fn cjk_ratio(s: &str) -> f64 {
     let cjk = s
         .chars()
         .filter(|c| {
-            let cp = c as u32;
+            let cp = *c as u32;
             (0x4E00..=0x9FFF).contains(&cp) // CJK 统一表意
                 || (0x3400..=0x4DBF).contains(&cp) // 扩展 A
                 || (0xF900..=0xFAFF).contains(&cp) // 兼容表意
