@@ -25,7 +25,8 @@
 //! | `command_palette_uses_grouped_assembly` | 🔴 | editor/mod.rs 面板渲染扁平列表（`pal.items.take(8)`），palette_view.rs + command_groups.rs 分组装配零调用者 |
 //! | `status_bar_consumes_status_info` | 🔴 | status_info.rs 四项纯函数（git 分支/编码/换行符/选中字数）零消费 |
 //! | `settings_panel_ui_exists` | 🔴 | #182：设置面板必须实现（#165 移除设置钮是错误裁决）；settings.rs 8 类存取已全实现只缺 UI 壳 |
-//! | `editor_area_context_menu_is_triggered` | 🟢 | #179：已随 PR #189 接线（editor/mod.rs `dispatch_context_menu` + shell.rs `menu_opener_for`——main 已含，旧登记未同步） |
+//! | `editor_area_context_menu_is_triggered` | 🟢 | #179：已随 PR #189 接线（editor/mod.rs `dispatch_context_menu` + shell.rs `menu_opener_for`） |
+//! | `locked_line_rejection_is_visible` | 🟢 | #178：拒改 stderr → GUI 反馈（Buffer `take_rejection` → Editor `after_edit` 收割 → status_bar 渲染） |
 //! | `gpu_failure_shows_native_dialog` | 🟢 | #185：GPU 初始化失败 stderr → 原生对话框兑底（native_dialog 候选链 + main.rs 失败分支消费） |
 //!
 //! **绝不允许 xfail/#[ignore] 放过未接线模块**（#183：「不许把测试写成 xfail
@@ -363,6 +364,44 @@ fn editor_area_context_menu_is_triggered() {
         "编辑器区右键菜单触发器未接线：editor/mod.rs 无 MouseButton::Right 处理、\
          不调 open_editor_context_menu——ed-* 八个动作处理器已接但经 UI 不可达\
          （#179）。对照：文件树右键已接（open_file_tree_context_menu）。"
+    );
+}
+
+/// 🔴 #178 范围：docx 锁定行拒改必须有 GUI 可见反馈。
+///
+/// 现状（修复前）：拒改只走 stderr（buffer.rs `edit-guard:` eprintln）——
+/// GUI 用户在锁定行敲字毫无反应，分不清是被锁还是卡了。
+///
+/// 三段锚点（数据源 → 收割 → 渲染——断任何一段即回红）：
+/// 1. `buffer.rs`：拒改落账 + 可收割（`take_rejection`）；
+/// 2. `editor/mod.rs`：`after_edit` 收割转存（locked_notice 字段面）；
+/// 3. `status_bar.rs`：渲染消费（locked_notice() + Error 色标签）。
+#[test]
+fn locked_line_rejection_is_visible() {
+    // ① 数据源：拒改记录可收割（Buffer 拒改点落账）。
+    let buffer_rs = src("editor/buffer.rs");
+    assert!(
+        buffer_rs.contains("take_rejection"),
+        "拒改数据源缺失：buffer.rs 无 take_rejection——锁定行拒改只走 stderr，\
+         GUI 反馈链断在数据源（#178）。"
+    );
+    // ② 收割：编辑器公共收尾把拒改转存为可见提示。
+    let editor_rs = src("editor/mod.rs");
+    assert!(
+        editor_rs.contains("self.buffer.take_rejection()"),
+        "拒改收割缺失：editor/mod.rs after_edit 不收割 take_rejection——\
+         拒改落了账但没人消费（#178）。"
+    );
+    assert!(
+        editor_rs.contains("struct LockedNotice"),
+        "LockedNotice 结构缺失：拒改提示无承载结构（#178）。"
+    );
+    // ③ 渲染：状态栏消费提示（Error 色可见标签）。
+    let sb = src("status_bar.rs");
+    assert!(
+        sb.contains("locked_notice") && sb.contains("ui::Color::Error"),
+        "拒改渲染缺失：status_bar.rs 不消费 locked_notice / 无 Error 色标签——\
+         收割链有了但用户看不见（#178）。"
     );
 }
 
