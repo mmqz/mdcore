@@ -78,6 +78,9 @@ mod context_menu;
 mod context_menu_view;
 mod palette_view;
 mod status_info;
+// #185：系统原生错误对话框——GPU/图形栈初始化失败（GPUI 起不来）
+// 时的「用户看得见」兑底（zenity/kdialog/xmessage/notify-send 候选链）。
+mod native_dialog;
 mod shell;
 mod status_bar;
 mod tab_bar;
@@ -291,6 +294,33 @@ fn main() {
                          Direct3D 11（FL 10.1+）。请更新显卡驱动后重试；\
                          仍失败时运行 `RUST_LOG=gpui_wgpu=info mang-shell` 采集日志。"
                     );
+                    // #185：stderr 之上补「用户看得见」兑底——GPUI 窗口
+                    // 系统尚未建立（弹 GPUI 对话框 = 死循环：弹窗本身需要
+                    // 窗口），借 OS 原生提示工具（Linux zenity/kdialog/
+                    // xmessage/notify-send；Windows powershell MessageBox；
+                    // macOS osascript）。送达判定：spawn 成功且退出码 0
+                    //（无显示会话时 zenity 能 spawn 但立即失败→换下一
+                    // 候选）；全失败 false 回退纯 stderr（诊断面仍在）。
+                    let shown = native_dialog::show_error(&native_dialog::DialogSpec {
+                        title: "mang 无法启动".to_string(),
+                        message: format!(
+                            "打开主窗口失败（图形初始化需要 GPU 支持）。\n\n\
+                             {error:#}\n\n\
+                             建议：请更新显卡驱动后重试。\n\
+                             · Linux：需 Vulkan 驱动或 OpenGL 4.3+\
+                             （软件渲染 llvmpipe 亦可）\n\
+                             · Windows：需 Direct3D 11（FL 10.1+）\n\n\
+                             仍失败时请运行 RUST_LOG=gpui_wgpu=info mang-shell \
+                             采集日志并反馈。"
+                        ),
+                    });
+                    if !shown {
+                        eprintln!(
+                            "（#185：未找到可用的系统对话框工具——\
+                             zenity/kdialog/xmessage/notify-send 均不可达，\
+                             仅 stderr 留痕）"
+                        );
+                    }
                     std::process::exit(70);
                 }
             };

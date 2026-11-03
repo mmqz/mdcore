@@ -27,6 +27,7 @@
 //! | `settings_panel_ui_exists` | 🔴 | #182：设置面板必须实现（#165 移除设置钮是错误裁决）；settings.rs 8 类存取已全实现只缺 UI 壳 |
 //! | `editor_area_context_menu_is_triggered` | 🟢 | #179：已随 PR #189 接线（editor/mod.rs `dispatch_context_menu` + shell.rs `menu_opener_for`） |
 //! | `locked_line_rejection_is_visible` | 🟢 | #178：拒改 stderr → GUI 反馈（Buffer `take_rejection` → Editor `after_edit` 收割 → status_bar 渲染） |
+//! | `gpu_failure_shows_native_dialog` | 🟢 | #185：GPU 初始化失败 stderr → 原生对话框兑底（native_dialog 候选链 + main.rs 失败分支消费） |
 //!
 //! **绝不允许 xfail/#[ignore] 放过未接线模块**（#183：「不许把测试写成 xfail
 //! 放过未接线的模块」）——A-3/#179/#182 接线落地后这些测试转绿。
@@ -401,5 +402,39 @@ fn locked_line_rejection_is_visible() {
         sb.contains("locked_notice") && sb.contains("ui::Color::Error"),
         "拒改渲染缺失：status_bar.rs 不消费 locked_notice / 无 Error 色标签——\
          收割链有了但用户看不见（#178）。"
+    );
+}
+
+/// 🔴 #185 范围：GPU 初始化失败必须有 GUI 可见提示（原生对话框兑底）。
+///
+/// 现状（修复前）：`open_window` 失败只走 stderr + exit(70)——桌面双击
+/// 用户无终端父进程，stderr 无处落 ≈ 「点了没反应」的静默失败。
+///
+/// 锚点（模块存在 → 失败分支消费 → 模块挂载进 bin）：
+/// 1. `native_dialog.rs` 模块源码在仓（候选链 + 送达判定）；
+/// 2. `main.rs` 开窗失败分支调用 `native_dialog::show_error`（stderr
+///    保留，对话框叠加其上）；
+/// 3. `main.rs` 挂 `mod native_dialog`（bin 目标可达）。
+#[test]
+fn gpu_failure_shows_native_dialog() {
+    // ① 模块本体。
+    let nd = src("native_dialog.rs");
+    assert!(
+        nd.contains("pub fn show_error") && nd.contains("pub fn candidate_commands"),
+        "原生对话框模块缺失：native_dialog.rs 无 show_error/candidate_commands\
+         ——GPU 失败提示的候选链不存在（#185）。"
+    );
+    // ② 开窗失败分支消费（stderr 三连之后、exit(70) 之前）。
+    let main_rs = src("main.rs");
+    assert!(
+        main_rs.contains("native_dialog::show_error"),
+        "失败分支未接对话框：main.rs 开窗 Err 分支不调 native_dialog::show_error\
+         ——GPU 初始化失败仍只走 stderr，桌面双击用户看不到任何提示（#185）。"
+    );
+    // ③ 模块挂载。
+    assert!(
+        main_rs.contains("mod native_dialog;"),
+        "模块未挂载：main.rs 无 mod native_dialog 声明——对话框代码进不了\
+         bin 目标（#185）。"
     );
 }
