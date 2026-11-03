@@ -829,15 +829,21 @@ fn parse_hf_run(v: &serde_json::Value, path: &str) -> Result<RunSpec, ExportErro
         .as_object()
         .ok_or_else(|| options_err(path, "run must be an object".into()))?;
     for key in obj.keys() {
-        if !matches!(key.as_str(), "text" | "bold" | "italic" | "field") {
+        if !matches!(
+            key.as_str(),
+            "text" | "bold" | "italic" | "field" | "charStyle"
+        ) {
             return Err(options_err(
                 path,
-                format!("unknown run field `{key}` (allowed: text, bold, italic, field)"),
+                format!(
+                    "unknown run field `{key}` (allowed: text, bold, italic, field, charStyle)"
+                ),
             ));
         }
     }
     // 域 run：{"field": "page"|"numpages"}——text/field 互斥（域 run 的
-    // 显示文本是渲染期计算面，混入 text 语义矛盾）。
+    // 显示文本是渲染期计算面，混入 text 语义矛盾）。charStyle 与域
+    // run 互斥（域 run 无用户样式面——页码字符形态归样式定义侧）。
     if let Some(fv) = obj.get("field") {
         let s = fv
             .as_str()
@@ -858,16 +864,35 @@ fn parse_hf_run(v: &serde_json::Value, path: &str) -> Result<RunSpec, ExportErro
                 "`field` and `text` are mutually exclusive".into(),
             ));
         }
+        if obj.get("charStyle").is_some() {
+            return Err(options_err(
+                path,
+                "`field` and `charStyle` are mutually exclusive".into(),
+            ));
+        }
         return Ok(RunSpec {
             field: Some(field),
             ..RunSpec::text("")
         });
     }
-    // 文本 run：text 必填，bold/italic 可选。
+    // 文本 run：text 必填，bold/italic/charStyle 可选（#196 任务 3：
+    // charStyle = 字符样式引用——合法集 = office-io 预置字符样式
+    // （Strong/Emphasis）∪ 引擎 define 的 Character 型（本 options 面
+    // 无 styles 定义键——自定义面经 office-io API 消费方）；引用合法
+    // 性双层：桥面解析 typed + 引擎 V12 save 漏斗粘性兜底）。
     let text = req_str(obj, path, "text")?;
+    let char_style = match obj.get("charStyle") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            v.as_str()
+                .ok_or_else(|| options_err(path, format!("`charStyle` must be a string, got {v}")))?
+                .to_string(),
+        ),
+    };
     Ok(RunSpec {
         bold: opt_bool(obj, path, "bold")?,
         italic: opt_bool(obj, path, "italic")?,
+        char_style,
         ..RunSpec::text(text)
     })
 }
@@ -3008,6 +3033,70 @@ mod tests {
         assert_eq!(back.footers[0].variant, HeaderFooterVariant::Default);
         // 正文不受影响（页面装置面与文档体面正交）
         assert!(paras(&back.blocks).iter().any(|p| p.text() == "正文段落。"));
+    }
+
+    /// #196 任务 3 w10：hf run `charStyle` 键——预置字符样式引用
+    ///（rStyle 发射 + styles.xml 定义恒在 + 互斥/悬空双层拒）。
+    #[test]
+    fn w10_hf_char_style_key() {
+        let tree = markdown_to_tree("正文。\n");
+        // 合法路径：Strong/Emphasis 引用发射 rStyle。
+        let options = r#"{
+            "header": {
+                "runs": [
+                    {"text": "重点强调", "charStyle": "Strong"},
+                    {"text": " 普通对照"},
+                    {"text": " 斜体引", "charStyle": "Emphasis"}
+                ]
+            }
+        }"#;
+        let bytes = export_docx_styled_core(&tree, options).expect("styled export");
+        let h1 = part_xml(&bytes, "word/header1.xml");
+        assert!(
+            h1.contains(r#"<w:rStyle w:val="Strong" />"#),
+            "Strong rStyle 发射: {h1}"
+        );
+        assert!(
+            h1.contains(r#"<w:rStyle w:val="Emphasis" />"#),
+            "Emphasis rStyle 发射"
+        );
+        // 普通 run 零 rStyle 面。
+        assert_eq!(h1.matches("rStyle").count(), 2, "恰两个 rStyle");
+        // styles.xml：预置字符样式定义恒在（hf 槽位独立部件也共享
+        // 文档级 styles.xml）。
+        let st = part_xml(&bytes, "word/styles.xml");
+        assert!(
+            st.contains(r#"<w:style w:type="character" w:styleId="Strong">"#),
+            "Strong 定义在场"
+        );
+        // 互斥：field + charStyle 同 run 拒。
+        let bad_mutex = r#"{
+            "header": {"runs": [{"field": "page", "charStyle": "Strong"}]}
+        }"#;
+        let err = export_docx_styled_core(&tree, bad_mutex).unwrap_err();
+        assert!(
+            err.message.contains("mutually exclusive"),
+            "field/charStyle 互斥拒: {}",
+            err.message
+        );
+        // 悬空：未定义样式名经 V12 save 漏斗拒（桥面解析过——typed
+        // 双层第二层）。
+        let bad_dangling = r#"{
+            "header": {"runs": [{"text": "x", "charStyle": "NoSuch"}]}
+        }"#;
+        let err2 = export_docx_styled_core(&tree, bad_dangling).unwrap_err();
+        assert!(
+            err2.message.contains("V12") || err2.message.contains("未定义"),
+            "悬空样式 V12 拒: {}",
+            err2.message
+        );
+        // null = 缺省（不引用——与既有 options 语义一致）。
+        let null_ok = r#"{
+            "header": {"runs": [{"text": "x", "charStyle": null}]}
+        }"#;
+        let bytes2 = export_docx_styled_core(&tree, null_ok).expect("null 合法");
+        let h2 = part_xml(&bytes2, "word/header1.xml");
+        assert!(!h2.contains("rStyle"), "null 缺省零 rStyle 面");
     }
 
     /// P1 #190-E2：首页/偶数页独立槽（验收③）——titlePg +

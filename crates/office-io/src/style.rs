@@ -1220,11 +1220,18 @@ impl StyleDef {
 }
 
 /// 预置样式 id 集（引擎 Builder 恒发 `Normal` + 本写器 new() 预置
-/// `Heading1-9`——styles.xml 写出面恒含 10 个预置）。
+/// `Heading1-9`——styles.xml 写出面恒含 10 个段落预置）。
 pub const PRESET_STYLE_IDS: [&str; 10] = [
     "Normal", "Heading1", "Heading2", "Heading3", "Heading4", "Heading5", "Heading6", "Heading7",
     "Heading8", "Heading9",
 ];
+
+/// #196 任务 3：预置**字符**样式 id 集（写器 new() 预注入——Word
+/// 内置名：Strong = 加粗强调 / Emphasis = 斜体强调）。与段落预置
+/// 分离（`styled_paragraph` 引用校验仍走 [`PRESET_STYLE_IDS`]——
+/// 段落/字符类型不混用；rStyle 引用面 [`PRESET_CHAR_STYLE_IDS`]
+/// ——V12 校验数据源）。
+pub const PRESET_CHAR_STYLE_IDS: [&str; 2] = ["Strong", "Emphasis"];
 
 fn is_preset(id: &str) -> bool {
     PRESET_STYLE_IDS.contains(&id)
@@ -1271,9 +1278,9 @@ impl crate::docx::DocxWriter {
                 def.type_
             )));
         }
-        if is_preset(id) {
+        if is_preset(id) || PRESET_CHAR_STYLE_IDS.contains(&id) {
             return Err(crate::docx::DocxError::InvalidInput(format!(
-                "style id '{id}' collides with preset (Normal/Heading1-9)"
+                "style id '{id}' collides with preset (Normal/Heading1-9/Strong/Emphasis)"
             )));
         }
         if self.defined_styles().contains(id) {
@@ -1885,7 +1892,8 @@ mod tests {
         // 读回：链 + effective + 主题（引擎写面无 theme 部件——主题
         // 解析为空表，themeColor 承载在位）。
         let b = read_docx_styles_from_bytes(&bytes).unwrap();
-        // 全表序：Normal（Builder 恒发）→ Heading1-9（new() 预置）→ 自定义三连。
+        // 全表序：Normal（Builder 恒发）→ Heading1-9（new() 预置）→
+        // Strong/Emphasis（#196 任务 3 预置字符样式）→ 自定义三连。
         assert_eq!(
             b.tree.style_ids(),
             [
@@ -1899,6 +1907,8 @@ mod tests {
                 "Heading7",
                 "Heading8",
                 "Heading9",
+                "Strong",
+                "Emphasis",
                 "MyBase",
                 "MyDerived",
                 "MyDerivedChar"
@@ -2042,6 +2052,9 @@ mod tests {
     #[test]
     fn styled_paragraph_xml_face() {
         // pStyle 写面 XML 断言（styles.xml + document.xml 双面）。
+        // #196 任务 3：样式名从 Emphasis 改 MyPara——Emphasis 已成为
+        // 预置字符样式名（define_style 重名拒），本测试意图是自定义
+        // 段落样式面，不依赖具体名。
         let mut w = DocxWriter::new();
         w.define_style(StyleDef {
             based_on: Some("Normal".into()),
@@ -2054,10 +2067,10 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            ..StyleDef::new("Emphasis", StyleType::Paragraph)
+            ..StyleDef::new("MyPara", StyleType::Paragraph)
         })
         .unwrap();
-        w.styled_paragraph(&[crate::docx::RunSpec::text("hi")], "Emphasis")
+        w.styled_paragraph(&[crate::docx::RunSpec::text("hi")], "MyPara")
             .unwrap();
         let bytes = w.save_to_vec().unwrap();
         let mut za = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).unwrap();
@@ -2066,14 +2079,14 @@ mod tests {
             .unwrap()
             .read_to_string(&mut doc)
             .unwrap();
-        assert!(doc.contains("<w:pStyle w:val=\"Emphasis\" />"), "{doc}");
+        assert!(doc.contains("<w:pStyle w:val=\"MyPara\" />"), "{doc}");
         let mut styles = String::new();
         za.by_name("word/styles.xml")
             .unwrap()
             .read_to_string(&mut styles)
             .unwrap();
         assert!(
-            styles.contains("<w:style w:type=\"paragraph\" w:styleId=\"Emphasis\">"),
+            styles.contains("<w:style w:type=\"paragraph\" w:styleId=\"MyPara\">"),
             "{styles}"
         );
         assert!(styles.contains("<w:basedOn w:val=\"Normal\" />"));

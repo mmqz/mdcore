@@ -3886,6 +3886,14 @@ pub struct RunSpec {
     /// fldChar end 三连——无缓存结果文本：域值是渲染期计算面，
     /// 读回文本不含域值）。
     pub field: Option<FieldSpec>,
+    /// **字符样式引用**（#196 任务 3——`w:rStyle`）：Some = run 发射
+    /// `Run::style(id)`（与直接格式位 bold/italic 并存——Word 中
+    /// 直接格式压样式，共存合法）；引用合法性 = 预置字符样式集
+    /// （Strong/Emphasis——Word 内置名）∪ `define_style` 已定义
+    /// Character 型 id（V12 粘性：悬空引用 save 漏斗拒——Word 静默
+    /// 忽略悬空 rStyle = 视觉丢失，写自洽不产出）。经
+    /// [`RunSpec::char_styled`] 构造。
+    pub char_style: Option<String>,
 }
 
 impl RunSpec {
@@ -3901,6 +3909,7 @@ impl RunSpec {
             anchor: None,
             footnote: None,
             field: None,
+            char_style: None,
         }
     }
 
@@ -3916,6 +3925,7 @@ impl RunSpec {
             anchor: None,
             footnote: None,
             field: None,
+            char_style: None,
         }
     }
 
@@ -3940,6 +3950,7 @@ impl RunSpec {
             anchor: None,
             footnote: None,
             field: None,
+            char_style: None,
         }
     }
 
@@ -3957,6 +3968,7 @@ impl RunSpec {
             anchor: None,
             footnote: None,
             field: None,
+            char_style: None,
         }
     }
 
@@ -3978,6 +3990,7 @@ impl RunSpec {
             anchor: Some(anchor.into()),
             footnote: None,
             field: None,
+            char_style: None,
         }
     }
 
@@ -3995,6 +4008,7 @@ impl RunSpec {
             anchor: None,
             footnote: Some(note.into()),
             field: None,
+            char_style: None,
         }
     }
 
@@ -4011,6 +4025,7 @@ impl RunSpec {
             anchor: None,
             footnote: None,
             field: Some(FieldSpec::Page),
+            char_style: None,
         }
     }
 
@@ -4027,6 +4042,7 @@ impl RunSpec {
             anchor: None,
             footnote: None,
             field: Some(FieldSpec::NumPages),
+            char_style: None,
         }
     }
 
@@ -4064,6 +4080,17 @@ impl RunSpec {
                 bookmark: bookmark.into(),
             }),
             ..Self::field_page()
+        }
+    }
+
+    /// 字符样式引用 run（#196 任务 3——`w:rStyle`；与直接格式位
+    /// 并存：Word 中直接格式压样式）。样式 id 合法性 = 预置字符集
+    /// （Strong/Emphasis）∪ 已 define 的 Character 型 id（V12 粘性
+    /// save 漏斗拒）；空串拒（与 V7/V11 同语义）。
+    pub fn char_styled(text: impl Into<String>, style_id: impl Into<String>) -> Self {
+        Self {
+            char_style: Some(style_id.into()),
+            ..Self::text(text)
         }
     }
 }
@@ -4288,20 +4315,47 @@ impl DocxWriter {
     pub fn new() -> Self {
         let mut docx = docx_rs::Docx::new();
         // Heading1-9 样式定义（outline 级；based_on Normal；qFormat
-        // ——样式面板可见）。无字体面 = 模型级边界（渲染语义面外）。
+        // ——样式面板可见）。#196 任务 3：视觉面补齐——此前 rPr 空 =
+        // 样式面板可见但视觉平（标题与正文无差），「改样式批量生效」
+        // 仅形式满足；现补字号梯度（Word 内置默认 16/13/12/11pt×6
+        // ——半点 32/26/24/22）+ 加粗（H1-H4，H5-H9 常规——层级递弱）
+        // ，标题有了可见初始态，改样式（如全局换标题字体）批量生效
+        // 有实际视觉意义。颜色不补（主题面复杂，出版惯例黑字最稳
+        // ——登记裁决点）。
+        const HEADING_SIZES: [usize; 9] = [32, 26, 24, 22, 22, 22, 22, 22, 22];
         for level in 1u8..=9 {
             let mut style =
                 docx_rs::Style::new(format!("Heading{level}"), docx_rs::StyleType::Paragraph)
                     .name(format!("heading {level}"))
                     .based_on("Normal")
                     .next("Normal")
-                    .q_format(true);
+                    .q_format(true)
+                    .size(HEADING_SIZES[(level - 1) as usize]);
+            if level <= 4 {
+                style = style.bold();
+            }
             style.paragraph_property = style
                 .paragraph_property
                 .clone()
                 .outline_lvl((level - 1) as usize);
             docx = docx.add_style(style);
         }
+        // #196 任务 3：预置字符样式（Word 内置名）——Strong = 加粗
+        // 强调 / Emphasis = 斜体强调；rStyle 引用面（RunSpec::
+        // char_styled）零定义即用，V12 校验的合法集（另有 define_style
+        // 的 Character 型自定义——写自洽先定义后引用）。
+        docx = docx.add_style(
+            docx_rs::Style::new("Strong", docx_rs::StyleType::Character)
+                .name("Strong")
+                .q_format(true)
+                .bold(),
+        );
+        docx = docx.add_style(
+            docx_rs::Style::new("Emphasis", docx_rs::StyleType::Character)
+                .name("Emphasis")
+                .q_format(true)
+                .italic(),
+        );
         Self {
             docx,
             numbering_registered: false,
@@ -4631,6 +4685,25 @@ impl DocxWriter {
                 if let Some(FieldSpec::PageRef { bookmark }) = &r.field {
                     if bookmark.is_empty() {
                         self.validation_error = Some("V11: PAGEREF 目标书签名为空串".into());
+                    }
+                }
+            }
+            // #196 任务 3 V12（悬空 rStyle 引用）粘性检查——字符样式
+            // id 须在预置字符集（Strong/Emphasis）∪ 已定义 Character
+            // 型集合内；空串同拒（写自洽：Word 静默忽略悬空 rStyle =
+            // 视觉丢失，不产出半合法文档）。
+            if self.validation_error.is_none() {
+                if let Some(cs) = &r.char_style {
+                    if cs.is_empty() {
+                        self.validation_error = Some("V12: 字符样式引用为空串".into());
+                    } else {
+                        let known = crate::style::PRESET_CHAR_STYLE_IDS.contains(&cs.as_str())
+                            || self.defined_styles.contains(cs);
+                        if !known {
+                            self.validation_error = Some(format!(
+                                "V12: 字符样式 '{cs}' 未定义（预置 Strong/Emphasis 或先 define_style）"
+                            ));
+                        }
                     }
                 }
             }
@@ -5384,6 +5457,11 @@ fn add_spec_to_paragraph(p: docx_rs::Paragraph, spec: &RunSpec) -> docx_rs::Para
     }
     let mut run = docx_rs::Run::new().add_text(spec.text.as_str());
     let mut rp = docx_rs::RunProperty::new();
+    // #196 任务 3：字符样式引用（w:rStyle）——引擎 RunProperty::style
+    //（设置在 rp 内；先于此处构造后续格式位后赋值，避免覆盖）。
+    if let Some(cs) = &spec.char_style {
+        rp = rp.style(cs);
+    }
     if spec.bold {
         rp = rp.bold();
     }
@@ -6124,6 +6202,7 @@ mod tests {
                 anchor: None,
                 footnote: None,
                 field: None,
+                char_style: None,
             }
         );
         assert!(RunSpec::styled("a", true, false).bold);
@@ -6140,6 +6219,7 @@ mod tests {
                 anchor: None,
                 footnote: None,
                 field: None,
+                char_style: None,
             }
         );
         // docx-r2 构造器：脚注 marker / 两个简单域。
@@ -6156,6 +6236,7 @@ mod tests {
                 anchor: None,
                 footnote: Some("注".into()),
                 field: None,
+                char_style: None,
             }
         );
         assert_eq!(RunSpec::field_page().field, Some(FieldSpec::Page));
@@ -7338,6 +7419,7 @@ mod tests {
                 anchor: Some("sec1".into()),
                 footnote: None,
                 field: None,
+                char_style: None,
             }
         );
     }
@@ -7974,5 +8056,187 @@ mod tests {
             strip(&doc2).replace("w14:paraId=\"00000002\"", "P"),
             "空 entries 与 RunSpec TOC 路径字节同构"
         );
+    }
+    // ── #196 任务 3：pStyle 视觉面 + rStyle 测试组（T9）───────────
+
+    /// T9a：Heading1-9 视觉面——字号梯度（16/13/12/11pt×6）+ 加粗
+    /// （H1-H4）；pStyle 引用与 outlineLvl 双通道不受影响（document.xml
+    /// 面零变化——纯 styles.xml 增强）。
+    #[test]
+    fn t9a_heading_visual_face() {
+        let mut w = DocxWriter::new();
+        w.heading(1, "甲").unwrap();
+        w.heading(5, "乙").unwrap();
+        let bytes = w.save_to_vec().unwrap();
+        let styles = String::from_utf8(zip_part_bytes(&bytes, "word/styles.xml").unwrap()).unwrap();
+        // 字号梯度：H1=32 半点（16pt）/ H2=26 / H3=24 / H4=22 /
+        // H5-H9=22。
+        for (id, sz) in [
+            ("Heading1", "32"),
+            ("Heading2", "26"),
+            ("Heading3", "24"),
+            ("Heading4", "22"),
+            ("Heading9", "22"),
+        ] {
+            assert!(
+                styles.contains(&format!(r#"<w:style w:type="paragraph" w:styleId="{id}">"#)),
+                "{id} 定义在场"
+            );
+            // sz 断言：Heading 样式段内 <w:sz w:val="N" />（半点）。
+            let seg_start = styles
+                .find(&format!(r#"w:styleId="{id}""#))
+                .expect("{id} 段");
+            let seg_end = styles[seg_start + 10..]
+                .find("<w:style ")
+                .map(|k| seg_start + 10 + k)
+                .unwrap_or(styles.len());
+            let seg = &styles[seg_start..seg_end];
+            assert!(
+                seg.contains(&format!(r#"<w:sz w:val="{sz}" />"#)),
+                "{id} 字号 {sz} 半点在场"
+            );
+        }
+        // 加粗面：H1-H4 有 <w:b />，H5-H9 无。
+        for (id, expect_b) in [
+            ("Heading1", true),
+            ("Heading4", true),
+            ("Heading5", false),
+            ("Heading9", false),
+        ] {
+            let seg_start = styles.find(&format!(r#"w:styleId="{id}""#)).unwrap();
+            let seg_end = styles[seg_start + 10..]
+                .find("<w:style ")
+                .map(|k| seg_start + 10 + k)
+                .unwrap_or(styles.len());
+            let seg = &styles[seg_start..seg_end];
+            assert_eq!(
+                seg.contains("<w:b />"),
+                expect_b,
+                "{id} 加粗位 = {expect_b}"
+            );
+        }
+        // document.xml 面零变化：pStyle + outlineLvl 双通道照旧。
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(
+            doc.contains(r#"<w:pStyle w:val="Heading1" />"#)
+                && doc.contains(r#"<w:outlineLvl w:val="0" />"#),
+            "pStyle/outline 双通道保持"
+        );
+    }
+
+    /// T9b：rStyle 发射——char_styled run 的 `w:rStyle`（与直接格式位
+    /// 并存：Word 直接格式压样式）。
+    #[test]
+    fn t9b_char_style_emission() {
+        let mut w = DocxWriter::new();
+        w.paragraph(&[
+            RunSpec::char_styled("重点", "Strong"),
+            RunSpec::char_styled("斜引", "Emphasis"),
+            RunSpec::text("普通"),
+        ]);
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(
+            doc.contains(r#"<w:rStyle w:val="Strong" />"#),
+            "Strong rStyle 发射"
+        );
+        assert!(
+            doc.contains(r#"<w:rStyle w:val="Emphasis" />"#),
+            "Emphasis rStyle 发射"
+        );
+        // 无 char_style 的 run 零 rStyle 面（普通 run 不受影响）。
+        assert_eq!(
+            doc.matches("rStyle").count(),
+            2,
+            "恰两个 rStyle（普通 run 零面）"
+        );
+        // 与直接格式并存（bold + rStyle 同 run 合法）。
+        let mut w2 = DocxWriter::new();
+        w2.paragraph(&[RunSpec {
+            bold: true,
+            char_style: Some("Strong".into()),
+            ..RunSpec::text("叠加")
+        }]);
+        let bytes2 = w2.save_to_vec().unwrap();
+        let doc2 =
+            String::from_utf8(zip_part_bytes(&bytes2, "word/document.xml").unwrap()).unwrap();
+        assert!(
+            doc2.contains(r#"<w:rStyle w:val="Strong" />"#) && doc2.contains("<w:b />"),
+            "rStyle 与直接格式共存"
+        );
+    }
+
+    /// T9c：V12 矩阵——空串拒 / 悬空名拒 / 预置 Strong·Emphasis 过 /
+    /// define_style 的 Character 型过（写自洽先定义后引用）。
+    #[test]
+    fn t9c_v12_reference_matrix() {
+        // 空串。
+        let mut w = DocxWriter::new();
+        w.paragraph(&[RunSpec::char_styled("x", "")]);
+        let err = w.save_to_vec().unwrap_err();
+        assert!(
+            matches!(err, DocxError::InvalidInput(ref m) if m.starts_with("V12")),
+            "空串拒：{err:?}"
+        );
+        // 悬空名（未定义未预置）。
+        let mut w2 = DocxWriter::new();
+        w2.paragraph(&[RunSpec::char_styled("x", "NoSuchStyle")]);
+        let err2 = w2.save_to_vec().unwrap_err();
+        assert!(
+            matches!(err2, DocxError::InvalidInput(ref m) if m.starts_with("V12")),
+            "悬空拒：{err2:?}"
+        );
+        // 预置字符样式两枚过。
+        let mut w3 = DocxWriter::new();
+        w3.paragraph(&[RunSpec::char_styled("x", "Strong")]);
+        w3.paragraph(&[RunSpec::char_styled("y", "Emphasis")]);
+        assert!(w3.save_to_vec().is_ok(), "预置 Strong/Emphasis 过");
+        // define_style 的 Character 型先定义后引用过。
+        let mut w4 = DocxWriter::new();
+        w4.define_style(crate::style::StyleDef {
+            run: crate::style::StyleRunProps {
+                bold: Some(true),
+                ..Default::default()
+            },
+            ..crate::style::StyleDef::new("MyChar", crate::style::StyleType::Character)
+        })
+        .unwrap();
+        w4.paragraph(&[RunSpec::char_styled("z", "MyChar")]);
+        assert!(w4.save_to_vec().is_ok(), "自定义 Character 型过");
+        // define_style 重名拒（Strong/Emphasis 已预置）。
+        let mut w5 = DocxWriter::new();
+        let dup = w5.define_style(crate::style::StyleDef::new(
+            "Strong",
+            crate::style::StyleType::Character,
+        ));
+        assert!(dup.is_err(), "define Strong 重名拒");
+    }
+
+    /// T9d：预置注入——styles.xml 恒含 Strong/Emphasis 字符样式定义
+    /// （Word 内置名，qFormat 面板可见）；写读全环读回 bold/italic。
+    #[test]
+    fn t9d_preset_char_styles_injected_and_roundtrip() {
+        let mut w = DocxWriter::new();
+        w.paragraph_text("占位");
+        let bytes = w.save_to_vec().unwrap();
+        let styles = String::from_utf8(zip_part_bytes(&bytes, "word/styles.xml").unwrap()).unwrap();
+        assert!(
+            styles.contains(r#"<w:style w:type="character" w:styleId="Strong">"#),
+            "Strong 字符样式定义在场"
+        );
+        assert!(
+            styles.contains(r#"<w:style w:type="character" w:styleId="Emphasis">"#),
+            "Emphasis 字符样式定义在场"
+        );
+        // 写读全环：读面逐字段还原（S1 对偶纪律）。
+        let b = crate::style::read_docx_styles_from_bytes(&bytes).unwrap();
+        let strong = b.tree.get("Strong").expect("读回 Strong");
+        assert_eq!(strong.run.bold, Some(true), "Strong.bold 读回");
+        let emph = b.tree.get("Emphasis").expect("读回 Emphasis");
+        assert_eq!(emph.run.italic, Some(true), "Emphasis.italic 读回");
+        // Heading 视觉面读回（H1 = 32 半点 + bold）。
+        let h1 = b.tree.get("Heading1").expect("读回 Heading1");
+        assert_eq!(h1.run.size, Some(32), "Heading1.size 读回");
+        assert_eq!(h1.run.bold, Some(true), "Heading1.bold 读回");
     }
 }
