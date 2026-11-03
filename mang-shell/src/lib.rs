@@ -43,3 +43,9 @@ pub mod command_groups;
 /// 的面板浮层消费。
 #[path = "palette_view.rs"]
 pub mod palette_view;
+
+/// #185：系统原生错误对话框（GPU/图形栈初始化失败——GPUI 起不来时
+/// 的「用户看得见」兜底）。纯 std（Command + 候选链构造），进 lib 树
+/// 供单测断言候选序/转义/受控 PATH 送达矩阵。
+#[path = "native_dialog.rs"]
+pub mod native_dialog;

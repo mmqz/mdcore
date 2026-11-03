@@ -25,7 +25,8 @@
 //! | `command_palette_uses_grouped_assembly` | 🔴 | editor/mod.rs 面板渲染扁平列表（`pal.items.take(8)`），palette_view.rs + command_groups.rs 分组装配零调用者 |
 //! | `status_bar_consumes_status_info` | 🔴 | status_info.rs 四项纯函数（git 分支/编码/换行符/选中字数）零消费 |
 //! | `settings_panel_ui_exists` | 🔴 | #182：设置面板必须实现（#165 移除设置钮是错误裁决）；settings.rs 8 类存取已全实现只缺 UI 壳 |
-//! | `editor_area_context_menu_is_triggered` | 🔴 | #179：shell.rs `open_editor_context_menu` 零调用者，ed-* 八个动作处理器经 UI 不可达 |
+//! | `editor_area_context_menu_is_triggered` | 🟢 | #179：已随 PR #189 接线（editor/mod.rs `dispatch_context_menu` + shell.rs `menu_opener_for`——main 已含，旧登记未同步） |
+//! | `gpu_failure_shows_native_dialog` | 🟢 | #185：GPU 初始化失败 stderr → 原生对话框兑底（native_dialog 候选链 + main.rs 失败分支消费） |
 //!
 //! **绝不允许 xfail/#[ignore] 放过未接线模块**（#183：「不许把测试写成 xfail
 //! 放过未接线的模块」）——A-3/#179/#182 接线落地后这些测试转绿。
@@ -362,5 +363,39 @@ fn editor_area_context_menu_is_triggered() {
         "编辑器区右键菜单触发器未接线：editor/mod.rs 无 MouseButton::Right 处理、\
          不调 open_editor_context_menu——ed-* 八个动作处理器已接但经 UI 不可达\
          （#179）。对照：文件树右键已接（open_file_tree_context_menu）。"
+    );
+}
+
+/// 🔴 #185 范围：GPU 初始化失败必须有 GUI 可见提示（原生对话框兑底）。
+///
+/// 现状（修复前）：`open_window` 失败只走 stderr + exit(70)——桌面双击
+/// 用户无终端父进程，stderr 无处落 ≈ 「点了没反应」的静默失败。
+///
+/// 锚点（模块存在 → 失败分支消费 → 模块挂载进 bin）：
+/// 1. `native_dialog.rs` 模块源码在仓（候选链 + 送达判定）；
+/// 2. `main.rs` 开窗失败分支调用 `native_dialog::show_error`（stderr
+///    保留，对话框叠加其上）；
+/// 3. `main.rs` 挂 `mod native_dialog`（bin 目标可达）。
+#[test]
+fn gpu_failure_shows_native_dialog() {
+    // ① 模块本体。
+    let nd = src("native_dialog.rs");
+    assert!(
+        nd.contains("pub fn show_error") && nd.contains("pub fn candidate_commands"),
+        "原生对话框模块缺失：native_dialog.rs 无 show_error/candidate_commands\
+         ——GPU 失败提示的候选链不存在（#185）。"
+    );
+    // ② 开窗失败分支消费（stderr 三连之后、exit(70) 之前）。
+    let main_rs = src("main.rs");
+    assert!(
+        main_rs.contains("native_dialog::show_error"),
+        "失败分支未接对话框：main.rs 开窗 Err 分支不调 native_dialog::show_error\
+         ——GPU 初始化失败仍只走 stderr，桌面双击用户看不到任何提示（#185）。"
+    );
+    // ③ 模块挂载。
+    assert!(
+        main_rs.contains("mod native_dialog;"),
+        "模块未挂载：main.rs 无 mod native_dialog 声明——对话框代码进不了\
+         bin 目标（#185）。"
     );
 }
