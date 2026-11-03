@@ -451,12 +451,38 @@ pub struct Editor {
     /// ShellApp；闭包在 shell.rs 侧构造时捕获弱句柄（#166 file_tree
     /// 的同款模式，注入面见 ShellApp 的三个挂入口）。
     menu_opener: Option<MenuOpener>,
+    /// #178：锁定行拒改提示（用户在锁定行敲字 → 编辑门禁拒 → 状态栏
+    /// 可见反馈；`None` = 无拒改或已消退）。消退时机：下一次成功
+    /// 编辑 / 光标离开被拒行（[`Self::after_edit`] 单点维护）。
+    locked_notice: Option<LockedNotice>,
 }
 
 /// #179：右键菜单上抛回调（shell 注入——闭包内持 ShellApp 弱句柄）。
 /// 参数：(窗口坐标, 是否有选区, 是否只读)；在编辑器的右键 listener
 /// 里同步调用，菜单状态落在 shell 上（ed-* 动作派发回 shell）。
 pub type MenuOpener = Box<dyn Fn(context_menu::Point, bool, bool, &mut App) + 'static>;
+
+/// #178：锁定行拒改提示（状态栏消费）。
+///
+/// 数据链：`Buffer` 拒改点落 [`crate::editor::buffer::RejectNotice`] →
+/// [`Editor::after_edit`] 收割转存本结构 → `status_bar` 渲染可见提示。
+/// 文案基座「此行受保护，不可编辑」+ 具体原因（docx 桥的
+/// `ReadOnlyLine::reason`——表格/域代码/修订等各自的说法）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LockedNotice {
+    /// 面向用户的拒改原因。
+    pub reason: String,
+    /// 被拒变更的起点行（编辑器行号，0 基）。
+    pub line: usize,
+}
+
+impl LockedNotice {
+    /// 状态栏提示文案（固定基座 + 具体原因——两段式，用户先看到
+    /// 「为什么敲不进字」，再看到具体类别）。
+    pub fn label(&self) -> String {
+        format!("⚠ 此行受保护，不可编辑——{}", self.reason)
+    }
+}
 
 impl Editor {
     /// 打开文档：`path` 为 `None` 时是未命名新文档。
@@ -527,6 +553,7 @@ impl Editor {
             canvas: None,
             canvas_drag: None,
             menu_opener: None,
+            locked_notice: None,
         };
         this.refresh_caches();
         // 初始聚焦由 ShellApp::new 完成（需要 window 上下文）。
@@ -586,6 +613,7 @@ impl Editor {
             canvas: None,
             canvas_drag: None,
             menu_opener: None,
+            locked_notice: None,
         };
         this.refresh_caches();
         this
@@ -660,6 +688,7 @@ impl Editor {
             canvas: None,
             canvas_drag: None,
             menu_opener: None,
+            locked_notice: None,
         };
         // 编辑门禁接线：桥本体归 Editor（保存时取回写计划），Buffer 持钩子
         // 句柄（锁定行拒改 + 行归属重排——Buffer 唯一变更入口处生效）。
@@ -721,6 +750,7 @@ impl Editor {
             canvas: None,
             canvas_drag: None,
             menu_opener: None,
+            locked_notice: None,
         };
         this.refresh_caches();
         this
@@ -781,6 +811,7 @@ impl Editor {
             canvas: None,
             canvas_drag: None,
             menu_opener: None,
+            locked_notice: None,
         };
         this.refresh_caches();
         this
@@ -840,6 +871,7 @@ impl Editor {
             canvas: Some(view),
             canvas_drag: None,
             menu_opener: None,
+            locked_notice: None,
         };
         this.refresh_caches();
         this
@@ -2633,15 +2665,33 @@ impl Editor {
             .line_row(&self.buffer, line)
             .unwrap_or(line);
         self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
-        self.publish_doc_event();
+        let published = self.publish_doc_event();
+        // #178：拒改反馈维护（单点）——
+        //  · Buffer 有拒改记录 → 转存提示（状态栏可见）；
+        //  · 本次有成功变更 → 旧提示消退（拒改条件已解除）；
+        //  · 无变更也无拒改（纯光标移动）→ 光标离开被拒行时消退
+        //    （提示指向「这一行」，人走了提示就没必要留着）。
+        if let Some(rej) = self.buffer.take_rejection() {
+            self.locked_notice = Some(LockedNotice {
+                reason: rej.reason,
+                line: rej.line,
+            });
+        } else if published {
+            self.locked_notice = None;
+        } else if let Some(notice) = self.locked_notice.as_ref()
+            && notice.line != line
+        {
+            self.locked_notice = None;
+        }
     }
 
     /// #111 订阅模式：收割 Buffer 待发变更并发布事件（一次收尾一条；
     /// 多步事务合并——revision_before..revision 跨度）。无变更即不发。
-    fn publish_doc_event(&mut self) {
+    /// 返回是否发布了变更（#178 拒改提示的消退判定消费）。
+    fn publish_doc_event(&mut self) -> bool {
         let (changes, base) = self.buffer.take_pending();
         if changes.is_empty() {
-            return;
+            return false;
         }
         crate::doc_events::publish(crate::doc_events::DocEvent {
             kind: "doc_changed",
@@ -2655,6 +2705,12 @@ impl Editor {
             },
             changes,
         });
+        true
+    }
+
+    /// #178：当前锁定行拒改提示（状态栏消费；`None` = 无）。
+    pub fn locked_notice(&self) -> Option<&LockedNotice> {
+        self.locked_notice.as_ref()
     }
 
     /// 行样式源分派：docx/pdf/xlsx 只读态取预计算 span，md 态走围栏感知

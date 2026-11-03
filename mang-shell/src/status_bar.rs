@@ -2,7 +2,8 @@
 //!
 //! 左：文档状态（文件名 + 修改标记 ● + 行,列 + 字数——无文档时「就绪」）
 //! + 工作区路径（F2——打开文件夹后显示，`~` 缩写/超长截前保尾）
-//! + 选中字数（#188 接线——有选区才显示）；
+//! + 选中字数（#188 接线——有选区才显示）
+//! + 锁定行拒改提示（#178——锁定行敲字被拒时可见，Error 色）；
 //! 右：git 分支 / 文件编码 / 换行符（#188 接线——各自可判定才显示）
 //! + 版本与许可标识。背景色差（title_bar_background）区分主编辑区，
 //! 无 1px 边框。
@@ -123,6 +124,11 @@ pub fn status_bar(
         Some(sel) => format!("{left}  ·  {sel}"),
         None => left,
     };
+    // #178：锁定行拒改提示（独立 Error 色标签——不走左段文本拼接；
+    // 有拒改才渲染，无拒改不占位）。数据链：Buffer 拒改点 →
+    // Editor::after_edit 收割 → locked_notice ——此前只有 stderr
+    // 留痕，GUI 用户敲字无反应（#178 本修）。
+    let locked_notice = editor.and_then(|ed| ed.read(cx).locked_notice().cloned());
 
     h_flex()
         .id("status-bar")
@@ -140,6 +146,15 @@ pub fn status_bar(
         .child(
             h_flex()
                 .gap_3()
+                // #178：锁定行拒改提示（Error 色——「此行受保护，
+                // 不可编辑」+ 具体原因；无拒改不占位）。
+                .when_some(locked_notice, |el, notice| {
+                    el.child(
+                        Label::new(notice.label())
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Error),
+                    )
+                })
                 // #188：git 分支（如  main）——非 git 目录不占位。
                 .when_some(branch_label, |el, branch| {
                     el.child(

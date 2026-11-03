@@ -221,6 +221,11 @@ pub struct Buffer {
     /// 如一次 undo 手势 N 步；事件携带 base..current 跨度让消费方
     /// 判定中间是否有未见过的版本跳变）。
     pending_base: Option<u64>,
+    /// #178：最近一次拒改记录（`EditHook::before_edit` 回 `Err` 时落；
+    /// 编辑器收尾经 [`Buffer::take_rejection`] 一次性收割——GUI 可见
+    /// 反馈的数据源。stderr 留痕不变，本字段只是补「用户看得见」面）。
+    /// Clone 快照不带（克隆体不是事件源——与 pending 同口径）。
+    last_reject: Option<RejectNotice>,
     /// #115：编辑意图钩子（docx 可编辑态挂桥；None = 纯文本面）。
     ///
     /// 语义：**变更之前**询问（`EditIntent` 回 `Err` = 拒绝本次编辑，
@@ -251,6 +256,7 @@ impl Clone for Buffer {
             revision: self.revision,
             pending: Vec::new(),
             pending_base: None,
+            last_reject: None,
             // 钩子不随克隆走（克隆体是快照；新宿主自行接线）。
             edit_hook: None,
             undo_hook: None,
@@ -321,6 +327,18 @@ pub trait EditHook {
     fn after_edit(&mut self, summary: &EditSummary);
 }
 
+/// #178：一次拒改的记录（GUI 反馈数据源）。
+///
+/// 拒改点（`replace_range` / `replace_batch` 的钩子 `Err` 分支）落账，
+/// 编辑器收尾收割 → 状态栏提示；与 stderr 留痕并行（诊断面不动）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RejectNotice {
+    /// 面向用户的拒改原因（docx 桥给的是用户可读文案）。
+    pub reason: String,
+    /// 被拒变更的起点行（编辑器行号——提示定位/行内呈现用）。
+    pub line: usize,
+}
+
 /// 撤销/重做涉及的行数变化量（`redo` = 方向）。
 ///
 /// 撤销：把 `new_text` 换回 `old_text` → 行数变化 = old − new；
@@ -386,6 +404,7 @@ impl Buffer {
             revision: 0,
             pending: Vec::new(),
             pending_base: None,
+            last_reject: None,
             edit_hook: None,
             undo_hook: None,
         }
@@ -499,6 +518,18 @@ impl Buffer {
         self.edit_hook.take()
     }
 
+    /// #178：收割最近一次拒改记录（取出即清空——编辑器收尾单点消费；
+    /// 无拒改/已收割 = `None`）。与 [`Buffer::take_pending`] 同「一次性
+    /// 收割」口径：拒改是事件性事实，收割后不留残影。
+    pub fn take_rejection(&mut self) -> Option<RejectNotice> {
+        self.last_reject.take()
+    }
+
+    /// #178：拒改记录窥视（不取走——克隆口径测试/诊断用）。
+    pub(crate) fn last_reject_note(&self) -> Option<&RejectNotice> {
+        self.last_reject.as_ref()
+    }
+
     pub fn set_edit_hook(&mut self, hook: Option<Box<dyn EditHook>>) {
         self.edit_hook = hook;
     }
@@ -532,6 +563,11 @@ impl Buffer {
             && let Err(reason) = hook.before_edit(&intent)
         {
             eprintln!("edit-guard: 拒绝编辑（{reason}）");
+            // #178：拒改落账（GUI 反馈面——stderr 之外的可见通道）。
+            self.last_reject = Some(RejectNotice {
+                reason,
+                line: start.line,
+            });
             return false;
         }
         let cursor = self.apply_core(start, end, text);
@@ -658,6 +694,12 @@ impl Buffer {
                 && let Err(reason) = hook.before_edit(&intent)
             {
                 eprintln!("edit-guard: 拒绝批量替换（{reason}）");
+                // #178：拒改落账（GUI 反馈面——批量整批原子拒，行取被拒
+                // 首条起点；stderr 保留）。
+                self.last_reject = Some(RejectNotice {
+                    reason,
+                    line: at.line,
+                });
                 return 0;
             }
             line_shift += new_lines as i64 - old_lines as i64;
@@ -2204,6 +2246,78 @@ mod rpc_extend_tests {
         assert!(
             snapshot.take_pending().0.is_empty(),
             "克隆体不是事件源——不带待发记录"
+        );
+    }
+
+    // ---------------- #178：拒改记录（GUI 反馈数据源） ----------------
+
+    /// 恒拒钩子（锁定行门禁的测试替身——`Err` 即拒）。
+    struct RejectAllHook;
+
+    impl EditHook for RejectAllHook {
+        fn before_edit(&mut self, _intent: &EditIntent) -> Result<(), String> {
+            Err("此行受保护，不可编辑".into())
+        }
+
+        fn after_edit(&mut self, _summary: &EditSummary) {}
+    }
+
+    #[test]
+    fn rejection_recorded_when_hook_denies() {
+        let mut b = Buffer::from_plain_text("ab\ncd");
+        b.set_edit_hook(Some(Box::new(RejectAllHook)));
+        b.set_cursor(p(1, 1));
+        let applied = b.replace_range(p(1, 1), p(1, 1), "x");
+        assert!(!applied, "钩子拒绝 → 零变更");
+        assert_eq!(b.line(1), "cd", "Buffer 未被改动");
+        // 收割：原因 + 起点行都落账
+        let notice = b.take_rejection().expect("拒改记录必须可收割");
+        assert_eq!(notice.reason, "此行受保护，不可编辑");
+        assert_eq!(notice.line, 1);
+        // 一次性收割：再次取 = None（无残影）
+        assert!(b.take_rejection().is_none());
+    }
+
+    #[test]
+    fn no_rejection_without_hook_or_on_success() {
+        // 无钩子（md 纯文本面）：编辑成功且无拒改记录。
+        let mut b = Buffer::from_plain_text("ab");
+        assert!(b.replace_range(p(0, 1), p(0, 1), "x"));
+        assert!(b.take_rejection().is_none(), "成功编辑不留拒改记录");
+        // 有钩子但放行：同样无记录（Ok 放行的钩子）。
+        struct AllowHook;
+        impl EditHook for AllowHook {
+            fn before_edit(&mut self, _: &EditIntent) -> Result<(), String> {
+                Ok(())
+            }
+            fn after_edit(&mut self, _: &EditSummary) {}
+        }
+        let mut b = Buffer::from_plain_text("ab");
+        b.set_edit_hook(Some(Box::new(AllowHook)));
+        assert!(b.replace_range(p(0, 1), p(0, 1), "x"));
+        assert!(b.take_rejection().is_none());
+    }
+
+    #[test]
+    fn rejection_recorded_for_denied_batch() {
+        let mut b = Buffer::from_plain_text("ab\ncd");
+        b.set_edit_hook(Some(Box::new(RejectAllHook)));
+        let n = b.replace_batch(vec![(p(0, 0), p(0, 1), "z".into())]);
+        assert_eq!(n, 0, "整批原子拒");
+        let notice = b.take_rejection().expect("批量拒改也落账");
+        assert_eq!(notice.line, 0, "行取被拒首条起点");
+    }
+
+    #[test]
+    fn clone_drops_rejection_like_pending() {
+        let mut b = Buffer::from_plain_text("ab");
+        b.set_edit_hook(Some(Box::new(RejectAllHook)));
+        b.replace_range(p(0, 0), p(0, 0), "x");
+        assert!(b.last_reject_note().is_some(), "拒改已落账");
+        let snapshot = b.clone();
+        assert!(
+            snapshot.last_reject_note().is_none(),
+            "克隆体不是事件源——不带拒改记录（与 pending 同口径）"
         );
     }
 }
