@@ -46,6 +46,7 @@
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use text as zed_text;
 
@@ -1202,7 +1203,25 @@ impl Buffer {
     ///   [`is_word_char`] 一致：字母数字（含 CJK）+ 下划线）
     /// 返回所有匹配起点（按文档序；含重叠命中——消费方按需过滤，
     /// 替换全部在 find_bar 侧做非重叠筛选）。
+    ///
+    /// #164 1c：本函数为全文查找计时包装（MANG_PERF 门控——未开零开销）；
+    /// 实现在 [`Self::find_matches_opts_impl`]（查找 <1s 红线的归因面）。
     pub fn find_matches_opts(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        whole_word: bool,
+    ) -> Vec<Point> {
+        let since = crate::perf::on().then(Instant::now);
+        let hits = self.find_matches_opts_impl(query, case_sensitive, whole_word);
+        if let Some(since) = since {
+            crate::perf::find(query.chars().count(), self.line_count(), hits.len(), since);
+        }
+        hits
+    }
+
+    /// [`Self::find_matches_opts`] 的实现体（原实现原样下沉——语义零变更）。
+    fn find_matches_opts_impl(
         &self,
         query: &str,
         case_sensitive: bool,

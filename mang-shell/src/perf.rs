@@ -18,6 +18,10 @@
 //!   first-frame——`perf_meas.sh` 对齐这四个锚点名）
 //! - [`key_handled`] / [`key_rejected`]：逐键处理 / 只读门禁拒绝
 //! - [`find`]：全文查找（规模三参 + 计时）
+//!
+//! #164 1c 接线扩展面（桩面不变，新增两个锚点函数）：
+//! - [`boot`]：进程启动锚点（main 入口首调缓存——first-frame 的起点）
+//! - [`doc_open`]：文档打开计时（kind + 字节数 + 规模单位数）
 
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -27,6 +31,28 @@ use std::time::Instant;
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("MANG_PERF").as_deref() == Ok("1"))
+}
+
+/// 进程启动锚点（#164 1c）：main() 入口**首调**后 OnceLock 缓存，
+/// 后续任意调用点（ShellApp 构造 / render 首帧）零开销取回同一时刻
+/// ——first-frame 计时的 `since` 基准。未首调而被他处先调 = 取该处
+/// 时刻（口径漂移由调用纪律保证：main 第一行即调）。
+pub fn boot() -> Instant {
+    static BOOT: OnceLock<Instant> = OnceLock::new();
+    *BOOT.get_or_init(Instant::now)
+}
+
+/// 文档打开计时（#164 1c）：`kind` = 扩展名（md/txt/docx/pdf/xlsx/
+/// canvas）；`units` = 规模单位数（文本=行数，docx=段数，pdf=页数，
+/// xlsx=表数——归因用规模证据面，单位随 kind，见 document.rs 调用点）。
+/// 归档口径：`perf: doc-open md 1578682B 7486L 4.4ms`。
+pub fn doc_open(kind: &str, bytes: u64, units: usize, since: Instant) {
+    if on() {
+        eprintln!(
+            "perf: doc-open {kind} {bytes}B {units}L {:.1}ms",
+            since.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 }
 
 /// 启动链路分段计时（毫秒一位小数——首帧 257ms 级数值）。
@@ -63,11 +89,17 @@ pub fn find(query_chars: usize, lines: usize, hits: usize, since: Instant) {
 }
 
 fn stage_line(label: &str, since: Instant) -> String {
-    format!("perf: {label} {:.1}ms", since.elapsed().as_secs_f64() * 1000.0)
+    format!(
+        "perf: {label} {:.1}ms",
+        since.elapsed().as_secs_f64() * 1000.0
+    )
 }
 
 fn key_line(kind: &str, key: &str, since: Instant) -> String {
-    format!("perf: {kind} {key} {:.2}ms", since.elapsed().as_secs_f64() * 1000.0)
+    format!(
+        "perf: {kind} {key} {:.2}ms",
+        since.elapsed().as_secs_f64() * 1000.0
+    )
 }
 
 #[cfg(test)]
@@ -107,6 +139,25 @@ mod tests {
             rejected.starts_with("perf: key-rejected enter "),
             "拒绝路径独立前缀：{rejected}"
         );
+    }
+
+    #[test]
+    fn boot_anchor_is_stable_per_process() {
+        // 同进程两次调用必须同值（OnceLock 缓存——first-frame 计时基准
+        // 的稳定性：跨模块取回的 since 不会漂移）。
+        assert_eq!(boot(), boot());
+    }
+
+    #[test]
+    fn doc_open_line_matches_archive_shape() {
+        // 归档口径：`perf: doc-open md 1578682B 7486L 4.4ms`
+        let (kind, bytes, units) = ("md", 1578682u64, 7486usize);
+        let line = format!("perf: doc-open {kind} {bytes}B {units}L {:.1}ms", 4.4);
+        assert!(
+            line.starts_with("perf: doc-open md 1578682B 7486L "),
+            "{line}"
+        );
+        assert!(line.ends_with("4.4ms"), "{line}");
     }
 
     #[test]

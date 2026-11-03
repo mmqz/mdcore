@@ -8,6 +8,13 @@
 //! mang-shell --smoke-sec N     烟雾模式：开窗 N 秒后自动退出（exit 0 +
 //!                               stdout 末行 "smoke: quit reached"——Xvfb
 //!                               无头验证通道）
+//! mang-shell --smoke-perf-keys N  #164 逐键测量：与启动 FILE + --smoke-sec
+//!                               组合——3.5s 装载稳定后合成 N 个可打印键
+//!                               （30ms 间隔，真实键处理链全管线）；
+//!                               MANG_PERF=1 下逐键 `perf: key` 证据行
+//! mang-shell --smoke-perf-scroll N  #164 滚动测量：N 个滚轮事件（16ms
+//!                               间隔 ≈ 62.5/s，上下交替防滚穿，完整派发
+//!                               管线）；配合 MANG_PERF=1 与退出期 VmHWM
 //! mang-shell --smoke-user-type #111 用户键入烟雾：与 --smoke-sec + 启动
 //!                               FILE 组合——3.5s 合成用户键入 "user
 //!                               typed this" + 回车（真实键处理链）；RPC
@@ -89,7 +96,13 @@ mod title_bar;
 
 use document::OpenOutcome;
 
+mod perf;
+
 fn main() {
+    // #164：进程启动锚点（first-frame 计时基准——main 第一行即调，
+    // OnceLock 缓存后任意模块零开销取回；MANG_PERF 未开时仅一次 Instant）。
+    let boot = perf::boot();
+    perf::stage("main-enter", boot);
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("mang-shell {}", env!("CARGO_PKG_VERSION"));
@@ -189,6 +202,22 @@ fn main() {
         .position(|a| a == "--smoke-workspace")
         .and_then(|i| args.get(i + 1))
         .cloned();
+    // #164 1c：逐键测量钩子（--smoke-perf-keys N——与启动 FILE 组合：
+    // 3.5s 装载稳定后合成 N 个可打印键（间隔 30ms，真实键处理链全
+    // 管线）；MANG_PERF=1 下逐键落 `perf: key` 证据行）。
+    let smoke_perf_keys: Option<usize> = args
+        .iter()
+        .position(|a| a == "--smoke-perf-keys")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok());
+    // #164 1c：滚动测量钩子（--smoke-perf-scroll N——与启动 FILE 组合：
+    // N 个滚轮事件（间隔 16ms ≈ 62.5/s，上下交替防滚穿），经完整派发
+    // 管线；配合 MANG_PERF=1 与帧观测评估滚动面）。
+    let smoke_perf_scroll: Option<usize> = args
+        .iter()
+        .position(|a| a == "--smoke-perf-scroll")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok());
     // 批 2：鼠标烟雾脚本（需与 --smoke-sec + FILE 组合）。
     let smoke_mouse = args.iter().any(|a| a == "--smoke-mouse");
     // G5：语法高亮烟雾（--smoke-syntax-hl——与启动 FILE 组合：3.5s 经
@@ -225,6 +254,8 @@ fn main() {
                 "--smoke-save-as",
                 "--smoke-docx-bid",
                 "--rpc-sock",
+                "--smoke-perf-keys",
+                "--smoke-perf-scroll",
             ]
             .iter()
             .flat_map(|flag| {
@@ -717,6 +748,44 @@ fn main() {
                 .detach();
             }
 
+            // #164 1c：逐键测量脚本（真实键处理链全管线；间隔 30ms；
+            // 尾行带总耗时——吞吐面证据，逐键延迟由 perf: key 行量化）。
+            if let Some(n) = smoke_perf_keys {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    let t0 = std::time::Instant::now();
+                    for i in 0..n {
+                        let delay = if i == 0 { 3500 } else { 30 };
+                        dispatch_key(&handle, cx, delay, "x", false, false, Some("x")).await;
+                    }
+                    eprintln!(
+                        "perf-keys: script done ({n} keys, {:.1}s)",
+                        t0.elapsed().as_secs_f64()
+                    );
+                })
+                .detach();
+            }
+
+            // #164 1c：滚动测量脚本（完整派发管线；16ms 间隔 ≈ 62.5/s，
+            // 上下交替防滚穿——500 events ≈ 8s，归档口径同节奏；尾行带
+            // 总耗时——吞吐面证据。逐帧 fps 需实机验证清单补充）。
+            if let Some(n) = smoke_perf_scroll {
+                let handle = window_handle.clone();
+                cx.spawn(async move |cx| {
+                    let t0 = std::time::Instant::now();
+                    for i in 0..n {
+                        let delay = if i == 0 { 3500 } else { 16 };
+                        let dy = if i % 2 == 0 { -3.0 } else { 3.0 };
+                        dispatch_scroll(&handle, cx, delay, 0.0, dy).await;
+                    }
+                    eprintln!(
+                        "perf-scroll: script done ({n} events, {:.1}s)",
+                        t0.elapsed().as_secs_f64()
+                    );
+                })
+                .detach();
+            }
+
             if let Some(sec) = smoke_sec {
                 cx.spawn(async move |cx| {
                     cx.background_executor()
@@ -727,6 +796,16 @@ fn main() {
                 .detach();
             }
         });
+
+    // #164 1c：内存峰值（MANG_PERF 门控——/proc/self/status VmHWM，
+    // Linux 口径；非 Linux 静默跳过）。峰值红线 <1GB（#68 设计口径）。
+    if perf::on() {
+        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+            if let Some(line) = status.lines().find(|l| l.starts_with("VmHWM")) {
+                eprintln!("perf: {line}");
+            }
+        }
+    }
 
     println!("smoke: quit reached");
 }

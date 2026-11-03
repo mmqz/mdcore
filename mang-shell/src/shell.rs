@@ -139,6 +139,10 @@ pub struct ShellApp {
     /// #182：右栏视图（属性/来源 ↔ 设置——图标条设置钮切换；
     /// 右栏折叠开关打开时恒回属性视图）。
     settings_view: bool,
+    /// #164 1c：首帧计时基点（ShellApp 构造时置 = perf::boot()，首个
+    /// render 呈现时消费——`perf: first-frame` 证据行；MANG_PERF 未开
+    /// 恒 None，零开销）。
+    perf_first_frame: Option<Instant>,
     /// F2：Ctrl+K 和弦待续期（None = 无和弦进行中）。
     chord_until: Option<Instant>,
     /// F4：确认框（脏标签关闭/退出前确认；None = 无进行中）。
@@ -348,6 +352,7 @@ impl ShellApp {
             git_panel: None,
             git_view: false,
             settings_view: false,
+            perf_first_frame: crate::perf::on().then(crate::perf::boot),
             chord_until: None,
             confirm: None,
             confirm_focus,
@@ -1466,6 +1471,11 @@ impl ShellApp {
 
 impl Render for ShellApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // #164 1c：首帧计时（首个 render = 首帧呈现；消费后恒 None——
+        // 后续 render 零开销）。红线 <2s（#68 设计口径）。
+        if let Some(since) = self.perf_first_frame.take() {
+            crate::perf::stage("first-frame", since);
+        }
         let colors = cx.theme().colors().clone();
         let title = self.title_with(cx);
         // G4：面板拖拽收尾监听用的实体句柄（canvas paint 闭包捕获——
