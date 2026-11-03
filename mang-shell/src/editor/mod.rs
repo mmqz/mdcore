@@ -5192,4 +5192,172 @@ mod tests {
             "/w/notes.md"
         );
     }
+
+    // ------------------------------------------------------------------
+    // #169：Cmd::ALL 运行时执行面（真实 GPUI TestAppContext——实体/上下文
+    // 全真，无头窗口）。静态三方对账（枚举↔ALL↔执行臂+桩检测）在
+    // tests/command_coverage.rs；本组钉「每条都真的能跑且有可见效果」。
+    // ------------------------------------------------------------------
+
+    /// 运行时测试共用文档：两个同级一级标题（折叠域——fold_all 收同级
+    /// 块）+ 嵌套二级标题 + 多行正文（移动/选区域）。
+    const CMD_TEST_DOC: &str =
+        "# 一级标题甲\n第一行正文内容\n# 一级标题乙\n第二行正文内容\n## 二级小节\n尾部正文一行\n";
+
+    /// 窗口宿主：Editor 非根视图（ShellApp 才 Render），测试以最小宿主
+    /// 开窗取真实 `Window`（exec_command 的焦点面需要——与 rpc.rs
+    /// `run_command` 同通道：`ed.update(cx, |ed, cx| ed.run_command(cmd, window, cx))`）。
+    struct EditorHost(gpui::Entity<Editor>);
+
+    impl gpui::Render for EditorHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            gpui::div()
+        }
+    }
+
+    /// 建编辑器 + 宿主窗口（返回编辑器实体与窗口句柄）。
+    fn editor_window(
+        cx: &mut gpui::TestAppContext,
+        path: Option<std::path::PathBuf>,
+    ) -> (gpui::Entity<Editor>, gpui::WindowHandle<EditorHost>) {
+        let ed = cx.update(|cx| cx.new(|cx| Editor::new(path, CMD_TEST_DOC.to_string(), cx)));
+        let ed_for_host = ed.clone();
+        let window = cx.add_window(move |_window, _cx| EditorHost(ed_for_host.clone()));
+        (ed, window)
+    }
+
+    /// #169 2.1 全量执行：遍历 `Cmd::ALL`，每条在真实编辑器上执行一遍
+    /// （Save 走临时文件），断言全程不 panic——「面板只列可执行的」
+    /// 声称的运行时面。
+    #[gpui::test]
+    fn runtime_every_cmd_in_all_executes(cx: &mut gpui::TestAppContext) {
+        let dir = std::env::temp_dir().join(format!("mdc-cmd-all-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cmds.md");
+        std::fs::write(&path, CMD_TEST_DOC).unwrap();
+
+        let (ed, window) = editor_window(cx, Some(path.clone()));
+
+        // 顺序 = ALL 声明序；面板类命令（find/replace/goto）开后续命令
+        // 不受干扰（exec 直达，不走键路由）；折叠类先 fold 后 unfold
+        // 自愈；Save 无前置（未脏时写当前内容亦安全）。
+        for &cmd in Cmd::ALL {
+            window.update(cx, |_host, window, cx| {
+                ed.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
+            });
+        }
+
+        // 收尾存活（缓冲仍可读 = 未 panic 未崩溃）+ 清理。
+        window.update(cx, |_host, _window, cx| {
+            ed.update(cx, |ed, _| {
+                assert!(ed.buffer.cursor().line < ed.buffer.line_count());
+            });
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #169 2.1 状态变化断言——导航/选区类：光标真动、选区真选。
+    #[gpui::test]
+    fn runtime_navigation_and_selection_change_state(cx: &mut gpui::TestAppContext) {
+        let (ed, window) = editor_window(cx, None);
+
+        window.update(cx, |_host, window, cx| {
+            ed.update(cx, |ed, cx| {
+                ed.run_command(Cmd::DocStart, window, cx);
+                assert_eq!(
+                    (ed.buffer.cursor().line, ed.buffer.cursor().col),
+                    (0, 0),
+                    "DocStart 应回文首"
+                );
+                ed.run_command(Cmd::DocEnd, window, cx);
+                assert_eq!(
+                    ed.buffer.cursor().line,
+                    ed.buffer.line_count() - 1,
+                    "DocEnd 应到末行"
+                );
+                // 行内移动：回到首行行尾（非空行 col>0）→ MoveLeft 左移一格
+                //（无条件断言——防条件跳过形成覆盖洞）。
+                ed.run_command(Cmd::DocStart, window, cx);
+                ed.run_command(Cmd::MoveEnd, window, cx);
+                let col_end = ed.buffer.cursor().col;
+                assert!(col_end > 0, "前置：首行（标题）非空——MoveEnd 后 col>0");
+                ed.run_command(Cmd::MoveLeft, window, cx);
+                assert_eq!(ed.buffer.cursor().col, col_end - 1, "MoveLeft 应左移一格");
+                // 下移/上移往返。
+                ed.run_command(Cmd::DocStart, window, cx);
+                ed.run_command(Cmd::MoveDown, window, cx);
+                assert_eq!(ed.buffer.cursor().line, 1, "MoveDown 应下移一行");
+                ed.run_command(Cmd::MoveUp, window, cx);
+                assert_eq!(ed.buffer.cursor().line, 0, "MoveUp 应上移一行");
+
+                // 全选：选区文本 = 全文（SelectAll 真生效）。
+                ed.run_command(Cmd::SelectAll, window, cx);
+                assert_eq!(ed.buffer.selection_text(), CMD_TEST_DOC.to_string());
+            });
+        });
+    }
+
+    /// #169 2.1 状态变化断言——折叠/面板/撤销/保存类：每类一个可见效果。
+    #[gpui::test]
+    fn runtime_fold_panels_undo_save_change_state(cx: &mut gpui::TestAppContext) {
+        let dir = std::env::temp_dir().join(format!("mdc-cmd-cls-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("edit.md");
+        std::fs::write(&path, CMD_TEST_DOC).unwrap();
+
+        let (ed, window) = editor_window(cx, Some(path.clone()));
+
+        // ① 折叠：FoldAll 收起两个同级一级标题块 → heads=2；UnfoldAll → 0
+        //    （二级小节嵌套在一级块内，不另立 head——heading_span 语义）。
+        window.update(cx, |_host, window, cx| {
+            ed.update(cx, |ed, cx| {
+                ed.run_command(Cmd::FoldAll, window, cx);
+                assert_eq!(
+                    ed.display_map.fold_heads().len(),
+                    2,
+                    "FoldAll 应收起两个一级标题块"
+                );
+                ed.run_command(Cmd::UnfoldAll, window, cx);
+                assert_eq!(ed.display_map.fold_heads().len(), 0, "UnfoldAll 应全部展开");
+            });
+        });
+
+        // ② 面板：OpenFind / OpenReplace / GotoLine 打开对应态。
+        window.update(cx, |_host, window, cx| {
+            ed.update(cx, |ed, cx| {
+                ed.run_command(Cmd::OpenFind, window, cx);
+                assert!(ed.find.is_some(), "OpenFind 应打开查找条");
+                ed.run_command(Cmd::OpenReplace, window, cx);
+                assert!(ed.find.is_some(), "OpenReplace 应打开替换条（find 态承载）");
+                ed.run_command(Cmd::GotoLine, window, cx);
+                assert!(ed.goto.is_some(), "GotoLine 应打开跳行框");
+            });
+        });
+
+        // ③ 撤销/重做：真实编辑 → Undo 复原 → Redo 重做。
+        // ④ 保存：脏内容落盘（文件 == 当前文本）。
+        window.update(cx, |_host, window, cx| {
+            ed.update(cx, |ed, cx| {
+                let before = ed.buffer.to_plain_text();
+                ed.insert_text_at(0, 0, "X", cx);
+                assert_ne!(ed.buffer.to_plain_text(), before, "前置：插入应改变文本");
+                ed.run_command(Cmd::Undo, window, cx);
+                assert_eq!(ed.buffer.to_plain_text(), before, "Undo 应复原插入");
+                ed.run_command(Cmd::Redo, window, cx);
+                assert_ne!(ed.buffer.to_plain_text(), before, "Redo 应重做插入");
+
+                let now = ed.buffer.to_plain_text();
+                ed.run_command(Cmd::Save, window, cx);
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    now,
+                    "Save 应把当前文本落盘"
+                );
+            });
+        });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

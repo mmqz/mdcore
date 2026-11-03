@@ -86,6 +86,11 @@ image = { version = "0.25", default-features = false }
 smallvec = "1"
 
 [dev-dependencies]
+# #169：Cmd::ALL 运行时执行面——gpui TestAppContext（真实实体/窗口/
+# 上下文，无头）。test-support 仅测试编译期生效（feature 在 dev 与
+# normal 依赖间不 unify——shipped 依赖图不变）；拉入 proptest 等
+# 传递 dev 件，不进 bin/lib 正式面。
+gpui = { path = "../third_party/zed/crates/gpui", default-features = false, features = ["test-support"] }
 # 烟雾夹具书签注入（测试面独占——不进 shipped 依赖图；版本与 mdc-pdf
 # 内 pin 同源 =0.45.0，default-features 同关）。
 lopdf = { version = "=0.45.0", default-features = false }
