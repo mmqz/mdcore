@@ -306,10 +306,18 @@ fn key_evidence(display: &str) -> Vec<String> {
 ///
 /// 证据形态为 `"key"` 字符串字面量（dispatch_key 以 `match key.as_str()`
 /// 与 `key == "g"` 两种写法分派，统一以字面量出现为证）。
+///
+/// #164 1c：dispatch_key 拆为计时包装 + `dispatch_key_inner` 实体
+///（键分派臂全部在 inner；包装层只做 MANG_PERF 计时）——两体并集
+/// 取证，意图不变：键位声称必须有实现分派。
 #[test]
 fn default_keys_reach_dispatch_key() {
     let file = src("editor/mod.rs");
-    let body = brace_block(&file, "fn dispatch_key(");
+    let body = format!(
+        "{}\n{}",
+        brace_block(&file, "fn dispatch_key("),
+        brace_block(&file, "fn dispatch_key_inner(")
+    );
 
     for &c in Cmd::ALL {
         let Some(key) = c.default_key() else {

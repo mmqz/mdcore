@@ -25,6 +25,45 @@ use crate::editor::docx_doc::{self, DocxPayload, EditablePayload};
 use crate::editor::pdf_doc::{self, PdfPayload};
 use crate::editor::xlsx_doc::{self, XlsxPayload};
 
+/// #164 1c：实体构造计时包装（editor-built 段——六形态统一口径；
+/// MANG_PERF 未开时 `since` 为 None，零开销直通）。
+fn build_ed(
+    since: Option<std::time::Instant>,
+    cx: &mut App,
+    f: impl FnOnce(&mut gpui::Context<Editor>) -> Editor,
+) -> Entity<Editor> {
+    let entity = cx.new(f);
+    if let Some(since) = since {
+        crate::perf::stage("editor-built", since);
+    }
+    entity
+}
+
+/// #164 1c：文档类型标识（扩展名小写——doc-open 证据行的 kind 字段）。
+fn kind_of(path: &Path) -> String {
+    path.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| "other".into())
+}
+
+/// #164 1c：文件字节数（doc-open 证据行的规模面）。
+fn file_bytes(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// #164 1c：规模单位数（文本=行数 / docx=段数 / pdf=页数 / xlsx=表数；
+/// canvas 与失败态无统一单位计 0——kind 字段已区分）。
+fn doc_units(opened: &OpenedDocument) -> usize {
+    match opened {
+        OpenedDocument::EditableText { content, .. } => content.split('\n').count(),
+        OpenedDocument::EditableDocx { item, .. } => item.payload.props.paragraphs,
+        OpenedDocument::ReadOnlyDocx { payload, .. } => payload.props.paragraphs,
+        OpenedDocument::ReadOnlyPdf { payload, .. } => payload.props.pages,
+        OpenedDocument::ReadOnlyXlsx { payload, .. } => payload.props.sheets,
+        _ => 0,
+    }
+}
+
 /// 打开结果。
 pub enum OpenedDocument {
     /// 可编辑文本文档（md / txt）。
@@ -139,9 +178,20 @@ pub enum OpenOutcome {
 /// 文件树 / 最近列表——F1/F2/F5）的共用通道，同一分派语义；docx/pdf
 /// 附启动证据行（stderr——烟雾断言通道）。
 pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
-    match open(path) {
+    // #164 1c：doc-open 分段计时（读 + 解析段）——MANG_PERF 门控，
+    // 未开时两次 `then` 分支预测级开销，无计时无分配。
+    let since_open = crate::perf::on().then(std::time::Instant::now);
+    let opened = open(path);
+    if let Some(since) = since_open {
+        crate::perf::doc_open(&kind_of(path), file_bytes(path), doc_units(&opened), since);
+    }
+    // #164 1c：editor-built 分段计时（实体构造段——六形态统一走 build_ed）。
+    let since_build = crate::perf::on().then(std::time::Instant::now);
+    match opened {
         OpenedDocument::EditableText { path, content } => {
-            OpenOutcome::Opened(cx.new(|cx| Editor::new(Some(path), content, cx)))
+            OpenOutcome::Opened(build_ed(since_build, cx, |cx| {
+                Editor::new(Some(path), content, cx)
+            }))
         }
         // #115：可编辑 docx——启动日志一行（属性面 + 编辑面 + 降级原因）。
         OpenedDocument::EditableDocx { path, item } => {
@@ -166,7 +216,9 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
             if let Some(notice) = &payload.notice {
                 eprintln!("docx: 降级说明——{notice}（{}）", path.display());
             }
-            OpenOutcome::Opened(cx.new(|cx| Editor::new_docx_editable(path, item, cx)))
+            OpenOutcome::Opened(build_ed(since_build, cx, |cx| {
+                Editor::new_docx_editable(path, item, cx)
+            }))
         }
         // 批 3 证据通道：启动日志一行（属性面 + 只读标记）。
         OpenedDocument::ReadOnlyDocx { path, payload } => {
@@ -180,7 +232,9 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
                 payload.props.warnings,
                 path.display()
             );
-            OpenOutcome::Opened(cx.new(|cx| Editor::new_docx(path, payload, cx)))
+            OpenOutcome::Opened(build_ed(since_build, cx, |cx| {
+                Editor::new_docx(path, payload, cx)
+            }))
         }
         // 批 4 证据通道：启动日志一行（属性面 + 只读标记）。
         OpenedDocument::ReadOnlyPdf { path, payload } => {
@@ -198,7 +252,9 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
                 scanned,
                 path.display()
             );
-            OpenOutcome::Opened(cx.new(|cx| Editor::new_pdf(path, payload, cx)))
+            OpenOutcome::Opened(build_ed(since_build, cx, |cx| {
+                Editor::new_pdf(path, payload, cx)
+            }))
         }
         // G6 证据通道：启动日志一行（属性面 + 只读标记）。
         OpenedDocument::ReadOnlyXlsx { path, payload } => {
@@ -218,12 +274,16 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
                 truncated,
                 path.display()
             );
-            OpenOutcome::Opened(cx.new(|cx| Editor::new_xlsx(path, payload, cx)))
+            OpenOutcome::Opened(build_ed(since_build, cx, |cx| {
+                Editor::new_xlsx(path, payload, cx)
+            }))
         }
         // #133 证据通道：启动日志一行（对象/图元/内容/视口 + 只读标记）。
         OpenedDocument::Canvas { path, view } => {
             eprintln!("{}", view.open_evidence(&path));
-            OpenOutcome::Opened(cx.new(|cx| Editor::new_canvas(path, view, cx)))
+            OpenOutcome::Opened(build_ed(since_build, cx, |cx| {
+                Editor::new_canvas(path, view, cx)
+            }))
         }
         OpenedDocument::Unsupported { path } => OpenOutcome::Unsupported {
             message: unsupported_message(&path),

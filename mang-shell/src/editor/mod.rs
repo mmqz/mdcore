@@ -65,6 +65,7 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Instant;
 
 // r42 阶段 B：显示映射（软换行 + 折叠）。
 use display_map::DisplayMap;
@@ -2181,7 +2182,34 @@ impl Editor {
     /// PageUp / PageDown）、编辑（Backspace / Delete / Enter / Tab）、
     /// undo / redo、剪贴板、全选、查找（Ctrl+F）、保存（Ctrl+S）、
     /// Esc 清选区、可打印字符插入。
+    ///
+    /// #164 1c：本函数为逐键计时包装（MANG_PERF 门控——未开时一次分支
+    /// 预测级开销）；实分发在 [`Self::dispatch_key_inner`]。
     fn dispatch_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // #164：逐键计时（输入延迟 <50ms 红线——亚毫秒分辨率两位小数）。
+        let since = crate::perf::on().then(Instant::now);
+        let mut rejected = false;
+        self.dispatch_key_inner(event, window, cx, &mut rejected);
+        if let Some(since) = since {
+            let key = event.keystroke.key.to_lowercase();
+            if rejected {
+                crate::perf::key_rejected(&key, since);
+            } else {
+                crate::perf::key_handled(&key, since);
+            }
+        }
+    }
+
+    /// [`Self::dispatch_key`] 的实分发体（原实现原样下沉——语义零变更；
+    /// `perf_rejected` 由只读门禁分支置位，供包装层区分 handled/rejected
+    /// 证据行——#164 1c）。
+    fn dispatch_key_inner(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        perf_rejected: &mut bool,
+    ) {
         let ks = &event.keystroke;
         let ctrl = ks.modifiers.control || ks.modifiers.platform;
         let shift = ks.modifiers.shift;
@@ -2239,6 +2267,7 @@ impl Editor {
         // 变更类整段拒绝（输入/删除/回车/Tab/剪切/粘贴/撤销/重做/保存）
         // ——纯函数面单测钉定（docx_doc::readonly_allows）。
         if self.read_only && !docx_doc::readonly_allows(&key, ctrl) {
+            *perf_rejected = true; // #164：拒绝路径独立证据行（key-rejected）
             cx.notify();
             return;
         }
