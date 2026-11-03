@@ -1072,7 +1072,16 @@ async fn run_mouse_script(window: &gpui::WindowHandle<shell::ShellApp>, cx: &mut
         cx.background_executor()
             .timer(Duration::from_millis(delay_ms))
             .await;
-        let _ = cx.update(|cx| window.update(cx, |_, window, cx| window.dispatch_event(ev, cx)));
+        // #164：合成事件不得经 window.update 派发——它包住 ShellApp 根视图
+        // 实体更新，事件命中 shell 级监听器（cx.listener）即 GPUI 重入
+        // panic（entity_map.rs:164「already being updated」；面板手柄
+        // 实测复现，见 #89 坑3 / #164）。update_window 拿 AnyView 闭包，
+        // 不包根视图实体——与 dispatch_key / dispatch_scroll /
+        // run_panel_resize_script 全部既有派发点同口径（本处为最后一处
+        // 旧模式残留：编辑区鼠标事件不触 shell 监听器故此前未爆，属潜伏
+        // 缺陷——脚本点击面一旦扩到 shell 级 hitbox 即 panic）。
+        let any_handle: gpui::AnyWindowHandle = (*window).into();
+        let _ = cx.update_window(any_handle, |_, window, cx| window.dispatch_event(ev, cx));
     }
 
     // 1) 单击定位（首步 2.5s 吸收启动滞后：进程启动→首帧 ~1.2s；
