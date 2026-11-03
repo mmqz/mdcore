@@ -49,3 +49,10 @@ pub mod palette_view;
 /// 供单测断言候选序/转义/受控 PATH 送达矩阵。
 #[path = "native_dialog.rs"]
 pub mod native_dialog;
+
+/// #68 批 5 / #164：性能测量桩（`MANG_PERF=1` 门控——未开时零开销：
+/// 桩点一次分支预测，无计时无分配）。纯 std（OnceLock + Instant），
+/// 进 lib 树供单测钉门控/输出契约；接线面（main 启动分段 / dispatch_key
+/// 逐键 / find_matches 全文查找）由 #164 后续提交按两行式接入。
+#[path = "perf.rs"]
+pub mod perf;
