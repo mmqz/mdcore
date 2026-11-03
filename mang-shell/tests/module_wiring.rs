@@ -28,6 +28,7 @@
 //! | `editor_area_context_menu_is_triggered` | 🟢 | #179：已随 PR #189 接线（editor/mod.rs `dispatch_context_menu` + shell.rs `menu_opener_for`） |
 //! | `locked_line_rejection_is_visible` | 🟢 | #178：拒改 stderr → GUI 反馈（Buffer `take_rejection` → Editor `after_edit` 收割 → status_bar 渲染） |
 //! | `gpu_failure_shows_native_dialog` | 🟢 | #185：GPU 初始化失败 stderr → 原生对话框兑底（native_dialog 候选链 + main.rs 失败分支消费） |
+//! | `synthetic_dispatch_never_wraps_root_view_update` | 🟢 | #164 1b：main.rs 全部合成事件派发点走 update_window 口径——旧模式（window.update 包裹 dispatch_event）命中 shell 级监听器即 GPUI 重入 panic（entity_map.rs:164，面板手柄实测复现） |
 //!
 //! **绝不允许 xfail/#[ignore] 放过未接线模块**（#183：「不许把测试写成 xfail
 //! 放过未接线的模块」）——A-3/#179/#182 接线落地后这些测试转绿。
@@ -437,4 +438,63 @@ fn gpu_failure_shows_native_dialog() {
         "模块未挂载：main.rs 无 mod native_dialog 声明——对话框代码进不了\
          bin 目标（#185）。"
     );
+}
+
+// ---------------------------------------------------------------------------
+// #164：合成事件派发安全——dispatch_event 不得包根视图 update（GPUI 重入）
+// ---------------------------------------------------------------------------
+
+/// #164 1b：main.rs 所有合成事件派发点必须走 `update_window`（AnyView
+/// 闭包）口径——`window.update`（根视图实体更新）内派发事件，事件命中
+/// shell 级监听器（cx.listener）即 GPUI 重入 panic：
+/// `cannot update ShellApp while it is already being updated`
+/// （entity_map.rs:164；面板手柄实测复现 exit 101，证据见 #164 PR 描述）。
+///
+/// 历史：dispatch_key（F3 键位烟雾）/ dispatch_key_mods + dispatch_scroll
+/// （#133 canvas）/ run_panel_resize_script::step（#89 坑3）四处已修；
+/// run_mouse_script::step 为最后一处旧模式残留（#164 修复——编辑区鼠标
+/// 事件不触 shell 监听器故此前未爆，属潜伏缺陷）。本锚点把「新派发点
+/// 再犯同类错」钉成测试红灯。
+#[test]
+fn synthetic_dispatch_never_wraps_root_view_update() {
+    let main_rs = src("main.rs");
+    let lines: Vec<&str> = main_rs.lines().collect();
+
+    // 全部合成事件派发点（dispatch_event 调用行）。
+    let dispatch_lines: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains(".dispatch_event("))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        dispatch_lines.len() >= 4,
+        "合成事件派发点少于 4 处（现找到 {}）——键/修饰键/滚轮/鼠标/面板\
+         五通道至少应留四个（通道裁撤请同步更新本基线）",
+        dispatch_lines.len()
+    );
+
+    for &i in &dispatch_lines {
+        // ① 负向：本行与前 4 行内不得出现根视图 update 包裹（旧模式特征）。
+        for j in i.saturating_sub(4)..=i {
+            assert!(
+                !lines[j].contains("window.update("),
+                "main.rs:{} dispatch_event 被根视图 update 包裹（{} 行）——\
+                 事件命中 shell 级监听器即 GPUI 重入 panic（#164：\
+                 entity_map.rs:164「already being updated」）。\
+                 改用 cx.update_window(any_handle, |_, window, cx| ...) 口径",
+                i + 1,
+                j + 1
+            );
+        }
+        // ② 正向：派发点必须显式经 update_window（前 3 行内有口径证据）。
+        assert!(
+            lines[i.saturating_sub(3)..=i]
+                .iter()
+                .any(|l| l.contains("update_window(")),
+            "main.rs:{} dispatch_event 未见 update_window 口径（前 3 行无）——\
+             合成事件派发必须走 AnyView 闭包（#164），不得包根视图实体更新",
+            i + 1
+        );
+    }
 }
