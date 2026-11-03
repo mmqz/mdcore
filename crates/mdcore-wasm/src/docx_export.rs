@@ -132,7 +132,7 @@ use crate::WasmCore;
 use mdc_office_io::docx::read_docx_from_bytes;
 use mdc_office_io::docx::{
     anonymize_docx_props, DefaultTypography, DocxError, DocxWriter, FieldSpec, LineRuleSpec,
-    LineSpacingSpec, ListKind, PageGeometry, RunSpec,
+    LineSpacingSpec, ListKind, PageGeometry, RunSpec, TocEntry,
 };
 use mdcore::tree::{Attrs, BlockKind, BlockTree, MarkSpan, NodeId};
 use wasm_bindgen::prelude::*;
@@ -459,6 +459,50 @@ pub(crate) fn table_rows(text: &str) -> Vec<Vec<String>> {
     out
 }
 
+/// #196 任务 2：TOC 标题书签配对表——(块 id, 行序) → 书签名
+/// （[`collect_toc_entries`] 收集位置序 = [`DocxWriter::toc_entries`]
+/// 返回名序，zip 配对后供 [`emit_block`] 查表；空 = 无 TOC 或无收录
+/// 标题，Heading 走裸 [`DocxWriter::heading`] 路径）。
+type TocMarkMap = std::collections::HashMap<(NodeId, usize), String>;
+
+/// #196 任务 2：收集 TOC 目录项（镜像 [`emit_block`] 遍历形状：
+/// Document/Blockquote/ListItem 递归 + Heading 收录；层级域
+/// lo..=hi 过滤 = TOC `\o` 开关镜像——F9 后 Word 重排仅收录范围内，
+/// 静态项与之一致）。多行标题逐行逐项（每行一目录项一书签——与
+/// emit_block 逐行发射镜像，行间序号配对不错位）。
+fn collect_toc_entries(
+    tree: &BlockTree,
+    id: NodeId,
+    lo: u8,
+    hi: u8,
+    entries: &mut Vec<TocEntry>,
+    positions: &mut Vec<(NodeId, usize)>,
+) {
+    let node = tree.node(id);
+    match node.kind {
+        // 递归容器面（与 emit_block 同形：虚根透明 / 引用嵌套 / 列表
+        // 嵌套 item；Blockquote 空引用无标题面自然零递归）。
+        BlockKind::Document | BlockKind::Blockquote | BlockKind::ListItem => {
+            for &c in &node.children {
+                collect_toc_entries(tree, c, lo, hi, entries, positions);
+            }
+        }
+        BlockKind::Heading => {
+            let level = heading_level(&node.attrs);
+            if (lo..=hi).contains(&level) {
+                // 净文本口径与 emit_block Heading 分支同源
+                // （effective_inline 剥定界符 + text_lines 展开）。
+                let (clean, _) = effective_inline(&node.text.to_string(), &node.marks);
+                for (idx, line) in text_lines(&clean).iter().enumerate() {
+                    entries.push(TocEntry::new(level, *line));
+                    positions.push((id, idx));
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 单块发射（先序递归；降级语义见模块文档映射表）。`quote_depth` =
 /// 引用上下文深度（0 = 无引用面；Blockquote 子块递归传 depth+1 嵌套
 /// 步进——仅段落/嵌套引用承载 ind/pBdr，其余子块登记见模块文档）。
@@ -468,6 +512,7 @@ fn emit_block(
     w: &mut DocxWriter,
     quote_depth: usize,
     images: &ImageTable,
+    toc_marks: &TocMarkMap,
 ) -> Result<(), ExportError> {
     let node = tree.node(id);
     let text = node.text.to_string();
@@ -475,7 +520,7 @@ fn emit_block(
         // 虚根透明递归（top_level 已绕过；op 面禁止 Document 子块——防御）
         BlockKind::Document => {
             for &c in &node.children {
-                emit_block(tree, c, w, quote_depth, images)?;
+                emit_block(tree, c, w, quote_depth, images, toc_marks)?;
             }
         }
         BlockKind::Heading => {
@@ -483,8 +528,19 @@ fn emit_block(
             // #15：行内定界符剥除（净文本），格式丢弃——映射表登记；
             // 未闭合定界符字面量保留。
             let (clean, _) = effective_inline(&text, &node.marks);
-            for line in text_lines(&clean) {
-                w.heading(level, line).map_err(|e| map_error(&e))?;
+            for (idx, line) in text_lines(&clean).iter().enumerate() {
+                // #196 任务 2：TOC 收录标题行携书签发射（目录项跳转
+                // 目标侧）；未收录（无 TOC / 层级域外）走裸 heading
+                // （零漂移）。
+                match toc_marks.get(&(id, idx)) {
+                    Some(bm) => {
+                        w.heading_bookmarked(level, line, bm)
+                            .map_err(|e| map_error(&e))?;
+                    }
+                    None => {
+                        w.heading(level, line).map_err(|e| map_error(&e))?;
+                    }
+                }
             }
         }
         BlockKind::Paragraph => {
@@ -533,7 +589,7 @@ fn emit_block(
                 emit_rich_paragraphs(w, &clean, &marks, d);
             }
             for &c in &node.children {
-                emit_block(tree, c, w, d, images)?;
+                emit_block(tree, c, w, d, images, toc_marks)?;
             }
         }
         BlockKind::ListItem => {
@@ -560,7 +616,7 @@ fn emit_block(
                     .map_err(|e| map_error(&e))?;
             }
             for &c in &node.children {
-                emit_block(tree, c, w, quote_depth, images)?;
+                emit_block(tree, c, w, quote_depth, images, toc_marks)?;
             }
         }
         BlockKind::ThematicBreak => {
@@ -578,8 +634,10 @@ pub fn export_docx_core(tree: &BlockTree) -> Result<Vec<u8>, ExportError> {
     // P1 #190：无 options 面 = 空图片表（图片行降级为字面量文本——
     // 与既有行为逐字节一致，图片只在 styled 面资源表供给）。
     let empty: ImageTable = ImageTable::new();
+    // #196 任务 2：无 options 面无 TOC——空配对表（Heading 裸路径）。
+    let no_toc: TocMarkMap = TocMarkMap::new();
     for &child in tree.top_level() {
-        emit_block(tree, child, &mut w, 0, &empty)?;
+        emit_block(tree, child, &mut w, 0, &empty, &no_toc)?;
     }
     w.save_to_vec().map_err(|e| map_error(&e))
 }
@@ -1250,15 +1308,32 @@ pub fn export_docx_styled_core(
         }
     }
     // W-1：TOC 域段居文档开头（内容块发射之前——Word 惯例：目录在
-    // 正文前；Word/LO 打开后提示更新域生成真实目录）。
+    // 正文前）。#196 任务 2：静态目录项升级——每个收录标题一项
+    // （hyperlink 跳转 + PAGEREF 页码域），正文标题挂对应书签
+    // （配对表查表发射）；无收录标题（空文档/全域外）退化为旧占位
+    // 形态（office-io toc_entries 空退化）。既有消费者（toc 未启用）
+    // 字节零变化。
+    let mut toc_marks: TocMarkMap = TocMarkMap::new();
     if let Some(toc) = opts.toc {
-        w.paragraph(&[RunSpec::field_toc_heading_range(
-            toc.level_from,
-            toc.level_to,
-        )]);
+        let mut entries: Vec<TocEntry> = Vec::new();
+        let mut positions: Vec<(NodeId, usize)> = Vec::new();
+        for &child in tree.top_level() {
+            collect_toc_entries(
+                tree,
+                child,
+                toc.level_from,
+                toc.level_to,
+                &mut entries,
+                &mut positions,
+            );
+        }
+        let names = w.toc_entries(&entries, Some((toc.level_from, toc.level_to)));
+        for (pos, name) in positions.into_iter().zip(names) {
+            toc_marks.insert(pos, name);
+        }
     }
     for &child in tree.top_level() {
-        emit_block(tree, child, &mut w, 0, &opts.images)?;
+        emit_block(tree, child, &mut w, 0, &opts.images, &toc_marks)?;
     }
     let bytes = w.save_to_vec().map_err(|e| map_error(&e))?;
     // W-2：匿名化后处理（暗标 G3/R-11——docProps 元数据清零，正文
@@ -2448,13 +2523,28 @@ mod tests {
             doc.contains(r#"<w:fldChar w:fldCharType="separate""#),
             "separate 域结果分界在场"
         );
+        // #196 任务 2：域结果区 = 静态目录项（占位提示升级——有收录
+        // 标题时目录可见且可点击跳转；零收录仍退化占位形，见下文
+        // 2-4 层级断言）。
         assert!(
-            doc.contains("（目录域——打开后全选再按 F9 更新生成）"),
-            "占位提示文本在场"
+            doc.contains(r#"<w:hyperlink w:anchor="toc_0""#),
+            "目录项 hyperlink（w:anchor 引用侧）在场"
+        );
+        assert!(
+            doc.contains("<w:instrText>PAGEREF toc_0 \\h</w:instrText>"),
+            "目录项 PAGEREF 域（\\h 超链接行为）在场"
+        );
+        assert!(
+            doc.contains(r#"<w:bookmarkStart w:id="0" w:name="toc_0""#),
+            "标题书签（定义侧）在场"
+        );
+        assert!(
+            doc.contains(r#"<w:tab w:val="right" w:leader="dot" w:pos="8504""#),
+            "右对齐点线 tab stop（A4 缺省文本宽）在场"
         );
         assert!(
             doc.contains(r#"<w:fldChar w:fldCharType="end""#),
-            "fldChar end 在场"
+            "fldChar end 在场（跨段域收尾）"
         );
         // 位置：TOC 域居文档开头（首内容块之前）。
         let toc_pos = doc.find("TOC \\o").expect("TOC instr 在场");
@@ -2463,18 +2553,27 @@ mod tests {
             toc_pos < first_heading,
             "TOC 域段居首内容块之前（Word 惯例：目录在正文前）"
         );
-        // 文本面：读回 = 加性首段（提示文本）+ 原内容零损。
+        // 引用侧（目录项 hyperlink）在定义侧（标题书签）之前——目录
+        // 居正文前的文档序。
+        let link_pos = doc.find(r#"w:anchor="toc_0""#).expect("引用侧");
+        let bm_pos = doc.find(r#"w:name="toc_0""#).expect("定义侧");
+        assert!(link_pos < bm_pos, "目录项引用侧先于标题书签定义侧");
+        // 文本面：读回 = TOC 域块（域头空段 + 目录项段 + 域尾空段）
+        // + 原内容零损（目录项文本 = 标题文本 + tab 字符；PAGEREF
+        // 页码占位 volatile 剥离不拼接）。
         let back = read_docx_from_bytes(&bytes).expect("read back");
         let ps = paras(&back.blocks);
         let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
         assert_eq!(
             texts,
             vec![
-                "（目录域——打开后全选再按 F9 更新生成）".to_string(),
+                "".to_string(),
+                "章一\t".to_string(),
+                "".to_string(),
                 "章一".to_string(),
                 "正文段。".to_string(),
             ],
-            "TOC 段 = 加性首段；正文内容零损"
+            "TOC 块 = 域头空段 + 目录项段（tab 读回 \t）+ 域尾空段；正文零损"
         );
 
         // 自定义层级 2-4 → `TOC \o "2-4"`。
@@ -2488,6 +2587,14 @@ mod tests {
             doc_24.contains(r#"<w:instrText>TOC \o &quot;2-4&quot;</w:instrText>"#),
             "自定义层级 2-4 进 \\o 开关"
         );
+        // #196 任务 2：层级域外（章一 = H1 不在 2-4）→ 零收录 → 空
+        // 退化占位形（提示 F9；零目录项/零 PAGEREF/零书签）。
+        assert!(
+            doc_24.contains("（目录域——打开后全选再按 F9 更新生成）"),
+            "零收录 = 占位退化形（提示 F9）"
+        );
+        assert!(!doc_24.contains("PAGEREF"), "零收录零 PAGEREF");
+        assert!(!doc_24.contains("bookmarkStart"), "零收录零书签");
         // 合法边界 1-9 全域恰过（引擎 V8 边界镜像）。
         let bytes_lo = export_docx_styled_core(
             &tree,
@@ -2516,6 +2623,92 @@ mod tests {
             doc_combo.contains(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#),
             "toc 面不受 typography 影响"
         );
+    }
+
+    /// #196 任务 2 w9a：多级静态目录项结构——目录项数/缩进梯度/
+    /// hyperlink↔bookmarkStart 逐项配平（引用侧与定义侧名字闭环——
+    /// 配对错位即红）。
+    #[test]
+    fn w9_toc_static_entries_multilevel_structure() {
+        let tree = markdown_to_tree("# 章一\n\n## 节甲\n\n### 目乙\n\n正文。\n");
+        let bytes =
+            export_docx_styled_core(&tree, r#"{"toc":{"enabled":true}}"#).expect("toc 1-3 默认");
+        let doc = zip_stored_part(&bytes, "word/document.xml");
+        // 目录项数 = 收录标题数（H1+H2+H3 = 3；正文段不入目录）。
+        assert_eq!(
+            doc.matches("PAGEREF toc_").count(),
+            3,
+            "恰 3 目录项 PAGEREF"
+        );
+        // 缩进梯度：(level-1)×240 —— H1=0（无 ind）、H2=240、H3=480。
+        assert!(
+            doc.contains(r#"<w:ind w:left="240""#) && doc.contains(r#"<w:ind w:left="480""#),
+            "层级缩进梯度 240/480 在场"
+        );
+        // 逐项配平：每个目录项 hyperlink anchor（引用侧）都有同名
+        // bookmarkStart（定义侧）——跳转闭环零悬空（若桥面配对错位
+        // /书签漏挂，此处即红）。
+        for n in ["toc_0", "toc_1", "toc_2"] {
+            assert!(
+                doc.contains(&format!(r#"<w:hyperlink w:anchor="{n}""#)),
+                "引用侧 {n}"
+            );
+            let bm = format!(r#"w:name="{n}""#);
+            assert!(doc.contains(&bm), "定义侧 {n}（配平——零悬空引用）");
+        }
+        assert_eq!(
+            doc.matches("bookmarkStart").count(),
+            3,
+            "定义侧恰 3（收录标题各一）"
+        );
+        // 域配平：begin/separate/end = TOC(1) + PAGEREF(3) = 4。
+        assert_eq!(
+            doc.matches(r#"w:fldCharType="begin""#).count(),
+            4,
+            "begin 配平"
+        );
+        assert_eq!(doc.matches(r#"w:fldCharType="end""#).count(), 4, "end 配平");
+        // 标题样式双通道保持（书签挂接不改变 Heading 面）。
+        for h in ["Heading1", "Heading2", "Heading3"] {
+            assert!(doc.contains(&format!(r#"w:val="{h}""#)), "{h} 样式在场");
+        }
+    }
+
+    /// #196 任务 2 w9b：层级过滤——`\o` 域外标题不入目录不挂书签
+    ///（H4 在 1-3 域外：bookmarkStart 恰 = 收录数；H4 段无书签
+    /// 面——裸 heading 路径零漂移）。
+    #[test]
+    fn w9_toc_level_filter_excludes_out_of_range_headings() {
+        let tree = markdown_to_tree("# 章一\n\n#### 深层四\n\n正文。\n");
+        let bytes = export_docx_styled_core(&tree, r#"{"toc":{"enabled":true}}"#).expect("toc 1-3");
+        let doc = zip_stored_part(&bytes, "word/document.xml");
+        // H4（层级 4）在 1-3 域外 → 不入目录。
+        assert_eq!(
+            doc.matches("PAGEREF toc_").count(),
+            1,
+            "仅 H1 入目录（H4 域外）"
+        );
+        // H4 文本恰现一次（正文标题段）——目录项无它（hyperlink 面
+        // 恰 1 = H1 项）。
+        assert_eq!(
+            doc.matches("深层四").count(),
+            1,
+            "H4 恰现一次（仅正文标题段，不入目录项）"
+        );
+        assert_eq!(
+            doc.matches("<w:hyperlink").count(),
+            1,
+            "hyperlink 面 = 仅 H1 目录项"
+        );
+        // H4 段在场（正文标题零损）且无书签（bookmarkStart 恰 1 = H1）。
+        assert!(doc.contains("深层四"), "H4 正文标题在场（零损）");
+        assert_eq!(
+            doc.matches("bookmarkStart").count(),
+            1,
+            "书签恰挂收录标题（H4 域外裸 heading）"
+        );
+        // H4 样式仍发射（样式面与 TOC 收录面正交）。
+        assert!(doc.contains(r#"w:val="Heading4""#), "H4 样式在场");
     }
 
     /// W-1/W-2 回归锚：两键缺省/null/enabled:false/anonymize:false →
