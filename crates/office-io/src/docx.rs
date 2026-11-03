@@ -3654,7 +3654,7 @@ fn extract_headers_footers(
 /// 简单域代码（docx-r2 写面）：PAGE / NUMPAGES 两面（引擎元素族
 /// 其余域 = TOC[文档级]/PAGEREF[书签面]/HYPERLINK[`todo!()` 崩溃面
 /// instr_text.rs:32]——登记不暴露）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldSpec {
     /// 当前页码域（`<w:instrText>PAGE</w:instrText>`）。
     Page,
@@ -3667,6 +3667,37 @@ pub enum FieldSpec {
     /// dirty 给出可操作提示）。`heading_range` = `\o` 开关（None =
     /// 不发射开关——Word 默认收录全部标题层级）。
     TableOfContents { heading_range: Option<(u8, u8)> },
+    /// 书签页码引用域（PAGEREF——#196 任务 2）：instrText
+    /// `PAGEREF {bookmark} \h` 五连（begin + instr + separate +
+    /// 页码占位 "1" + end）；`\h` = 超链接行为（点击跳转书签处）。
+    /// 占位页码 "1" 是保存时快照——Word/LO 打开后 F9 重算（与 TOC
+    /// 域 dirty 同理）；单独发射时 begin 不置 dirty（页码域无
+    /// 「提示更新」必要——嵌入 TOC 静态项时随 TOC 域整块刷新）。
+    /// 引用的书签名：非空粘性校验（V11——count_specs 漏斗）；悬空
+    /// 引用（书签不在本文档）合法——与 anchor_link 悬空锚点同语义
+    /// （T3 先例：跨文档书签引用是 Word 合法形态，读面 PAGEREF 是
+    /// volatile 域——域结果剥离，读面无语义损失）。
+    PageRef { bookmark: String },
+}
+
+/// #196 任务 2：TOC 静态目录项（[`DocxWriter::toc_entries`] 元素——
+/// 目录项文本 + 层级；书签名由写器生成，不经本结构）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TocEntry {
+    /// 标题层级（1-9——V8 同域；驱动目录项缩进 (level-1)×240 twips）。
+    pub level: u8,
+    /// 目录项文本（标题段净文本——调用方负责剥行内定界符）。
+    pub text: String,
+}
+
+impl TocEntry {
+    /// 便捷构造。
+    pub fn new(level: u8, text: impl Into<String>) -> Self {
+        Self {
+            level,
+            text: text.into(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4021,6 +4052,20 @@ impl RunSpec {
             ..Self::field_page()
         }
     }
+
+    /// 书签页码引用域 run（`PAGEREF {bookmark} \h`——#196 任务 2；
+    /// \h 超链接行为恒开：无 \h 的 PAGEREF 只显示页码不可点击，
+    /// 导出面无「仅显页码不要跳转」用例，不暴露开关——最小面）。
+    /// 空书签名 = V11 违规：构造不失败（人体工学签名），save 漏斗
+    /// 经写器粘性校验拒绝（与 V7/V8 同语义）。
+    pub fn field_pageref(bookmark: impl Into<String>) -> Self {
+        Self {
+            field: Some(FieldSpec::PageRef {
+                bookmark: bookmark.into(),
+            }),
+            ..Self::field_page()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4216,6 +4261,10 @@ pub struct DocxWriter {
     /// 部 id——§8：仅单次导出会话内稳定，**不作为身份**；公开身份
     /// = 书签名）。
     bookmark_next_id: usize,
+    /// #196 任务 2：toc_entries 书签名生成计数器（`toc_N` 递增基准
+    /// ——与用户书签避让：生成时查 bookmark_names，撞名则递增跳过；
+    /// save_to_vec 重建基态时随 Self::new() 重置）。
+    toc_bookmark_counter: usize,
     /// N-4（#29）：已发射表格计数（文档序 0 基——与 document.xml
     /// `<w:tbl>` 出现序对齐；save 后随基态重置）。
     tables_emitted: usize,
@@ -4260,6 +4309,7 @@ impl DocxWriter {
             typography: None,
             paragraphs: 0,
             runs: 0,
+            toc_bookmark_counter: 0,
             validation_error: None,
             bookmark_names: std::collections::HashSet::new(),
             bookmark_next_id: 0,
@@ -4321,6 +4371,40 @@ impl DocxWriter {
         Ok(())
     }
 
+    /// **带书签的标题段**（#196 任务 2——TOC 跳转目标侧）：与
+    /// [`Self::heading`] 同构（样式引用 + outline 级双通道）+
+    /// `bookmarkStart/End` 对包标题文本（书签定义点——与
+    /// [`Self::bookmark_paragraph`] 同 id 唯一化/名字注册纪律，复用
+    /// V1-V6 校验矩阵；`toc_N` 名由 [`Self::toc_entries`] 生成，
+    /// 过全部校验）。**跳转闭环的另一侧**：[`Self::toc_entries`] 发射
+    /// 的目录项 PAGEREF/hyperlink 引用本方法注册的书签名。
+    pub fn heading_bookmarked(
+        &mut self,
+        level: u8,
+        text: &str,
+        bookmark: &str,
+    ) -> Result<(), DocxError> {
+        if !(1..=9).contains(&level) {
+            return Err(DocxError::Parse(format!(
+                "heading level must be 1-9, got {level}"
+            )));
+        }
+        validate_bookmark_name(bookmark, &self.bookmark_names)?;
+        let id = self.bookmark_next_id;
+        self.bookmark_next_id += 1;
+        self.bookmark_names.insert(bookmark.to_string());
+        let mut p = docx_rs::Paragraph::new()
+            .style(&format!("Heading{level}"))
+            .add_run(docx_rs::Run::new().add_text(text));
+        p.property = p.property.clone().outline_lvl((level - 1) as usize);
+        p = p.add_bookmark_start(id, bookmark.to_string());
+        p = p.add_bookmark_end(id);
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
+        self.runs += 1;
+        Ok(())
+    }
+
     /// 单文本段落（便捷面）。
     pub fn paragraph_text(&mut self, text: &str) {
         self.paragraph(&[RunSpec::text(text)]);
@@ -4359,6 +4443,157 @@ impl DocxWriter {
         Ok(())
     }
 
+    /// **TOC 静态目录项块**（#196 任务 2——目录项可点击跳转）：跨段域
+    /// 三段式 = 域头段（begin[dirty=true] + instrText `TOC \o "lo-hi"`
+    /// 与 separate——与旧 [`RunSpec::field_toc_heading_range`] 域段前三
+    /// run 同构）、目录项段 × N、域尾段（end）。目录项段 =
+    /// `hyperlink(w:anchor=书签名)`{ 文本 run + tab run + PAGEREF 五连 }
+    /// 附右对齐点线 tab stop（pos 随 [`Self::page_geometry`] 动态
+    /// 计算——缺省引擎基线 A4 文本宽 8504 twips）与层级缩进
+    /// （(level-1)×240 twips）。
+    ///
+    /// **书签名**：`toc_N`（`toc_bookmark_counter` 递增，撞用户书签
+    /// 则跳号避让）；**返回值** = entries 序的书签名列表——调用方在
+    /// 正文对应标题处经 [`Self::heading_bookmarked`] 以同名注册书签
+    /// （定义点），与本方法发射的引用侧（hyperlink anchor + PAGEREF
+    /// 指令）构成跳转闭环。名字走 V4 字符域（`toc_1` 形态恒过；V5
+    /// `_Toc` 保留名不撞——Word 的 `_TocNNN` 内部惯例非协议要求，
+    /// 包装层自有命名空间避开它，用户书签纪律 V1-V6 零例外维持）。
+    ///
+    /// **entries 空 = 旧形态退化**：发射占位提示五连域段（与
+    /// `field_toc_heading_range` 路径逐字节同构——无标题文档既有行为
+    /// 零漂移）。
+    ///
+    /// 校验（save 漏斗粘性——V8 同纪律）：entry level 1-9；\
+    /// `heading_range` 的 lo/hi 1-9 且 lo ≤ hi。
+    pub fn toc_entries(
+        &mut self,
+        entries: &[TocEntry],
+        heading_range: Option<(u8, u8)>,
+    ) -> Vec<String> {
+        // V8 域校验（heading_range——与 count_specs 的 RunSpec 路径
+        // 同判据；本方法不经 RunSpec，粘性落账在此单点）。
+        if let Some((lo, hi)) = heading_range {
+            if self.validation_error.is_none()
+                && (lo == 0 || hi == 0 || lo > 9 || hi > 9 || lo > hi)
+            {
+                self.validation_error = Some(format!(
+                    "V8: TOC 标题层级域违规（{lo}-{hi}——须 1-9 且 lo ≤ hi）"
+                ));
+            }
+        }
+        // V8'（entry level 域——heading 同域 1-9）。
+        if self.validation_error.is_none() {
+            if let Some(bad) = entries.iter().find(|e| !(1..=9).contains(&e.level)) {
+                self.validation_error =
+                    Some(format!("V8: TOC 目录项层级越界（{}——须 1-9）", bad.level));
+            }
+        }
+        // 空退化：占位五连域段（旧形态逐字节同构）。
+        if entries.is_empty() {
+            let mut toc = docx_rs::InstrToC::new();
+            if let Some((lo, hi)) = heading_range {
+                toc = toc.heading_styles_range(lo as usize, hi as usize);
+            }
+            let p = docx_rs::Paragraph::new()
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, true))
+                .add_run(docx_rs::Run::new().add_instr_text(docx_rs::InstrText::TOC(toc)))
+                .add_run(
+                    docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false),
+                )
+                .add_run(docx_rs::Run::new().add_text("（目录域——打开后全选再按 F9 更新生成）"))
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
+            self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+            self.paragraphs += 1;
+            self.runs += 5;
+            return Vec::new();
+        }
+        // tab stop 位 = 文本宽（页宽 - 左右边距 - 装订线；几何未设置
+        // = 引擎基线 A4 11906 + Word 2019 边距 1701/1701——g2_t4 钉定
+        // 的字节面缺省）。
+        let text_width = match &self.page_geometry {
+            Some(g) => {
+                let w = g.width as i64
+                    - g.margin_left.max(0) as i64
+                    - g.margin_right.max(0) as i64
+                    - g.gutter.max(0) as i64;
+                w.max(0) as usize
+            }
+            None => 11906 - 1701 - 1701,
+        };
+        // 域头段（begin[dirty] + instr + separate）。
+        let mut toc = docx_rs::InstrToC::new();
+        if let Some((lo, hi)) = heading_range {
+            toc = toc.heading_styles_range(lo as usize, hi as usize);
+        }
+        let head = docx_rs::Paragraph::new()
+            .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, true))
+            .add_run(docx_rs::Run::new().add_instr_text(docx_rs::InstrText::TOC(toc)))
+            .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false));
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(head);
+        self.paragraphs += 1;
+        self.runs += 3;
+        // 目录项段 × N（hyperlink(anchor){ 文本 + tab + PAGEREF 五连 }）。
+        let mut names = Vec::with_capacity(entries.len());
+        for e in entries {
+            // 书签名生成：toc_N 递增，撞用户已注册名则跳号（先到先得
+            // ——用户已注册 toc_3 则生成跳到 toc_4）。**生成侧不注册**
+            // （名字只预留不占用——注册/定义发生在调用方
+            // `heading_bookmarked` 携同名注册时；counter 单调不回退，
+            // 同会话零重复生成；用户抢注同名后到 → 定义点 V6 诚实拒）。
+            let mut n = self.toc_bookmark_counter;
+            loop {
+                let cand = format!("toc_{n}");
+                if !self.bookmark_names.contains(&cand) {
+                    self.toc_bookmark_counter = n + 1;
+                    names.push(cand);
+                    break;
+                }
+                n += 1;
+            }
+            let name = names.last().unwrap().clone();
+            let mut p = docx_rs::Paragraph::new().indent(
+                Some((e.level as i32 - 1) * 240),
+                None,
+                None,
+                None,
+            );
+            p = p.add_tab(
+                docx_rs::Tab::new()
+                    .val(docx_rs::TabValueType::Right)
+                    .leader(docx_rs::TabLeaderType::Dot)
+                    .pos(text_width),
+            );
+            let hl = docx_rs::Hyperlink::new(name.as_str(), docx_rs::HyperlinkType::Anchor)
+                .add_run(docx_rs::Run::new().add_text(e.text.as_str()))
+                .add_run(docx_rs::Run::new().add_tab())
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
+                .add_run(
+                    docx_rs::Run::new().add_instr_text(docx_rs::InstrText::PAGEREF(
+                        docx_rs::InstrPAGEREF::new(name.as_str()).hyperlink(),
+                    )),
+                )
+                .add_run(
+                    docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false),
+                )
+                .add_run(docx_rs::Run::new().add_text("1"))
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
+            p = p.add_hyperlink(hl);
+            self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+            self.paragraphs += 1;
+            // 文本 + tab + PAGEREF 五连 = 7 run（hyperlink 内 run 计
+            // 入文档 run 面——与 link run 同纪律）。
+            self.runs += 7;
+        }
+        // 域尾段（end——独立空段，引擎 TableOfContentsItem 同形）。
+        let tail = docx_rs::Paragraph::new()
+            .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(tail);
+        self.paragraphs += 1;
+        self.runs += 1;
+        names
+    }
+
     /// r4-t2：段/run 计数单点（paras 含本段；脚注规格 +1 段 +1 run）。
     /// S1 样式面：pub(crate)（style.rs `styled_paragraph` 复用）。
     /// S1 编号面：pub(crate)（numbering.rs `numbered_list_item` 复用）。
@@ -4387,6 +4622,15 @@ impl DocxWriter {
                         self.validation_error = Some(format!(
                             "V8: TOC 标题层级域违规（{lo}-{hi}——须 1-9 且 lo ≤ hi）"
                         ));
+                    }
+                }
+            }
+            // #196 任务 2 V11（PAGEREF 空书签）粘性检查——与 V7 同
+            // 语义（构造器人体工学签名，save 漏斗拒绝零产物）。
+            if self.validation_error.is_none() {
+                if let Some(FieldSpec::PageRef { bookmark }) = &r.field {
+                    if bookmark.is_empty() {
+                        self.validation_error = Some("V11: PAGEREF 目标书签名为空串".into());
                     }
                 }
             }
@@ -5090,13 +5334,13 @@ fn add_spec_to_paragraph(p: docx_rs::Paragraph, spec: &RunSpec) -> docx_rs::Para
     }
     // 简单域（begin/instrText/end 三连——引擎 add_tc 同构先例
     // run.rs:202-208）。
-    if let Some(field) = spec.field {
+    if let Some(field) = &spec.field {
         // G1 TOC：五连（begin[dirty] + instrText + separate + 占位 + end）
         // ——域结果占位给打开者可操作提示；dirty=true 让 Word/LO 打开
         // 即提示更新域生成目录。
         if let FieldSpec::TableOfContents { heading_range } = field {
             let mut toc = docx_rs::InstrToC::new();
-            if let Some((lo, hi)) = heading_range {
+            if let Some((lo, hi)) = *heading_range {
                 toc = toc.heading_styles_range(lo as usize, hi as usize);
             }
             return p
@@ -5108,10 +5352,30 @@ fn add_spec_to_paragraph(p: docx_rs::Paragraph, spec: &RunSpec) -> docx_rs::Para
                 .add_run(docx_rs::Run::new().add_text("（目录域——打开后全选再按 F9 更新生成）"))
                 .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
         }
+        // #196 任务 2 PAGEREF：五连（begin 非dirty + instr
+        // `PAGEREF {bm} \h` + separate + 页码占位 + end）——占位 "1"
+        // 是保存时快照，F9 重算；与 TOC 五连同构（域结果占位两 run）
+        // 但 begin 不置 dirty（嵌入 TOC 静态项时随整块刷新，单独发射
+        // 时无「提示更新」必要）。
+        if let FieldSpec::PageRef { bookmark } = field {
+            return p
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
+                .add_run(
+                    docx_rs::Run::new().add_instr_text(docx_rs::InstrText::PAGEREF(
+                        docx_rs::InstrPAGEREF::new(bookmark).hyperlink(),
+                    )),
+                )
+                .add_run(
+                    docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false),
+                )
+                .add_run(docx_rs::Run::new().add_text("1"))
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::End, false));
+        }
         let instr = match field {
             FieldSpec::Page => docx_rs::InstrText::PAGE(docx_rs::InstrPAGE::new()),
             FieldSpec::NumPages => docx_rs::InstrText::NUMPAGES(docx_rs::InstrNUMPAGES::new()),
             FieldSpec::TableOfContents { .. } => unreachable!("TOC 已在上方分支返回"),
+            FieldSpec::PageRef { .. } => unreachable!("PAGEREF 已在上方分支返回"),
         };
         return p
             .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
@@ -5349,8 +5613,8 @@ const ANON_PEOPLE_XML: &str = concat!(
 /// comments.xml 批注作者面匿名化（w:author/w:initials → 空串、
 /// w:date → epoch——quick-xml 事件流属性级改写，文本内容零触碰）。
 fn anonymize_comments_xml(xml: &str) -> Result<String, DocxError> {
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::Reader;
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut writer = quick_xml::Writer::new(Vec::new());
@@ -5915,14 +6179,12 @@ mod tests {
     #[test]
     fn list_item_ilvl_validation() {
         let mut w = DocxWriter::new();
-        assert!(
-            w.list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
-                .is_ok()
-        );
-        assert!(
-            w.list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
-                .is_ok()
-        );
+        assert!(w
+            .list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
+            .is_ok());
+        assert!(w
+            .list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
+            .is_ok());
         assert!(matches!(
             w.list_item(&[RunSpec::text("a")], ListKind::Bullet, MAX_LIST_LEVEL + 1),
             Err(DocxError::Parse(m)) if m.contains("ilvl")
@@ -6184,11 +6446,9 @@ mod tests {
         let mut w = Vec::new();
         let ct = parse_content_types(xml, false, &mut w).unwrap();
         assert_eq!(ct.content_type_of("a.png").as_deref(), Some("image/png"));
-        assert!(
-            w.iter().any(
-                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
-            )
-        );
+        assert!(w
+            .iter()
+            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
     }
 
     /// [Content_Types].xml 缺属性条目 + 重复条目：严格拒 / 兼容跳过
@@ -6275,11 +6535,9 @@ mod tests {
             .unwrap()
             .expect("兼容容忍");
         assert!(t.get("rId1").is_some(), "合法条目保留");
-        assert!(
-            w.iter().any(
-                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
-            )
-        );
+        assert!(w
+            .iter()
+            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
     }
 
     /// .rels 根元素名错误：严格拒 / 兼容警告 + 条目照常解析
@@ -6570,8 +6828,8 @@ mod tests {
             240,
         )
         .unwrap(); // 1p + 1r
-        // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
-        // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
+                   // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
+                   // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
         assert_eq!(w.paragraphs, 14);
         // 17 run：heading 1 + paragraph 4（3 run + 脚注 1）+ table 3 +
         // header 1 + footer 1 + code 1 + hr 0 + quote 1 + list_item 1 +
@@ -7455,5 +7713,266 @@ mod tests {
         let bogus = writer.finish().unwrap().into_inner();
         let err = anonymize_docx_props(&bogus).unwrap_err();
         assert!(matches!(err, DocxError::Io(_)), "fail-closed 拒绝: {err:?}");
+    }
+
+    // ── #196 任务 2：PAGEREF + TOC 静态目录项测试组（T8）──────────
+
+    /// T8a：field_pageref 五连 XML 面（begin 非 dirty + instr
+    /// `PAGEREF {bm} \h` + separate + 页码占位 "1" + end）。
+    #[test]
+    fn t8a_field_pageref_five_part_xml_face() {
+        let mut w = DocxWriter::new();
+        w.paragraph(&[RunSpec::text("页码："), RunSpec::field_pageref("secIntro")]);
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        // 五连逐件在场（begin 非单独 dirty——TOC 域才有 dirty 提示位；
+        // 此处断言 begin 在场 + 不多不少一个 PAGEREF 指令）。
+        assert!(
+            doc.contains(r#"<w:instrText>PAGEREF secIntro \h</w:instrText>"#),
+            "PAGEREF 指令（\\h 超链接开关）恰在场"
+        );
+        assert!(
+            doc.matches(r#"w:fldCharType="begin""#).count() == 1,
+            "单域 begin 恰一次"
+        );
+        assert!(
+            doc.matches(r#"w:fldCharType="separate""#).count() == 1,
+            "separate 恰一次"
+        );
+        assert!(
+            doc.matches(r#"w:fldCharType="end""#).count() == 1,
+            "end 恰一次"
+        );
+        // 页码占位 "1"（域结果区——separate 与 end 之间）。
+        let sep = doc.find(r#"w:fldCharType="separate""#).unwrap();
+        let end = doc.find(r#"w:fldCharType="end""#).unwrap();
+        assert!(doc[sep..end].contains(">1<"), "域结果区页码占位 \"1\" 在场");
+        // 可解析往返（读面 PAGEREF = volatile 域，域结果剥离不 panic）。
+        assert!(read_docx_from_bytes(&bytes).is_ok());
+    }
+
+    /// T8b：toc_entries 三段式跨段域结构 + 跳转闭环配平。
+    #[test]
+    fn t8b_toc_entries_block_structure_and_jump_closure() {
+        let mut w = DocxWriter::new();
+        let names = w.toc_entries(
+            &[
+                TocEntry::new(1, "第一章 引言"),
+                TocEntry::new(2, "1.1 背景"),
+                TocEntry::new(3, "1.1.1 细节"),
+            ],
+            Some((1, 3)),
+        );
+        assert_eq!(names.len(), 3, "书签名按 entries 序返回");
+        assert_eq!(names[0], "toc_0", "首名 toc_0（counter 从 0 起）");
+        // 正文侧书签定义（跳转闭环另一侧）。
+        w.heading_bookmarked(1, "第一章 引言", &names[0]).unwrap();
+        w.heading_bookmarked(2, "1.1 背景", &names[1]).unwrap();
+        w.heading_bookmarked(3, "1.1.1 细节", &names[2]).unwrap();
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        // 域头：TOC 指令 + dirty（打开提示更新域）恰一次。
+        assert!(
+            doc.contains(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#),
+            "TOC \\o 指令在场"
+        );
+        assert!(
+            doc.matches(r#"w:dirty="true""#).count() == 1,
+            "域头 begin dirty 恰一次（TOC 域独有提示位）"
+        );
+        // 跨段域配平：begin/separate/end 各 = TOC(1) + PAGEREF(3)。
+        assert_eq!(
+            doc.matches(r#"w:fldCharType="begin""#).count(),
+            4,
+            "begin = TOC + 3×PAGEREF"
+        );
+        assert_eq!(
+            doc.matches(r#"w:fldCharType="separate""#).count(),
+            4,
+            "separate 同配平"
+        );
+        assert_eq!(
+            doc.matches(r#"w:fldCharType="end""#).count(),
+            4,
+            "end 同配平"
+        );
+        // 目录项：hyperlink anchor 引用侧 ×3 + 指令引用侧 ×3。
+        for n in &names {
+            assert!(
+                doc.contains(&format!(r#"<w:hyperlink w:anchor="{n}""#)),
+                "hyperlink 引用 {n}"
+            );
+            assert!(
+                doc.contains(&format!("<w:instrText>PAGEREF {n} \\h</w:instrText>")),
+                "PAGEREF 指令引用 {n}"
+            );
+        }
+        // 定义侧：bookmarkStart/End 对 ×3（标题段内）。
+        assert_eq!(doc.matches("bookmarkStart").count(), 3, "标题书签定义侧 ×3");
+        assert_eq!(doc.matches("bookmarkEnd").count(), 3, "配对 End ×3");
+        // tab stop：右对齐点线（A4 缺省文本宽 8504）。
+        assert!(
+            doc.contains(r#"w:leader="dot""#) && doc.contains(r#"w:val="right""#),
+            "右对齐点线 tab stop 在场"
+        );
+        assert!(doc.contains(r#"w:pos="8504""#), "tab 位 = A4 缺省文本宽");
+        // 层级缩进：level 2/3 项缩进 240/480。
+        assert!(
+            doc.contains(r#"w:left="240""#) && doc.contains(r#"w:left="480""#),
+            "层级缩进 (level-1)×240"
+        );
+        // 标题段样式双通道保持（heading_bookmarked 与 heading 同构）。
+        assert!(
+            doc.matches(r#"w:val="Heading1""#).count() >= 1
+                && doc.matches(r#"w:val="Heading3""#).count() >= 1,
+            "Heading 样式引用 + outline 双通道保持"
+        );
+    }
+
+    /// T8c：heading_bookmarked 校验矩阵（heading 域 + V1-V6 书签域
+    /// 透传——与 bookmark_paragraph 同纪律）。
+    #[test]
+    fn t8c_heading_bookmarked_validation() {
+        // heading 层级域。
+        let mut w = DocxWriter::new();
+        assert!(w.heading_bookmarked(0, "x", "a").is_err(), "level 0 拒");
+        assert!(w.heading_bookmarked(10, "x", "a").is_err(), "level 10 拒");
+        // V5 保留名（toc 通道自有命名 toc_N 不撞；用户直接传 _Toc 拒）。
+        let mut w2 = DocxWriter::new();
+        assert!(
+            w2.heading_bookmarked(1, "x", "_Toc1").is_err(),
+            "_Toc 保留名拒（V5）"
+        );
+        // V6 重名（toc_entries 生成名已被 heading_bookmarked 注册——
+        // 再注册同名拒）。
+        let mut w3 = DocxWriter::new();
+        let names = w3.toc_entries(&[TocEntry::new(1, "章")], None);
+        let dup = w3.heading_bookmarked(1, "章", &names[0]);
+        assert!(dup.is_ok(), "首注册过（闭环合法路径）");
+        let mut w4 = DocxWriter::new();
+        let names4 = w4.toc_entries(&[TocEntry::new(1, "章")], None);
+        w4.heading_bookmarked(1, "章", &names4[0]).unwrap();
+        assert!(
+            w4.heading_bookmarked(1, "again", &names4[0]).is_err(),
+            "同书签名二次定义拒（V6）"
+        );
+    }
+
+    /// T8d：写读全环——读面语义镜像（TOC 域内容型保留 + PAGEREF
+    /// volatile 域结果剥离 + 标题文本在场）。
+    #[test]
+    fn t8d_write_read_roundtrip_semantics() {
+        let mut w = DocxWriter::new();
+        let names = w.toc_entries(
+            &[TocEntry::new(1, "章甲"), TocEntry::new(2, "节乙")],
+            Some((1, 2)),
+        );
+        w.heading_bookmarked(1, "章甲", &names[0]).unwrap();
+        w.heading_bookmarked(2, "节乙", &names[1]).unwrap();
+        w.paragraph_text("正文。");
+        let bytes = w.save_to_vec().unwrap();
+        let doc = read_docx_from_bytes(&bytes).unwrap();
+        // 目录项文本保留（TOC = 内容型域——域结果承载作者可见内容；
+        // 段落文本面 = Block 文本聚合）。
+        let all_text: String = doc
+            .blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(p) => p.text(),
+                Block::Table(_) | Block::TextBox(_) => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all_text.contains("章甲"), "目录项文本 1 保留");
+        assert!(all_text.contains("节乙"), "目录项文本 2 保留");
+        // PAGEREF 页码占位剥离（volatile——markdown 无分页语义）。
+        assert!(
+            !all_text.contains("章甲1") && !all_text.contains("节乙1"),
+            "页码占位不拼接（volatile 剥离）"
+        );
+        // 正文标题文本在场（写读主体面不受影响）。
+        assert!(all_text.contains("正文。"), "正文在场");
+    }
+
+    /// T8e：粘性校验——V11 空书签 / V8 entry 层级 / V8 heading_range
+    /// （save 漏斗拒绝零产物）。
+    #[test]
+    fn t8e_sticky_validation_v11_v8() {
+        // V11：field_pageref 空书签名。
+        let mut w = DocxWriter::new();
+        w.paragraph(&[RunSpec::field_pageref("")]);
+        let err = w.save_to_vec().unwrap_err();
+        assert!(
+            matches!(err, DocxError::InvalidInput(ref m) if m.starts_with("V11")),
+            "V11 粘性拒：{err:?}"
+        );
+        // V8'：entry 层级越界。
+        let mut w2 = DocxWriter::new();
+        w2.toc_entries(&[TocEntry::new(0, "x")], None);
+        let err2 = w2.save_to_vec().unwrap_err();
+        assert!(
+            matches!(err2, DocxError::InvalidInput(ref m) if m.contains("V8")),
+            "entry 层级粘性拒：{err2:?}"
+        );
+        // V8：heading_range 倒序（toc_entries 直传路径）。
+        let mut w3 = DocxWriter::new();
+        w3.toc_entries(&[TocEntry::new(1, "x")], Some((3, 1)));
+        let err3 = w3.save_to_vec().unwrap_err();
+        assert!(
+            matches!(err3, DocxError::InvalidInput(ref m) if m.starts_with("V8")),
+            "heading_range 粘性拒：{err3:?}"
+        );
+    }
+
+    /// T8f：书签生成避让——用户已注册 toc_0/toc_1 时生成跳号（先到
+    /// 先得，零重名）。
+    #[test]
+    fn t8f_bookmark_generation_avoids_user_collisions() {
+        let mut w = DocxWriter::new();
+        w.bookmark_paragraph(&[RunSpec::text("用户书签")], "toc_0")
+            .unwrap();
+        w.bookmark_paragraph(&[RunSpec::text("用户书签 2")], "toc_1")
+            .unwrap();
+        let names = w.toc_entries(&[TocEntry::new(1, "甲"), TocEntry::new(1, "乙")], None);
+        assert_eq!(
+            names,
+            vec!["toc_2".to_string(), "toc_3".to_string()],
+            "撞名跳号"
+        );
+        // 生成后注册定义侧（闭环）且不再撞用户名。
+        w.heading_bookmarked(1, "甲", &names[0]).unwrap();
+        w.heading_bookmarked(1, "乙", &names[1]).unwrap();
+        assert!(w.save_to_vec().is_ok(), "全环合法");
+    }
+
+    /// T8g：空 entries 退化——与旧 RunSpec TOC 路径同构（占位提示
+    /// 文本在场，无目录项/书签/PAGEREF 面）。
+    #[test]
+    fn t8g_empty_entries_degrades_to_legacy_shape() {
+        let mut w = DocxWriter::new();
+        let names = w.toc_entries(&[], Some((1, 3)));
+        assert!(names.is_empty(), "空 entries 零书签");
+        let bytes = w.save_to_vec().unwrap();
+        let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
+        assert!(
+            doc.contains("（目录域——打开后全选再按 F9 更新生成）"),
+            "占位提示在场（旧形态）"
+        );
+        assert!(!doc.contains("PAGEREF"), "零 PAGEREF 面");
+        assert!(!doc.contains("bookmarkStart"), "零书签面");
+        // 与 RunSpec 路径字节同构（同参数同产物——既有消费者零漂移）。
+        let mut w2 = DocxWriter::new();
+        w2.paragraph(&[RunSpec::field_toc_heading_range(1, 3)]);
+        let bytes2 = w2.save_to_vec().unwrap();
+        let doc2 =
+            String::from_utf8(zip_part_bytes(&bytes2, "word/document.xml").unwrap()).unwrap();
+        // 域段部分逐字节同构（w14:paraId 是引擎自增序——两文档段序
+        // 相同则 paraId 相同；比对去 paraId 后的域段内容）。
+        let strip = |s: &str| s.replace("w14:paraId=\"00000001\"", "P");
+        assert_eq!(
+            strip(&doc).replace("w14:paraId=\"00000002\"", "P"),
+            strip(&doc2).replace("w14:paraId=\"00000002\"", "P"),
+            "空 entries 与 RunSpec TOC 路径字节同构"
+        );
     }
 }
