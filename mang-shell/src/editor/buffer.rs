@@ -2131,7 +2131,7 @@ mod fence_dirty_tests {
         // 克隆体不是变更源——记账从 Clean 起步（消费方首收全量，恒安全）。
         let mut b = Buffer::from_plain_text("a\nb");
         assert!(b.replace_range(p(0, 0), p(0, 0), "x"));
-        let snapshot = b.clone();
+        let mut snapshot = b.clone();
         assert_eq!(snapshot.take_fence_dirty(), FenceDirty::Clean);
         // 源窗口不受克隆影响。
         assert_eq!(
