@@ -1,6 +1,10 @@
-//! 自绘标题栏（#63 Lead：顶部标题栏，可拖拽窗口）。
+//! 自绘标题栏（#63 Lead：顶部标题栏，可拖拽窗口；#209：左侧标题后
+//! 挂菜单栏）。
 //!
-//! 结构：`[标题 16px 边距] [flex 拖拽区] [窗口控制钮 3 个]`。
+//! 结构：`[标题 16px 边距] [菜单栏 文件/编辑/查看/帮助] [flex 拖拽区]
+//! [窗口控制钮 3 个]`。菜单栏渲染在 [`crate::menu_bar_view`]（结构与
+//! 状态在 `crate::menu_bar` / `ShellApp.menu_bar`）；窗口控制钮与拖拽
+//! 语义本模块自持，#209 未改动。
 //!
 //! 拖拽的跨平台路径（#68 Lead Windows 真机验证后修正——原
 //! `start_window_move()` 单路径在 Windows 失效）：
@@ -25,14 +29,26 @@
 //! 注：X11 下客户端装饰（CSD）需合成器支持，无合成器时 gpui_linux 自动
 //! 回退服务端装饰（WM 标题栏）——本栏恒在客户区内渲染，两种形态不塌。
 
-use gpui::{App, MouseButton, Pixels, px};
+use gpui::{Context, MouseButton, Pixels, px};
 use ui::prelude::*;
 use ui::{IconButton, IconName, Label, LabelSize};
+
+use crate::menu_bar;
+use crate::menu_bar_view;
+use crate::shell::ShellApp;
 
 /// 标题栏高度（px）。
 pub const TITLE_BAR_HEIGHT: Pixels = px(36.);
 
-pub fn title_bar(title: &str, cx: &App) -> impl IntoElement {
+/// 渲染标题栏。`menus` / `menu_state` = #209 菜单栏（结构与状态由
+/// shell 提供——本模块只做布局挂载；`cx.listener` 需要 ShellApp 上下文，
+/// activity_bar/tab_bar 同款签名口径）。
+pub fn title_bar(
+    title: &str,
+    menus: &[menu_bar::TopMenu],
+    menu_state: &menu_bar::MenuBarState,
+    cx: &mut Context<ShellApp>,
+) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     h_flex()
         .id("title-bar")
@@ -40,7 +56,24 @@ pub fn title_bar(title: &str, cx: &App) -> impl IntoElement {
         .flex_none()
         .w_full()
         .bg(colors.title_bar_background)
-        // 拖拽只挂中央弹性区——避免点控制钮时连带触发窗口移动。
+        // 标题（固定列——不参与拖拽；菜单栏紧随其后，见 issue #209 布局）。
+        .child(
+            h_flex()
+                .id("title-bar-caption")
+                .h_full()
+                .flex_none()
+                .items_center()
+                .pl_4()
+                .child(
+                    Label::new(title)
+                        .size(LabelSize::Small)
+                        .color(ui::Color::Muted),
+                ),
+        )
+        // #209：菜单栏（文件/编辑/查看/帮助——点击下拉；快捷键标签、
+        // 键盘导航、灰显态见 menu_bar / menu_bar_view）。
+        .child(menu_bar_view::menu_titles(menus, menu_state, cx))
+        // 拖拽只挂中央弹性区——避免点控制钮/菜单标题时连带触发窗口移动。
         .child(
             div()
                 .id("title-bar-drag")
@@ -59,14 +92,7 @@ pub fn title_bar(title: &str, cx: &App) -> impl IntoElement {
                     el.on_mouse_down(MouseButton::Left, |_, window, _| {
                         window.start_window_move();
                     })
-                })
-                .child(
-                    h_flex().h_full().items_center().pl_4().child(
-                        Label::new(title)
-                            .size(LabelSize::Small)
-                            .color(ui::Color::Muted),
-                    ),
-                ),
+                }),
         )
         .child(window_controls())
 }

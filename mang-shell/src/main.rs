@@ -83,6 +83,11 @@ mod settings_panel;
 mod command_groups;
 mod context_menu;
 mod context_menu_view;
+// #209：顶部菜单栏——模型层（menu_bar.rs，lib 树共享：纯数据 + 导航
+// 状态机 + 几何估算，带单测）+ 渲染层（menu_bar_view.rs，bin 专属：
+// 标题行/下拉/子菜单/遮罩，形态循 context_menu_view）。
+mod menu_bar;
+mod menu_bar_view;
 mod palette_view;
 mod status_info;
 // #185：系统原生错误对话框——GPU/图形栈初始化失败（GPUI 起不来）

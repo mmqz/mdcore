@@ -2047,6 +2047,23 @@ impl Editor {
         self.exec_command(cmd, window, cx);
     }
 
+    /// #209：开/关命令面板（菜单栏「编辑 → 命令面板」入口）。原
+    /// dispatch_key 的 Ctrl+Shift+P 内联块**逐字提取**为此方法——键位
+    /// 臂改为调用（两入口同一逻辑，行为零变化；候选集 = 分组装配的
+    /// 扁平序，与渲染同源）。
+    pub fn toggle_command_palette(&mut self, cx: &mut Context<Self>) {
+        self.palette = if self.palette.is_none() {
+            Some(PaletteState {
+                query: String::new(),
+                selected: 0,
+                items: Self::palette_flat_of("", &self.palette_recent),
+            })
+        } else {
+            None
+        };
+        cx.notify();
+    }
+
     /// #134：md 标题大纲（RPC `get_outline` 的数据面——逐行
     /// [`highlight::heading_level`]，与语法高亮同一判定源）。返回
     /// `(级别, 行号 0 基, 标题文本)` 列表。渲染态（docx/pdf/xlsx 含
@@ -2226,18 +2243,11 @@ impl Editor {
             return;
         }
 
-        // r42 阶段 E：Ctrl+Shift+P 开/关命令面板（toggle）。
+        // r42 阶段 E：Ctrl+Shift+P 开/关命令面板（toggle）。#209：内联块
+        // 提取为 toggle_command_palette（菜单栏「编辑 → 命令面板」入口与
+        // 键位共用同一方法——逻辑逐字保留，行为零变化）。
         if ctrl && shift && key == "p" {
-            self.palette = if self.palette.is_none() {
-                Some(PaletteState {
-                    query: String::new(),
-                    selected: 0,
-                    items: Self::palette_flat_of("", &self.palette_recent),
-                })
-            } else {
-                None
-            };
-            cx.notify();
+            self.toggle_command_palette(cx);
             return;
         }
         // 面板打开时：其余键位全部归面板（含 ctrl 组合——面板态屏蔽编辑键）。

@@ -42,6 +42,8 @@ use crate::editor::Editor;
 use crate::editor::buffer::IndentUnit;
 use crate::file_tree::FileTree;
 use crate::git_panel::GitPanel;
+use crate::menu_bar;
+use crate::menu_bar_view;
 use crate::panels;
 use crate::recent::RecentStore;
 use crate::settings_panel;
@@ -178,6 +180,13 @@ pub struct ShellApp {
     /// #166：文件树右键目标（动作执行的路径面——新建/打开/重命名/删除/
     /// 资源管理器揭示都需要知道右键的是哪一行）。
     context_menu_target: Option<PathBuf>,
+    /// #209：顶部菜单栏状态（哪个菜单开/选中项/子菜单开合/下拉锚点——
+    /// menu_bar::MenuBarState 纯状态机；键盘导航在根 on_key_down 的
+    /// 模态拦截分支，鼠标接线在 menu_bar_view）。
+    menu_bar: menu_bar::MenuBarState,
+    /// #209：菜单栏模态焦点域（菜单开着时接管键盘——键事件沿浮层→
+    /// shell 根冒泡，编辑器隔离；确认框 confirm_focus 同款模式）。
+    menu_focus: FocusHandle,
 }
 
 /// 右键菜单来源（决定同一动作 id 派发到哪套处理器）。
@@ -369,6 +378,8 @@ impl ShellApp {
             context_menu: None,
             context_menu_origin: MenuOrigin::default(),
             context_menu_target: None,
+            menu_bar: menu_bar::MenuBarState::default(),
+            menu_focus: cx.focus_handle(),
         };
         // 初始焦点：有文档 → 编辑器（键入/编辑即时可用）；空态 →
         // shell 根域（Ctrl+O 等空态键位经 root→shell 根路径可达——
@@ -773,6 +784,160 @@ impl ShellApp {
             return;
         };
         editor.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
+    }
+
+    // ── #209：顶部菜单栏 ─────────────────────────────────────────
+
+    /// #209：菜单构建上下文快照（`menu_bar::build_menus` 入参——灰显/
+    /// 勾选的全部依据；每次打开/渲染/导航现场采集，菜单模型零状态）。
+    fn menu_context(&self, cx: &App) -> menu_bar::MenuContext {
+        let tab = self.tabs.get(self.active);
+        menu_bar::MenuContext {
+            has_document: tab.is_some(),
+            // 只读/选区判定与编辑器右键菜单同判定源（is_read_only /
+            // selection_points 的 start < end——dispatch_context_menu 口径）。
+            read_only: tab.is_some_and(|t| t.editor.read(cx).is_read_only()),
+            has_selection: tab.is_some_and(|t| {
+                t.editor
+                    .read(cx)
+                    .selection_points()
+                    .is_some_and(|(s, e)| s < e)
+            }),
+            font_size: self.font_size,
+            theme_mode: self.theme_mode,
+            left_open: self.left_open,
+            git_view: self.git_view,
+            recent_files: self.recent.recent_files().to_vec(),
+        }
+    }
+
+    /// #209：顶部菜单 `idx` 是否正展开（标题行点击的开/关判定——
+    /// `menu_bar` 字段私有，menu_bar_view 经此只读；同菜单再点 = 关，
+    /// 别的菜单 = 一键切换）。
+    pub fn is_menu_bar_open_at(&self, idx: usize) -> bool {
+        self.menu_bar.open == Some(idx)
+    }
+
+    /// #209：打开顶部菜单（标题点击——`anchor_x` = 点击 x）。焦点移入
+    /// 菜单模态域（编辑器隔离：↑↓ 不再动光标）；右键菜单互斥关闭
+    /// （遮罩本就挡住右键源，此处防御性收口）。
+    pub fn open_menu_bar(
+        &mut self,
+        idx: usize,
+        anchor_x: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_context_menu(cx);
+        let menus = menu_bar::build_menus(&self.menu_context(cx));
+        self.menu_bar.open_menu(idx, anchor_x, &menus);
+        window.focus(&self.menu_focus.clone(), cx);
+        cx.notify();
+    }
+
+    /// #209：关闭菜单栏（Esc / 点外部 / 动作执行后）——焦点归回活动
+    /// 标签（空态回 shell 根域，`focus_active` 既有口径）。
+    pub fn close_menu_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.menu_bar.is_open() {
+            return;
+        }
+        self.menu_bar.close();
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// #209：子菜单开/合（父行点击——键盘 Enter/→ 同效）。
+    pub fn toggle_menu_submenu(&mut self, entry_idx: usize, cx: &mut Context<Self>) {
+        let menus = menu_bar::build_menus(&self.menu_context(cx));
+        if self.menu_bar.open_submenu == Some(entry_idx) {
+            self.menu_bar.close_submenu();
+        } else {
+            self.menu_bar.open_submenu_at(&menus, entry_idx);
+        }
+        cx.notify();
+    }
+
+    /// #209：执行菜单动作（条目点击 / Enter——与右键菜单
+    /// `activate_context_menu_item` 同型的派发单点）。**只映射既有动作**
+    /// （owner 指令）：Cmd 走 [`Self::dispatch_editor_cmd`]（键位/命令
+    /// 面板/右键菜单/图标条同链）；剪贴板走 `Editor::menu_*`；shell 级
+    /// 走既有方法——映射表见 `menu_bar` 模块文档。
+    pub fn activate_menu_action(
+        &mut self,
+        action: menu_bar::MenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 先关菜单 + 焦点归位（动作可能开对话框/浮层，菜单不得残留）。
+        self.menu_bar.close();
+        self.focus_active(window, cx);
+        use menu_bar::MenuAction as Act;
+        match action {
+            Act::EditorCmd(cmd) => self.dispatch_editor_cmd(cmd, window, cx),
+            // 剪贴板三件：Cmd 枚举无剪贴板项——Editor 菜单方法（右键
+            // 菜单 ed-cut/ed-copy/ed-paste 同款既有路径）。
+            Act::Cut => {
+                if let Some(editor) = self.editor().cloned() {
+                    editor.update(cx, |ed, cx| ed.menu_cut(cx));
+                }
+            }
+            Act::Copy => {
+                if let Some(editor) = self.editor().cloned() {
+                    editor.update(cx, |ed, cx| ed.menu_copy(cx));
+                }
+            }
+            Act::Paste => {
+                if let Some(editor) = self.editor().cloned() {
+                    editor.update(cx, |ed, cx| ed.menu_paste(cx));
+                }
+            }
+            Act::OpenFile => self.prompt_open_file(window, cx),
+            Act::OpenFolder => self.prompt_open_workspace(window, cx),
+            // 序 = MenuContext.recent_files 序（菜单打开期间列表不变——
+            // 模态；越界/已删除防御：不崩溃，缺失给提示）。
+            Act::OpenRecent(idx) => match self.recent.recent_files().get(idx).cloned() {
+                Some(path) if path.exists() => self.open_document(path, window, cx),
+                Some(path) => {
+                    self.show_notice(format!("文件不存在：{}", path.display()), cx);
+                }
+                None => {}
+            },
+            Act::SaveAs => self.prompt_save_as(window, cx),
+            // 与标题栏 × 钮同一条 cx.quit 既有路径（该路径不经
+            // on_should_close 脏确认——× 钮现状同此，行为对齐不超范围
+            // 修补；统一走脏确认建议另开 issue）。
+            Act::Quit => cx.quit(),
+            // 关于：既有提示横幅承载（层 3 可发现性验收项——版本信息
+            // 面向用户可见）。
+            Act::About => self.show_notice(
+                format!(
+                    "mang-shell {}（mdcore 桌面外壳）",
+                    env!("CARGO_PKG_VERSION")
+                ),
+                cx,
+            ),
+            // 命令面板：Ctrl+Shift+P 键位臂的既有逻辑提取的公开方法
+            // （editor/mod.rs toggle_command_palette——两入口共用，行为
+            // 零变化）。
+            Act::TogglePalette => {
+                if let Some(editor) = self.editor().cloned() {
+                    editor.update(cx, |ed, cx| ed.toggle_command_palette(cx));
+                }
+            }
+            Act::SetTheme(mode) => self.set_theme_mode(mode, cx),
+            // 字号：与 Ctrl+=/-/0 键位同一换算（±1 / 重置 15；域钳制在
+            // apply_font_size 收口）。
+            Act::FontBigger => self.apply_font_size(px(self.font_size + 1.), cx),
+            Act::FontSmaller => self.apply_font_size(px(self.font_size - 1.), cx),
+            Act::FontReset => self.apply_font_size(px(15.), cx),
+            Act::ToggleFileTreePanel => self.toggle_left(cx),
+            Act::ToggleGitPanel => self.toggle_git(cx),
+            // 置灰项不绑动作（无既有命令映射）——正常不可达（灰显挂
+            // 不了 on_click、Enter 有 enabled 门）；能到达说明菜单配错，
+            // stderr 留痕（右键菜单未接线兜底同款口径）。
+            Act::None => eprintln!("menu-bar: 置灰项不绑动作（无既有命令映射）"),
+        }
+        cx.notify();
     }
 
     /// F1/F3：打开文件（Ctrl+O 对话框 / 文件树点击 / 最近列表共用
@@ -1478,6 +1643,9 @@ impl Render for ShellApp {
         }
         let colors = cx.theme().colors().clone();
         let title = self.title_with(cx);
+        // #209：菜单栏数据（每次渲染重建——结构随文档/主题/最近列表快照
+        // 变化；标题行与浮层共用一份，构建成本 = 小字符串拼装）。
+        let menus = menu_bar::build_menus(&self.menu_context(cx));
         // G4：面板拖拽收尾监听用的实体句柄（canvas paint 闭包捕获——
         // on_mouse_event 只能在 paint 期调用，render 期直调会 panic，
         // 与 editor 的 ime-hook canvas 同模式接线）。
@@ -1502,6 +1670,25 @@ impl Render for ShellApp {
                 let ctrl = ks.modifiers.control || ks.modifiers.platform;
                 let plain_ctrl = ctrl && !ks.modifiers.shift && !ks.modifiers.alt;
                 let key = ks.key.to_lowercase();
+
+                // #209：菜单栏模态拦截（菜单开着时接管导航键——焦点已
+                // 移入菜单浮层域 menu_focus，编辑器收不到键；其余键位
+                // 全隔离：确认框同款模态语义）。←→ 切菜单/进出子菜单、
+                // ↑↓ 移动、Enter 确认/进子菜单、Esc 关闭；动作执行走
+                // activate_menu_action（与右键菜单/命令面板同一分发单
+                // 点）。菜单与右键菜单互斥（打开时已收口），先后无行为差。
+                if this.menu_bar.is_open() {
+                    let title = this.title_with(cx);
+                    let menus = menu_bar::build_menus(&this.menu_context(cx));
+                    if let Some(action) =
+                        menu_bar::navigate(&mut this.menu_bar, &menus, &key, &title)
+                    {
+                        this.activate_menu_action(action, window, cx);
+                    } else {
+                        cx.notify();
+                    }
+                    return;
+                }
 
                 // #166：右键菜单 Esc 关闭（点空白由菜单遮罩承担；菜单与
                 // 确认框互斥——ft-delete 开确认时菜单已关）。放在确认框
@@ -1609,7 +1796,7 @@ impl Render for ShellApp {
                     this.prompt_open_file(window, cx);
                 }
             }))
-            .child(title_bar::title_bar(&title, cx))
+            .child(title_bar::title_bar(&title, &menus, &self.menu_bar, cx))
             // F3：标签栏（有标签才渲染；标题栏与主体之间）。
             .when(!self.tabs.is_empty(), |el| {
                 let ws_root = self
@@ -1737,6 +1924,29 @@ impl Render for ShellApp {
                     );
                     let rect = menu.layout(screen);
                     el.child(context_menu_view::context_menu_overlay(menu, rect, cx))
+                }
+                None => el,
+            })
+            // #209：菜单栏浮层——右键菜单浮层之后再挂（同为链尾最上层；
+            // 两者互斥——打开菜单栏时已收口右键菜单）。遮罩从标题栏下
+            // 缘起（标题按钮保持可点——一键切换菜单），摆放几何按当前
+            // 窗口尺寸算（place_menu 边缘翻转复用右键菜单同款）。
+            .map(|el| match self.menu_bar.open {
+                Some(_) => {
+                    let bounds = window.bounds();
+                    let screen = MenuRect::new(
+                        0.,
+                        0.,
+                        bounds.size.width.as_f32(),
+                        bounds.size.height.as_f32(),
+                    );
+                    el.child(menu_bar_view::menu_bar_overlay(
+                        &menus,
+                        &self.menu_bar,
+                        &self.menu_focus,
+                        screen,
+                        cx,
+                    ))
                 }
                 None => el,
             })

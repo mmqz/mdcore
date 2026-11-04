@@ -452,6 +452,31 @@ fn context_menu_view_clicks_dispatch_to_shell() {
     );
 }
 
+/// #209：菜单栏渲染层接线——标题点击开菜单（open_menu_bar）、遮罩点
+/// 击关菜单（close_menu_bar）、条目点击派发动作（activate_menu_action，
+/// 与右键菜单 activate_context_menu_item 同款单点）。灰显项不挂
+/// on_click 是设计（点不到不算死按钮）。
+#[test]
+fn menu_bar_view_clicks_dispatch_to_shell() {
+    let file = src("menu_bar_view.rs");
+    assert!(
+        file.contains("open_menu_bar"),
+        "菜单标题未接 open_menu_bar（点击不开下拉）"
+    );
+    assert!(
+        file.contains("close_menu_bar"),
+        "菜单遮罩未接 close_menu_bar（点外部不关闭）"
+    );
+    assert!(
+        file.contains("activate_menu_action"),
+        "菜单项 on_click 未接 activate_menu_action（点击无效果）"
+    );
+    assert!(
+        dead_closures(&file).is_empty(),
+        "menu_bar_view.rs 存在空闭包（死交互）"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // palette：命令面板数据链零丢失
 // ---------------------------------------------------------------------------
