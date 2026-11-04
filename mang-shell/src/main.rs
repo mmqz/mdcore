@@ -88,6 +88,9 @@ mod context_menu_view;
 // 标题行/下拉/子菜单/遮罩，形态循 context_menu_view）。
 mod menu_bar;
 mod menu_bar_view;
+// #217：键位表层（默认表 = 现状键位精确镜像 + 用户覆盖合并；纯逻辑
+// 零 GPUI——lib 树同源挂载，菜单标签与键位派发的单一事实源）。
+mod keymap;
 mod palette_view;
 mod status_info;
 // #185：系统原生错误对话框——GPU/图形栈初始化失败（GPUI 起不来）
@@ -242,6 +245,11 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .cloned();
     let rpc_disabled = args.iter().any(|a| a == "--no-rpc");
+
+    // #217：键位表装载（settings.json `keymap` 键 → 默认表合并；坏条目
+    // 逐条 stderr 警告——「记忆是增强不是依赖」）。开窗前完成：任何
+    // 查表点（编辑器派发/shell 键钩子/菜单标签）首访即得合并产物。
+    keymap::init(&settings::load_keymap_overrides());
 
     application()
         .with_assets(assets::Assets)

@@ -135,8 +135,9 @@ pub struct MenuItemSpec {
     /// 派发键（渲染层 element id 与日志定位用；全菜单唯一——单测钉定）。
     pub id: &'static str,
     pub label: String,
-    /// 右侧快捷键标签（只标真实键位——见模块文档「快捷键标签的真实性」）。
-    pub shortcut: Option<&'static str>,
+    /// 右侧快捷键标签（**从 keymap 表生成**——单一事实源，用户换绑后
+    /// 跟随；只标真实键位，见模块文档「快捷键标签的真实性」）。
+    pub shortcut: Option<String>,
     pub action: MenuAction,
     /// false = 置灰不可点（灰显而非消失——菜单长短不跳变，右键菜单同款）。
     pub enabled: bool,
@@ -178,10 +179,20 @@ impl MenuEntry {
         }
     }
 
-    /// 附加快捷键标签（只对动作项生效）。
-    pub fn shortcut(mut self, key: &'static str) -> Self {
+    /// 附加快捷键标签（只对动作项生效——字面量口，测试/无表动作用；
+    /// 产物默认走 [`Self::shortcut_for`]）。
+    pub fn shortcut(mut self, key: impl Into<String>) -> Self {
         if let MenuEntry::Item(spec) = &mut self {
-            spec.shortcut = Some(key);
+            spec.shortcut = Some(key.into());
+        }
+        self
+    }
+
+    /// 从 keymap 表取该动作的当前键位标签（#217 单一事实源：默认表
+    /// = 现状键位镜像；用户换绑后菜单标签跟随。无绑定 → 不标）。
+    pub fn shortcut_for(mut self, action_id: &str) -> Self {
+        if let MenuEntry::Item(spec) = &mut self {
+            spec.shortcut = crate::keymap::store().label(action_id);
         }
         self
     }
@@ -242,17 +253,17 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
                 // 通道）——置灰不绑动作（owner 指令：无命令的项禁用）。
                 MenuEntry::item("file-new", "新建").with_enabled(false),
                 MenuEntry::item("file-open", "打开")
-                    .shortcut("Ctrl+O")
+                    .shortcut_for("prompt_open_file")
                     .act(MenuAction::OpenFile),
                 MenuEntry::item("file-open-folder", "打开文件夹")
-                    .shortcut("Ctrl+K Ctrl+O")
+                    .shortcut_for("prompt_open_workspace")
                     .act(MenuAction::OpenFolder),
                 MenuEntry::item("file-save", "保存")
-                    .shortcut("Ctrl+S")
+                    .shortcut_for("save")
                     .act(MenuAction::EditorCmd(Cmd::Save))
                     .with_enabled(doc),
                 MenuEntry::item("file-save-as", "另存为")
-                    .shortcut("Ctrl+Shift+S")
+                    .shortcut_for("prompt_save_as")
                     .act(MenuAction::SaveAs)
                     .with_enabled(doc),
                 MenuEntry::Separator,
@@ -266,39 +277,39 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
             label: "编辑",
             entries: vec![
                 MenuEntry::item("edit-undo", "撤销")
-                    .shortcut("Ctrl+Z")
+                    .shortcut_for("undo")
                     .act(MenuAction::EditorCmd(Cmd::Undo))
                     .with_enabled(writable),
                 // dispatch_key 的 redo 实际绑定是 Ctrl+Shift+Z（z if
                 // ctrl && shift 臂）与 Ctrl+Y 双臂——标签取前者。
                 MenuEntry::item("edit-redo", "重做")
-                    .shortcut("Ctrl+Shift+Z")
+                    .shortcut_for("redo")
                     .act(MenuAction::EditorCmd(Cmd::Redo))
                     .with_enabled(writable),
                 MenuEntry::Separator,
                 MenuEntry::item("edit-cut", "剪切")
-                    .shortcut("Ctrl+X")
+                    .shortcut_for("cut")
                     .act(MenuAction::Cut)
                     .with_enabled(writable && ctx.has_selection),
                 MenuEntry::item("edit-copy", "复制")
-                    .shortcut("Ctrl+C")
+                    .shortcut_for("copy")
                     .act(MenuAction::Copy)
                     .with_enabled(doc && ctx.has_selection),
                 MenuEntry::item("edit-paste", "粘贴")
-                    .shortcut("Ctrl+V")
+                    .shortcut_for("paste")
                     .act(MenuAction::Paste)
                     .with_enabled(writable),
                 MenuEntry::Separator,
                 MenuEntry::item("edit-find", "查找")
-                    .shortcut("Ctrl+F")
+                    .shortcut_for("open_find")
                     .act(MenuAction::EditorCmd(Cmd::OpenFind))
                     .with_enabled(doc),
                 MenuEntry::item("edit-replace", "替换")
-                    .shortcut("Ctrl+H")
+                    .shortcut_for("open_replace")
                     .act(MenuAction::EditorCmd(Cmd::OpenReplace))
                     .with_enabled(writable),
                 MenuEntry::item("edit-palette", "命令面板")
-                    .shortcut("Ctrl+Shift+P")
+                    .shortcut_for("toggle_command_palette")
                     .act(MenuAction::TogglePalette)
                     .with_enabled(doc),
             ],
@@ -326,15 +337,15 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
                     vec![
                         // 域界灰显（设置面板步进钮同口径：8-32）。
                         MenuEntry::item("view-font-inc", "增大")
-                            .shortcut("Ctrl+=")
+                            .shortcut_for("font_bigger")
                             .act(MenuAction::FontBigger)
                             .with_enabled(ctx.font_size < 32.),
                         MenuEntry::item("view-font-dec", "减小")
-                            .shortcut("Ctrl+-")
+                            .shortcut_for("font_smaller")
                             .act(MenuAction::FontSmaller)
                             .with_enabled(ctx.font_size > 8.),
                         MenuEntry::item("view-font-reset", "重置")
-                            .shortcut("Ctrl+0")
+                            .shortcut_for("font_reset")
                             .act(MenuAction::FontReset),
                     ],
                 ),
@@ -349,7 +360,7 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
                             .checked(ctx.left_open && ctx.git_view),
                         // 搜索 = 既有 Cmd::OpenFind（图标条搜索钮同链）。
                         MenuEntry::item("view-side-search", "搜索")
-                            .shortcut("Ctrl+F")
+                            .shortcut_for("open_find")
                             .act(MenuAction::EditorCmd(Cmd::OpenFind))
                             .with_enabled(doc),
                     ],
@@ -654,7 +665,7 @@ pub fn to_context_items(entries: &[MenuEntry]) -> Vec<MenuItem> {
             MenuEntry::Item(spec) => MenuItem::Action {
                 id: spec.id,
                 label: spec.label.clone(),
-                shortcut: spec.shortcut.map(str::to_string),
+                shortcut: spec.shortcut.clone(),
                 enabled: spec.enabled,
             },
             MenuEntry::Separator => MenuItem::Separator,
@@ -823,7 +834,7 @@ mod tests {
                 .or_else(|| find(&menus[1].entries, id))
                 .or_else(|| find(&menus[2].entries, id))
                 .unwrap_or_else(|| panic!("{id} 缺失"));
-            assert_eq!(spec.shortcut, Some(*key), "{id} 快捷键标签漂移");
+            assert_eq!(spec.shortcut.as_deref(), Some(*key), "{id} 快捷键标签漂移");
         }
         // 无键位的项不标（新建/退出/主题/侧栏切换等——不存在「标了但按了没反应」）。
         for id in [
