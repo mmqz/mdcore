@@ -135,19 +135,38 @@ pub fn load_font_size() -> Option<f32> {
 
 /// #217：键位覆盖读取（`keymap` 键：对象数组——`{"bind": "ctrl+alt+p",
 /// "action": "toggle_command_palette"}` 换绑 / `{"unbind": "ctrl+shift+p"}`
-/// 解绑，按序应用）。结构不符的**单条**跳过（stderr 警告——与
-/// `keymap::KeymapStore::apply_user` 的逐条容错同口径：一条坏配置不废
-/// 掉全部自定义）；键串/动作名的合法性由 keymap 层检测并警告。
+/// 解绑，按序应用）。`keymap` 键存在但非数组 → stderr 警告后忽略
+/// （#218 review：不再静默——配置类型错误应可发现）；结构不符的
+/// **单条**跳过（stderr 警告——与 `keymap::KeymapStore::apply_user`
+/// 的逐条容错同口径：一条坏配置不废掉全部自定义）；键串/动作名的
+/// 合法性由 keymap 层检测并警告。解析体见 [`parse_keymap_entries`]
+/// （纯函数——单测面）。
 pub fn load_keymap_overrides() -> Vec<crate::keymap::UserOverride> {
     let Some(dir) = config_dir() else {
         return Vec::new();
     };
-    let value = load_from(&dir);
-    let Some(entries) = value.get("keymap").and_then(|v| v.as_array()) else {
+    parse_keymap_entries(&load_from(&dir))
+}
+
+/// `keymap` 键解析（纯函数——仅依赖 serde_json + std，`load_from`
+/// 产物或任意等价 JSON 树）：
+///
+/// - 键缺失 → 空（静默——未配置即默认键位）；
+/// - 键存在但非数组 → stderr 警告（类型中文名）+ 空；
+/// - 数组 → 逐条解析（单条结构错误跳过 + 警告）。
+fn parse_keymap_entries(value: &serde_json::Value) -> Vec<crate::keymap::UserOverride> {
+    let Some(entries) = value.get("keymap") else {
+        return Vec::new();
+    };
+    let Some(arr) = entries.as_array() else {
+        eprintln!(
+            "keymap: 配置应为数组（当前为{}），已忽略",
+            json_type_name_cn(entries)
+        );
         return Vec::new();
     };
     let mut out = Vec::new();
-    for (i, entry) in entries.iter().enumerate() {
+    for (i, entry) in arr.iter().enumerate() {
         let Some(obj) = entry.as_object() else {
             eprintln!("keymap: 第 {i} 条不是对象，已跳过");
             continue;
@@ -169,6 +188,19 @@ pub fn load_keymap_overrides() -> Vec<crate::keymap::UserOverride> {
         }
     }
     out
+}
+
+/// JSON 值类型中文名（keymap 非数组警告的「当前为{类型}」填充——
+/// 与逐条警告「不是对象」同风格的中文可读面）。
+fn json_type_name_cn(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "布尔",
+        serde_json::Value::Number(_) => "数字",
+        serde_json::Value::String(_) => "字符串",
+        serde_json::Value::Array(_) => "数组",
+        serde_json::Value::Object(_) => "对象",
+    }
 }
 
 /// #132-3：折叠状态读写（`folds` 键：`{"<文件路径>": [起始行, ...]}`）。
@@ -581,5 +613,64 @@ mod tests {
             "空键不产生 folds 段"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #217/#218：keymap 键缺失 → 空（静默——未配置即默认键位；
+    /// 空对象 / 整树 null / 只有别的键 同口径）。
+    #[test]
+    fn keymap_entries_missing_key_is_silent_empty() {
+        assert!(parse_keymap_entries(&serde_json::json!({})).is_empty());
+        assert!(parse_keymap_entries(&serde_json::Value::Null).is_empty());
+        assert!(
+            parse_keymap_entries(&serde_json::json!({ "theme": "dark", "font_size": 15 }))
+                .is_empty()
+        );
+    }
+
+    /// #218 review：keymap 键存在但非数组 → 警告 + 空（五种非数组类型
+    /// 全覆盖——对象/字符串/数字/布尔/null；不再静默吞掉）。
+    #[test]
+    fn keymap_entries_non_array_types_warn_and_empty() {
+        for value in [
+            serde_json::json!({ "keymap": { "bind": "ctrl+alt+p" } }),
+            serde_json::json!({ "keymap": "ctrl+alt+p" }),
+            serde_json::json!({ "keymap": 42 }),
+            serde_json::json!({ "keymap": true }),
+            serde_json::json!({ "keymap": null }),
+        ] {
+            assert!(
+                parse_keymap_entries(&value).is_empty(),
+                "非数组 keymap 应解析为空：{value}"
+            );
+        }
+    }
+
+    /// #217：正常条目解析（bind/unbind 两形态）+ 坏条目混排逐条容错
+    /// （非对象 / 缺键 / 值类型错——好条目照常产出，坏条目跳过）。
+    #[test]
+    fn keymap_entries_parses_good_and_skips_bad_mixed() {
+        let value = serde_json::json!({
+            "keymap": [
+                { "bind": "ctrl+alt+p", "action": "toggle_command_palette" },
+                "not an object",
+                { "unbind": "ctrl+shift+p" },
+                { "missing": "fields" },
+                { "bind": 3, "action": "save" },
+                { "unbind": 7 }
+            ]
+        });
+        assert_eq!(
+            parse_keymap_entries(&value),
+            vec![
+                crate::keymap::UserOverride::Bind {
+                    bind: "ctrl+alt+p".into(),
+                    action: "toggle_command_palette".into()
+                },
+                crate::keymap::UserOverride::Unbind {
+                    bind: "ctrl+shift+p".into()
+                },
+            ],
+            "好条目按序产出，坏条目（非对象/缺键/值类型错）跳过"
+        );
     }
 }
