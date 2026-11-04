@@ -2000,8 +2000,16 @@ fn perf_rope_edit_find_2m_chars() {
         t_find < std::time::Duration::from_secs(1),
         "查找超红线：{t_find:?}"
     );
+}
 
-    // ---------------- #205：fence 脏行记账 ----------------
+// ---------------- #205：fence 脏行记账 ----------------
+#[cfg(test)]
+mod fence_dirty_tests {
+    use super::*;
+
+    fn p(line: usize, col: usize) -> Point {
+        Point::new(line, col)
+    }
 
     /// #205 测试钩子：全拒（拒改路径零变更零记账的判定面）。
     struct FenceRejectAllHook;
