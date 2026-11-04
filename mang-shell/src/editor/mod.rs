@@ -54,6 +54,7 @@ pub mod commands;
 pub mod display_map; // r42 阶段 B（#68）：buffer <-> 显示行列映射（软换行 + 折叠）
 pub mod docx_doc;
 pub mod docx_edit_bridge; // #115：docx 可编辑化——Buffer ↔ DocxEditor 可逆映射
+pub mod fence; // #205：fence 缓存重建（纯逻辑：FenceCursor 推进 + 增量/全量）
 pub mod find_bar;
 pub mod highlight;
 pub mod mouse;
@@ -95,7 +96,7 @@ use theme::ThemeColors;
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
-use buffer::{Buffer, IndentUnit, Point};
+use buffer::{Buffer, FenceDirty, IndentUnit, Point};
 use docx_doc::{DocxPayload, DocxProps, EditablePayload, HeadingEntry};
 use docx_edit_bridge::{DocxEditing, LineBlock, Writeback};
 use find_bar::{FindKeyOutcome, FindState};
@@ -380,6 +381,11 @@ pub struct Editor {
     /// G5：每行所属围栏块的语言标注（`Some(lang)` = 行首处于带语言
     /// 标注的围栏内；`None` = 围栏外/无标注块——与 fence_cache 并行）。
     fence_lang_cache: Vec<Option<highlight::CodeLang>>,
+    /// #205：fence 缓存有效性标记（`true` = 缓存由真实重建产出，可作
+    /// 增量种子源）。构造期为 `false`（构造器预填的全 false 缓存不代表
+    /// 真实围栏态）；md 态首次 refresh_caches 全量重建后置 `true`；
+    /// docx/xlsx 态围栏重建被跳过，永不置位。增量前置条件之一。
+    fence_cache_valid: bool,
     /// #132 任务 1：括号匹配缓存（键 = 文档版本 + 主光标；键变即重算）。
     /// 渲染层每行读取——缓存键不变时零扫描，避免逐行重新扫全文。
     bracket_cache: BracketCache,
@@ -531,6 +537,7 @@ impl Editor {
             fence_cache: Vec::new(),
             ctrl_k_pending: false,
             fence_lang_cache: Vec::new(),
+            fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
             bracket_lang,
             display_map: DisplayMap::default(),
@@ -591,6 +598,7 @@ impl Editor {
             fence_cache: vec![false; line_count],
             ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
+            fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
             bracket_lang,
             display_map: DisplayMap::default(),
@@ -665,6 +673,7 @@ impl Editor {
             fence_cache: vec![false; line_count],
             ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
+            fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
             bracket_lang,
             display_map: DisplayMap::default(),
@@ -728,6 +737,7 @@ impl Editor {
             fence_cache: vec![false; line_count],
             ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
+            fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
             bracket_lang,
             display_map: DisplayMap::default(),
@@ -790,6 +800,7 @@ impl Editor {
             fence_cache: vec![false; line_count],
             ctrl_k_pending: false,
             fence_lang_cache: vec![None; line_count],
+            fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
             bracket_lang,
             display_map: DisplayMap::default(),
@@ -847,6 +858,7 @@ impl Editor {
             // canvas 无围栏语义——fence 恒 false（同 docx/pdf/xlsx 口径）。
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
+            fence_cache_valid: false,
             ctrl_k_pending: false,
             // #132 任务1：括号匹配缓存（canvas 无语言语义——恒 None）。
             bracket_cache: BracketCache::default(),
@@ -2145,38 +2157,65 @@ impl Editor {
     }
 
     /// 文档变更后的缓存刷新（fence 状态 + 查找匹配 + 断点失效）。
+    ///
+    /// #205：fence 缓存**增量重建**——Buffer 侧脏行记账
+    /// （[`Buffer::take_fence_dirty`]，单区间编辑窗口）+ 缓存有效性与
+    /// 长度校验通过时，从脏行起用 [`fence::rebuild_fences_incremental`]
+    /// 推进并与旧缓存平移对齐比较，行首态一致即停机（典型逐键
+    /// O(编辑行)——围栏内外普通打字零传播；只有围栏奇偶/语言标注被
+    /// 真正改变时才向后传播）。任何不确定情形（多区间编辑、长度失配、
+    /// 脏行越界、缓存无效）回退全量 [`fence::rebuild_fences_full`]——
+    /// 两条路径**共用同一单行推进函数** `FenceCursor::advance`，语义
+    /// 恒等（等价性对照测试见 fence.rs 与 harness-205）。docx/xlsx
+    /// 只读态无围栏语义且免大文档逐行 md 高亮的无效开销——fence_cache
+    /// 构造时恒 false，重建整体跳过（既有语义不变）。
     fn refresh_caches(&mut self) {
         // r42 阶段 B：编辑后断点全部失效（被编辑行的断点需重算；
         // 下一帧对可见行重新回填）。
         self.display_map.reset_wraps();
-        // fence：逐行推进（md 模式；docx/xlsx 只读态无围栏语义且免大
-        // 文档逐行 md 高亮的无效开销——fence_cache 构造时恒 false）。
+        // #205：先收割脏行记账（一次性——含 docx/xlsx 态：这些模式下
+        // 围栏重建跳过，但记账照常清零，防陈旧窗口跨刷新累积）。
+        let dirty = self.buffer.take_fence_dirty();
         if self.docx.is_none() && self.xlsx.is_none() {
-            let mut states = Vec::with_capacity(self.buffer.line_count());
-            // G5：语言态缓存（与 fence 并行——开围栏行捕获语言标注）。
-            let mut langs = Vec::with_capacity(self.buffer.line_count());
-            let mut fence = false;
-            let mut cur_lang: Option<highlight::CodeLang> = None;
-            for i in 0..self.buffer.line_count() {
-                states.push(fence);
-                langs.push(if fence { cur_lang } else { None });
-                let state = if fence {
-                    highlight::FenceState::CodeBlock(cur_lang)
-                } else {
-                    highlight::FenceState::Outside
+            let n = self.buffer.line_count();
+            // #205 无变更快速路径：窗口 Clean + 缓存有效 + 长度一致 ⇒
+            // 缓存描述的就是当前文档（Buffer 侧所有变更入口都记账——
+            // 见 FenceDirty 文档），直接复用。查找跳转等纯光标路径的
+            // after_edit 收尾从 O(doc) 全量重建降为 O(1)。
+            let unchanged =
+                dirty == FenceDirty::Clean && self.fence_cache_valid && self.fence_cache.len() == n;
+            if !unchanged {
+                // #205 增量前置条件：单区间窗口 + 缓存有效（至少全量重建
+                // 过一次——构造期全 false 预填不算）+ 窗口 pre_lines 与缓存
+                // 长度一致（编辑确实作用于缓存所描述的文档）。
+                let incremental = match dirty {
+                    FenceDirty::Single {
+                        line,
+                        inserted_lines,
+                        pre_lines,
+                    } if self.fence_cache_valid && self.fence_cache.len() == pre_lines => {
+                        fence::rebuild_fences_incremental(
+                            &mut self.fence_cache,
+                            &mut self.fence_lang_cache,
+                            n,
+                            line,
+                            line.saturating_add(inserted_lines).saturating_add(1),
+                            |i| self.buffer.line(i),
+                        )
+                    }
+                    _ => false,
                 };
-                let h = highlight::highlight_line_ex(&self.buffer.line(i), state);
-                if !fence && h.fence_at_end {
-                    // 开围栏：捕获语言标注（```rust → Rust）。
-                    cur_lang = highlight::fence_lang_of(&self.buffer.line(i));
-                } else if fence && !h.fence_at_end {
-                    // 闭围栏：语言态复位。
-                    cur_lang = None;
+                if !incremental {
+                    fence::rebuild_fences_full(
+                        &mut self.fence_cache,
+                        &mut self.fence_lang_cache,
+                        n,
+                        |i| self.buffer.line(i),
+                    );
                 }
-                fence = h.fence_at_end;
+                // 增量与全量产物等价（对照测试钉定）——有效性同义。
+                self.fence_cache_valid = true;
             }
-            self.fence_cache = states;
-            self.fence_lang_cache = langs;
         }
         if let Some(f) = &mut self.find {
             f.refresh(&self.buffer);
