@@ -55,10 +55,6 @@ fn src(rel: &str) -> String {
         .unwrap_or_else(|e| panic!("源码文件缺失/不可读（{}）：{e}", path.display()))
 }
 
-fn line_of(file: &str, byte_idx: usize) -> usize {
-    file[..byte_idx.min(file.len())].matches('\n').count() + 1
-}
-
 /// 函数体/枚举体提取：`decl`（如 `"fn exec_command("` / `"enum Cmd {"`）
 /// 起首个 `{` 到配对 `}`（字符串字面量感知——`"{"`/`format!("{x}")` 不计深度）。
 fn brace_block(file: &str, decl: &str) -> String {
