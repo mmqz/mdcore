@@ -53,7 +53,7 @@
 
 ```bash
 cargo test --workspace              # 语义锁全绿 361 用例（46 test result 行全 ok / 31 非空套件；PDF-e+T2-fix 259 → T3 复用 267 → office-impl T1 290 [+18 集成 +5 文档] → xlsx-r1 阶段 B 361 [+71：office url_policy 16 单测 + 消毒五面靶向安全 44 + office-io io 单测 9 + 17 件语料 harness 2]；290 基线只增不改；默认零引擎依赖，裸环境全绿）
-cargo test -p mdc-pdf --features engine-pdfium    # +13 引擎锁 + 6 #[ignore] 性能门（需 libpdfium.so，定位序：MDC_PDFIUM_LIB → 候选清单 → 系统）
+cargo test -p mdc-pdf --features engine-pdfium    # 需原生 PDFium（Windows: pdfium.dll），安装见 docs/INSTALL.md
 cargo test -p mdc-pdf --features engine-pdfium,engine-lopdf    # +17 PDF-d 标注写锁（lopdf 增量写；需 libpdfium.so + spike fixtures）
 cargo test -p mdc-pdf --features engine-pdfium --test pdfc_perf -- --ignored --nocapture    # 性能门实测打印（阈值 = 实测×3）
 cargo check --target wasm32-unknown-unknown

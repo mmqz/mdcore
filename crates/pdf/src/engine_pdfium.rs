@@ -413,10 +413,20 @@ fn bind_by_resolution() -> Result<&'static Pdfium, CommandError> {
             Pdfium::pdfium_platform_library_name().to_string_lossy()
         )),
     }
+    let hint = pdfium_missing_library_hint();
     Err(CommandError::engine(format!(
-        "pdfium 库定位失败（定位序：{PDFIUM_LIB_ENV} → 编译期候选清单 → 系统）；已尝试：{}",
+        "{hint} 定位详情：{}",
         tried.join("；")
     )))
+}
+
+fn pdfium_missing_library_hint() -> String {
+    let library_name = Pdfium::pdfium_platform_library_name()
+        .to_string_lossy()
+        .into_owned();
+    format!(
+        "PDF 引擎不可用：未找到或无法加载 {library_name}。修复：下载 https://github.com/bblanchon/pdfium-binaries/releases，解压后将 bin/{library_name} 放到 <exe 同目录>，或设置环境变量 {PDFIUM_LIB_ENV}=<库完整路径>。请确认下载包与操作系统和架构匹配。"
+    )
 }
 
 /// 单路径尝试（成功 = 进程单例就位）。
@@ -432,5 +442,25 @@ fn try_bind(path: &Path) -> Result<&'static Pdfium, String> {
             Err("进程已被绑定（外部绑定者不受支持——本 crate 单例未就位的竞争窗口）".to_string())
         }
         Err(why) => Err(format!("绑定失败：{why}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_library_hint_is_actionable() {
+        let hint = pdfium_missing_library_hint();
+        let library_name = Pdfium::pdfium_platform_library_name()
+            .to_string_lossy()
+            .into_owned();
+
+        assert!(hint.contains(&library_name));
+        assert!(hint.contains("https://github.com/bblanchon/pdfium-binaries/releases"));
+        assert!(hint.contains("bin/"));
+        assert!(hint.contains("<exe 同目录>"));
+        assert!(hint.contains(PDFIUM_LIB_ENV));
+        assert!(hint.contains("<库完整路径>"));
     }
 }
