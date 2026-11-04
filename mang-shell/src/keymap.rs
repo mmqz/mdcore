@@ -140,9 +140,11 @@
 //! ```
 //!
 //! - 键串：`ctrl+k ctrl+o`（空格分 chord，二键为限）；修饰词
-//!   `ctrl`/`shift`/`alt`（大小写不敏感，可组合）；`ctrl` 在运行时
-//!   归一为 control 或 platform（macOS ⌘——与现状 `ctrl` 变量同义）；
-//!   键名小写（`=`/`+`/`-`/`[`/字母/`home`…）；
+//!   `ctrl`/`shift`/`alt`（大小写不敏感，可组合；meta/cmd 等其余
+//!   修饰词**不支持**——解析即报错，防幻影键静默度掉换绑，#218
+//!   review）；`ctrl` 在运行时归一为 control 或 platform（macOS ⌘
+//!   ——与现状 `ctrl` 变量同义）；键名小写（`=`/`+`/`-`/`[`/字母/
+//!   `home`…）；
 //! - `action`：[`Action::id`] 机器名（`prompt_open_file`/
 //!   `toggle_command_palette`/…——`from_id` 反查全集见单测）；
 //! - 合并与冲突策略：见 [`KeymapStore::apply_user`]。
@@ -1481,7 +1483,9 @@ impl std::fmt::Display for ParseError {
 ///
 /// - 修饰词 `ctrl`/`shift`/`alt`（大小写不敏感，可组合，顺序任意；
 ///   重复修饰报错）；`ctrl` 运行时归一 control||platform（macOS ⌘）；
-/// - 键名小写规范化；
+///   其余修饰词（meta/cmd/command/win/windows/super/option/altgr/
+///   control）不支持——报错（防幻影键，见 [`parse_pattern`]）；
+/// - 键名小写规范化（裸修饰词不能单独作键名）；
 /// - 单 token = 单键；两 token = chord；空串/超两键/修饰后缺键名报错。
 pub fn parse_binding(s: &str) -> Result<Binding, ParseError> {
     let tokens: Vec<&str> = s.split_whitespace().collect();
@@ -1509,7 +1513,31 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     }
 }
 
+/// 已知但**不支持**的修饰词（meta/cmd/command/win/windows/super/
+/// option/altgr/control——平台修饰词的常见别名；引擎三态模型只有
+/// ctrl/shift/alt）。显式报错而非静默当键名——否则整串落成 dispatch
+/// 永不产生的**幻影键**（如 `meta+k`），bind 会悄悄移除旧绑定且新键
+/// 永不触发（把 save 换绑到 meta+k = Ctrl+S 失效——#218 review）。
+const UNSUPPORTED_MODIFIERS: &[&str] = &[
+    "meta", "cmd", "command", "win", "windows", "super", "option", "altgr", "control",
+];
+
+/// 裸修饰词禁作键名（ctrl/shift/alt 及上述不支持词单独出现同样是
+/// 幻影键——dispatch 的键名永不可能是修饰词本身）。
+const BARE_MODIFIERS: &[&str] = &[
+    "ctrl", "control", "shift", "alt", "meta", "cmd", "command", "win", "windows", "super",
+    "option", "altgr",
+];
+
 /// 解析单键 pattern（`ctrl+shift+[` 形态——前缀扫描消耗修饰词）。
+///
+/// 解析失败即整条拒绝（apply 侧先 parse 后变异——旧绑定不受影响）。
+/// 除既有错误（空串/重复修饰/修饰后缺键名）外，还拒绝三类幻影键
+/// 形态（#218 review）：
+/// - 已知但不支持的修饰词前缀（`meta+k` / `cmd+s` / `control+k`…）；
+/// - 残段仍含 `+` 且不以 `+` 开头（`foo+bar`；`ctrl++` 的键名 "+"
+///   以 `+` 开头，继续合法——前缀扫描天然不误拆）；
+/// - 裸修饰词单独作键名（`meta` / `ctrl` / `alt`…）。
 fn parse_pattern(token: &str) -> Result<KeyPattern, ParseError> {
     let mut ctrl = Mod::Any;
     let mut shift = Mod::Any;
@@ -1534,6 +1562,13 @@ fn parse_pattern(token: &str) -> Result<KeyPattern, ParseError> {
             }
             alt = Mod::Yes;
             rest = r;
+        } else if let Some(word) = UNSUPPORTED_MODIFIERS
+            .iter()
+            .find(|&&w| strip_modifier_ci(rest, w).is_some())
+        {
+            return Err(ParseError(format!(
+                "\"{token}\"：不支持的修饰词「{word}」（支持 ctrl/shift/alt）"
+            )));
         } else {
             break;
         }
@@ -1541,12 +1576,36 @@ fn parse_pattern(token: &str) -> Result<KeyPattern, ParseError> {
     if rest.is_empty() {
         return Err(ParseError(format!("\"{token}\"：修饰词后缺键名")));
     }
+    // 残段含 `+` 且不以 `+` 开头（如 "foo+bar"）：键名不含 "+"——
+    // 以 "+" 开头的残段是键名 "+"（`ctrl++`），继续合法。
+    if rest.contains('+') && !rest.starts_with('+') {
+        let head = rest.split('+').next().unwrap_or_default();
+        return Err(ParseError(format!(
+            "\"{token}\"：不支持的修饰词「{head}」（支持 ctrl/shift/alt）"
+        )));
+    }
+    // 裸修饰词单独作键名（dispatch 键名永不可能是修饰词本身）。
+    if let Some(word) = BARE_MODIFIERS
+        .iter()
+        .find(|&&w| rest.eq_ignore_ascii_case(w))
+    {
+        return Err(ParseError(format!(
+            "\"{token}\"：修饰词「{word}」不能单独作键名"
+        )));
+    }
     Ok(KeyPattern {
         key: rest.to_lowercase(),
         ctrl,
         shift,
         alt,
     })
+}
+
+/// 大小写不敏感修饰词前缀消耗（`meta+` → 剥离后剩余段；词后必须恰好
+/// 是 `+`——`strip_prefix_ci` 的词级匹配保证不误伤 "windows" 起头的
+/// "win" 等部分词）。
+fn strip_modifier_ci<'a>(s: &'a str, word: &str) -> Option<&'a str> {
+    strip_prefix_ci(s, word)?.strip_prefix('+')
 }
 
 /// 用户覆盖条目（settings.json `keymap` 数组的元素——serde_json 手工
@@ -2076,11 +2135,114 @@ mod tests {
         assert!(parse_binding("ctrl+k ctrl+o ctrl+j").is_err());
         assert!(parse_binding("ctrl+").is_err());
         assert!(parse_binding("ctrl+ctrl+k").is_err());
-        // 无修饰前缀的 "meta+k"：整串当键名（宽容——永不匹配真实键，
-        // 无害；文档写明键名不含 "+"）。
+        // 不支持的修饰词（meta/cmd/…）显式报错——幻影键防线
+        // （#218 review），逐词面见 parse_pattern_rejects_phantom_modifiers。
+        assert!(parse_binding("meta+k").is_err());
+    }
+
+    /// 幻影修饰词防线（#218 review）：已知但不支持的修饰词前缀、
+    /// 混入支持修饰词后的不支持词、含 `+` 的未知词、裸修饰词作键名
+    /// ——全部 Err（dispatch 永不产生这些键名）；既有合法形态（含
+    /// "+" 键名的 `ctrl++`）回归钉定不受影响。
+    #[test]
+    fn parse_pattern_rejects_phantom_modifiers() {
+        for bad in [
+            // 已知但不支持的修饰词前缀（大小写不敏感）。
+            "meta+k",
+            "Meta+K",
+            "META+k",
+            "cmd+s",
+            "command+s",
+            "win+e",
+            "windows+d",
+            "super+x",
+            "option+v",
+            "altgr+n",
+            "control+k",
+            "Control+K",
+            // 混入支持修饰词后（扫描逐轮检查——第二段照样抓）。
+            "ctrl+meta+k",
+            "ctrl+alt+cmd+k",
+            "shift+win+e",
+            // 未知词带 "+"（"foo+bar" 类）。
+            "foo+bar",
+            "ctrl+foo+bar",
+            // 裸修饰词单独作键名。
+            "meta",
+            "Meta",
+            "cmd",
+            "ctrl",
+            "Ctrl",
+            "control",
+            "shift",
+            "alt",
+            "Alt",
+        ] {
+            assert!(parse_binding(bad).is_err(), "\"{bad}\" 应报错（幻影键）");
+        }
+        // 既有合法形态回归钉定（"+" 键名必须继续合法——前缀扫描不误拆）。
+        for ok in [
+            "ctrl++",
+            "ctrl+-",
+            "ctrl+shift+[",
+            "SHIFT+Ctrl+A",
+            "alt+f",
+            "ctrl+k ctrl+o",
+            "ctrl+alt+home",
+        ] {
+            assert!(parse_binding(ok).is_ok(), "\"{ok}\" 应保持合法");
+        }
+        // 错误文案可读（警告直出 stderr 的口径）。
+        let err = parse_binding("meta+k").unwrap_err().0;
+        assert!(
+            err.contains("meta") && err.contains("ctrl/shift/alt"),
+            "{err}"
+        );
+        let err = parse_binding("meta").unwrap_err().0;
+        assert!(
+            err.contains("meta") && err.contains("不能单独作键名"),
+            "{err}"
+        );
+    }
+
+    /// 幻影键换绑的关键回归（#218 review 原例）：bind "meta+k" → save
+    /// 被拒且 **ctrl+s 默认绑定完好**（解析失败发生在移除旧绑定之前
+    /// ——apply 先 parse 后变异，结构性保证）；unbind 幻影键同样被拒
+    /// 且零移除。
+    #[test]
+    fn phantom_modifier_bind_rejected_keeps_default_save() {
+        let mut store = KeymapStore::default_tables();
+        let warnings = store.apply_user(&[
+            UserOverride::Bind {
+                bind: "meta+k".into(),
+                action: "save".into(),
+            },
+            UserOverride::Unbind {
+                bind: "meta+k".into(),
+            },
+        ]);
+        assert_eq!(warnings.len(), 2, "两条都应被拒：{warnings:?}");
+        assert!(
+            warnings[0].contains("不支持的修饰词「meta」"),
+            "bind 拒绝文案应指明修饰词：{}",
+            warnings[0]
+        );
+        assert!(
+            warnings[1].contains("不支持的修饰词「meta」"),
+            "unbind 拒绝文案应指明修饰词：{}",
+            warnings[1]
+        );
+        // Save 默认绑定完好（若 bind 落地则会移除 ctrl+s——Save 失效）。
         assert_eq!(
-            parse_binding("meta+k").unwrap(),
-            Single(KeyPattern::key("meta+k"))
+            store.resolve_editor_main(&q("s", true, false, false), None),
+            EditorOutcome::Matched(EditorAction::Save),
+            "meta+k 被拒不得影响 ctrl+s 默认绑定"
+        );
+        // 全表零移除：默认 chord 完好（unbind 幻影键零副作用）。
+        let pending = q("k", true, false, false);
+        assert_eq!(
+            store.resolve_editor_main(&q("0", false, false, false), Some(&pending)),
+            EditorOutcome::Matched(EditorAction::FoldAll)
         );
     }
 
