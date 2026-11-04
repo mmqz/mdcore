@@ -2089,7 +2089,14 @@ mod fence_dirty_tests {
         // 单点 undo/redo（物理回放）也是单区间 → Single（收割后）。
         let mut b = Buffer::from_plain_text("a\nb");
         assert!(b.replace_range(p(1, 0), p(1, 0), "x\ny"));
-        assert_eq!(b.take_fence_dirty(), FenceDirty::Clean);
+        assert_eq!(
+            b.take_fence_dirty(),
+            FenceDirty::Single {
+                line: 1,
+                inserted_lines: 1,
+                pre_lines: 2,
+            }
+        );
         assert!(b.undo());
         assert_eq!(
             b.take_fence_dirty(),
