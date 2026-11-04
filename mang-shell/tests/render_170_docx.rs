@@ -32,13 +32,16 @@
 //!   段落并数空段——**宽面块序实装口径**（表格单元格段不入顶层段流；
 //!   `w:sdt` 内容宽面结构性丢弃——#156 sdt 盲区）。
 //!
-//! ## 图片面（诚实登记的缺口）
+//! ## 图片面（#204 起双面：正向对账 + 零图守卫）
 //!
-//! `tests/fixtures/` 下两个 docx 夹具**均无图片**（`a:blip` = 0、
-//! `word/media/` = 0 部件——python3 zipfile 预检 + 本文件独立计数
-//! 双口径一致）。按任务口径改用「多表格计数 + 空段」面；图片面留
-//! **缺口守卫测试**（`docx_image_face_gap_guard_*`）：夹具再生成带图
-//! 时守卫变红，提醒补真图片对账（props.images ↔ a:blip ↔ media 部件）。
+//! `smoke_image.docx`（#204 带图黄金夹具——scripts/make_image_docx_
+//! fixture.py 手构）承载**正向对账**（`docx_image_face_positive_
+//! reconciliation_*`）：两内联图（纯图片段 + 文本混排段各一），
+//! props.images ↔ 独立 a:blip ↔ word/media/ 部件三方对账 + 邻接内容
+//! 不丢不崩（图片不入行流——空段占行、混排段文本保留）。
+//! 两个旧夹具（smoke.docx / bid-e2e/07_export.docx）仍无图——零图
+//! 守卫（`docx_image_face_gap_guard_*`）原样保留：防夹具漂移成带图件
+//! 后三方口径悄悄失衡。
 //!
 //! ## 铁律
 //!
@@ -376,11 +379,23 @@ fn count_media_parts(bytes: &[u8]) -> usize {
 //   - 空段：body 直下 1（文末 sectPr 间隔段，pPr-only 无 run）；
 //     sdt 内 2（域段，宽面丢弃不计）；空单元格 21（20 无 `w:t` +
 //     1 空 `<w:t/>`）；`w:br` 0（无软换行——段落不拆行）；
-//   - 图片：`a:blip` 0、`w:drawing` 0、`word/media/` 0 部件（两夹具
-//     同判无图——「图片不丢」正向面无夹具可测，见缺口守卫测试）。
+//   - 图片：`a:blip` 0、`w:drawing` 0、`word/media/` 0 部件（两旧夹具
+//     同判无图——零图守卫防漂移；正向面由 smoke_image.docx 承载）。
 //
 // `smoke.docx`：26 `w:p` / 1 `w:tbl` / 4 `w:tr` / 0 图（render_fidelity
 // 已全量对账——本文件只在图片守卫里触碰）。
+//
+// `smoke_image.docx`（3342 字节，#204 带图黄金例）：
+//   - `w:p` 13 = body 直下 9（含 1 空段——纯图片段零 `w:t`）+
+//     表格内 4（一格一段）；`w:tbl` 1 / `w:tr` 2 / `w:tc` 4；
+//   - 图片：`a:blip` 2 / `w:drawing` 2（均 `wp:inline`）/
+//     `word/media/` 2 部件（image1.png 178 B 96×64 三横带、
+//     image2.png 259 B 160×80 竖纹——一图一部件一引用：document.xml.rels
+//     rId1/rId2 恰两条 image 关系）；
+//   - 读面黄金数（harness 实测）：props.images = 2、blocks = 10、
+//     paragraphs = 9、tables = 1、table_rows = 2、empty_paragraphs = 1、
+//     warnings = 0；行模型 13 行（段4 纯图片段 = 空行、段6 混排段文本
+//     「机房实拍（广角）：」保留）。
 
 // ---------------------------------------------------------------------------
 // ① 只读渲染：多表格不拍平 + 空段/空单元格不丢行
@@ -710,17 +725,18 @@ fn bid_docx_editable_paragraph_and_cell_ledger_complete() {
 }
 
 // ---------------------------------------------------------------------------
-// ③ 图片面缺口守卫（两夹具均无图——零口径对账 + 缺口留证）
+// ③ 图片面（#204 起双面：smoke_image.docx 正向对账 + 两旧夹具零图守卫）
 // ---------------------------------------------------------------------------
 
-/// 「图片不丢」正向面（props.images ≥ 1 ↔ a:blip ↔ word/media/ 部件数
-/// 三方对账）**无夹具可测**：`tests/fixtures/` 两个 docx 夹具均无图
-/// （smoke.docx 生成器不产图；标书 e2e 产物 07_export.docx 无图）。
+/// 两**旧**夹具（smoke.docx / bid-e2e/07_export.docx）的零图防漂移
+/// 守卫：props.images ↔ a:blip ↔ word/media/ 部件三方 == 0。
 ///
-/// 本测试钉住「无图」这个事实本身：props.images ↔ a:blip ↔ media 部件
-/// 三方 == 0。夹具再生成**带图**时这里变红——提醒补真正的图片对账
-/// （props.images 与 a:blip 计数一致且 ≥ 1、media 部件数 ≥ images），
-/// 而不是让缺口静默溜过去。缺图夹具本身登记为 issue #170 的遗留缺口。
+/// #204 前这里是「缺口留证」（正向面无夹具可测）；#204 带图黄金夹具
+/// smoke_image.docx 入库后，正向面已由
+/// [`docx_image_face_positive_reconciliation_smoke_image`] 承载——本
+/// 守卫转为纯防漂移：任一旧夹具再生成时漂入图片（三方任一 ≠ 0）即红
+/// （props.images 口径 = 容器级媒体部件数，与 blip 计数在「多图共部件」
+/// 等形态下会错位——不能让带图件静默穿过零图断言）。
 #[test]
 fn docx_image_face_gap_guard_no_image_fixture_in_repo() {
     for rel in ["smoke.docx", "bid-e2e/07_export.docx"] {
@@ -762,12 +778,151 @@ fn docx_image_face_gap_guard_no_image_fixture_in_repo() {
         );
     }
     eprintln!(
-        "\n══════ 缺口留证（不伪装覆盖）══════\n  \
-         tests/fixtures 两个 docx 夹具均无图片（a:blip=0 / word/media=0）。\n  \
-         「图片不丢」正向面（images ≥ 1 的三方对账）因此无夹具可测——\n  \
-         本测试只钉「无图」事实与三方零口径一致，防止缺口静默漂移。\n  \
-         补法：生成带图黄金夹具（如 gen_smoke_docx 加 image run）后，\n  \
-         在本文件补 props.images ↔ a:blip ↔ media 部件的对账断言。\n\
+        "\n══════ 图片面覆盖（#204 已补齐）══════\n  \
+         两旧夹具（smoke.docx / bid-e2e/07_export.docx）仍无图——本守卫\n  \
+         钉住三方零口径一致，防夹具漂移成带图件后口径失衡。\n  \
+         「图片不丢」正向面（images ≥ 1 三方对账 + 邻接内容不丢不崩）\n  \
+         已由 smoke_image.docx 黄金例承载（见下一个测试）。\n\
          ══════════════════════════════════════\n"
+    );
+}
+
+/// #204：图片正向对账（smoke_image.docx——两内联图，尺寸不同、分置
+/// 两段；scripts/make_image_docx_fixture.py 手构，黄金例数字 =
+/// python3 zipfile 预检 + 本文件独立计数 + 仓库外 harness 真实跑
+/// `docx_doc::load` 三方一致）。
+///
+/// 断言面（读面实装语义——docx_doc.rs：图片不入正文行流，计数入
+/// props.images；其口径 = **容器级媒体部件清单**（`word/media/*`
+/// 枚举）而非 a:blip 计数，夹具按「一图一部件一引用」构造使三口径恒等）：
+///
+/// - **三方对账**：props.images == 独立 a:blip == word/media/ 部件数，
+///   且 ≥ 1（黄金例 2）——带图件读面报 0 或口径错位都现形；
+/// - **不丢不崩**：装载成功零警告；纯图片段被识别为空段
+///   （empty_paragraphs 计数 + 占行，不静默蒸发）；混排段文本保留；
+///   邻接标题/表格/段落零位移（行模型 13 行逐行对账）。
+#[test]
+fn docx_image_face_positive_reconciliation_smoke_image() {
+    let rel = "smoke_image.docx";
+    let bytes = fixture_bytes(rel);
+    let xml = part_text(&bytes, "word/document.xml");
+    let payload = docx_doc::load(&fixture(rel)).expect("带图夹具只读装载");
+
+    // ── 独立计数（不信引擎自报）──
+    let blips = count_tag(&xml, "a:blip");
+    let drawings = count_tag(&xml, "w:drawing");
+    let inlines = count_tag(&xml, "wp:inline");
+    let media = count_media_parts(&bytes);
+    let census = census_paragraphs(&xml);
+    let wp_total = count_tag(&xml, "w:p");
+    let wtbl = count_element(&xml, "w:tbl");
+    let wtr = count_element(&xml, "w:tr");
+    let wtc = count_element(&xml, "w:tc");
+
+    // 扫描器自洽 + 黄金例（夹具漂移第一道红）。
+    assert_eq!(
+        census.body + census.sdt + census.table,
+        wp_total,
+        "普查自洽：body({}) + sdt({}) + table({}) != w:p 总数 {wp_total}",
+        census.body,
+        census.sdt,
+        census.table
+    );
+    assert_eq!(
+        (wp_total, census.body, census.sdt, census.table),
+        (13, 9, 0, 4)
+    );
+    assert_eq!((wtbl, wtr, wtc), (1, 2, 4), "黄金例：1 表 / 2 行 / 4 格");
+    assert_eq!(
+        (blips, drawings, inlines, media),
+        (2, 2, 2, 2),
+        "黄金例：2 图（a:blip / w:drawing / wp:inline / media 部件四口径）"
+    );
+
+    // ── 图片正向对账（#170 验收面「图片不丢」——#204 补齐）──
+    assert_eq!(
+        payload.props.images, blips,
+        "图片数：props.images = {} vs 独立 a:blip = {blips}——图片清单与引用计数不一致（图丢了读面不知道）",
+        payload.props.images
+    );
+    assert_eq!(
+        payload.props.images, media,
+        "图片数：props.images = {} vs word/media/ 部件数 = {media}——容器级媒体清单不一致",
+        payload.props.images
+    );
+    assert_eq!(
+        payload.props.images, 2,
+        "props.images 应 ≥ 1（黄金例 2——带图件读面报 0 = 图片面丢失）"
+    );
+    assert_eq!(
+        payload.props.warnings, 0,
+        "干净包零警告（有警告 = 夹具畸形或读面误报，实际 {}）",
+        payload.props.warnings
+    );
+
+    // ── 不丢不崩：图片不入行流（读面实装语义）──
+    // 纯图片段 = 空段（计数 + 占行）；混排段 = 文本保留、图不入文本。
+    assert_eq!(
+        payload.props.empty_paragraphs, census.body_empty,
+        "空段计数：props.empty_paragraphs = {} vs 独立空段普查 = {}（纯图片段应被识别为空段——不丢段）",
+        payload.props.empty_paragraphs, census.body_empty
+    );
+    assert_eq!(census.body_empty, 1, "黄金例：恰 1 空段（纯图片段零 w:t）");
+
+    let lines: Vec<&str> = payload.text.split('\n').collect();
+    assert_eq!(
+        lines.len(),
+        census.body + wtc,
+        "总行数：渲染行 = {} vs 顶层段 {} + 单元格 {} = {}（图片段占行不丢）",
+        lines.len(),
+        census.body,
+        wtc,
+        census.body + wtc
+    );
+    assert_eq!(lines.len(), 13, "黄金例：9 段 + 4 格 = 13 行");
+    // 逐行对账：图片两侧内容零位移（段4 纯图片段 = 空行；段6 混排段
+    // 文本保留、图片不入文本）。
+    assert_eq!(
+        lines,
+        vec![
+            "智慧园区综合管理平台图示样张",
+            "本样张验证 docx 图片读面（#204）：两张内联图片，尺寸不同、分置两段。",
+            "一、网络拓扑",
+            "下图为平台网络拓扑示意（纯图片段——图片不入正文行流）。",
+            "", // 段4 纯图片段：空行承载（图片计数入 props.images）
+            "二、机房实拍",
+            "机房实拍（广角）：", // 段6 混排段：文本保留、图片不入文本
+            "三、报价明细",
+            "设备",
+            "数量",
+            "机柜",
+            "42",
+            "全文完——图片清单见属性面板（props.images = 2）。",
+        ],
+        "行模型逐行对账——图片段两侧邻接内容完好（不丢不崩）"
+    );
+
+    // ── 邻接结构完好：块数 / 表格 / 标题树 ──
+    assert_eq!(
+        payload.props.blocks,
+        census.body + wtbl,
+        "块数 = {} vs 顶层段 {} + 表 {} = {}——图片段/表被丢或虚增",
+        payload.props.blocks,
+        census.body,
+        wtbl,
+        census.body + wtbl
+    );
+    assert_eq!(payload.props.tables, wtbl, "表数不因图片丢");
+    assert_eq!(payload.props.table_rows, wtr, "表行不因图片丢");
+    assert_eq!(payload.headings.len(), 4, "标题树 4（1 H1 + 3 H2）");
+    assert_eq!(
+        (payload.headings[0].level, payload.headings[0].text.as_str()),
+        (1, "智慧园区综合管理平台图示样张"),
+        "首标题完好（H1）"
+    );
+    assert_eq!(
+        payload.headings[3].text.as_str(),
+        "三、报价明细",
+        "末标题完好（混排图片段与表之间的标题零位移）"
     );
 }
