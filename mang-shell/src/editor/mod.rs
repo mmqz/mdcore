@@ -91,6 +91,9 @@ use crate::command_groups::RecentRing;
 use crate::palette_view;
 // #179（#188 接线）：编辑器区右键菜单——坐标类型 + 上抛回调。
 use crate::context_menu;
+// #217：键位表（编辑器键派发的单一事实源——默认表 = 原两处匹配臂的
+// 精确镜像；纯逻辑层，行为零变化红线）。
+use crate::keymap::{self, EditorAction, KeyQuery};
 use mouse::ClickKind;
 use theme::ThemeColors;
 use ui::prelude::*;
@@ -376,8 +379,9 @@ pub struct Editor {
     scroll: UniformListScrollHandle,
     /// 每行行首的代码围栏状态缓存（文档变更时重算）。
     fence_cache: Vec<bool>,
-    /// #132-3：`Ctrl+K` 前缀键已按下（等下一个键完成组合）。
-    ctrl_k_pending: bool,
+    /// #217：chord 首键挂起快照（原 #132-3 `ctrl_k_pending: bool` 的
+    /// 表化升级——存首键实际按键，续接匹配由 keymap 表驱动）。
+    chord_pending: Option<keymap::KeyQuery>,
     /// G5：每行所属围栏块的语言标注（`Some(lang)` = 行首处于带语言
     /// 标注的围栏内；`None` = 围栏外/无标注块——与 fence_cache 并行）。
     fence_lang_cache: Vec<Option<highlight::CodeLang>>,
@@ -535,7 +539,7 @@ impl Editor {
             find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             fence_cache: Vec::new(),
-            ctrl_k_pending: false,
+            chord_pending: None,
             fence_lang_cache: Vec::new(),
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
@@ -596,7 +600,7 @@ impl Editor {
             // docx 无围栏语义——fence 恒 false（refresh_caches 在 docx
             // 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
-            ctrl_k_pending: false,
+            chord_pending: None,
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
@@ -671,7 +675,7 @@ impl Editor {
             find_saved: FindState::default(),
             scroll: UniformListScrollHandle::new(),
             fence_cache: vec![false; line_count],
-            ctrl_k_pending: false,
+            chord_pending: None,
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
@@ -735,7 +739,7 @@ impl Editor {
             scroll: UniformListScrollHandle::new(),
             // pdf 无围栏语义——fence 恒 false（同 docx 态口径）。
             fence_cache: vec![false; line_count],
-            ctrl_k_pending: false,
+            chord_pending: None,
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
@@ -798,7 +802,7 @@ impl Editor {
             // xlsx 无围栏语义——fence 恒 false（同 docx 态口径，
             // refresh_caches 在 xlsx 模式下跳过 md 逐行推进）。
             fence_cache: vec![false; line_count],
-            ctrl_k_pending: false,
+            chord_pending: None,
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
@@ -859,7 +863,7 @@ impl Editor {
             fence_cache: vec![false; line_count],
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
-            ctrl_k_pending: false,
+            chord_pending: None,
             // #132 任务1：括号匹配缓存（canvas 无语言语义——恒 None）。
             bracket_cache: BracketCache::default(),
             bracket_lang: None,
@@ -2270,6 +2274,14 @@ impl Editor {
         let ctrl = ks.modifiers.control || ks.modifiers.platform;
         let shift = ks.modifiers.shift;
         let key = ks.key.to_lowercase();
+        // #217：按键查询（一次构造，前置层/主层查表共用；ctrl 已归一
+        // control||platform，key 已小写——与 KeyQuery 口径一致）。
+        let kq = KeyQuery {
+            key: key.clone(),
+            ctrl,
+            shift,
+            alt: ks.modifiers.alt,
+        };
 
         // #133 任务 1：canvas 态键域——视口命令（缩放/平移），其余键
         // 整段消费（行模型导航/编辑/查找/跳行语义不适用自由画布；命令
@@ -2284,8 +2296,11 @@ impl Editor {
 
         // r42 阶段 E：Ctrl+Shift+P 开/关命令面板（toggle）。#209：内联块
         // 提取为 toggle_command_palette（菜单栏「编辑 → 命令面板」入口与
-        // 键位共用同一方法——逻辑逐字保留，行为零变化）。
-        if ctrl && shift && key == "p" {
+        // 键位共用同一方法——逻辑逐字保留，行为零变化）。#217：键位改查
+        // keymap 表（默认表 = 原内联臂精确镜像；用户换绑后跟随）。
+        if let Some(keymap::Action::Editor(EditorAction::PaletteToggle)) =
+            keymap::store().resolve_pre(keymap::Site::EditorPalette, &kq)
+        {
             self.toggle_command_palette(cx);
             return;
         }
@@ -2297,14 +2312,19 @@ impl Editor {
 
         // G2：Ctrl+G 开跳行输入框（只读态同样可用——导航类；键位门在
         // readonly_allows 白名单）。已开时交由下方 goto 键处理（重置输入）。
-        if ctrl && !shift && key == "g" && self.goto.is_none() {
-            let count = self.buffer.line_count();
-            self.goto = Some(GotoState {
-                input: String::new(),
-                hint: goto_hint("", count),
-            });
-            cx.notify();
-            return;
+        // #217：键位改查 keymap 表（`goto.is_none()` 条件保留在执行层）。
+        if let Some(keymap::Action::Editor(EditorAction::GotoOpen)) =
+            keymap::store().resolve_pre(keymap::Site::EditorGoto, &kq)
+        {
+            if self.goto.is_none() {
+                let count = self.buffer.line_count();
+                self.goto = Some(GotoState {
+                    input: String::new(),
+                    hint: goto_hint("", count),
+                });
+                cx.notify();
+                return;
+            }
         }
         // G2：跳行框打开时优先拦截全部键（含 ctrl 组合——面板同口径）。
         if self.goto.is_some() && self.handle_goto_key(&event.keystroke, cx) {
@@ -2321,166 +2341,20 @@ impl Editor {
             return;
         }
 
-        // #132-3：Ctrl+K 前缀键。到此说明上一个键是 Ctrl+K——本键若不
-        // 是 0/J 就**取消前缀并照常下沉**（不吞键）。0/J 分支在下方。
-        let ctrl_k_was_pending = self.ctrl_k_pending;
-        if ctrl_k_was_pending && !(key == "0" || key == "j") {
-            self.ctrl_k_pending = false;
-        }
-
-        match key.as_str() {
-            // r42 阶段 C：移动统一入口 do_move（多光标同向分派）
-            "left" => self.do_move(MultiMove::Left, ctrl, shift),
-            "right" => self.do_move(MultiMove::Right, ctrl, shift),
-            "up" => self.do_move(MultiMove::Up, ctrl, shift),
-            "down" => self.do_move(MultiMove::Down, ctrl, shift),
-            "home" => {
-                if ctrl {
-                    self.do_move(MultiMove::DocStart, ctrl, shift);
-                } else {
-                    self.do_move(MultiMove::Home, ctrl, shift);
-                }
-            }
-            "end" => {
-                if ctrl {
-                    self.do_move(MultiMove::DocEnd, ctrl, shift);
-                } else {
-                    self.do_move(MultiMove::End, ctrl, shift);
-                }
-            }
-            "pageup" => {
-                for _ in 0..PAGE_LINES {
-                    self.do_move(MultiMove::Up, false, shift);
-                }
-            }
-            "pagedown" => {
-                for _ in 0..PAGE_LINES {
-                    self.do_move(MultiMove::Down, false, shift);
-                }
-            }
-            "enter" => {
-                self.newline_multi();
-                self.after_edit();
-            }
-            "backspace" => {
-                self.backspace_multi();
-                self.after_edit();
-            }
-            "delete" => {
-                self.delete_forward_multi();
-                self.after_edit();
-            }
-            "tab" if !ctrl => {
-                // G3：Tab 缩进 / Shift+Tab 反缩进（F3 口径保留：带 Ctrl
-                // 的 Tab 是标签切换——不消费，冒泡 shell 级键钩子）。
-                self.indent_key(shift);
-                self.after_edit();
-            }
-            "escape" => {
-                // r42 阶段 C：多光标优先收拢（主光标头）
-                if self.cursors.is_multiple() {
-                    self.cursors.collapse_to_primary();
-                    self.sync_buffer_from_cursors_primary();
-                } else if self.buffer.selection().is_some() {
-                    let head = self.buffer.cursor();
-                    self.buffer.set_cursor(head);
-                    self.sync_cursors_from_buffer();
-                }
-            }
-            "a" if ctrl => self.buffer.select_all(),
-            "c" if ctrl => self.copy_selection(cx),
-            "x" if ctrl => {
-                let text = self.buffer.selection_text();
-                if !text.is_empty() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    self.buffer.delete_selection();
-                }
-            }
-            "v" if ctrl => {
-                if let Some(item) = cx.read_from_clipboard()
-                    && let Some(text) = item.text()
-                {
-                    self.buffer.insert(&text);
-                }
-            }
-            "z" if ctrl && shift => {
-                self.buffer.redo();
-            }
-            "z" if ctrl => {
-                // r42 阶段 C：批撤销（多点编辑一次撤整批）
-                let n = self.cursors.take_undo_batch();
-                if n > 1 {
-                    for _ in 0..n {
-                        if !self.buffer.undo() {
-                            break;
-                        }
-                    }
-                    self.sync_cursors_from_buffer();
-                } else {
-                    // G1：单光标路径——undo 栈顶若为批量记录（全部
-                    // 替换），一条记录一次撤整批；证据行供烟雾/日志面。
-                    let pending = self.buffer.last_undo_batch_count();
-                    self.buffer.undo();
-                    if pending > 1 {
-                        eprintln!("find-replace: undo batch {pending} edits in one step");
-                    }
-                    self.sync_cursors_from_buffer();
-                }
-            }
-            "y" if ctrl => {
-                self.buffer.redo();
-                self.sync_cursors_from_buffer();
-            }
-            "d" if ctrl => {
-                // r42 阶段 C：Ctrl+D 加同词光标（文档序下一个完整词匹配；
-                // 词源=主选区文本或主光标头处词）
-                if let Some(c2) = Cursors::add_next_word_match(&self.buffer, &self.cursors) {
-                    self.cursors = c2;
-                    self.sync_buffer_from_cursors_primary();
-                }
-            }
-            "f" if ks.modifiers.alt => {
-                // r42 阶段 B/D：围栏块折叠 toggle（与 gutter 指示物共用）。
-                let line = self.buffer.cursor().line;
-                self.toggle_fold_at(line);
-                self.persist_folds();
-            }
-            // #132-3：折叠快捷键（VS Code 口径）。
-            "[" if ctrl && shift => {
-                self.fold_current();
-                self.persist_folds();
-            }
-            "]" if ctrl && shift => {
-                self.unfold_current();
-                self.persist_folds();
-            }
+        // #217：主层查表（原 `ctrl_k_pending` 预处理 + match 主体 →
+        // keymap 表驱动；默认表 = 原臂序/守卫的精确镜像，行为零变化）。
+        let outcome = keymap::store().resolve_editor_main(&kq, self.chord_pending.as_ref());
+        // 挂起态随本次派发终结（Pending 分支随即重置快照——原「前缀
+        // 取消并照常下沉」由引擎续接落空后的单键匹配承担）。
+        self.chord_pending = None;
+        match outcome {
             // Ctrl+K 是**前缀键**（VS Code 的 Ctrl+K Ctrl+X 系列）。按下时
-            // 只置标志、不消费内容；下一个键按该标志分流。超时/其它键 =
-            // 前缀取消（不静默吞键：其余键照常下沉原分支）。
-            "k" if ctrl && !shift => {
-                self.ctrl_k_pending = true;
-                return;
+            // 只挂起、不消费内容；下一个键按挂起分流（表内 chord 续接）。
+            keymap::EditorOutcome::Pending => {
+                self.chord_pending = Some(kq);
+                return; // 原 "k" 臂语义：提前 return 不落尾部
             }
-            "0" if self.ctrl_k_pending => {
-                self.ctrl_k_pending = false;
-                self.fold_all();
-                self.persist_folds();
-            }
-            "j" if self.ctrl_k_pending => {
-                self.ctrl_k_pending = false;
-                self.unfold_all();
-                self.persist_folds();
-            }
-            "f" if ctrl => self.open_find(window, cx),
-            // G1：Ctrl+H 替换条（只读门禁在前——docx/pdf 态不达此处）。
-            "h" if ctrl => self.open_replace(window, cx),
-            "s" if ctrl && !shift => {
-                self.save();
-            }
-            // F4：Ctrl+Shift+S（另存为）不消费——冒泡至 shell 级钩子
-            //（另存为需 prompt_for_new_path 应用层面 + 标签身份更新）。
-            "s" if ctrl => {}
-            _ => {
+            keymap::EditorOutcome::None => {
                 // 可打印字符（无修饰或仅 shift）：插入。
                 // key_char 为平台布局产生的实际字符（IME 未接管时的直输路径；
                 // 控制字符（含 \n/\r/tab）已被上方分支截获，此处双保险过滤）。
@@ -2494,6 +2368,162 @@ impl Editor {
                     self.insert_text_multi(c);
                 }
             }
+            keymap::EditorOutcome::Matched(action) => match action {
+                // r42 阶段 C：移动统一入口 do_move（多光标同向分派）；
+                // ctrl 词跳/shift 选区在执行层参数化（原家族臂结构）。
+                EditorAction::MoveKey(keymap::MoveDir::Left) => {
+                    self.do_move(MultiMove::Left, ctrl, shift)
+                }
+                EditorAction::MoveKey(keymap::MoveDir::Right) => {
+                    self.do_move(MultiMove::Right, ctrl, shift)
+                }
+                EditorAction::MoveKey(keymap::MoveDir::Up) => {
+                    self.do_move(MultiMove::Up, ctrl, shift)
+                }
+                EditorAction::MoveKey(keymap::MoveDir::Down) => {
+                    self.do_move(MultiMove::Down, ctrl, shift)
+                }
+                EditorAction::HomeKey => {
+                    if ctrl {
+                        self.do_move(MultiMove::DocStart, ctrl, shift);
+                    } else {
+                        self.do_move(MultiMove::Home, ctrl, shift);
+                    }
+                }
+                EditorAction::EndKey => {
+                    if ctrl {
+                        self.do_move(MultiMove::DocEnd, ctrl, shift);
+                    } else {
+                        self.do_move(MultiMove::End, ctrl, shift);
+                    }
+                }
+                EditorAction::PageUpKey => {
+                    for _ in 0..PAGE_LINES {
+                        self.do_move(MultiMove::Up, false, shift);
+                    }
+                }
+                EditorAction::PageDownKey => {
+                    for _ in 0..PAGE_LINES {
+                        self.do_move(MultiMove::Down, false, shift);
+                    }
+                }
+                EditorAction::Newline => {
+                    self.newline_multi();
+                    self.after_edit();
+                }
+                EditorAction::Backspace => {
+                    self.backspace_multi();
+                    self.after_edit();
+                }
+                EditorAction::DeleteForward => {
+                    self.delete_forward_multi();
+                    self.after_edit();
+                }
+                EditorAction::Indent => {
+                    // G3：Tab 缩进 / Shift+Tab 反缩进（F3 口径保留：带 Ctrl
+                    // 的 Tab 是标签切换——不消费，冒泡 shell 级键钩子）。
+                    self.indent_key(shift);
+                    self.after_edit();
+                }
+                EditorAction::EscapeClearSelection => {
+                    // r42 阶段 C：多光标优先收拢（主光标头）
+                    if self.cursors.is_multiple() {
+                        self.cursors.collapse_to_primary();
+                        self.sync_buffer_from_cursors_primary();
+                    } else if self.buffer.selection().is_some() {
+                        let head = self.buffer.cursor();
+                        self.buffer.set_cursor(head);
+                        self.sync_cursors_from_buffer();
+                    }
+                }
+                EditorAction::SelectAll => self.buffer.select_all(),
+                EditorAction::Copy => self.copy_selection(cx),
+                EditorAction::Cut => {
+                    let text = self.buffer.selection_text();
+                    if !text.is_empty() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                        self.buffer.delete_selection();
+                    }
+                }
+                EditorAction::Paste => {
+                    if let Some(item) = cx.read_from_clipboard()
+                        && let Some(text) = item.text()
+                    {
+                        self.buffer.insert(&text);
+                    }
+                }
+                EditorAction::Redo => {
+                    self.buffer.redo();
+                }
+                EditorAction::Undo => {
+                    // r42 阶段 C：批撤销（多点编辑一次撤整批）
+                    let n = self.cursors.take_undo_batch();
+                    if n > 1 {
+                        for _ in 0..n {
+                            if !self.buffer.undo() {
+                                break;
+                            }
+                        }
+                        self.sync_cursors_from_buffer();
+                    } else {
+                        // G1：单光标路径——undo 栈顶若为批量记录（全部
+                        // 替换），一条记录一次撤整批；证据行供烟雾/日志面。
+                        let pending = self.buffer.last_undo_batch_count();
+                        self.buffer.undo();
+                        if pending > 1 {
+                            eprintln!("find-replace: undo batch {pending} edits in one step");
+                        }
+                        self.sync_cursors_from_buffer();
+                    }
+                }
+                EditorAction::RedoY => {
+                    self.buffer.redo();
+                    self.sync_cursors_from_buffer();
+                }
+                EditorAction::AddNextWordMatch => {
+                    // r42 阶段 C：Ctrl+D 加同词光标（文档序下一个完整词匹配；
+                    // 词源=主选区文本或主光标头处词）
+                    if let Some(c2) = Cursors::add_next_word_match(&self.buffer, &self.cursors) {
+                        self.cursors = c2;
+                        self.sync_buffer_from_cursors_primary();
+                    }
+                }
+                EditorAction::ToggleFold => {
+                    // r42 阶段 B/D：围栏块折叠 toggle（与 gutter 指示物共用）。
+                    let line = self.buffer.cursor().line;
+                    self.toggle_fold_at(line);
+                    self.persist_folds();
+                }
+                // #132-3：折叠快捷键（VS Code 口径）。
+                EditorAction::FoldCurrent => {
+                    self.fold_current();
+                    self.persist_folds();
+                }
+                EditorAction::UnfoldCurrent => {
+                    self.unfold_current();
+                    self.persist_folds();
+                }
+                EditorAction::FoldAll => {
+                    self.fold_all();
+                    self.persist_folds();
+                }
+                EditorAction::UnfoldAll => {
+                    self.unfold_all();
+                    self.persist_folds();
+                }
+                EditorAction::OpenFind => self.open_find(window, cx),
+                // G1：Ctrl+H 替换条（只读门禁在前——docx/pdf 态不达此处）。
+                EditorAction::OpenReplace => self.open_replace(window, cx),
+                EditorAction::Save => {
+                    self.save();
+                }
+                // F4：Ctrl+Shift+S（另存为）不消费——冒泡至 shell 级钩子
+                //（另存为需 prompt_for_new_path 应用层面 + 标签身份更新）。
+                EditorAction::Pass => {}
+                // 前置层动作（palette/goto）路由在各自查表点，主层不可达
+                //（apply_bind 按动作身份分层）——防御性空实现。
+                EditorAction::PaletteToggle | EditorAction::GotoOpen => {}
+            },
         }
         self.after_edit();
         cx.notify();

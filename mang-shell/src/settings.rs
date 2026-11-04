@@ -133,6 +133,43 @@ pub fn load_font_size() -> Option<f32> {
     load_from(&dir).get("font_size")?.as_f64().map(|v| v as f32)
 }
 
+/// #217：键位覆盖读取（`keymap` 键：对象数组——`{"bind": "ctrl+alt+p",
+/// "action": "toggle_command_palette"}` 换绑 / `{"unbind": "ctrl+shift+p"}`
+/// 解绑，按序应用）。结构不符的**单条**跳过（stderr 警告——与
+/// `keymap::KeymapStore::apply_user` 的逐条容错同口径：一条坏配置不废
+/// 掉全部自定义）；键串/动作名的合法性由 keymap 层检测并警告。
+pub fn load_keymap_overrides() -> Vec<crate::keymap::UserOverride> {
+    let Some(dir) = config_dir() else {
+        return Vec::new();
+    };
+    let Some(entries) = load_from(&dir).get("keymap").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let Some(obj) = entry.as_object() else {
+            eprintln!("keymap: 第 {i} 条不是对象，已跳过");
+            continue;
+        };
+        if let (Some(bind), Some(action)) = (
+            obj.get("bind").and_then(|v| v.as_str()),
+            obj.get("action").and_then(|v| v.as_str()),
+        ) {
+            out.push(crate::keymap::UserOverride::Bind {
+                bind: bind.to_string(),
+                action: action.to_string(),
+            });
+        } else if let Some(bind) = obj.get("unbind").and_then(|v| v.as_str()) {
+            out.push(crate::keymap::UserOverride::Unbind {
+                bind: bind.to_string(),
+            });
+        } else {
+            eprintln!("keymap: 第 {i} 条缺 bind/action 或 unbind 键，已跳过");
+        }
+    }
+    out
+}
+
 /// #132-3：折叠状态读写（`folds` 键：`{"<文件路径>": [起始行, ...]}`）。
 ///
 /// 语义：**按文件记住「折叠头行的行号集合」**（0 基）。存头行而非区间，

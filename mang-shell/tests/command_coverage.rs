@@ -22,7 +22,7 @@
 //! | ① | `enum_variants_match_all_list` | 静态解析 commands.rs 的枚举体与 ALL 表 |
 //! | ② | `exec_command_arms_cover_all_without_stubs` | 静态解析 mod.rs 的 match arm：全量在场 + 无空体 |
 //! | ③ | 同上（`_ =>` 通配检测） | 静态 |
-//! | ④ | `default_keys_reach_dispatch_key` | default_key 动态解析主键 → dispatch_key 函数体证据 |
+//! | ④ | `default_keys_reach_dispatch_key` | default_key 键序 → keymap 默认表解析（行为级）+ dispatch_key_inner 执行臂（源码级）——#217 表化双证据 |
 //! | ⑤ | `titles_and_keys_unique` | 可执行（title/default_key 全局唯一） |
 //!
 //! ## 为什么静态解析而不是构造 Editor 执行
@@ -42,6 +42,7 @@
 use std::path::{Path, PathBuf};
 
 use mang_shell::editor::commands::{self, Cmd};
+use mang_shell::keymap;
 
 // ---------------------------------------------------------------------------
 // 源码读取与函数体提取（与 wiring_integrity.rs 同款工具——本文件独立
@@ -280,36 +281,52 @@ fn panic_stub(body: &str, at: usize, kind: &str) -> ! {
 // ④ default_key → dispatch_key 键位分派可达
 // ---------------------------------------------------------------------------
 
-/// 展示键位（`Ctrl+K Ctrl+0` / `Alt+F` / `←`）→ dispatch_key 函数体内
-/// 应存在的**字符串字面量证据**列表。
-///
-/// 序列键（空格分隔多 chord）逐段出证据：`Ctrl+K Ctrl+0` → `["k", "0"]`
-/// （前缀键 "k" 置 `ctrl_k_pending`，第二键 "0" 在前缀态下命中折叠分支）。
-fn key_evidence(display: &str) -> Vec<String> {
+/// display 键序解析（`Ctrl+K Ctrl+0` → [(k,ctrl), (0,ctrl)]——chord
+/// 空格分段、`+` 分修饰/主键、箭头形转键名；修饰词大小写不敏感）。
+fn key_sequence(display: &str) -> Vec<(String, bool, bool, bool)> {
     let mut out = Vec::new();
     for chord in display.split(' ') {
-        let main = chord.split('+').next_back().unwrap_or(chord);
+        let mods: Vec<&str> = chord.split('+').collect();
+        let main = *mods.last().unwrap_or("");
+        let ctrl = mods.iter().any(|m| m.eq_ignore_ascii_case("ctrl"));
+        let shift = mods.iter().any(|m| m.eq_ignore_ascii_case("shift"));
+        let alt = mods.iter().any(|m| m.eq_ignore_ascii_case("alt"));
         let name = match main {
-            "←" => "left".to_string(),
-            "→" => "right".to_string(),
-            "↑" => "up".to_string(),
-            "↓" => "down".to_string(),
-            other => other.to_lowercase(),
-        };
-        out.push(name);
+            "←" => "left",
+            "→" => "right",
+            "↑" => "up",
+            "↓" => "down",
+            other => other,
+        }
+        .to_lowercase();
+        out.push((name, ctrl, shift, alt));
     }
     out
 }
 
-/// ④ `default_keys_reach_dispatch_key`：每个命令声称的默认键位，在
-/// `dispatch_key` 里有对应的按键分派——键位声称了但没实现 = 按键无反应。
+fn query(seq: &(String, bool, bool, bool)) -> keymap::KeyQuery {
+    keymap::KeyQuery {
+        key: seq.0.clone(),
+        ctrl: seq.1,
+        shift: seq.2,
+        alt: seq.3,
+    }
+}
+
+/// ④ `default_keys_reach_dispatch_key`：每个命令声称的默认键位必须真有
+/// 分派——#217 键位表化后的**双证据**：
 ///
-/// 证据形态为 `"key"` 字符串字面量（dispatch_key 以 `match key.as_str()`
-/// 与 `key == "g"` 两种写法分派，统一以字面量出现为证）。
+/// ① **行为级**：default_key 键序在 keymap 默认表（= 原两处匹配臂的
+///    精确镜像）解析出动作（chord 两步：首键挂起 + 续接命中）；
+/// ② **源码级**：该动作在 `dispatch_key_inner` 执行层有对应臂/查表点
+///    （表动作无执行体 = 按键无反应）。
 ///
-/// #164 1c：dispatch_key 拆为计时包装 + `dispatch_key_inner` 实体
-///（键分派臂全部在 inner；包装层只做 MANG_PERF 计时）——两体并集
-/// 取证，意图不变：键位声称必须有实现分派。
+/// 键条件本身（哪个键绑哪个动作）由 keymap.rs 内嵌单测逐臂钉定
+/// （`editor_move_family_all_modifier_combos` / `shell_single_key_branches`
+/// 等——harness `#[path]` 双环境同源执行）；本测试只钉「声称→分派」链
+/// 不脱节。#164 1c：dispatch_key 拆为计时包装 + `dispatch_key_inner`
+/// 实体（键分派臂全部在 inner；包装层只做 MANG_PERF 计时）——两体并集
+/// 取证，意图不变。
 #[test]
 fn default_keys_reach_dispatch_key() {
     let file = src("editor/mod.rs");
@@ -318,34 +335,66 @@ fn default_keys_reach_dispatch_key() {
         brace_block(&file, "fn dispatch_key("),
         brace_block(&file, "fn dispatch_key_inner(")
     );
+    let store = keymap::KeymapStore::default_tables();
 
     for &c in Cmd::ALL {
-        let Some(key) = c.default_key() else {
+        let Some(display) = c.default_key() else {
             panic!("{c:?} 无默认键位——commands.rs 的基线断言应已抓到");
         };
-        let evidence = key_evidence(key);
+        let seq = key_sequence(display);
         assert!(
-            !evidence.is_empty(),
-            "{c:?} 键位 {key:?} 解析不出主键——key_evidence 需适配新键形态"
+            !seq.is_empty(),
+            "{c:?} 键位 {display:?} 解析不出键序——key_sequence 需适配新键形态"
         );
-        for name in evidence {
-            let literal = format!("\"{name}\"");
-            assert!(
-                body.contains(&literal),
-                "{c:?} 声称默认键位 {key:?}，但 dispatch_key 里找不到主键 \
-                 {literal} 的分派——按键无反应（键位声称与实现脱节）"
-            );
-        }
+        // ① 行为级：默认表解析（GotoLine 在前置层查表点，其余主层）。
+        let action = if c == Cmd::GotoLine {
+            match store.resolve_pre(keymap::Site::EditorGoto, &query(&seq[0])) {
+                Some(keymap::Action::Editor(a)) => a,
+                other => panic!("{c:?} 键位 {display:?} 前置层未解析出动作：{other:?}"),
+            }
+        } else {
+            let first = query(&seq[0]);
+            let outcome = match seq.len() {
+                1 => store.resolve_editor_main(&first, None),
+                2 => {
+                    assert!(
+                        matches!(
+                            store.resolve_editor_main(&first, None),
+                            keymap::EditorOutcome::Pending
+                        ),
+                        "{c:?} 键位 {display:?} 首键未挂起（chord 机制断链）"
+                    );
+                    store.resolve_editor_main(&query(&seq[1]), Some(&first))
+                }
+                n => panic!("{c:?} 键位 {display:?} {n} 段——keymap 至多两键"),
+            };
+            match outcome {
+                keymap::EditorOutcome::Matched(a) => a,
+                other => panic!("{c:?} 键位 {display:?} 主层未解析出动作：{other:?}"),
+            }
+        };
+        // ② 源码级：执行层臂在场（表动作 → dispatch_key_inner 执行体）。
+        let variant = format!("{action:?}")
+            .split('(')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            body.contains(&format!("EditorAction::{variant}")),
+            "{c:?} 声称默认键位 {display:?}（→ {variant}），但 dispatch_key_inner \
+             无 {variant} 执行臂——按键无反应（键位声称与实现脱节）"
+        );
     }
 
-    // 序列键机制在位（Ctrl+K 前缀态——FoldAll/UnfoldAll 依赖）。
+    // 序列键机制在位（#217：`ctrl_k_pending` 布尔 → `chord_pending`
+    // 挂起快照——证据面同步）。
     if Cmd::ALL
         .iter()
         .any(|c| c.default_key().is_some_and(|k| k.contains(' ')))
     {
         assert!(
-            body.contains("ctrl_k_pending"),
-            "存在序列键位（Ctrl+K …）但 dispatch_key 无 ctrl_k_pending 前缀态机制"
+            body.contains("chord_pending"),
+            "存在序列键位（Ctrl+K …）但 dispatch_key 无 chord_pending 挂起机制"
         );
     }
 }

@@ -290,7 +290,7 @@ fn action_row(
             div()
                 .text_size(px(11.))
                 .text_color(colors.text_muted)
-                .child(spec.shortcut.unwrap_or("")),
+                .child(spec.shortcut.as_deref().unwrap_or("")),
         );
     if spec.enabled {
         let action = spec.action;

@@ -112,6 +112,10 @@ fn face1_menu_items_reach_command_dispatch() {
 /// 打开 / Ctrl+Shift+S 另存为 / Ctrl+=/−/0 字号 / Ctrl+T 主题。
 /// （编辑器级键臂 ↔ Cmd 声称的对账在 command_coverage.rs
 /// `default_keys_reach_dispatch_key`——两级互补。）
+///
+/// #217：键位条件改 keymap 表驱动（哪个键绑哪个动作由 keymap.rs 内嵌
+/// 单测逐臂钉定 + harness `#[path]` 双环境执行）——本面证据升级为
+/// **动作变体 → 处理调用** 的执行臂对账（表动作无执行体 = 按键无反应）。
 #[test]
 fn face2_shell_shortcuts_reach_commands() {
     let shell = src("shell.rs");
@@ -125,18 +129,34 @@ fn face2_shell_shortcuts_reach_commands() {
         .map(|i| hook_start + i)
         .unwrap_or(shell.len());
     let key_block = &shell[hook_start..hook_end];
-    for (key_cond, call, what) in [
-        ("\"tab\"", "cycle_tab", "Ctrl+Tab 循环标签"),
-        ("\"w\"", "close_active_tab", "Ctrl+W 关闭标签"),
-        ("\"o\"", "prompt_open_file", "Ctrl+O 打开文件"),
-        ("\"s\"", "prompt_save_as", "Ctrl+Shift+S 另存为"),
-        ("\"=\"", "apply_font_size", "Ctrl+= 字号放大"),
-        ("\"t\"", "cycle_theme", "Ctrl+T 主题循环"),
+    for (variant, call, what) in [
+        ("ShellAction::NextTab", "cycle_tab", "Ctrl+Tab 循环标签"),
+        (
+            "ShellAction::CloseTab",
+            "close_active_tab",
+            "Ctrl+W 关闭标签",
+        ),
+        (
+            "ShellAction::PromptOpenFile",
+            "prompt_open_file",
+            "Ctrl+O 打开文件",
+        ),
+        (
+            "ShellAction::PromptSaveAs",
+            "prompt_save_as",
+            "Ctrl+Shift+S 另存为",
+        ),
+        (
+            "ShellAction::FontBigger",
+            "apply_font_size",
+            "Ctrl+= 字号放大",
+        ),
+        ("ShellAction::CycleTheme", "cycle_theme", "Ctrl+T 主题循环"),
     ] {
         assert!(
-            key_block.contains(key_cond) && key_block.contains(call),
+            key_block.contains(variant) && key_block.contains(call),
             "【面 2：快捷键 → Cmd 映射】shell 级键臂断链——{what}：\
-             键条件 `{key_cond}` 或处理调用 `{call}(` 不在键钩子内"
+             动作臂 `{variant}` 或处理调用 `{call}(` 不在键钩子内"
         );
     }
 }

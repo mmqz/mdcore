@@ -93,6 +93,15 @@ impl MenuItem {
         self
     }
 
+    /// 从 keymap 表取该动作当前键位标签（#217 单一事实源：菜单标签
+    /// 与实际键位同源，用户换绑后跟随；无绑定 → 不标）。
+    pub fn with_shortcut_for(mut self, action_id: &str) -> Self {
+        if let MenuItem::Action { shortcut, .. } = &mut self {
+            *shortcut = crate::keymap::store().label(action_id);
+        }
+        self
+    }
+
     /// 置灰/启用。
     pub fn with_enabled(mut self, on: bool) -> Self {
         if let MenuItem::Action { enabled, .. } = &mut self {
@@ -259,19 +268,23 @@ pub fn editor_menu(has_selection: bool, read_only: bool) -> Vec<MenuItem> {
     let writable = !read_only;
     vec![
         MenuItem::action("ed-cut", "剪切")
-            .with_shortcut("Ctrl+X")
+            .with_shortcut_for("cut")
             .with_enabled(has_selection && writable),
         MenuItem::action("ed-copy", "复制")
-            .with_shortcut("Ctrl+C")
+            .with_shortcut_for("copy")
             .with_enabled(has_selection),
-        MenuItem::action("ed-paste", "粘贴").with_shortcut("Ctrl+V").with_enabled(writable),
+        MenuItem::action("ed-paste", "粘贴")
+            .with_shortcut_for("paste")
+            .with_enabled(writable),
         MenuItem::Separator,
-        MenuItem::action("ed-select-all", "全选").with_shortcut("Ctrl+A"),
-        MenuItem::action("ed-find", "查找").with_shortcut("Ctrl+F"),
-        MenuItem::action("ed-replace", "替换").with_shortcut("Ctrl+H").with_enabled(writable),
+        MenuItem::action("ed-select-all", "全选").with_shortcut_for("select_all"),
+        MenuItem::action("ed-find", "查找").with_shortcut_for("open_find"),
+        MenuItem::action("ed-replace", "替换")
+            .with_shortcut_for("open_replace")
+            .with_enabled(writable),
         MenuItem::Separator,
-        MenuItem::action("ed-goto", "跳转到行").with_shortcut("Ctrl+G"),
-        MenuItem::action("ed-fold", "折叠/展开").with_shortcut("Alt+F"),
+        MenuItem::action("ed-goto", "跳转到行").with_shortcut_for("goto_line"),
+        MenuItem::action("ed-fold", "折叠/展开").with_shortcut_for("toggle_fold"),
     ]
 }
 

@@ -34,6 +34,12 @@ pub mod context_menu;
 #[path = "menu_bar.rs"]
 pub mod menu_bar;
 
+/// #217：键位表层（默认表 = editor dispatch_key / shell on_key_down
+/// 两处匹配臂的精确镜像；匹配引擎 + settings.json 用户覆盖合并）——
+/// 纯逻辑零 GPUI，菜单标签与键位派发的单一事实源。
+#[path = "keymap.rs"]
+pub mod keymap;
+
 /// 状态栏信息面（git 分支/编码/换行符/选中字数）：纯函数，零 GPUI
 /// 依赖——全部对着字节与目录写断言。
 #[path = "status_info.rs"]

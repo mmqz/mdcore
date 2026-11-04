@@ -44,6 +44,8 @@ use crate::file_tree::FileTree;
 use crate::git_panel::GitPanel;
 use crate::menu_bar;
 use crate::menu_bar_view;
+// #217：键位表（shell 键钩子的单一事实源——默认表 = 原分支精确镜像）。
+use crate::keymap::{self, ShellAction};
 use crate::panels;
 use crate::recent::RecentStore;
 use crate::settings_panel;
@@ -146,7 +148,7 @@ pub struct ShellApp {
     /// 恒 None，零开销）。
     perf_first_frame: Option<Instant>,
     /// F2：Ctrl+K 和弦待续期（None = 无和弦进行中）。
-    chord_until: Option<Instant>,
+    chord: Option<(keymap::KeyQuery, Instant)>,
     /// F4：确认框（脏标签关闭/退出前确认；None = 无进行中）。
     confirm: Option<ConfirmState>,
     /// F4：确认框焦点域（模态开启时接管焦点——编辑器不再收键；
@@ -362,7 +364,7 @@ impl ShellApp {
             git_view: false,
             settings_view: false,
             perf_first_frame: crate::perf::on().then(crate::perf::boot),
-            chord_until: None,
+            chord: None,
             confirm: None,
             confirm_focus,
             root_focus,
@@ -1668,7 +1670,6 @@ impl Render for ShellApp {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let ks = &event.keystroke;
                 let ctrl = ks.modifiers.control || ks.modifiers.platform;
-                let plain_ctrl = ctrl && !ks.modifiers.shift && !ks.modifiers.alt;
                 let key = ks.key.to_lowercase();
 
                 // #209：菜单栏模态拦截（菜单开着时接管导航键——焦点已
@@ -1734,66 +1735,85 @@ impl Render for ShellApp {
                     return;
                 }
 
-                // F2 和弦第一键：Ctrl+K（进入待续期，重复按刷新窗口）。
-                if plain_ctrl && ks.key.eq_ignore_ascii_case("k") {
-                    this.chord_until = Some(Instant::now() + CHORD_WINDOW);
-                    return;
-                }
-                // F2 和弦第二键：窗口期内 Ctrl+O → 工作区（吞掉，不落 F1
-                // 文件打开）；过期/非 O → 和弦作废。
-                let chord_pending = this
-                    .chord_until
-                    .take()
-                    .is_some_and(|until| Instant::now() <= until);
-                if chord_pending && plain_ctrl && ks.key.eq_ignore_ascii_case("o") {
-                    this.prompt_open_workspace(window, cx);
-                    return;
-                }
-                this.chord_until = None;
-
-                // F3：Ctrl+Tab / Ctrl+Shift+Tab 循环切换标签。
-                if ctrl && !ks.modifiers.alt && ks.key == "tab" {
-                    this.cycle_tab(!ks.modifiers.shift, window, cx);
-                    return;
-                }
-                // F3：Ctrl+W 关闭当前标签（F4：脏标签经确认框）。
-                if plain_ctrl && ks.key.eq_ignore_ascii_case("w") {
-                    this.close_active_tab(window, cx);
-                    return;
-                }
-                // F4：Ctrl+Shift+S 另存为（编辑器 s 臂带 !shift 守卫冒泡至此）。
-                if ctrl
-                    && ks.modifiers.shift
-                    && !ks.modifiers.alt
-                    && ks.key.eq_ignore_ascii_case("s")
-                {
-                    this.prompt_save_as(window, cx);
-                    return;
-                }
-                // F6：Ctrl+= / Ctrl++ 放大、Ctrl+- 缩小、Ctrl+0 重置
-                //（shift 兼容——"+" 多为 shift+= 产生）。
-                if ctrl && !ks.modifiers.alt && (ks.key == "=" || ks.key == "+") {
-                    let next = this.font_size + 1.;
-                    this.apply_font_size(px(next), cx);
-                    return;
-                }
-                if ctrl && !ks.modifiers.alt && ks.key == "-" {
-                    let next = this.font_size - 1.;
-                    this.apply_font_size(px(next), cx);
-                    return;
-                }
-                if plain_ctrl && ks.key == "0" {
-                    this.apply_font_size(px(15.), cx);
-                    return;
-                }
-                // F6：Ctrl+T 循环主题（system → light → dark → system）。
-                if plain_ctrl && ks.key.eq_ignore_ascii_case("t") {
-                    this.cycle_theme(cx);
-                    return;
-                }
-                // F1：Ctrl+O 文件打开。
-                if plain_ctrl && ks.key.eq_ignore_ascii_case("o") {
-                    this.prompt_open_file(window, cx);
+                // #217：shell 键位改查 keymap 表（默认表 = 下方原分支的
+                // 精确镜像，行为零变化；用户换绑后跟随）。模态守卫（菜单
+                // /右键菜单/确认框）在表之前——模态语义不入表。
+                let kq = keymap::KeyQuery {
+                    key,
+                    ctrl,
+                    shift: ks.modifiers.shift,
+                    alt: ks.modifiers.alt,
+                };
+                let outcome =
+                    keymap::store().resolve_shell(&kq, this.chord.as_ref(), Instant::now());
+                // 挂起态随本次派发终结（Pending 分支随即重置——原
+                // `chord_until.take()` 语义：过期/续接落空 = 作废不吞键，
+                // 本键照常走单键匹配）。
+                this.chord = None;
+                match outcome {
+                    // F2 和弦第一键：Ctrl+K（进入待续期，重复按刷新窗口）。
+                    keymap::ShellOutcome::Pending => {
+                        this.chord = Some((kq, Instant::now() + CHORD_WINDOW));
+                        return;
+                    }
+                    keymap::ShellOutcome::None => {}
+                    keymap::ShellOutcome::Matched(action) => match action {
+                        // F2 和弦第二键：窗口期内 Ctrl+O → 工作区（吞掉，
+                        // 不落 F1 文件打开）；过期/非 O 由引擎按 deadline
+                        // 归一为单键匹配。
+                        ShellAction::PromptOpenWorkspace => {
+                            this.prompt_open_workspace(window, cx);
+                            return;
+                        }
+                        // F3：Ctrl+Tab 下一标签（原单分支 !shift 参数化拆分）。
+                        ShellAction::NextTab => {
+                            this.cycle_tab(true, window, cx);
+                            return;
+                        }
+                        // F3：Ctrl+Shift+Tab 上一标签。
+                        ShellAction::PrevTab => {
+                            this.cycle_tab(false, window, cx);
+                            return;
+                        }
+                        // F3：Ctrl+W 关闭当前标签（F4：脏标签经确认框）。
+                        ShellAction::CloseTab => {
+                            this.close_active_tab(window, cx);
+                            return;
+                        }
+                        // F4：Ctrl+Shift+S 另存为（编辑器 s 臂带 !shift 守卫
+                        // 冒泡至此）。
+                        ShellAction::PromptSaveAs => {
+                            this.prompt_save_as(window, cx);
+                            return;
+                        }
+                        // F6：Ctrl+= / Ctrl++ 放大（shift 兼容——"+" 多为
+                        // shift+= 产生）。
+                        ShellAction::FontBigger => {
+                            let next = this.font_size + 1.;
+                            this.apply_font_size(px(next), cx);
+                            return;
+                        }
+                        // F6：Ctrl+- 缩小。
+                        ShellAction::FontSmaller => {
+                            let next = this.font_size - 1.;
+                            this.apply_font_size(px(next), cx);
+                            return;
+                        }
+                        // F6：Ctrl+0 重置 15px。
+                        ShellAction::FontReset => {
+                            this.apply_font_size(px(15.), cx);
+                            return;
+                        }
+                        // F6：Ctrl+T 循环主题（system → light → dark → system）。
+                        ShellAction::CycleTheme => {
+                            this.cycle_theme(cx);
+                            return;
+                        }
+                        // F1：Ctrl+O 文件打开。
+                        ShellAction::PromptOpenFile => {
+                            this.prompt_open_file(window, cx);
+                        }
+                    },
                 }
             }))
             .child(title_bar::title_bar(&title, &menus, &self.menu_bar, cx))
