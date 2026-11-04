@@ -38,7 +38,10 @@ fn decodes_transparent_png_seal() {
     // 中心应当不透明（印章笔画）
     let center = alpha[200 * 400 + 200];
     assert!(center > 100, "中心应有印章笔画，实际 alpha={center}");
-    assert!(alpha.contains(&0) && alpha.iter().any(|&a| a > 0), "应同时有透明与不透明像素");
+    assert!(
+        alpha.contains(&0) && alpha.iter().any(|&a| a > 0),
+        "应同时有透明与不透明像素"
+    );
 }
 
 #[test]
@@ -48,7 +51,10 @@ fn jpeg_path_is_recognised_for_embedding() {
     jpeg.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03]);
     jpeg.extend_from_slice(&[0u8; 32]);
     let err = decode_image(&jpeg).unwrap_err();
-    assert!(err.to_string().contains("DCTDecode"), "JPEG 应走嵌入而非解码：{err}");
+    assert!(
+        err.to_string().contains("DCTDecode"),
+        "JPEG 应走嵌入而非解码：{err}"
+    );
 }
 
 // ---------------------------------------------------------------- 盖章
@@ -70,7 +76,10 @@ fn stamps_seal_into_page_content_stream() {
     assert!(text.contains("/SMask"), "半透明 PNG 应带软蒙版");
     assert!(text.contains("Do"), "内容流应有绘制算子");
     // 图要真画进内容流（打印才带），不是注释
-    assert!(text.contains("200 0 0 200 100 100 cm") || text.contains("200 0 0 200 100.0 100.0 cm"), "应出现铺满 rect 的 cm 矩阵");
+    assert!(
+        text.contains("200 0 0 200 100 100 cm") || text.contains("200 0 0 200 100.0 100.0 cm"),
+        "应出现铺满 rect 的 cm 矩阵"
+    );
 }
 
 #[test]
@@ -90,30 +99,54 @@ fn opacity_multiplies_into_alpha() {
 
 #[test]
 fn page_out_of_range_is_typed_error() {
-    let err = stamp_image(base_pdf(), 99, [0.0, 0.0, 10.0, 10.0], &seal_png(), StampOptions::default())
-        .unwrap_err();
+    let err = stamp_image(
+        base_pdf(),
+        99,
+        [0.0, 0.0, 10.0, 10.0],
+        &seal_png(),
+        StampOptions::default(),
+    )
+    .unwrap_err();
     assert!(matches!(err, StampError::BadPage(99)), "{err:?}");
 }
 
 #[test]
 fn zero_area_rect_rejected() {
-    let err = stamp_image(base_pdf(), 0, [10.0, 10.0, 10.0, 50.0], &seal_png(), StampOptions::default())
-        .unwrap_err();
+    let err = stamp_image(
+        base_pdf(),
+        0,
+        [10.0, 10.0, 10.0, 50.0],
+        &seal_png(),
+        StampOptions::default(),
+    )
+    .unwrap_err();
     assert_eq!(err, StampError::BadRect);
 }
 
 #[test]
 fn bad_image_is_typed_error() {
-    let err = stamp_image(base_pdf(), 0, [0.0, 0.0, 10.0, 10.0], b"nope", StampOptions::default())
-        .unwrap_err();
+    let err = stamp_image(
+        base_pdf(),
+        0,
+        [0.0, 0.0, 10.0, 10.0],
+        b"nope",
+        StampOptions::default(),
+    )
+    .unwrap_err();
     assert!(matches!(err, StampError::BadImage(_)), "{err:?}");
 }
 
 #[test]
 fn stamping_preserves_existing_content() {
     let base = base_pdf();
-    let out = stamp_image(base.clone(), 0, [10.0, 10.0, 60.0, 60.0], &seal_png(), StampOptions::default())
-        .unwrap();
+    let out = stamp_image(
+        base.clone(),
+        0,
+        [10.0, 10.0, 60.0, 60.0],
+        &seal_png(),
+        StampOptions::default(),
+    )
+    .unwrap();
     // 原有页面文本仍在（内容流是追加不是替换）
     let base_text = String::from_utf8_lossy(&base).to_string();
     let out_text = String::from_utf8_lossy(&out).to_string();

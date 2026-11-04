@@ -49,8 +49,16 @@ fn read_fixture(name: &str) -> Vec<u8> {
 fn fixtures_are_present_and_non_trivial() {
     let svg = read_fixture("golden.svg");
     let png = read_fixture("golden.png");
-    assert!(svg.len() > 500, "golden.svg 太小，疑似被截断：{}B", svg.len());
-    assert!(png.len() > 1000, "golden.png 太小，疑似被截断：{}B", png.len());
+    assert!(
+        svg.len() > 500,
+        "golden.svg 太小，疑似被截断：{}B",
+        svg.len()
+    );
+    assert!(
+        png.len() > 1000,
+        "golden.png 太小，疑似被截断：{}B",
+        png.len()
+    );
     assert_eq!(
         &png[..8],
         &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],

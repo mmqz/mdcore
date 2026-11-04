@@ -11,8 +11,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use mdc_canvas::render::{
-    CanvasRendering, Color, LineCap, PathCmd, Point, Rect, Shape, ShapeStyle,
-    StrokeDash, StrokeStyle, TextAnchor, TextStyle,
+    CanvasRendering, Color, LineCap, PathCmd, Point, Rect, Shape, ShapeStyle, StrokeDash,
+    StrokeStyle, TextAnchor, TextStyle,
 };
 
 fn stroke(c: Color, w: f64) -> StrokeStyle {

@@ -183,9 +183,7 @@ impl StrokeDash {
 
     fn check(&self) -> Result<(), CanvasError> {
         if self.dash != 0 && self.gap == 0 {
-            return Err(CanvasError::InvalidInput(
-                "虚线模式 gap 不可为 0".into(),
-            ));
+            return Err(CanvasError::InvalidInput("虚线模式 gap 不可为 0".into()));
         }
         Ok(())
     }
@@ -366,9 +364,16 @@ pub enum PathCmd {
     MoveTo(Point),
     LineTo(Point),
     /// 二次贝塞尔。
-    QuadTo { ctrl: Point, to: Point },
+    QuadTo {
+        ctrl: Point,
+        to: Point,
+    },
     /// 三次贝塞尔。
-    CubicTo { c1: Point, c2: Point, to: Point },
+    CubicTo {
+        c1: Point,
+        c2: Point,
+        to: Point,
+    },
     Close,
 }
 
@@ -395,7 +400,13 @@ impl PathCmd {
             PathCmd::MoveTo(p) => format!("M{} {}", num(p.x), num(p.y)),
             PathCmd::LineTo(p) => format!("L{} {}", num(p.x), num(p.y)),
             PathCmd::QuadTo { ctrl, to } => {
-                format!("Q{} {} {} {}", num(ctrl.x), num(ctrl.y), num(to.x), num(to.y))
+                format!(
+                    "Q{} {} {} {}",
+                    num(ctrl.x),
+                    num(ctrl.y),
+                    num(to.x),
+                    num(to.y)
+                )
             }
             PathCmd::CubicTo { c1, c2, to } => format!(
                 "C{} {} {} {} {} {}",
@@ -1783,7 +1794,6 @@ impl RasterRenderer {
     pub fn into_png(self) -> Result<Vec<u8>, CanvasError> {
         encode_png(&self.bmp)
     }
-
 }
 
 /// 采样行循环：对区间 [y0,y1] 覆盖的每个像素行回调，给出采样行 y 与
@@ -1845,7 +1855,11 @@ fn blend_span(buf: &mut Bitmap, y: u32, p0: f64, p1: f64, weight: f64, color: Co
     let eps = 1e-9;
     if (b - a).abs() <= eps {
         // 零宽区间：只按闭区间原点归属一格（避免整段消失）。
-        let xi = if (a - a.floor() - 0.5).abs() <= 0.5 { a.floor() } else { a.ceil() };
+        let xi = if (a - a.floor() - 0.5).abs() <= 0.5 {
+            a.floor()
+        } else {
+            a.ceil()
+        };
         if xi >= 0.0 && xi < w {
             buf.blend_at(xi as u32, y, color, weight);
         }
@@ -1890,49 +1904,54 @@ fn raster_line(buf: &mut Bitmap, a: (f64, f64), b: (f64, f64), hw: f64, color: C
     let dx = bx - ax;
     let dy = by - ay;
     let len2 = dx * dx + dy * dy;
-    sample_rows(buf.height, ay.min(by) - hw, ay.max(by) + hw, |py, sy, weight| {
-        let mut lo = f64::INFINITY;
-        let mut hi = f64::NEG_INFINITY;
-        // 轴向部分：t 轴上距离 <= hw 的区间（半平面判定，不含端帽）。
-        if len2 > 0.0 {
-            let a2 = len2;
-            let b2 = 2.0 * (dx * ax + dy * (ay - sy));
-            let c2 = ax * ax + (ay - sy) * (ay - sy) - hw * hw;
-            let disc = b2 * b2 - 4.0 * a2 * c2;
-            // 判别式恰为 0 = 采样行正好相切胶囊边缘，t0 == t1 退化成一点；
-            // 这时必须整条轴段都算覆盖（否则 0.5px 线整条消失，本站踩过）。
-            if (0.0..1e-12).contains(&disc) {
-                let xa = ax.min(bx);
-                let xb = ax.max(bx);
-                lo = lo.min(xa);
-                hi = hi.max(xb);
-            } else if disc > 0.0 {
-                let sq = disc.sqrt();
-                let t0 = (-b2 - sq) / (2.0 * a2);
-                let t1 = (-b2 + sq) / (2.0 * a2);
-                if t1 > 0.0 && t0 < 1.0 {
-                    // 需要的是该行在原始直线上的 x 范围（不夹到 [0,1]），
-                    // 端帽由下面的圆补——把 t 夹住会让端帽区变成矩形。
-                    let xa = ax + t0 * dx;
-                    let xb = ax + t1 * dx;
-                    lo = lo.min(xa.min(xb));
-                    hi = hi.max(xa.max(xb));
+    sample_rows(
+        buf.height,
+        ay.min(by) - hw,
+        ay.max(by) + hw,
+        |py, sy, weight| {
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
+            // 轴向部分：t 轴上距离 <= hw 的区间（半平面判定，不含端帽）。
+            if len2 > 0.0 {
+                let a2 = len2;
+                let b2 = 2.0 * (dx * ax + dy * (ay - sy));
+                let c2 = ax * ax + (ay - sy) * (ay - sy) - hw * hw;
+                let disc = b2 * b2 - 4.0 * a2 * c2;
+                // 判别式恰为 0 = 采样行正好相切胶囊边缘，t0 == t1 退化成一点；
+                // 这时必须整条轴段都算覆盖（否则 0.5px 线整条消失，本站踩过）。
+                if (0.0..1e-12).contains(&disc) {
+                    let xa = ax.min(bx);
+                    let xb = ax.max(bx);
+                    lo = lo.min(xa);
+                    hi = hi.max(xb);
+                } else if disc > 0.0 {
+                    let sq = disc.sqrt();
+                    let t0 = (-b2 - sq) / (2.0 * a2);
+                    let t1 = (-b2 + sq) / (2.0 * a2);
+                    if t1 > 0.0 && t0 < 1.0 {
+                        // 需要的是该行在原始直线上的 x 范围（不夹到 [0,1]），
+                        // 端帽由下面的圆补——把 t 夹住会让端帽区变成矩形。
+                        let xa = ax + t0 * dx;
+                        let xb = ax + t1 * dx;
+                        lo = lo.min(xa.min(xb));
+                        hi = hi.max(xa.max(xb));
+                    }
                 }
             }
-        }
-        // 端帽（圆；退化零长线段也靠这里出像素）。
-        for (cx, cy) in [(ax, ay), (bx, by)] {
-            let dv = sy - cy;
-            if dv.abs() < hw {
-                let half = (hw * hw - dv * dv).sqrt();
-                lo = lo.min(cx - half);
-                hi = hi.max(cx + half);
+            // 端帽（圆；退化零长线段也靠这里出像素）。
+            for (cx, cy) in [(ax, ay), (bx, by)] {
+                let dv = sy - cy;
+                if dv.abs() < hw {
+                    let half = (hw * hw - dv * dv).sqrt();
+                    lo = lo.min(cx - half);
+                    hi = hi.max(cx + half);
+                }
             }
-        }
-        if hi > lo {
-            blend_span(buf, py, lo, hi, weight, color);
-        }
-    });
+            if hi > lo {
+                blend_span(buf, py, lo, hi, weight, color);
+            }
+        },
+    );
 }
 
 /// 折线描边（首尾相接的线段；closed 时闭合）。
@@ -2001,36 +2020,34 @@ fn raster_ellipse_fill(buf: &mut Bitmap, c: (f64, f64), rx: f64, ry: f64, color:
 }
 
 /// 椭圆描边：环带 [r-hw, r+hw]，用径向距离判定。
-fn raster_ellipse_stroke(
-    buf: &mut Bitmap,
-    c: (f64, f64),
-    rx: f64,
-    ry: f64,
-    hw: f64,
-    color: Color,
-) {
+fn raster_ellipse_stroke(buf: &mut Bitmap, c: (f64, f64), rx: f64, ry: f64, hw: f64, color: Color) {
     if color.a == 0 || rx <= 0.0 || ry <= 0.0 {
         return;
     }
-    sample_rows(buf.height, c.1 - ry - hw, c.1 + ry + hw, |py, sy, weight| {
-        let dy = sy - c.1;
-        // 解 (dx/rx)^2 + (dy/ry)^2 = 1 得到该行的水平半宽
-        let k = 1.0 - (dy / ry) * (dy / ry);
-        if k <= 0.0 {
-            // 上下极点的圆帽
-            let half = hw;
-            blend_span(buf, py, c.0 - half, c.0 + half, weight, color);
-            return;
-        }
-        let outer = (rx + hw) * k.sqrt();
-        let inner = (rx - hw).max(0.0) * k.sqrt();
-        blend_span(buf, py, c.0 - outer, c.0 - inner, weight, color);
-        if inner > 0.0 {
-            blend_span(buf, py, c.0 + inner, c.0 + outer, weight, color);
-        } else {
-            blend_span(buf, py, c.0 - outer, c.0 + outer, weight, color);
-        }
-    });
+    sample_rows(
+        buf.height,
+        c.1 - ry - hw,
+        c.1 + ry + hw,
+        |py, sy, weight| {
+            let dy = sy - c.1;
+            // 解 (dx/rx)^2 + (dy/ry)^2 = 1 得到该行的水平半宽
+            let k = 1.0 - (dy / ry) * (dy / ry);
+            if k <= 0.0 {
+                // 上下极点的圆帽
+                let half = hw;
+                blend_span(buf, py, c.0 - half, c.0 + half, weight, color);
+                return;
+            }
+            let outer = (rx + hw) * k.sqrt();
+            let inner = (rx - hw).max(0.0) * k.sqrt();
+            blend_span(buf, py, c.0 - outer, c.0 - inner, weight, color);
+            if inner > 0.0 {
+                blend_span(buf, py, c.0 + inner, c.0 + outer, weight, color);
+            } else {
+                blend_span(buf, py, c.0 - outer, c.0 + outer, weight, color);
+            }
+        },
+    );
 }
 
 /// 多边形非零环绕填充（多子路径一次扫描）。
@@ -2146,7 +2163,13 @@ impl CanvasRenderer for RasterRenderer {
                     }
                     if let Some(st) = style.stroke {
                         if st.width > 0.0 && st.color.a > 0 {
-                            raster_polyline(&mut self.bmp, &quad, true, st.width * k * 0.5, st.color);
+                            raster_polyline(
+                                &mut self.bmp,
+                                &quad,
+                                true,
+                                st.width * k * 0.5,
+                                st.color,
+                            );
                         }
                     }
                 } else {
@@ -2171,7 +2194,14 @@ impl CanvasRenderer for RasterRenderer {
                 }
                 if let Some(st) = style.stroke {
                     if st.width > 0.0 && st.color.a > 0 {
-                        raster_ellipse_stroke(&mut self.bmp, c, rx, ry, st.width * k * 0.5, st.color);
+                        raster_ellipse_stroke(
+                            &mut self.bmp,
+                            c,
+                            rx,
+                            ry,
+                            st.width * k * 0.5,
+                            st.color,
+                        );
                     }
                 }
             }
@@ -2189,7 +2219,13 @@ impl CanvasRenderer for RasterRenderer {
                     if st.width > 0.0 && st.color.a > 0 {
                         let hw = st.width * k * 0.5;
                         for (i, pts) in polys.iter().enumerate() {
-                            raster_polyline(&mut self.bmp, pts, fp.subpaths[i].closed, hw, st.color);
+                            raster_polyline(
+                                &mut self.bmp,
+                                pts,
+                                fp.subpaths[i].closed,
+                                hw,
+                                st.color,
+                            );
                         }
                     }
                 }
@@ -2409,7 +2445,11 @@ impl Crc32 {
             let mut c = i as u32;
             let mut k = 0;
             while k < 8 {
-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
                 k += 1;
             }
             table[i] = c;
@@ -2462,8 +2502,16 @@ pub fn export_png(canvas: &CanvasRendering, size: (u32, u32)) -> Result<Vec<u8>,
         return Err(CanvasError::InvalidInput("导出像素数超限".into()));
     }
     let view = canvas_bounds_geometry(canvas);
-    let sx = if view.w > 0.0 { size.0 as f64 / view.w } else { 1.0 };
-    let sy = if view.h > 0.0 { size.1 as f64 / view.h } else { 1.0 };
+    let sx = if view.w > 0.0 {
+        size.0 as f64 / view.w
+    } else {
+        1.0
+    };
+    let sy = if view.h > 0.0 {
+        size.1 as f64 / view.h
+    } else {
+        1.0
+    };
     let scale = sx.min(sy);
     let mut r = RasterRenderer::new(size, view, scale, canvas.background);
     for (s, tf) in &canvas.shapes {

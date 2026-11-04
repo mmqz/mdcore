@@ -122,7 +122,11 @@ pub(crate) struct Tlv<'a> {
 impl<'a> Tlv<'a> {
     /// 内容里逐个子 TLV（仅对 constructed 有意义）。
     pub fn children(&self) -> DerIter<'_> {
-        DerIter { data: self.value, pos: 0, base: self.offset + (self.total_len - self.value.len()) }
+        DerIter {
+            data: self.value,
+            pos: 0,
+            base: self.offset + (self.total_len - self.value.len()),
+        }
     }
 }
 
@@ -155,7 +159,10 @@ impl<'a> Iterator for DerIter<'a> {
 
 /// 解析单个 TLV。
 pub(crate) fn parse_tlv(data: &[u8], offset: usize) -> Result<Tlv<'_>, SignatureError> {
-    let bad = |o: usize, r: &str| SignatureError::Der { offset: o, reason: r.to_string() };
+    let bad = |o: usize, r: &str| SignatureError::Der {
+        offset: o,
+        reason: r.to_string(),
+    };
     if data.is_empty() {
         return Err(bad(offset, "数据为空"));
     }
@@ -173,7 +180,10 @@ pub(crate) fn parse_tlv(data: &[u8], offset: usize) -> Result<Tlv<'_>, Signature
     } else {
         let n = (first & 0x7F) as usize;
         if n == 0 {
-            return Err(bad(offset, "不定长编码（BER indeterminate）——CMS 应为 DER 定长"));
+            return Err(bad(
+                offset,
+                "不定长编码（BER indeterminate）——CMS 应为 DER 定长",
+            ));
         }
         if n > 4 {
             return Err(bad(offset, "长度字段超过 4 字节（可疑）"));
@@ -187,11 +197,21 @@ pub(crate) fn parse_tlv(data: &[u8], offset: usize) -> Result<Tlv<'_>, Signature
         }
         (2 + n, v)
     };
-    let end = hdr.checked_add(len).ok_or_else(|| bad(offset, "长度溢出"))?;
+    let end = hdr
+        .checked_add(len)
+        .ok_or_else(|| bad(offset, "长度溢出"))?;
     if end > data.len() {
-        return Err(bad(offset, &format!("内容越界（需要 {len} 字节，实有 {}）", data.len() - hdr)));
+        return Err(bad(
+            offset,
+            &format!("内容越界（需要 {len} 字节，实有 {}）", data.len() - hdr),
+        ));
     }
-    Ok(Tlv { tag, value: &data[hdr..end], offset, total_len: end })
+    Ok(Tlv {
+        tag,
+        value: &data[hdr..end],
+        offset,
+        total_len: end,
+    })
 }
 
 /// DER 通用 tag 常量。
@@ -250,7 +270,11 @@ pub(crate) fn der_string(tag: u8, value: &[u8]) -> Option<String> {
 
 /// INTEGER → 十六进制串（去前导 0）。
 pub(crate) fn integer_hex(value: &[u8]) -> String {
-    let v = value.iter().skip_while(|&&b| b == 0).copied().collect::<Vec<_>>();
+    let v = value
+        .iter()
+        .skip_while(|&&b| b == 0)
+        .copied()
+        .collect::<Vec<_>>();
     if v.is_empty() {
         return "0".to_string();
     }
@@ -442,7 +466,9 @@ pub(crate) fn parse_signed_data(der: &[u8]) -> Result<CmsSummary, SignatureError
     }
     let ct_oid = oid_to_string(ct.value);
     if ct_oid != OID_SIGNED_DATA {
-        return Err(SignatureError::Cms(format!("不是 SignedData（contentType={ct_oid}）")));
+        return Err(SignatureError::Cms(format!(
+            "不是 SignedData（contentType={ct_oid}）"
+        )));
     }
     let content = ci_it
         .next()
@@ -481,7 +507,8 @@ pub(crate) fn parse_signed_data(der: &[u8]) -> Result<CmsSummary, SignatureError
                 // certificates [0] IMPLICIT SET OF Certificate
                 for c in node.children().flatten() {
                     if c.tag == tags::SEQUENCE {
-                        if let Some(ci) = parse_certificate(&der[c.offset..c.offset + c.total_len]) {
+                        if let Some(ci) = parse_certificate(&der[c.offset..c.offset + c.total_len])
+                        {
                             out.certificates.push(ci);
                         }
                     }
@@ -534,7 +561,10 @@ pub(crate) fn parse_signed_data(der: &[u8]) -> Result<CmsSummary, SignatureError
     let sid_serial: Option<String> = match sid {
         Some(sid) if sid.tag == tags::SEQUENCE => {
             let mut it2 = sid.children();
-            let ias = it2.next().and_then(|r| r.ok()).filter(|x| x.tag == tags::SEQUENCE);
+            let ias = it2
+                .next()
+                .and_then(|r| r.ok())
+                .filter(|x| x.tag == tags::SEQUENCE);
             ias.and_then(|ias| {
                 let serial = ias.children().flatten().last();
                 serial
@@ -577,7 +607,11 @@ fn collect_sig_fields(doc: &lopdf::Document) -> Vec<(String, lopdf::Dictionary)>
     let mut seen: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
 
     // 源一：/AcroForm/Fields
-    let root = doc.trailer.get(b"Root").ok().and_then(|o| o.as_reference().ok());
+    let root = doc
+        .trailer
+        .get(b"Root")
+        .ok()
+        .and_then(|o| o.as_reference().ok());
     if let Some(root) = root {
         if let Ok(catalog) = doc.get_dictionary(root) {
             let acro = match catalog.get(b"AcroForm").ok() {
@@ -599,8 +633,12 @@ fn collect_sig_fields(doc: &lopdf::Document) -> Vec<(String, lopdf::Dictionary)>
 
     // 源二：页 /Annots（未登记进 /Fields 的签名控件）
     for (_n, page_id) in doc.get_pages() {
-        let Ok(page) = doc.get_dictionary(page_id) else { continue };
-        let Ok(annots) = page.get(b"Annots").and_then(|o| o.as_array()) else { continue };
+        let Ok(page) = doc.get_dictionary(page_id) else {
+            continue;
+        };
+        let Ok(annots) = page.get(b"Annots").and_then(|o| o.as_array()) else {
+            continue;
+        };
         for a in annots {
             if let Ok(id) = a.as_reference() {
                 if seen.contains(&id) {
@@ -609,8 +647,8 @@ fn collect_sig_fields(doc: &lopdf::Document) -> Vec<(String, lopdf::Dictionary)>
                 if let Ok(w) = doc.get_dictionary(id) {
                     let is_widget = w.get(b"Subtype").ok().and_then(|s| s.as_name().ok())
                         == Some(&b"Widget"[..]);
-                    let is_sig = w.get(b"FT").ok().and_then(|o| o.as_name().ok())
-                        == Some(&b"Sig"[..]);
+                    let is_sig =
+                        w.get(b"FT").ok().and_then(|o| o.as_name().ok()) == Some(&b"Sig"[..]);
                     if is_widget && is_sig {
                         visit_sig_field(doc, id, "", &mut out, &mut seen, 0);
                     }
@@ -633,7 +671,9 @@ fn visit_sig_field(
     if depth > 64 || !seen.insert(id) {
         return;
     }
-    let Ok(d) = doc.get_dictionary(id) else { return };
+    let Ok(d) = doc.get_dictionary(id) else {
+        return;
+    };
     let local = d
         .get(b"T")
         .ok()
@@ -647,7 +687,11 @@ fn visit_sig_field(
     } else {
         format!("{prefix}.{local}")
     };
-    let ft = d.get(b"FT").ok().and_then(|o| o.as_name().ok()).map(|n| n.to_vec());
+    let ft = d
+        .get(b"FT")
+        .ok()
+        .and_then(|o| o.as_name().ok())
+        .map(|n| n.to_vec());
     let kids: Vec<lopdf::ObjectId> = d
         .get(b"Kids")
         .ok()
@@ -669,8 +713,6 @@ fn build_signature_info(
     dict: lopdf::Dictionary,
 ) -> SignatureInfo {
     use lopdf::Object;
-
-
 
     // /V → 签名字典（可能是引用）
     let sig_dict: Option<lopdf::Dictionary> = match dict.get(b"V").ok() {
@@ -749,7 +791,11 @@ fn build_signature_info(
 
 /// 去掉 `/Contents` 十六进制块的尾部填充 0（PDF 用 0 填充保留槽位）。
 pub(crate) fn strip_trailing_zeros(raw: &[u8]) -> Vec<u8> {
-    let end = raw.iter().rposition(|&b| b != 0).map(|p| p + 1).unwrap_or(0);
+    let end = raw
+        .iter()
+        .rposition(|&b| b != 0)
+        .map(|p| p + 1)
+        .unwrap_or(0);
     raw[..end].to_vec()
 }
 
@@ -808,7 +854,12 @@ mod tests {
 
     #[test]
     fn utc_time_decoding() {
-        let t = Tlv { tag: tags::UTC_TIME, value: b"260101120000Z", offset: 0, total_len: 15 };
+        let t = Tlv {
+            tag: tags::UTC_TIME,
+            value: b"260101120000Z",
+            offset: 0,
+            total_len: 15,
+        };
         assert_eq!(der_time(&t), "2026-01-01 12:00:00");
     }
 }

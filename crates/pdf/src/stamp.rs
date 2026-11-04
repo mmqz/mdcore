@@ -113,10 +113,13 @@ fn decode_png(bytes: &[u8]) -> Result<DecodedImage, StampError> {
     let mut idat: Vec<u8> = Vec::new();
 
     while pos + 8 <= bytes.len() {
-        let len = u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let len = u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+            as usize;
         let tag = &bytes[pos + 4..pos + 8];
         let data_start = pos + 8;
-        let data_end = data_start.checked_add(len).ok_or_else(|| bad("chunk 长度溢出"))?;
+        let data_end = data_start
+            .checked_add(len)
+            .ok_or_else(|| bad("chunk 长度溢出"))?;
         if data_end > bytes.len() {
             return Err(bad("chunk 越界（文件截断？）"));
         }
@@ -178,7 +181,11 @@ fn decode_png(bytes: &[u8]) -> Result<DecodedImage, StampError> {
         let ft = raw[y * (stride + 1)];
         let line = &raw[y * (stride + 1) + 1..y * (stride + 1) + 1 + stride];
         let (prev_rows, cur_rows) = out.split_at_mut(y * stride);
-        let prev = if y == 0 { &[][..] } else { &prev_rows[(y - 1) * stride..] };
+        let prev = if y == 0 {
+            &[][..]
+        } else {
+            &prev_rows[(y - 1) * stride..]
+        };
         let cur = &mut cur_rows[..stride];
         cur.copy_from_slice(line);
         unfilter(ft, cur, prev, bpp)?;
@@ -290,12 +297,22 @@ fn unfilter(ft: u8, cur: &mut [u8], prev: &[u8], bpp: usize) -> Result<(), Stamp
             for i in 0..n {
                 let a = if i >= bpp { cur[i - bpp] as i16 } else { 0 };
                 let b = if prev.is_empty() { 0 } else { prev[i] as i16 };
-                let c = if i >= bpp && !prev.is_empty() { prev[i - bpp] as i16 } else { 0 };
+                let c = if i >= bpp && !prev.is_empty() {
+                    prev[i - bpp] as i16
+                } else {
+                    0
+                };
                 let p = a + b - c;
                 let pa = (p - a).abs();
                 let pb = (p - b).abs();
                 let pc = (p - c).abs();
-                let pred = if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c };
+                let pred = if pa <= pb && pa <= pc {
+                    a
+                } else if pb <= pc {
+                    b
+                } else {
+                    c
+                };
                 cur[i] = cur[i].wrapping_add(pred as u8);
             }
         }
@@ -354,7 +371,11 @@ pub(crate) mod flate {
 
     impl<'a> Bits<'a> {
         fn new(data: &'a [u8]) -> Self {
-            Bits { data, pos: 0, bit: 0 }
+            Bits {
+                data,
+                pos: 0,
+                bit: 0,
+            }
         }
         fn get(&mut self, n: u32) -> Result<u32, String> {
             let mut v = 0u32;
@@ -413,7 +434,11 @@ pub(crate) mod flate {
                 let count = self.counts[len] as i32;
                 if code - count < first {
                     let i = (index + (code - first)) as usize;
-                    return self.symbols.get(i).copied().ok_or_else(|| "符号越界".to_string());
+                    return self
+                        .symbols
+                        .get(i)
+                        .copied()
+                        .ok_or_else(|| "符号越界".to_string());
                 }
                 index += count;
                 first = (first + count) << 1;
@@ -503,19 +528,19 @@ pub(crate) mod flate {
     }
 
     const LEN_BASE: [u16; 29] = [
-        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99,
-        115, 131, 163, 195, 227, 258,
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
+        131, 163, 195, 227, 258,
     ];
     const LEN_EXTRA: [u8; 29] = [
         0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
     ];
     const DIST_BASE: [u16; 30] = [
-        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025,
-        1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+        2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
     ];
     const DIST_EXTRA: [u8; 30] = [
-        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12,
-        12, 13, 13,
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
+        13, 13,
     ];
 
     fn inflate_block(
@@ -590,7 +615,11 @@ fn image_xobject(src: &ImageSource, opacity: f32) -> (Stream, Option<Stream>) {
     match src {
         ImageSource::Jpeg(bytes) => {
             let (w, h, comps) = jpeg_dimensions(bytes).unwrap_or((1, 1, 3));
-            let cs = if comps == 1 { "DeviceGray" } else { "DeviceRGB" };
+            let cs = if comps == 1 {
+                "DeviceGray"
+            } else {
+                "DeviceRGB"
+            };
             let mut s = Stream::new(
                 dictionary! {
                     "Type" => "XObject",
@@ -609,7 +638,11 @@ fn image_xobject(src: &ImageSource, opacity: f32) -> (Stream, Option<Stream>) {
             (s, None)
         }
         ImageSource::Raw(img) => {
-            let cs = if img.components == 1 { "DeviceGray" } else { "DeviceRGB" };
+            let cs = if img.components == 1 {
+                "DeviceGray"
+            } else {
+                "DeviceRGB"
+            };
             let mut s = Stream::new(
                 dictionary! {
                     "Type" => "XObject",
@@ -708,9 +741,7 @@ pub fn stamp_image(
 
     let mut doc = Document::load_mem(&pdf).map_err(|e| StampError::Io(format!("装载失败：{e}")))?;
     let pages = doc.get_pages();
-    let page_id = *pages
-        .get(&(page + 1))
-        .ok_or(StampError::BadPage(page))?;
+    let page_id = *pages.get(&(page + 1)).ok_or(StampError::BadPage(page))?;
 
     let src = classify(image)?;
     let (mut xobj, smask) = image_xobject(&src, opts.opacity);
@@ -743,7 +774,8 @@ pub fn stamp_image(
     let content = format!(
         "q\n{} 0 0 {} {} {} cm\n/Im0 Do\nQ\n",
         w, h, rect[0], rect[1]
-    ).into_bytes();
+    )
+    .into_bytes();
     let stream_id = doc.add_object(Stream::new(dictionary! {}, content));
     {
         let page_dict = doc
@@ -780,7 +812,13 @@ mod tests {
     #[test]
     fn rejects_bad_rect_and_opacity() {
         assert_eq!(
-            stamp_image(vec![], 0, [0.0, 0.0, 0.0, 0.0], &[], StampOptions::default()),
+            stamp_image(
+                vec![],
+                0,
+                [0.0, 0.0, 0.0, 0.0],
+                &[],
+                StampOptions::default()
+            ),
             Err(StampError::BadRect)
         );
         let opts = StampOptions { opacity: 1.5 };

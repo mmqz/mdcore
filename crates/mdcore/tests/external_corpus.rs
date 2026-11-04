@@ -209,7 +209,9 @@ fn l1_external_corpus_gate() {
     for mp in [&spec_path, &good_path] {
         // 判据：文件存在 ≠ 内容有效（CI 上可能被 gitignore 成空占位）。
         // 用「≥ 1KB」作为有效语料门槛——spec.txt 实际 ~250KB，good.txt ~120KB。
-        let ok = std::fs::metadata(mp).map(|m| m.len() > 1024).unwrap_or(false);
+        let ok = std::fs::metadata(mp)
+            .map(|m| m.len() > 1024)
+            .unwrap_or(false);
         if !ok {
             eprintln!();
             eprintln!("====================================================================");

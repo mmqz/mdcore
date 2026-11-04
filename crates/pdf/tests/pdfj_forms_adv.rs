@@ -10,9 +10,7 @@
 
 use std::path::PathBuf;
 
-use mdc_pdf::forms::{
-    Alignment, ErrorKind, FieldAppearance, FormError, PdfForm, ValidationResult,
-};
+use mdc_pdf::forms::{Alignment, ErrorKind, FieldAppearance, FormError, PdfForm, ValidationResult};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
@@ -36,7 +34,11 @@ fn required_fields_are_detected_when_empty() {
     let form = PdfForm::read(&advanced()).unwrap();
     // 夹具里 project_name / legal_rep / amount_upper 带 /Ff bit1
     let flags = form.flags("project_name").expect("应有标志位");
-    assert!(flags.is_required(), "project_name 应为必填（Ff={}）", flags.raw());
+    assert!(
+        flags.is_required(),
+        "project_name 应为必填（Ff={}）",
+        flags.raw()
+    );
     assert_eq!(flags.raw(), 2, "必填位 = bit1");
 
     let vr = form.validate();
@@ -46,7 +48,11 @@ fn required_fields_are_detected_when_empty() {
         assert!(names.contains(&want), "应报必填缺失 {want}：{names:?}");
     }
     assert!(vr.errors.iter().all(|e| e.kind == ErrorKind::Required));
-    assert!(vr.to_message().contains("必填项未填写"), "{}", vr.to_message());
+    assert!(
+        vr.to_message().contains("必填项未填写"),
+        "{}",
+        vr.to_message()
+    );
 }
 
 #[test]
@@ -65,7 +71,11 @@ fn readonly_fields_skip_validation() {
     // 只读域不该报「必填未填」——它本就不可填
     let form = PdfForm::read(&advanced()).unwrap();
     for f in form.fields() {
-        if form.flags(f.name()).map(|x| x.is_read_only()).unwrap_or(false) {
+        if form
+            .flags(f.name())
+            .map(|x| x.is_read_only())
+            .unwrap_or(false)
+        {
             assert!(
                 !form.validate().errors.iter().any(|e| e.field == f.name()),
                 "只读域 {} 不应进校验错误",
@@ -102,14 +112,19 @@ fn max_len_counts_cjk_as_two_bytes() {
     form.force_raw_value("legal_rep", "一二三四五六七八九十一二三四五六");
     let vr = form.validate();
     assert!(
-        vr.errors.iter().any(|e| e.field == "legal_rep" && e.kind == ErrorKind::TooLong),
+        vr.errors
+            .iter()
+            .any(|e| e.field == "legal_rep" && e.kind == ErrorKind::TooLong),
         "16 个汉字 = 32 字节，超 30：{vr:?}"
     );
     // 15 个汉字 = 30 字节，正好卡线
     let mut form2 = PdfForm::read(&advanced()).unwrap();
     form2.force_raw_value("legal_rep", "一二三四五六七八九十一二三四五"); // 30 字节
     let vr2 = form2.validate();
-    assert!(!vr2.errors.iter().any(|e| e.field == "legal_rep"), "30 字节应通过：{vr2:?}");
+    assert!(
+        !vr2.errors.iter().any(|e| e.field == "legal_rep"),
+        "30 字节应通过：{vr2:?}"
+    );
 }
 
 // ---------------------------------------------------------------- 任务 1：选项
@@ -119,7 +134,10 @@ fn invalid_choice_is_detected() {
     // 选择域当前值在选项集内 → 无错
     let form = PdfForm::read(&advanced()).unwrap();
     let vr = form.validate();
-    assert!(!vr.errors.iter().any(|e| e.field == "project_type" && e.kind == ErrorKind::InvalidChoice));
+    assert!(!vr
+        .errors
+        .iter()
+        .any(|e| e.field == "project_type" && e.kind == ErrorKind::InvalidChoice));
 }
 
 // ---------------------------------------------------------------- 任务 2：外观
@@ -143,7 +161,10 @@ fn appearance_roundtrip_through_dict() {
     // 写回后 pypdf 应能看到 /DA 与 /Q
     let out = form.save().unwrap();
     let text = String::from_utf8_lossy(&out);
-    assert!(text.contains("/Q 1") || text.contains("/Q 1 "), "应写 /Q 1（居中）");
+    assert!(
+        text.contains("/Q 1") || text.contains("/Q 1 "),
+        "应写 /Q 1（居中）"
+    );
     assert!(text.contains("14"), "应写字号 14");
 }
 
@@ -159,7 +180,10 @@ fn appearance_rejects_non_text_field() {
 #[test]
 fn appearance_rejects_bad_font_size() {
     let mut form = PdfForm::read(&advanced()).unwrap();
-    let app = FieldAppearance { font_size: 0.0, ..Default::default() };
+    let app = FieldAppearance {
+        font_size: 0.0,
+        ..Default::default()
+    };
     let err = form.set_appearance("project_name", app).unwrap_err();
     assert!(matches!(err, FormError::InvalidValue { .. }), "{err:?}");
 }
@@ -196,7 +220,8 @@ fn appearance_cjk_path_still_builds_cid_ap() {
     let mut form = PdfForm::read(&advanced()).unwrap();
     form.set_font(&test_font());
     form.set_field("project_name", "中标").unwrap();
-    form.set_appearance("project_name", FieldAppearance::default()).unwrap();
+    form.set_appearance("project_name", FieldAppearance::default())
+        .unwrap();
     let out = form.save().unwrap();
     let text = String::from_utf8_lossy(&out);
     assert!(text.contains("/AP"), "中文域也应生成外观流");
@@ -211,7 +236,11 @@ fn cross_page_field_is_merged_into_one() {
     let names: Vec<String> = form.fields().iter().map(|f| f.name().to_string()).collect();
     let count = names.iter().filter(|n| *n == "bidder_name").count();
     assert_eq!(count, 1, "跨页同名域应合并为 1 个：{names:?}");
-    assert_eq!(form.len(), 7, "两页共 7 个唯一域（原 8 个 Widget）：{names:?}");
+    assert_eq!(
+        form.len(),
+        7,
+        "两页共 7 个唯一域（原 8 个 Widget）：{names:?}"
+    );
 }
 
 #[test]

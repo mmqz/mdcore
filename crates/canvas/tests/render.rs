@@ -4,9 +4,7 @@
 //! 「跑通就算过」。像素级断言的容差写在每条断言的注释里。
 
 use mdc_canvas::render::*;
-use mdc_canvas::{
-    Actor, CanvasCommand, CanvasObject, CanvasSession, ObjectKind, SessionOptions,
-};
+use mdc_canvas::{Actor, CanvasCommand, CanvasObject, CanvasSession, ObjectKind, SessionOptions};
 use std::collections::BTreeMap;
 
 // ── 辅助 ───────────────────────────────────────────────────────
@@ -140,10 +138,7 @@ fn thick_stroke_is_fully_opaque_mid_edge() {
     // 4px 描边：边中部必须是纯黑满覆盖（抗锯齿只该出现在两侧）。
     let b = raster_one(Shape::Rect {
         rect: Rect::new(0.0, 0.0, 20.0, 12.0),
-        style: ShapeStyle::both(
-            Color::WHITE,
-            StrokeStyle::new(Color::BLACK, 4.0),
-        ),
+        style: ShapeStyle::both(Color::WHITE, StrokeStyle::new(Color::BLACK, 4.0)),
     });
     let mid = b.get(10, 2);
     assert!(lum(mid) < 30.0, "4px 描边中部应近乎纯黑，实际 {mid:?}");
@@ -240,7 +235,10 @@ fn scale_multiplies_size_about_center() {
     // 支点 = 包围盒中心 → 中心不动。
     let c0 = b0.center();
     let c2 = b2.center();
-    assert!((c2.x - c0.x).abs() < 1e-9 && (c2.y - c0.y).abs() < 1e-9, "绕中心缩放，中心不动");
+    assert!(
+        (c2.x - c0.x).abs() < 1e-9 && (c2.y - c0.y).abs() < 1e-9,
+        "绕中心缩放，中心不动"
+    );
 }
 
 #[test]
@@ -270,7 +268,10 @@ fn rotate_is_clockwise_in_screen_coords() {
     let m = Transform::rotate(std::f64::consts::FRAC_PI_2).with_origin(Point::new(0.0, 0.0));
     let a = m.to_affine(Point::new(0.0, 0.0));
     let p = a.apply(Point::new(10.0, 0.0));
-    assert!((p.x).abs() < 1e-9 && (p.y - 10.0).abs() < 1e-9, "顺时针为正，实际 {p:?}");
+    assert!(
+        (p.x).abs() < 1e-9 && (p.y - 10.0).abs() < 1e-9,
+        "顺时针为正，实际 {p:?}"
+    );
 }
 
 // ── SVG 导出 ───────────────────────────────────────────────────
@@ -342,7 +343,10 @@ fn svg_transform_folds_into_geometry() {
     );
     let svg = export_svg(&c);
     assert!(svg.contains("x=\"50\""), "平移必须体现在输出几何上：{svg}");
-    assert!(!svg.contains("<g transform"), "走几何折入，不输出 <g transform>");
+    assert!(
+        !svg.contains("<g transform"),
+        "走几何折入，不输出 <g transform>"
+    );
 }
 
 #[test]
@@ -362,10 +366,18 @@ fn png_has_valid_signature_and_chunks() {
         style: ShapeStyle::fill(Color::BLACK),
     });
     let png = export_png(&c, (16, 16)).unwrap();
-    assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a], "PNG 签名");
+    assert_eq!(
+        &png[..8],
+        &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+        "PNG 签名"
+    );
     assert_eq!(&png[12..16], b"IHDR", "第一个 chunk 必须是 IHDR");
     assert!(png.windows(4).any(|w| w == b"IDAT"), "必须有 IDAT");
-    assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND", "必须以 IEND 收尾");
+    assert_eq!(
+        &png[png.len() - 8..png.len() - 4],
+        b"IEND",
+        "必须以 IEND 收尾"
+    );
 }
 
 #[test]
