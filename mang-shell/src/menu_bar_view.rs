@@ -130,14 +130,15 @@ pub fn menu_bar_overlay(
     let items = &menu.entries;
     let (w, h) = context_menu::menu_size(&to_context_items(items));
     let anchor = context_menu::Point::new(state.anchor_x, f32::from(TITLE_BAR_HEIGHT));
-    let rect = context_menu::place_menu(anchor, (w, h), screen);
+    let pos = context_menu::place_menu(anchor, (w, h), screen);
+    let menu_rect = context_menu::Rect::new(pos.x, pos.y, w, h);
 
     let mut list = div()
         .id(SharedString::from(format!("menu-drop-{}", menu.id)))
         .absolute()
-        .left(px(rect.x))
-        .top(px(rect.y))
-        .w(px(rect.w))
+        .left(px(pos.x))
+        .top(px(pos.y))
+        .w(px(w))
         .rounded_md()
         .border_1()
         .border_color(colors.border)
@@ -185,12 +186,12 @@ pub fn menu_bar_overlay(
                     // 父行在菜单内的偏移（含上内边距——见 menu_bar::row_y_offset）。
                     let (sw, sh) = context_menu::menu_size(&to_context_items(sub_items));
                     let row_y = row_y_offset(items, idx);
-                    let pos = context_menu::place_submenu(rect, row_y, (sw, sh), screen);
+                    let sub_pos = context_menu::place_submenu(menu_rect, row_y, (sw, sh), screen);
                     let mut sub = div()
                         .id(SharedString::from(format!("menu-sub-{}-{idx}", menu.id)))
                         .absolute()
-                        .left(px(pos.x))
-                        .top(px(pos.y))
+                        .left(px(sub_pos.x))
+                        .top(px(sub_pos.y))
                         .w(px(sw))
                         .rounded_md()
                         .border_1()
