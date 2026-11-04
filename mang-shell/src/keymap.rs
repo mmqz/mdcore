@@ -500,6 +500,59 @@ impl EditorAction {
             EditorAction::Pass => "editor_pass",
         }
     }
+
+    /// 只读模式下的动作安全性（动作级兜底——#218 review 修复）。
+    ///
+    /// 物理键级守卫（editor/mod.rs 的 `docx_doc::readonly_allows`）只认
+    /// **按键**不认动作：用户把放行键（如 ctrl+c）换绑到破坏性动作
+    /// （如 delete）后，物理守卫照常放行、动作照样执行。本函数在动作
+    /// 执行层兜底：接线层对 `Matched(action)` 且 `read_only` 且
+    /// `!readonly_safe()` 整体拒绝（双层防御第二层）。
+    ///
+    /// 口径镜像 `docx_doc::readonly_allows`（docx_doc.rs:1101）的白名单
+    /// 语义——浏览类放行、变更类拒绝；折键/替换/加光标等的默认键
+    /// （ctrl+shift+[、ctrl+h、ctrl+d）本就未过该白名单，保守封堵与
+    /// 现状一致。默认表不变量（凡 canonical 键过白名单者动作必 safe）
+    /// 由单测 `default_table_readonly_guard_invariant` 钉定——默认行为
+    /// 零变化。
+    pub fn readonly_safe(&self) -> bool {
+        match self {
+            // 浏览类：面板/跳行/移动/home/end/翻页/清选区/全选/复制/
+            // 查找（readonly_allows 对 left..escape 恒放行、a/c/f 仅
+            // ctrl 放行的动作面对应物；Pass 空臂无行为）。
+            EditorAction::PaletteToggle
+            | EditorAction::GotoOpen
+            | EditorAction::MoveKey(_)
+            | EditorAction::HomeKey
+            | EditorAction::EndKey
+            | EditorAction::PageUpKey
+            | EditorAction::PageDownKey
+            | EditorAction::EscapeClearSelection
+            | EditorAction::SelectAll
+            | EditorAction::Copy
+            | EditorAction::OpenFind
+            | EditorAction::Pass => true,
+            // 变更类：输入/删除/缩进/剪贴板写/撤销重做/加光标/折叠
+            // （折叠改持久化状态）/替换/保存——只读态一律拒绝。
+            EditorAction::Newline
+            | EditorAction::Backspace
+            | EditorAction::DeleteForward
+            | EditorAction::Indent
+            | EditorAction::Cut
+            | EditorAction::Paste
+            | EditorAction::Redo
+            | EditorAction::Undo
+            | EditorAction::RedoY
+            | EditorAction::AddNextWordMatch
+            | EditorAction::Save
+            | EditorAction::OpenReplace
+            | EditorAction::ToggleFold
+            | EditorAction::FoldCurrent
+            | EditorAction::UnfoldCurrent
+            | EditorAction::FoldAll
+            | EditorAction::UnfoldAll => false,
+        }
+    }
 }
 
 impl ShellAction {
@@ -2260,6 +2313,156 @@ mod tests {
             "合法覆盖后不应有歧义：{:?}",
             store.check_conflicts()
         );
+    }
+
+    // ─── 只读门禁（动作级兜底——#218 review 修复） ─────────────────
+
+    /// readonly_allows 镜像夹具（**镜像自 docx_doc.rs:1101，两处需同步
+    /// 改**——keymap 层纯 std 红线不依赖 docx_doc，单测用誊抄副本对拍；
+    /// docx_doc 侧有同名单测钉定其自身）。
+    fn readonly_allows_mirror(key: &str, ctrl: bool) -> bool {
+        match key {
+            "left" | "right" | "up" | "down" | "home" | "end" | "pageup" | "pagedown"
+            | "escape" => true,
+            "a" | "c" | "f" | "tab" | "=" | "+" | "-" | "0" | "t" | "g" => ctrl,
+            _ => false,
+        }
+    }
+
+    /// 分类表逐变体钉定（29 变体全覆盖——接线层兜底的判定面）。
+    #[test]
+    fn readonly_safe_classification_pinned() {
+        let safe: Vec<EditorAction> = vec![
+            EditorAction::PaletteToggle,
+            EditorAction::GotoOpen,
+            EditorAction::MoveKey(MoveDir::Left),
+            EditorAction::MoveKey(MoveDir::Right),
+            EditorAction::MoveKey(MoveDir::Up),
+            EditorAction::MoveKey(MoveDir::Down),
+            EditorAction::HomeKey,
+            EditorAction::EndKey,
+            EditorAction::PageUpKey,
+            EditorAction::PageDownKey,
+            EditorAction::EscapeClearSelection,
+            EditorAction::SelectAll,
+            EditorAction::Copy,
+            EditorAction::OpenFind,
+            EditorAction::Pass,
+        ];
+        let unsafe_: Vec<EditorAction> = vec![
+            EditorAction::Newline,
+            EditorAction::Backspace,
+            EditorAction::DeleteForward,
+            EditorAction::Indent,
+            EditorAction::Cut,
+            EditorAction::Paste,
+            EditorAction::Redo,
+            EditorAction::Undo,
+            EditorAction::RedoY,
+            EditorAction::AddNextWordMatch,
+            EditorAction::Save,
+            EditorAction::OpenReplace,
+            EditorAction::ToggleFold,
+            EditorAction::FoldCurrent,
+            EditorAction::UnfoldCurrent,
+            EditorAction::FoldAll,
+            EditorAction::UnfoldAll,
+        ];
+        for a in &safe {
+            assert!(a.readonly_safe(), "{a:?} 应为只读安全（浏览类）");
+        }
+        for a in &unsafe_ {
+            assert!(!a.readonly_safe(), "{a:?} 应为只读不安全（变更类）");
+        }
+        // 全集对账：EDITOR_ACTION_IDS 29 变体恰好二分（新增变体漏分类
+        // 即在此爆——分类表不得有漏网）。
+        assert_eq!(
+            safe.len() + unsafe_.len(),
+            EDITOR_ACTION_IDS.len(),
+            "分类表必须覆盖全部变体"
+        );
+        for a in EDITOR_ACTION_IDS {
+            let classified = safe.contains(a) || unsafe_.contains(a);
+            assert!(classified, "{}（{:?}）未入分类表", a.id(), a);
+        }
+    }
+
+    /// 默认表不变量：凡 canonical 键能过只读物理守卫（readonly_allows
+    /// 白名单）的条目，其动作必须 readonly_safe——证明动作级兜底对
+    /// **默认表**零行为变化（两层守卫在默认键位上从不冲突：物理守卫
+    /// 放行的键解析出的动作，兜底层必然放行）。
+    #[test]
+    fn default_table_readonly_guard_invariant() {
+        let store = KeymapStore::default_tables();
+        for (entries, _) in store.domains() {
+            for e in entries {
+                let Action::Editor(a) = e.action else {
+                    continue; // shell 域动作不经编辑器只读门禁
+                };
+                let canon = canonical_queries(&e.binding);
+                let passes = match canon.as_slice() {
+                    // 单键：物理守卫放行该键 → 动作必须 safe。
+                    [c1] => readonly_allows_mirror(&c1.key, c1.ctrl),
+                    // chord：首键过守卫（挂起）且尾键过守卫（续接执行）
+                    // → 动作必须 safe（默认表首键 ctrl+k 不过白名单，
+                    // 恒 false——断言对默认表恒空转，用户换绑后生效）。
+                    [c1, c2] => {
+                        readonly_allows_mirror(&c1.key, c1.ctrl)
+                            && readonly_allows_mirror(&c2.key, c2.ctrl)
+                    }
+                    _ => false,
+                };
+                if passes {
+                    assert!(
+                        a.readonly_safe(),
+                        "默认条目 \"{}\" → {} 过物理守卫但动作非只读安全（默认行为漂移）",
+                        label_binding(&e.binding),
+                        a.id()
+                    );
+                }
+            }
+        }
+    }
+
+    /// 绕道回归：ctrl+c（物理守卫放行键）换绑 delete 后——物理守卫仍
+    /// 放行（白名单镜像对拍），但解析出 DeleteForward 非只读安全 →
+    /// 接线层兜底条件成立（read_only && !readonly_safe → 拒绝）；
+    /// 安全动作（copy）换绑不受影响。
+    #[test]
+    fn readonly_bypass_blocked_at_action_level() {
+        // 物理守卫对 ctrl+c 放行（绕道前提——镜像夹具对拍）。
+        assert!(readonly_allows_mirror("c", true));
+        assert!(!readonly_allows_mirror("c", false));
+        let mut store = KeymapStore::default_tables();
+        let warnings = store.apply_user(&[UserOverride::Bind {
+            bind: "ctrl+c".into(),
+            action: "delete".into(),
+        }]);
+        assert!(warnings.is_empty(), "无冲突换绑不应警告：{warnings:?}");
+        // 换绑生效：ctrl+c 解析出 DeleteForward（物理守卫放行该键）……
+        assert_eq!(
+            store.resolve_editor_main(&q("c", true, false, false), None),
+            EditorOutcome::Matched(EditorAction::DeleteForward)
+        );
+        // ……且 DeleteForward 非只读安全 → 新接线层必拒（兜底条件成立）。
+        assert!(!EditorAction::DeleteForward.readonly_safe());
+        // 其余默认放行键不受换绑影响（select_all 完好）。
+        assert_eq!(
+            store.resolve_editor_main(&q("a", true, false, false), None),
+            EditorOutcome::Matched(EditorAction::SelectAll)
+        );
+        // 安全动作换绑不受影响：ctrl+alt+c → copy 照常解析且安全。
+        let mut store2 = KeymapStore::default_tables();
+        let warnings = store2.apply_user(&[UserOverride::Bind {
+            bind: "ctrl+alt+c".into(),
+            action: "copy".into(),
+        }]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            store2.resolve_editor_main(&q("c", true, false, true), None),
+            EditorOutcome::Matched(EditorAction::Copy)
+        );
+        assert!(EditorAction::Copy.readonly_safe());
     }
 
     // ─── 全局装配 ───────────────────────────────────────────────────

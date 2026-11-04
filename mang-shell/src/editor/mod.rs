@@ -2347,6 +2347,20 @@ impl Editor {
         // 挂起态随本次派发终结（Pending 分支随即重置快照——原「前缀
         // 取消并照常下沉」由引擎续接落空后的单键匹配承担）。
         self.chord_pending = None;
+        // #218：动作级只读兜底（双层防御第二层，Matched 统一经此门——
+        // 含 chord 续接解析结果）。上方物理键级守卫只认按键不认动作：
+        // 用户把放行键（如 ctrl+c）换绑到破坏性动作（如 delete）后
+        // 物理守卫放行、动作照样执行；此处按动作分类兜底
+        // （readonly_safe 口径镜像 readonly_allows：浏览类放行/变更类
+        // 拒绝），拒绝路径与物理守卫逐字同款。
+        if let keymap::EditorOutcome::Matched(action) = &outcome
+            && self.read_only
+            && !action.readonly_safe()
+        {
+            *perf_rejected = true; // #164：拒绝路径独立证据行（key-rejected）
+            cx.notify();
+            return;
+        }
         match outcome {
             // Ctrl+K 是**前缀键**（VS Code 的 Ctrl+K Ctrl+X 系列）。按下时
             // 只挂起、不消费内容；下一个键按挂起分流（表内 chord 续接）。
