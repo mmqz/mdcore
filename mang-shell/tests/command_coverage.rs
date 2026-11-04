@@ -287,7 +287,7 @@ fn key_sequence(display: &str) -> Vec<(String, bool, bool, bool)> {
     let mut out = Vec::new();
     for chord in display.split(' ') {
         let mods: Vec<&str> = chord.split('+').collect();
-        let main = *mods.last().unwrap_or("");
+        let main = mods.last().copied().unwrap_or("");
         let ctrl = mods.iter().any(|m| m.eq_ignore_ascii_case("ctrl"));
         let shift = mods.iter().any(|m| m.eq_ignore_ascii_case("shift"));
         let alt = mods.iter().any(|m| m.eq_ignore_ascii_case("alt"));
