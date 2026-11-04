@@ -216,6 +216,15 @@ const WIRED_MODULES: &[(&str, &str, &[&str])] = &[
     ("status_bar.rs（状态栏壳）", "shell.rs", &["status_bar::"]),
     // 标题栏：窗口控制钮 + 拖拽区。
     ("title_bar.rs（标题栏）", "shell.rs", &["title_bar::"]),
+    // #209：顶部菜单栏——模型（纯数据 + 键盘导航状态机）与渲染两层，
+    // 均由 shell 挂载消费（标题行经 title_bar 转发、浮层在渲染链尾；
+    // 模型同时经 lib 树供单测）。
+    ("menu_bar.rs（菜单栏模型）", "shell.rs", &["menu_bar::"]),
+    (
+        "menu_bar_view.rs（菜单栏渲染）",
+        "shell.rs",
+        &["menu_bar_view::"],
+    ),
     // 左右面板壳：left_panel/right_panel 挂载（git 视图路由是 A-3 待接线项，
     // 见 `git_panel_is_mounted_in_left_panel`）。
     (

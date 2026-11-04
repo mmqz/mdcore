@@ -27,6 +27,13 @@ pub mod settings;
 #[path = "context_menu.rs"]
 pub mod context_menu;
 
+/// #209：顶部菜单栏模型层（菜单结构/Cmd 映射/键盘导航状态机/下拉几何
+/// 估算）——纯数据零 GPUI 依赖，与 context_menu 同分层进 lib 树（渲染层
+/// menu_bar_view.rs 是 bin 专属）。菜单项只映射既有动作（Cmd 枚举 /
+/// Editor 菜单方法 / ShellApp 既有方法），无既有命令的项置灰不绑动作。
+#[path = "menu_bar.rs"]
+pub mod menu_bar;
+
 /// 状态栏信息面（git 分支/编码/换行符/选中字数）：纯函数，零 GPUI
 /// 依赖——全部对着字节与目录写断言。
 #[path = "status_info.rs"]
