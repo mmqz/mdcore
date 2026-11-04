@@ -142,7 +142,8 @@ pub fn load_keymap_overrides() -> Vec<crate::keymap::UserOverride> {
     let Some(dir) = config_dir() else {
         return Vec::new();
     };
-    let Some(entries) = load_from(&dir).get("keymap").and_then(|v| v.as_array()) else {
+    let value = load_from(&dir);
+    let Some(entries) = value.get("keymap").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
     let mut out = Vec::new();
