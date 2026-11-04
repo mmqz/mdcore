@@ -990,13 +990,17 @@ impl KeymapStore {
     /// - **同域冲突检测（canonical 赢家）**：用户键串的 canonical
     ///   按键（写出的修饰=按下、未写=未按下）在**换绑后的表**里必须
     ///   触发本动作——否则该键被更精确/更早的既有条目抢走，拒绝
-    ///   （动作保持既有绑定）；更精确的新条目（如 `alt+left` 叠在
+    ///   （动作保持既有绑定；抢走者可以是 chord 首键——单键 bind
+    ///   被更高精确度的 chord 前缀抢赢时该键恒 Pending，新绑定永不
+    ///   触发，同样拒绝，#218）；更精确的新条目（如 `alt+left` 叠在
     ///   方向键家族的 Any 条目上）能赢下 canonical → 允许并存；
     /// - **跨域检测（结构相交）**：与另一域（非 `Pass`）存在相交按键
     ///   组合即拒绝——编辑器不拦冒泡，同键两域会叠加执行（保守面：
     ///   只要有一种按键组合双触发就拒绝）；`Pass` 条目无行为，豁免；
     /// - **`unbind`**：移除该键串 canonical 按键**实际触发**的绑定
-    ///   （全域四表各至多一条赢家；chord 需写全两键）；无命中给警告；
+    ///   （全域四表各至多一条赢家，赢家规则 = dispatch 同款取舍
+    ///   ——单键按精确度/表序、chord 按尾键精确度/表序，见
+    ///   [`Self::remove_triggered`]；chord 需写全两键）；无命中给警告；
     /// - 解析失败（键串/动作名）、结构错误：**单条拒绝** + 可读警告，
     ///   其余条目照常生效（一条坏配置不废掉全部自定义——与 settings
     ///   容错文化一致：记忆是增强不是依赖）。
@@ -1142,7 +1146,20 @@ impl KeymapStore {
                     break; // 单键本动作命中——后续点被遮蔽无妨
                 }
                 Binding::Chord(..) => {
-                    let Some(cont) = best_continuation(list, &canon[0], &canon[1]) else {
+                    // 用户绑定单键而该键赢家是 chord 首键：dispatch 产生
+                    // Pending（chord 首键精确度/表序胜出），新单键绑定永不
+                    // 触发——按 canonical 赢家策略拒绝（原实现直接取
+                    // canon[1]，单键绑定无第二键会越界 panic——#218
+                    // review 附加审查发现）。
+                    let Some(second) = canon.get(1) else {
+                        warnings.push(format!(
+                            "bind \"{bind}\" → {action_id}：与既有绑定 \"{}\" → {} 冲突（该键当前触发它；如需覆盖请先 unbind），已拒绝",
+                            label_binding(&w.binding),
+                            w.action.id()
+                        ));
+                        return;
+                    };
+                    let Some(cont) = best_continuation(list, &canon[0], second) else {
                         continue;
                     };
                     if cont.action != action {
@@ -1194,8 +1211,20 @@ impl KeymapStore {
     }
 
     /// 解绑落地：移除该键串 canonical 按键**实际触发**的绑定（每表
-    /// 至多一条赢家——头/尾精确度优先、同度表序先者；全域四表都查
-    /// ——「这个键不再触发任何东西」的可预期语义）。返回是否有移除。
+    /// 至多一条赢家；全域四表都查——「这个键不再触发任何东西」的可
+    /// 预期语义）。返回是否有移除。
+    ///
+    /// 赢家规则**精确镜像 dispatch 两段式**（#218 review 修复——原
+    /// `(首键, 尾键)` 字典序会移错绑定）：
+    /// - 单键解绑：候选 = canonical 键匹配的 Single 条目，赢家 = 精确度
+    ///   最大、同度表序先者（= dispatch 单键选择 [`best_single`] 的
+    ///   取舍；chord 首键在 dispatch 产生 Pending 而非触发，不入候选
+    ///   ——移除 chord 需写全两键）；
+    /// - chord 解绑：候选 = 首键匹配 canonical 首键**且**尾键匹配
+    ///   canonical 尾键的 chord 条目，赢家 = **尾键**精确度最大、同度
+    ///   表序先者（= dispatch 续接选择 [`best_continuation`] 的取舍
+    ///   ——首键已发生，分流只看尾键；与 `spec > best_spec` 严格比较
+    ///   保持一致语义）。
     fn remove_triggered(&mut self, binding: &Binding) -> bool {
         let canon = canonical_queries(binding);
         let mut removed = false;
@@ -1205,28 +1234,20 @@ impl KeymapStore {
             &mut self.editor_main,
             &mut self.shell,
         ] {
-            let mut winner: Option<usize> = None;
-            for (i, e) in list.iter().enumerate() {
-                let fires = match (&e.binding, canon.as_slice()) {
-                    (Binding::Single(p), [c1]) => p.matches(c1),
-                    (Binding::Chord(p1, p2), [c1, c2]) => p1.matches(c1) && p2.matches(c2),
-                    _ => false,
-                };
-                if !fires {
-                    continue;
+            let winner: Option<usize> = match binding {
+                Binding::Single(_) => {
+                    let [c1] = canon.as_slice() else {
+                        unreachable!("单键绑定的 canonical 恰一键")
+                    };
+                    single_unbind_winner(list, c1)
                 }
-                let better = match winner {
-                    None => true,
-                    Some(w) => {
-                        let (hw, tw) = head_tail_spec(&list[w].binding);
-                        let (h, t) = head_tail_spec(&e.binding);
-                        (h, t) > (hw, tw)
-                    }
-                };
-                if better {
-                    winner = Some(i);
+                Binding::Chord(..) => {
+                    let [c1, c2] = canon.as_slice() else {
+                        unreachable!("chord 绑定的 canonical 恰两键")
+                    };
+                    chord_unbind_winner(list, c1, c2)
                 }
-            }
+            };
             if let Some(i) = winner {
                 list.remove(i);
                 removed = true;
@@ -1374,13 +1395,56 @@ fn best_continuation<'a>(
     best.map(|(_, e)| e)
 }
 
-/// 绑定的（首键精确度， 尾键精确度）——Single 尾键为 0（解绑赢家
-/// 取舍的比较面：头优先、尾次之、同度表序先者）。
-fn head_tail_spec(b: &Binding) -> (usize, usize) {
-    match b {
-        Binding::Single(p) => (p.specificity(), 0),
-        Binding::Chord(p1, p2) => (p1.specificity(), p2.specificity()),
+/// 单键解绑赢家：候选 = canonical 键匹配的 Single 条目，赢家 = 精确度
+/// 最大、同度表序先者（比较语义与 [`best_single`] 一致——`spec >
+/// best_spec` 严格大于，迭代序即表序）。返回赢家下标。
+fn single_unbind_winner(entries: &[Entry], q: &KeyQuery) -> Option<usize> {
+    let mut best: Option<(usize, usize)> = None;
+    for (i, e) in entries.iter().enumerate() {
+        let Binding::Single(p) = &e.binding else {
+            continue;
+        };
+        if !p.matches(q) {
+            continue;
+        }
+        let spec = p.specificity();
+        let better = match best {
+            None => true,
+            Some((best_spec, _)) => spec > best_spec,
+        };
+        if better {
+            best = Some((spec, i));
+        }
     }
+    best.map(|(_, i)| i)
+}
+
+/// chord 解绑赢家：候选 = 首键匹配 `c1` 且尾键匹配 `c2` 的 chord
+/// 条目，赢家 = **尾键**精确度最大、同度表序先者（比较语义与
+/// [`best_continuation`] 一致——首键已发生，分流只看尾键；#218
+/// review：原 `(首键, 尾键)` 字典序会解绑 dispatch 不会触发的那条，
+/// 如表同时有 `ctrl+shift+k x` 与 `ctrl+k ctrl+x` 时，序列
+/// （ctrl+shift+k, ctrl+x）dispatch 触发后者（尾 spec 1>0），字典序
+/// 却按头优先移除前者）。返回赢家下标。
+fn chord_unbind_winner(entries: &[Entry], c1: &KeyQuery, c2: &KeyQuery) -> Option<usize> {
+    let mut best: Option<(usize, usize)> = None;
+    for (i, e) in entries.iter().enumerate() {
+        let Binding::Chord(p1, p2) = &e.binding else {
+            continue;
+        };
+        if !(p1.matches(c1) && p2.matches(c2)) {
+            continue;
+        }
+        let spec = p2.specificity();
+        let better = match best {
+            None => true,
+            Some((best_spec, _)) => spec > best_spec,
+        };
+        if better {
+            best = Some((spec, i));
+        }
+    }
+    best.map(|(_, i)| i)
 }
 
 /// 绑定的 canonical 按键序列（写出修饰=按下、未写=未按下——用户
@@ -2263,6 +2327,142 @@ mod tests {
             bind: "ctrl+f9".into(),
         }]);
         assert_eq!(warnings.len(), 1);
+    }
+
+    /// chord 解绑赢家镜像 dispatch（#218 review 原例）：表同时有
+    /// `ctrl+shift+k x` 与 `ctrl+k ctrl+x` 时，序列（ctrl+shift+k,
+    /// ctrl+x）dispatch 触发**后者**（续接尾键精确度 1>0）——
+    /// unbind "ctrl+shift+k ctrl+x" 必须恰移除后者（原 `(首键, 尾键)`
+    /// 字典序按头优先移除了前者——dispatch 不会触发的那条），另一条
+    /// 完好。
+    #[test]
+    fn unbind_chord_winner_mirrors_dispatch() {
+        let mut store = KeymapStore::default_tables();
+        let warnings = store.apply_user(&[
+            UserOverride::Bind {
+                bind: "ctrl+shift+k x".into(),
+                action: "open_replace".into(),
+            },
+            UserOverride::Bind {
+                bind: "ctrl+k ctrl+x".into(),
+                action: "open_find".into(),
+            },
+        ]);
+        assert!(warnings.is_empty(), "两条 chord 换绑均应放行：{warnings:?}");
+        // dispatch 前提对拍：序列（ctrl+shift+k, ctrl+x）触发 open_find
+        // 的 chord（首键竞争 ctrl+shift+k 头 spec 2 胜出挂起；续接
+        // ctrl+x 尾 spec 1 > open_replace 裸 x 尾 spec 0）。
+        let first = q("k", true, true, false);
+        assert_eq!(
+            store.resolve_editor_main(&first, None),
+            EditorOutcome::Pending
+        );
+        assert_eq!(
+            store.resolve_editor_main(&q("x", true, false, false), Some(&first)),
+            EditorOutcome::Matched(EditorAction::OpenFind),
+            "dispatch 应触发 ctrl+k ctrl+x（尾键精确者胜）"
+        );
+        // 反向序列（ctrl+shift+k, 裸 x）触发 open_replace 的 chord。
+        assert_eq!(
+            store.resolve_editor_main(&q("x", false, false, false), Some(&first)),
+            EditorOutcome::Matched(EditorAction::OpenReplace)
+        );
+        // 解绑 dispatch 会触发的那条（review 原例的键串）。
+        let warnings = store.apply_user(&[UserOverride::Unbind {
+            bind: "ctrl+shift+k ctrl+x".into(),
+        }]);
+        assert!(warnings.is_empty(), "应恰命中一条移除：{warnings:?}");
+        // 另一条完好：同序列现在触发 open_replace 的 chord（若移错了
+        // 条，此解析会变 None/Cut——旧字典序赢家恰在此暴露）。
+        assert_eq!(
+            store.resolve_editor_main(&q("x", true, false, false), Some(&first)),
+            EditorOutcome::Matched(EditorAction::OpenReplace),
+            "解绑后应由幸存的 ctrl+shift+k x 接管该序列"
+        );
+        assert_eq!(
+            store.resolve_editor_main(&q("x", false, false, false), Some(&first)),
+            EditorOutcome::Matched(EditorAction::OpenReplace)
+        );
+        // 被解绑的 chord 不再触发：ctrl+k 挂起后续接 ctrl+x 落空 →
+        // 本键当新起点（ctrl+x = Cut——挂起终结语义）。
+        let pending = q("k", true, false, false);
+        assert_eq!(
+            store.resolve_editor_main(&q("x", true, false, false), Some(&pending)),
+            EditorOutcome::Matched(EditorAction::Cut)
+        );
+    }
+
+    /// 反向序列对称用例：unbind "ctrl+k ctrl+x" 恰移除 dispatch 在
+    /// （ctrl+k, ctrl+x）序列上触发的那条；ctrl+shift+k x 不受影响。
+    #[test]
+    fn unbind_chord_reverse_sequence_symmetric() {
+        let mut store = KeymapStore::default_tables();
+        let warnings = store.apply_user(&[
+            UserOverride::Bind {
+                bind: "ctrl+shift+k x".into(),
+                action: "open_replace".into(),
+            },
+            UserOverride::Bind {
+                bind: "ctrl+k ctrl+x".into(),
+                action: "open_find".into(),
+            },
+        ]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let pending = q("k", true, false, false);
+        // dispatch 前提：序列（ctrl+k, ctrl+x）触发 open_find 的 chord
+        //（首键默认 chord 头 spec 2 胜出挂起；续接只它匹配 ctrl+x）。
+        assert_eq!(
+            store.resolve_editor_main(&q("x", true, false, false), Some(&pending)),
+            EditorOutcome::Matched(EditorAction::OpenFind)
+        );
+        // 解绑该序列实际触发的绑定。
+        let warnings = store.apply_user(&[UserOverride::Unbind {
+            bind: "ctrl+k ctrl+x".into(),
+        }]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // 同序列不再触发 open_find：续接落空 → 本键当新起点（Cut）。
+        assert_eq!(
+            store.resolve_editor_main(&q("x", true, false, false), Some(&pending)),
+            EditorOutcome::Matched(EditorAction::Cut)
+        );
+        // open_find 无绑定（默认 ctrl+f 已在换绑时让位，chord 又被解绑）。
+        assert_eq!(store.label("open_find"), None);
+        // 另一条不受影响：序列（ctrl+shift+k, x）照常触发 open_replace。
+        let first = q("k", true, true, false);
+        assert_eq!(
+            store.resolve_editor_main(&q("x", false, false, false), Some(&first)),
+            EditorOutcome::Matched(EditorAction::OpenReplace)
+        );
+    }
+
+    /// 单键 bind 被 chord 首键抢赢 → 拒绝（原实现 canon[1] 越界
+    /// panic——单键绑定无第二键；#218 review 附加审查）。dispatch 语义
+    /// 对拍：ctrl+k 的赢家是 chord 首（spec 2 > 新单键 1）→ 恒 Pending，
+    /// 新单键绑定永不触发 → canonical 赢家策略拒绝，既有绑定保持。
+    #[test]
+    fn bind_single_key_stolen_by_chord_head_rejected() {
+        let mut store = KeymapStore::default_tables();
+        let warnings = store.apply_user(&[UserOverride::Bind {
+            bind: "ctrl+k".into(),
+            action: "fold_all".into(),
+        }]);
+        assert_eq!(warnings.len(), 1, "应恰好一条冲突警告：{warnings:?}");
+        assert!(
+            warnings[0].contains("冲突") && warnings[0].contains("unfold_all"),
+            "警告应指明抢占者（Ctrl+K Ctrl+J → unfold_all）：{}",
+            warnings[0]
+        );
+        // 拒绝 = 该条完全不生效：默认 chord 全部保持。
+        assert_eq!(
+            store.resolve_editor_main(&q("k", true, false, false), None),
+            EditorOutcome::Pending
+        );
+        let pending = q("k", true, false, false);
+        assert_eq!(
+            store.resolve_editor_main(&q("0", false, false, false), Some(&pending)),
+            EditorOutcome::Matched(EditorAction::FoldAll),
+            "fold_all 默认 chord 完好（拒绝不落任何变更）"
+        );
     }
 
     /// 格式错误：未知动作 / 坏键串——单条拒绝 + 可读警告，其余生效。
