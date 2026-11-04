@@ -239,6 +239,13 @@ pub struct Buffer {
     edit_hook: Option<Box<dyn EditHook>>,
     /// #115：撤销/重做通知（宿主据此同步行归属映射；None = 纯文本面）。
     undo_hook: Option<Box<dyn UndoHook>>,
+    /// #205：fence 增量重建的脏行记账（自上次收割以来的变更几何——
+    /// 见 [`FenceDirty`]）。所有文本变更入口（`replace_range` /
+    /// `replace_batch` / undo / redo）在此落账；Editor::refresh_caches
+    /// 经 [`Buffer::take_fence_dirty`] 一次性收割。Clone 快照不带记账
+    /// （克隆体不是变更源——与 pending/last_reject 同口径；克隆体的首次
+    /// 收割是 Clean → 全量，恒安全）。
+    fence_dirty: FenceDirty,
 }
 
 impl Clone for Buffer {
@@ -261,6 +268,8 @@ impl Clone for Buffer {
             // 钩子不随克隆走（克隆体是快照；新宿主自行接线）。
             edit_hook: None,
             undo_hook: None,
+            // #205：记账不随克隆走（克隆体不是变更源；见字段注释）。
+            fence_dirty: FenceDirty::Clean,
         }
     }
 }
@@ -326,6 +335,38 @@ pub trait EditHook {
     fn before_edit(&mut self, intent: &EditIntent) -> Result<(), String>;
     /// 变更**之后**：宿主据摘要重映射（块表/映射状态）。
     fn after_edit(&mut self, summary: &EditSummary);
+}
+
+/// #205：fence 增量重建的脏行记账（Buffer 侧记账，Editor 侧
+/// `refresh_caches` 经 [`Buffer::take_fence_dirty`] 一次性收割消费）。
+///
+/// 语义：自上次收割以来的变更几何——
+/// - [`FenceDirty::Single`]：恰一次**单区间**替换（`replace_range` /
+///   undo / redo 的单点回放）→ Editor 可从 `line` 起增量推进；
+/// - [`FenceDirty::Full`]：多区间（`replace_batch` / 批量撤销重放）或
+///   连续多次单区间编辑（多光标逐光标 insert 等）——合并几何不可靠，
+///   回退全量重建；
+/// - [`FenceDirty::Clean`]：无变更（初始态 / 收割后复位）→ 全量
+///   （初次构建缓存也走全量）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FenceDirty {
+    /// 自上次收割以来无文档变更。
+    #[default]
+    Clean,
+    /// 恰一次单区间替换的几何：
+    /// - `line`：变更起点行（**编辑时**文档坐标——窗口内仅有这一次
+    ///   变更，编辑时文档即消费方缓存所描述的文档）；
+    /// - `inserted_lines`：插入文本的换行数（编辑影响区新坐标
+    ///   `[line, line + inserted_lines + 1)`）；
+    /// - `pre_lines`：编辑前总行数（消费方校验 `fence_cache` 长度
+    ///   一致——失配即缓存不描述编辑前文档，回退全量）。
+    Single {
+        line: usize,
+        inserted_lines: usize,
+        pre_lines: usize,
+    },
+    /// 多区间 / 连续多编辑 / 批量撤销重放等不确定几何——回退全量。
+    Full,
 }
 
 /// #178：一次拒改的记录（GUI 反馈数据源）。
@@ -408,6 +449,7 @@ impl Buffer {
             last_reject: None,
             edit_hook: None,
             undo_hook: None,
+            fence_dirty: FenceDirty::Clean,
         }
     }
 
@@ -535,6 +577,39 @@ impl Buffer {
         self.edit_hook = hook;
     }
 
+    // -----------------------------------------------------------------------
+    // #205：fence 脏行记账（Editor::refresh_caches 消费）
+    // -----------------------------------------------------------------------
+
+    /// #205：记账一次单区间变更（replace_range / undo / redo 的单点
+    /// 回放路径）。**必须在 `apply_core` 之前调**（pre_lines 取编辑前
+    /// 行数）。已有未收割窗口时升级 Full——连续多次单区间编辑的合并
+    /// 几何不可靠（多光标逐光标编辑等），回退全量（现状行为，语义
+    /// 恒等）。
+    fn note_fence_single(&mut self, line: usize, inserted_lines: usize) {
+        let pre_lines = self.line_count();
+        self.fence_dirty = match self.fence_dirty {
+            FenceDirty::Clean => FenceDirty::Single {
+                line,
+                inserted_lines,
+                pre_lines,
+            },
+            _ => FenceDirty::Full,
+        };
+    }
+
+    /// #205：记账不确定几何（replace_batch / 批量撤销重放）——回退全量。
+    fn note_fence_full(&mut self) {
+        self.fence_dirty = FenceDirty::Full;
+    }
+
+    /// #205：收割 fence 脏行记账（取出即复位 Clean——refresh_caches
+    /// 单点消费，与 `take_pending`/`take_rejection` 同「一次性收割」
+    /// 口径）。
+    pub fn take_fence_dirty(&mut self) -> FenceDirty {
+        std::mem::replace(&mut self.fence_dirty, FenceDirty::Clean)
+    }
+
     /// **唯一文本变更入口**：删除 `[start, end)` 再插入 `text`（可含 `\n`）。
     /// 光标落在新插入文本末尾；清选区与列粘性；清 redo 栈。
     ///
@@ -571,6 +646,9 @@ impl Buffer {
             });
             return false;
         }
+        // #205：脏行记账（钩子已放行、变更必然发生；apply_core 前取
+        // 编辑前行数）。
+        self.note_fence_single(start.line, text_lines);
         let cursor = self.apply_core(start, end, text);
         // #111 订阅模式：precise 记录（end = 变更前被替换域终点；
         // start == end 即纯插入）。note 在版本递增**前**——基线 =
@@ -705,6 +783,9 @@ impl Buffer {
             }
             line_shift += new_lines as i64 - old_lines as i64;
         }
+        // #205：批量多区间——几何不可靠，回退全量（钩子已放行、变更
+        // 必然发生）。
+        self.note_fence_full();
         let n = records.len();
         // #111：一次批量事务版本只 +1（点位级记录已在构建循环内入队）。
         self.revision += 1;
@@ -834,6 +915,9 @@ impl Buffer {
             Undoable::Single(edit) => {
                 // 逆方向：把 new_text 的当前占位换回 old_text。
                 let end_new = self.end_after_insert(&edit.start, &edit.new_text);
+                // #205：单点回放也是单区间替换（undo 的「插入文本」
+                // 是 old_text）——apply_core 前记账。
+                self.note_fence_single(edit.start.line, edit.old_text.matches('\n').count());
                 // #111：单条撤销可精确记录（撤销前域 = new_text 占位域）。
                 self.note_change(crate::doc_events::ChangeRecord::precise(
                     "undo",
@@ -854,6 +938,8 @@ impl Buffer {
             Undoable::Batch(records) => {
                 // 逆方向整批：占位域（应用后字节坐标）一次批量换回
                 // old_text——单事务；LIFO 序下该域恒指本批占位。
+                // #205：批量多区间回放——回退全量。
+                self.note_fence_full();
                 let rope_edits: Vec<(Range<usize>, String)> = records
                     .iter()
                     .map(|r| (r.z_applied.0..r.z_applied.1, r.old_text.clone()))
@@ -893,6 +979,9 @@ impl Buffer {
             Undoable::Single(edit) => {
                 // 重放方向：[start, end_del) 的 old_text 换成 new_text。
                 let new_cursor = self.end_after_insert(&edit.start, &edit.new_text);
+                // #205：单点回放也是单区间替换（redo 的「插入文本」
+                // 是 new_text）——apply_core 前记账。
+                self.note_fence_single(edit.start.line, edit.new_text.matches('\n').count());
                 // #111：单条重做可精确记录（重放前域 = end_del 旧文本域）。
                 self.note_change(crate::doc_events::ChangeRecord::precise(
                     "redo",
@@ -908,6 +997,8 @@ impl Buffer {
                 // 重放整批：原始删除域（原始字节坐标）一次批量换入
                 // new_text——单事务；LIFO 序下批的 undo 使文档回原始
                 // 态，该域恒有效。
+                // #205：批量多区间回放——回退全量。
+                self.note_fence_full();
                 let rope_edits: Vec<(Range<usize>, String)> = records
                     .iter()
                     .map(|r| (r.z_del.0..r.z_del.1, r.new_text.clone()))
@@ -1909,6 +2000,141 @@ fn perf_rope_edit_find_2m_chars() {
         t_find < std::time::Duration::from_secs(1),
         "查找超红线：{t_find:?}"
     );
+
+    // ---------------- #205：fence 脏行记账 ----------------
+
+    /// #205 测试钩子：全拒（拒改路径零变更零记账的判定面）。
+    struct FenceRejectAllHook;
+    impl EditHook for FenceRejectAllHook {
+        fn before_edit(&mut self, _: &EditIntent) -> Result<(), String> {
+            Err("测试全拒".into())
+        }
+        fn after_edit(&mut self, _: &EditSummary) {}
+    }
+
+    #[test]
+    fn fence_dirty_single_recorded_by_replace_range() {
+        // 单区间编辑 → Single 窗口（line/inserted_lines/pre_lines）。
+        let mut b = Buffer::from_plain_text("a\nb\nc");
+        assert!(b.replace_range(p(1, 0), p(1, 0), "x\ny\nz"));
+        assert_eq!(
+            b.take_fence_dirty(),
+            FenceDirty::Single {
+                line: 1,
+                inserted_lines: 2,
+                pre_lines: 3,
+            }
+        );
+        // 收割后复位 Clean。
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Clean);
+    }
+
+    #[test]
+    fn fence_dirty_rejected_edit_not_recorded() {
+        // 钩子拒改 → 零变更零记账。
+        let mut b = Buffer::from_plain_text("ab\ncd");
+        b.set_edit_hook(Some(Box::new(FenceRejectAllHook)));
+        assert!(!b.replace_range(p(0, 0), p(0, 1), "x"));
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Clean);
+    }
+
+    #[test]
+    fn fence_dirty_consecutive_edits_upgrade_to_full() {
+        // 连续两次单区间编辑（无收割间隔——多光标逐光标路径）→ Full。
+        let mut b = Buffer::from_plain_text("a\nb");
+        assert!(b.replace_range(p(0, 0), p(0, 0), "x"));
+        assert!(b.replace_range(p(1, 0), p(1, 0), "y"));
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Full);
+        // 收割后的新一轮重新从 Single 起步。
+        assert!(b.replace_range(p(0, 0), p(0, 0), "z"));
+        assert_eq!(
+            b.take_fence_dirty(),
+            FenceDirty::Single {
+                line: 0,
+                inserted_lines: 0,
+                pre_lines: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn fence_dirty_noop_edit_not_recorded() {
+        // 空域 + 空文本 = no-op 短路（不落 undo、不计版本、不记账）。
+        let mut b = Buffer::from_plain_text("ab");
+        assert!(!b.replace_range(p(0, 1), p(0, 1), ""));
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Clean);
+    }
+
+    #[test]
+    fn fence_dirty_batch_recorded_as_full() {
+        let mut b = Buffer::from_plain_text("ab\ncd\nef");
+        let n = b.replace_batch(vec![
+            (p(0, 0), p(0, 1), "x".into()),
+            (p(2, 0), p(2, 1), "y".into()),
+        ]);
+        assert_eq!(n, 2);
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Full);
+    }
+
+    #[test]
+    fn fence_dirty_undo_redo_single_recorded() {
+        // 单点 undo/redo（物理回放）也是单区间 → Single（收割后）。
+        let mut b = Buffer::from_plain_text("a\nb");
+        assert!(b.replace_range(p(1, 0), p(1, 0), "x\ny"));
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Clean);
+        assert!(b.undo());
+        assert_eq!(
+            b.take_fence_dirty(),
+            FenceDirty::Single {
+                line: 1,
+                inserted_lines: 0, // undo 的「插入文本」= old_text（""）
+                pre_lines: 3,
+            }
+        );
+        assert!(b.redo());
+        assert_eq!(
+            b.take_fence_dirty(),
+            FenceDirty::Single {
+                line: 1,
+                inserted_lines: 1, // redo 的「插入文本」= new_text（"x\ny"）
+                pre_lines: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn fence_dirty_undo_batch_recorded_as_full() {
+        // 批量撤销回放（多区间）→ Full。
+        let mut b = Buffer::from_plain_text("ab\ncd\nef");
+        let n = b.replace_batch(vec![
+            (p(0, 0), p(0, 1), "x".into()),
+            (p(2, 0), p(2, 1), "y".into()),
+        ]);
+        assert_eq!(n, 2);
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Full);
+        assert!(b.undo());
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Full);
+        assert!(b.redo());
+        assert_eq!(b.take_fence_dirty(), FenceDirty::Full);
+    }
+
+    #[test]
+    fn fence_dirty_clone_starts_clean() {
+        // 克隆体不是变更源——记账从 Clean 起步（消费方首收全量，恒安全）。
+        let mut b = Buffer::from_plain_text("a\nb");
+        assert!(b.replace_range(p(0, 0), p(0, 0), "x"));
+        let snapshot = b.clone();
+        assert_eq!(snapshot.take_fence_dirty(), FenceDirty::Clean);
+        // 源窗口不受克隆影响。
+        assert_eq!(
+            b.take_fence_dirty(),
+            FenceDirty::Single {
+                line: 0,
+                inserted_lines: 0,
+                pre_lines: 2,
+            }
+        );
+    }
 }
 
 // =============================================================================
