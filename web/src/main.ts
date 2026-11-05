@@ -873,6 +873,14 @@ class CM6View {
     this.mutate(() => {
       this.core.apply_ops(JSON.stringify([op]), 'view', 'replace_text');
     });
+    // P0-4（#225，审计 P0-4）：快路径成功 ⇒ 块文本长度已变，byId.textChars
+    // 必须同步增量维护——handleEnter 的 split_block 以 textChars 为
+    // replace_text 删除区间端点，stale 值会造成尾段重复/错位（list_item
+    // 中段插字后 Enter = 最简复现）。rebuild/extend 之外唯一遗漏的维护点；
+    // mutate 抛错（核 reject）时本行不执行，异常转兜底 fullResync 重建，
+    // stale 值无害。W7 的 debugMapVsFullRebuild 逐项比对是等价性护栏。
+    const meta = this.blockMap.byId.get(rec.blockId);
+    if (meta) meta.textChars += this.cpLen(inserted) - (end - start);
     // 多行体（code/table）后续行的块内偏移平移（罕见；单行体块零维护）
     if (!rec.singleLine) {
       const delta = this.cpLen(inserted) - (end - start);

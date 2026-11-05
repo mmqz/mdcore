@@ -368,6 +368,47 @@ def main() -> int:
                   sel == {"r": 2, "c": 1, "rows": 2, "cols": 2} and copied == exp_tsv,
                   json.dumps({"sel": sel, "copied": copied, "expected": exp_tsv, "path": copy_path}))
 
+            # ---- 9b. 敌意单元格复制消毒（#225 P0-5：出口必经 guardTsvCell——
+            #      审计 P0-5：guard_csv_cell 存在但产品路径从未接线）。
+            #      三格一组：DDE 载荷 / 负数（登记为文本——PrefixApostrophe 模式
+            #      的已知代价，与引擎 Rust 面 guard_csv_cell 语义一致）/ 内嵌
+            #      \t（TSV 无转义，替换空格防新首字符位注入）----
+            for col, payload in ((6, "=cmd|/c calc"), (7, "-42")):
+                page.evaluate(f"window.__gridSetSelection(6, {col})")
+                page.keyboard.press("Enter")
+                page.keyboard.type(payload)
+                page.keyboard.press("Enter")
+            page.evaluate("window.__gridSetSelection(6, 8)")
+            page.keyboard.press("Enter")
+            page.keyboard.insert_text("plain\twith\ttabs")
+            page.keyboard.press("Enter")
+            # 选回 (6,6) 并扩 1×3（Enter 提交后选区已下移 → 显式回位）
+            page.evaluate("window.__gridSetSelection(6, 6)")
+            page.keyboard.press("Shift+ArrowRight")
+            page.keyboard.press("Shift+ArrowRight")
+            guarded = page.evaluate("""() => {
+                const dt = new DataTransfer();
+                let ev;
+                try {
+                    ev = new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true });
+                    if (!ev.clipboardData) throw new Error('ctor ignored clipboardData');
+                } catch (e) {
+                    ev = new Event('copy', { bubbles: true, cancelable: true });
+                    Object.defineProperty(ev, 'clipboardData', { value: dt });
+                }
+                document.dispatchEvent(ev);
+                return dt.getData('text/plain');
+            }""")
+            check("grid_copy_formula_injection_guarded",
+                  guarded == "'=cmd|/c calc\t'-42\tplain with tabs",
+                  json.dumps({"copied": guarded}))
+            # 清场：撤销 9b 的三笔编辑 + 选区回 (2,1)（10 号粘贴用例的
+            # 前置契约：账本零 + 落点 (2,1)）
+            page.keyboard.press("Control+z")
+            page.keyboard.press("Control+z")
+            page.keyboard.press("Control+z")
+            page.evaluate("window.__gridSetSelection(2, 1)")
+
             # ---- 10. 粘贴（TSV → 逐格编辑命令 k=text）----
             page.evaluate("""() => {
                 const dt = new DataTransfer();

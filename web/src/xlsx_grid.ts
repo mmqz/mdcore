@@ -180,6 +180,28 @@ function editDisplayText(rec: EditRecord): string {
   return rec.v === undefined ? '' : String(rec.v);
 }
 
+/** TSV 出口单元格消毒（#225 P0-5，审计 P0-5）。
+ *
+ * 与 office/src/sanitize/csv_formula.rs 的 guard_csv_cell(PrefixApostrophe)
+ * 语义对齐：首字符 ∈ {`=`,`+`,`-`,`@`}（公式触发集，office-d §5.1 口径）
+ * 前置 `'`——目标表格应用按文本展示，`=cmd|…` DDE / `=HYPERLINK(…)`
+ * 钓鱼的公式语义消除。空值/正常值原样放行。
+ *
+ * TSV 补充面（Rust 面注释中「调用方按需预处理」的落实）：TSV 无转义
+ * 语法，内嵌 \t/\r/\n 会破坏列结构并**制造新的首字符位**（`a\t=cmd`
+ * 的第二列重新命中触发集）——统一替换为空格，消毒完备性的一部分。 */
+function guardTsvCell(v: string): string {
+  if (v === '') return v;
+  const c = v.charCodeAt(0);
+  let out = c === 0x3d /* = */ || c === 0x2b /* + */ || c === 0x2d /* - */ || c === 0x40 /* @ */
+    ? `'${v}`
+    : v;
+  if (out.indexOf('\t') >= 0 || out.indexOf('\r') >= 0 || out.indexOf('\n') >= 0) {
+    out = out.replace(/[\t\r\n]/g, ' ');
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // window probe types (declared global — test/host face)
 // ---------------------------------------------------------------------------
@@ -956,7 +978,10 @@ export class XlsxGridUI {
       const parts: string[] = [];
       for (let j = 0; j < cols; j++) {
         const rec = this.editsMap.get(`${this.sheet}:${this.sel.r + i}:${this.sel.c + j}`);
-        parts.push(rec ? editDisplayText(rec) : (slice.cells[i]?.[j]?.d ?? ''));
+        // P0-5（#225）：出口消毒必经 guardTsvCell——敌意 xlsx 的显示文本
+        // 原样上剪贴板 = 复制进 Excel 即触发公式注入（审计 P0-5：
+        // guard_csv_cell 存在但产品路径从未接线）。
+        parts.push(guardTsvCell(rec ? editDisplayText(rec) : (slice.cells[i]?.[j]?.d ?? '')));
       }
       lines.push(parts.join('\t'));
     }
