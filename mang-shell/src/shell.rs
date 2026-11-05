@@ -2354,6 +2354,12 @@ mod tab_workflow_tests {
     fn shell_window(
         cx: &mut gpui::TestAppContext,
     ) -> (Entity<ShellApp>, gpui::WindowHandle<ShellHost>) {
+        // 主题全局：真实应用在 main.rs 开窗前 theme::init(JustBase)——
+        // 测试镜像同一序列（ShellApp::new 的 GlobalTheme::theme /
+        // theme_switch::apply_mode 首访即需；TestPlatform 的
+        // window_appearance 为固定 Light 桩，fallback 主题集不依赖
+        // 资产源——JustBase 与 main 同款可无头初始化）。
+        cx.update(|app| theme::init(theme::LoadThemes::JustBase, app));
         // ShellApp::new 需要 &mut Window（on_window_should_close 等），
         // 实体只能在 add_window 闭包内构造；槽位带出（FnOnce 一次性）。
         let mut slot: Option<Entity<ShellApp>> = None;
