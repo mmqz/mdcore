@@ -96,7 +96,10 @@ impl Core {
     ///   （ADR-B7 §4：被放弃文档态的 undo/redo 条目对重建后的树会
     ///   BadPath，保留即坏引用）。
     /// - 无变化时零事务零 revision 推进（Noop 语义，幂等）。
-    /// - 原子性：apply_ops 事务内失败 → 求逆回滚（ADR-B5），树零污染；
+    /// - 原子性：apply_ops 事务内失败 → 整树备份恢复（事务入口
+    ///   `backup = tree.clone()`、失败 `self.tree = backup`），树零污染
+    ///   （#220 勘误：此处原注「求逆回滚（ADR-B5）」不实——该机制
+    ///   从未在 mdcore 落地，研究仓侧声称经审计 P1-27 对账证伪）；
     ///   本方法不加自己的前半段突变，天然可回滚。
     pub fn adopt_external(
         &mut self,
