@@ -3,10 +3,12 @@
 //!
 //! ## 绑定纪律（决策记录 → gates.md PDF-c 节）
 //!
-//! - **定位序**：env `MDC_PDFIUM_LIB`（文件路径）→ 编译期候选清单 →
+//! - **定位序**：env `MDC_PDFIUM_LIB`（文件路径）→ 候选清单 →
 //!   系统（`bind_to_system_library`）。候选清单见
-//!   [`PdfiumEngine::library_candidates`]（含产品仓 `bin/` 预留位与
-//!   分析仓 spike 取件位——门禁环境路径）；
+//!   [`PdfiumEngine::library_candidates`]（**exe 同目录部署位最前**
+//!   ——#210 真实环境验证收口：INSTALL.md「放 exe 旁」的显式代码面
+//!   对应，不依赖 `bind_to_system_library` 的 LoadLibrary 隐式搜索序；
+//!   后接产品仓 `bin/` 取件位与分析仓 spike 取件位——门禁环境路径）；
 //! - **进程级单绑定**：pdfium-render 的绑定表是进程全局
 //!   （`PdfiumLibraryBindings` 全局 OnceCell；二次绑定报
 //!   `PdfiumLibraryBindingsAlreadyInitialized` 且 crate 外无复用构造器）。
@@ -132,25 +134,49 @@ impl PdfiumEngine {
         shared_pdfium()
     }
 
-    /// 库定位候选清单（编译期 `CARGO_MANIFEST_DIR` 相对——观测/诊断面，
-    /// 绑定按序尝试）：
+    /// 库定位候选清单（观测/诊断面，绑定按序尝试）：
     ///
+    /// 0. **exe 同目录**（产品部署位——#210 真实环境验证收口。
+    ///    INSTALL.md 指引「把库放到 exe 同目录」的显式候选：此前该
+    ///    放置形态只能经 `bind_to_system_library()` 的 LoadLibrary
+    ///    隐式搜索序兜底——理论可行（Windows DLL 搜索序 exe 目录
+    ///    第一位）但从未被真实验证，且绑定失败时定位详情不含此
+    ///    位置（用户按文档操作失败后不可诊断）。显式候选后：部署
+    ///    语义与代码直接对应，报错「定位详情」可见该路径已尝试）；
     /// 1. 产品仓 `bin/lib/`（fetch-pdfium.sh 取件位，PDF-e 接线）；
     /// 2. 分析仓 spike `bin/lib/`（门禁环境取件位）；
     /// 3. crate 本地 `bin/lib/`。
+    ///
+    /// exe 同目录经运行期 `current_exe()` 推导（部署语义跟着二进制
+    /// 走——用户把库放在哪个 exe 旁，哪个 exe 就能找到；与 1-3 的
+    /// 编译期 `CARGO_MANIFEST_DIR` 相对推导不同源）。推导失败（
+    /// `current_exe` 不可得的极端环境）静默跳过，后续候选与系统
+    /// 绑定兜底。优先序实证见 `tests/pdfk_deploy.rs`（进程级首绑定
+    /// 验证）；形状锁 `exe_dir_is_first_candidate`。
     pub fn library_candidates() -> Vec<PathBuf> {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-        [
-            // 产品仓根/bin/lib（crates/pdf → 上两级）
-            manifest.join("../../bin/lib"),
-            // 分析仓 spike（crates/pdf → 上三级 = 仓根同级）
-            manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/bin/lib"),
-            // crate 本地
-            manifest.join("bin/lib"),
-        ]
-        .into_iter()
-        .map(|dir| Pdfium::pdfium_platform_library_name_at_path(&dir))
-        .collect()
+        let mut candidates: Vec<PathBuf> = Vec::with_capacity(4);
+        // 0. exe 同目录（产品部署位——运行期推导，最前：用户放置位
+        //    优先于开发取件位）。
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(Pdfium::pdfium_platform_library_name_at_path(dir));
+            }
+        }
+        // 1-3. 开发/门禁取件位（编译期 manifest 相对）。
+        candidates.extend(
+            [
+                // 产品仓根/bin/lib（crates/pdf → 上两级）
+                manifest.join("../../bin/lib"),
+                // 分析仓 spike（crates/pdf → 上三级 = 仓根同级）
+                manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/bin/lib"),
+                // crate 本地
+                manifest.join("bin/lib"),
+            ]
+            .into_iter()
+            .map(|dir| Pdfium::pdfium_platform_library_name_at_path(&dir)),
+        );
+        candidates
     }
 
     /// 单页句柄（页界防御在先——引擎层不信任调用方）。
@@ -448,6 +474,34 @@ fn try_bind(path: &Path) -> Result<&'static Pdfium, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exe_dir_is_first_candidate() {
+        // #210 部署位验证（形状面）：exe 同目录必须是候选 0——
+        // INSTALL.md「放 exe 同目录」与定位序直接对应（产品部署位
+        // 优先于开发取件位）。绑定优先序的进程级实证见
+        // tests/pdfk_deploy.rs（独立测试二进制 = 独立进程的首绑定）。
+        let candidates = PdfiumEngine::library_candidates();
+        assert!(
+            !candidates.is_empty(),
+            "候选清单非空（exe 位 + 三个取件位）"
+        );
+        let exe_dir = std::env::current_exe()
+            .expect("测试环境 current_exe 可得")
+            .parent()
+            .expect("exe 路径有父目录")
+            .to_path_buf();
+        let expected = Pdfium::pdfium_platform_library_name_at_path(&exe_dir);
+        assert_eq!(candidates[0], expected, "exe 同目录部署位必须是候选 0");
+        // 开发取件位保持（门禁环境取件序不变——纯加性变更）。
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert!(
+            candidates.contains(&Pdfium::pdfium_platform_library_name_at_path(
+                &manifest.join("../../bin/lib")
+            )),
+            "产品仓取件位仍在候选清单"
+        );
+    }
 
     #[test]
     fn missing_library_hint_is_actionable() {

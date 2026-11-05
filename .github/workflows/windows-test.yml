@@ -71,11 +71,37 @@ jobs:
       - name: Test mdc-office-io (docx/xlsx/pptx)
         run: cargo test -p mdc-office-io
 
-      - name: Test mdc-pdf (four-piece + forms + stamp + signature)
-        # forms/stamp/signature/annotate 在 engine-lopdf feature 门后
-        # （lib.rs 的 #[cfg(feature = "engine-lopdf")]）——不带 feature 会
-        # unresolved import。pdfium 面需要动态库，CI 上没有，只开 lopdf。
-        run: cargo test -p mdc-pdf --features engine-lopdf
+      - name: Fetch pdfium (win-x64, pinned chromium/8086)
+        # #210 真实环境验证（#222 Lead 指派）：按 INSTALL.md 的取件源
+        # （bblanchon/pdfium-binaries，non-V8——与安全策略 §JS 面一致
+        # 不取 v8 变体）下载到定位序取件位（仓根 bin/lib）。
+        # 版本 pin + SHA256 与分析仓 fetch-pdfium.sh 同轨
+        # （chromium/8086 = pdfium-render pdfium_7881 绑定面的兼容二进制）；
+        # 升级 = 两处同步改 + 全 pdf 测试面复验。
+        shell: bash
+        run: |
+          mkdir -p bin/lib
+          curl -fL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8086/pdfium-win-x64.tgz" -o /tmp/pdfium-win-x64.tgz
+          echo "1fd8af952832dbb0eb16d9249f68fe09e5f5ebf7c3dd9f6066ea2720cc28487d  /tmp/pdfium-win-x64.tgz" | sha256sum -c -
+          # win 包顶层结构 = bin/pdfium.dll（linux 包是 lib/libpdfium.so——
+          # 两平台包内布局不同）：解压到临时目录后显式放置到定位序
+          # 取件位（仓根 bin/lib/pdfium.dll）。
+          rm -rf /tmp/pdfium-x && mkdir -p /tmp/pdfium-x
+          tar -xzf /tmp/pdfium-win-x64.tgz -C /tmp/pdfium-x
+          cp /tmp/pdfium-x/bin/pdfium.dll bin/lib/pdfium.dll
+          test -f bin/lib/pdfium.dll && echo "pdfium.dll in place ($(stat -c%s bin/lib/pdfium.dll) bytes)"
+
+      - name: Test mdc-pdf (lopdf + pdfium 双引擎面——#210 真实环境验证)
+        # #210/#222：pdfium 测试面 CI 化——此前本步骤只开 engine-lopdf
+        # （注释自认「pdfium 面需要动态库，CI 上没有」= engine-pdfium
+        # 零覆盖，INSTALL.md 指引与装载逻辑从未被真实 Windows 验证）。
+        # 库经 MDC_PDFIUM_LIB（定位序第 1 优先）显式提供；
+        # 「exe 同目录」部署位（INSTALL.md 方式 B）由 tests/pdfk_deploy.rs
+        # 在本步骤内进程级验证（该测试自行清 env、复制库到测试二进制
+        # 旁、走候选 0 绑定）。
+        env:
+          MDC_PDFIUM_LIB: ${{ github.workspace }}/bin/lib/pdfium.dll
+        run: cargo test -p mdc-pdf --features engine-lopdf,engine-pdfium
 
       - name: Test mdc-formula (xlsx formula engine)
         run: cargo test -p mdc-formula

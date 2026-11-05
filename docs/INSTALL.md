@@ -1,6 +1,17 @@
 # PDFium installation
 
-The desktop PDF reader uses the native PDFium library. PDFium is a runtime dependency and is not bundled by this repository. Download a release from the [pdfium-binaries releases](https://github.com/bblanchon/pdfium-binaries/releases) page. Choose the archive matching your operating system and CPU architecture.
+The desktop PDF reader uses the native PDFium library. PDFium is a runtime dependency and is not bundled by this repository. Download a release from the [pdfium-binaries releases](https://github.com/bblanchon/pdfium-binaries/releases) page. Choose the archive matching your operating system and CPU architecture (for example `win-x64` on 64-bit Windows; do **not** pick a `v8` variant).
+
+## How the application locates PDFium
+
+The loader tries locations in this order, and the error message lists every path it attempted:
+
+1. The `MDC_PDFIUM_LIB` environment variable, set to the full path of the library file (`pdfium.dll` / `libpdfium.so`).
+2. The directory of the application executable (`pdfium.dll` / `libpdfium.so` next to the exe).
+3. Repository development fetch locations (only present in development checkouts).
+4. The system dynamic-library search path.
+
+Placing the library next to the executable is the recommended default; `MDC_PDFIUM_LIB` overrides everything.
 
 ## Windows
 
@@ -16,8 +27,8 @@ $env:MDC_PDFIUM_LIB = "C:\path\to\pdfium.dll"
 
 ## Linux and macOS
 
-Download the matching release archive and install its native library (`libpdfium.so` on Linux or the platform library on macOS) in a location the dynamic loader can find. Alternatively, set `MDC_PDFIUM_LIB` to the full library path before starting the application.
+Download the matching release archive and either place the native library (`libpdfium.so` on Linux) beside the application executable, install it in a location the dynamic loader can find, or set `MDC_PDFIUM_LIB` to the full library path before starting the application.
 
 ## Troubleshooting
 
-If PDFium cannot be loaded, the error reports the library name and paths that were tried. Confirm that the file exists, that its architecture matches the application, and that any platform runtime dependencies are installed. You can also set `MDC_PDFIUM_LIB` directly to the library file, restart the application, and retry opening a PDF.
+If PDFium cannot be loaded, the error reports the library name and every path that was tried. Confirm that the file exists, that its architecture matches the application (a 64-bit application needs the x64 library), and that any platform runtime dependencies are installed. Setting `MDC_PDFIUM_LIB` directly to the library file removes all search ambiguity — if that works but the exe-adjacent placement does not, check that the file name matches exactly (`pdfium.dll` on Windows, `libpdfium.so` on Linux).
