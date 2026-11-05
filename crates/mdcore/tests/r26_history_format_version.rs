@@ -27,11 +27,11 @@
 
 use std::sync::Arc;
 
-use mdcore::Core;
 use mdcore::anchor::TextTarget;
 use mdcore::document::DocumentId;
 use mdcore::history::HISTORY_FORMAT_VERSION;
 use mdcore::tree::{BlockKind, NodePath};
+use mdcore::Core;
 
 // ---------------------------------------------------------------------------
 // 公共工具（同 r25 手法）

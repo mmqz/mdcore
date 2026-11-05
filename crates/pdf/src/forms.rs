@@ -70,15 +70,25 @@ pub struct FieldFlags(u32);
 
 impl FieldFlags {
     /// 从原始 `/Ff` 整数值构造。
-    pub fn from_raw(raw: i64) -> Self { FieldFlags(raw as u32) }
+    pub fn from_raw(raw: i64) -> Self {
+        FieldFlags(raw as u32)
+    }
     /// 原始整数值（写回时原样保留）。
-    pub fn raw(self) -> u32 { self.0 }
+    pub fn raw(self) -> u32 {
+        self.0
+    }
     /// bit0：只读。
-    pub fn is_read_only(self) -> bool { self.0 & 1 != 0 }
+    pub fn is_read_only(self) -> bool {
+        self.0 & 1 != 0
+    }
     /// bit1：必填。
-    pub fn is_required(self) -> bool { self.0 & 2 != 0 }
+    pub fn is_required(self) -> bool {
+        self.0 & 2 != 0
+    }
     /// bit2：不导出。
-    pub fn is_no_export(self) -> bool { self.0 & 4 != 0 }
+    pub fn is_no_export(self) -> bool {
+        self.0 & 4 != 0
+    }
 }
 
 /// 校验错误类别。
@@ -206,14 +216,31 @@ impl Default for FieldAppearance {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormField {
     /// 文本框。`max_len` 来自 `/MaxLen`（None = 不限）。
-    Text { name: String, value: String, max_len: Option<usize> },
+    Text {
+        name: String,
+        value: String,
+        max_len: Option<usize>,
+    },
     /// 复选框。`on_name` 是选中态的名字（通常是 `/Yes`，但**不总是**——
     /// 必须从 `/AP /N` 的键里读，写死 `/Yes` 在真实模板上会勾不上）。
-    Checkbox { name: String, checked: bool, on_name: String },
+    Checkbox {
+        name: String,
+        checked: bool,
+        on_name: String,
+    },
     /// 单选按钮组。`options` 是组内各选项名，`selected` 是当前选中项。
-    Radio { name: String, selected: Option<String>, options: Vec<String> },
+    Radio {
+        name: String,
+        selected: Option<String>,
+        options: Vec<String>,
+    },
     /// 下拉/列表。`selected` 允许多值（多选列表）。
-    Choice { name: String, selected: Vec<String>, options: Vec<String>, combo: bool },
+    Choice {
+        name: String,
+        selected: Vec<String>,
+        options: Vec<String>,
+        combo: bool,
+    },
     /// 数字签名字段（签名内容见 [`crate::signature`]）。
     Signature { name: String, signed: bool },
 }
@@ -246,12 +273,20 @@ impl FormField {
         match self {
             FormField::Text { value, .. } => value.clone(),
             FormField::Checkbox { checked, .. } => {
-                if *checked { "on".into() } else { "off".into() }
+                if *checked {
+                    "on".into()
+                } else {
+                    "off".into()
+                }
             }
             FormField::Radio { selected, .. } => selected.clone().unwrap_or_default(),
             FormField::Choice { selected, .. } => selected.join(","),
             FormField::Signature { signed, .. } => {
-                if *signed { "signed".into() } else { "unsigned".into() }
+                if *signed {
+                    "signed".into()
+                } else {
+                    "unsigned".into()
+                }
             }
         }
     }
@@ -342,7 +377,11 @@ pub enum FormError {
     /// 域不存在。
     FieldNotFound(String),
     /// 域类型不匹配（如对复选框 set_text）。
-    WrongFieldType { name: String, expected: &'static str, actual: String },
+    WrongFieldType {
+        name: String,
+        expected: &'static str,
+        actual: String,
+    },
     /// 域只读（/Ff bit0）。
     ReadOnly(String),
     /// 值不合法（超出 max_len、不在选项集里）。
@@ -359,7 +398,11 @@ impl std::fmt::Display for FormError {
             FormError::Open(e) => write!(f, "PDF 表单装载失败：{e}"),
             FormError::Encrypted => write!(f, "文档已加密（表单写回被拒——S5 纪律）"),
             FormError::FieldNotFound(n) => write!(f, "表单域 {n} 不存在"),
-            FormError::WrongFieldType { name, expected, actual } => {
+            FormError::WrongFieldType {
+                name,
+                expected,
+                actual,
+            } => {
                 write!(f, "表单域 {name} 类型不符：期望 {expected}，实际 {actual}")
             }
             FormError::ReadOnly(n) => write!(f, "表单域 {n} 只读（/Ff bit0）"),
@@ -462,15 +505,23 @@ fn collect_fields(doc: &Document) -> BTreeMap<String, RawField> {
 
     // 源二：页 /Annots 里的 /Widget（未登记进 /Fields 的野控件）
     for (_page_no, page_id) in doc.get_pages() {
-        let Ok(page) = doc.get_dictionary(page_id) else { continue };
-        let Ok(annots) = page.get(b"Annots").and_then(Object::as_array) else { continue };
+        let Ok(page) = doc.get_dictionary(page_id) else {
+            continue;
+        };
+        let Ok(annots) = page.get(b"Annots").and_then(Object::as_array) else {
+            continue;
+        };
         for a in annots {
-            let Ok(widget_id) = a.as_reference() else { continue };
+            let Ok(widget_id) = a.as_reference() else {
+                continue;
+            };
             if seen.contains(&widget_id) {
                 continue;
             }
             if widget_id.0 != 0 {
-                let Ok(w) = doc.get_dictionary(widget_id) else { continue };
+                let Ok(w) = doc.get_dictionary(widget_id) else {
+                    continue;
+                };
                 if w.get(b"Subtype").ok().and_then(|s| s.as_name().ok()) != Some(&b"Widget"[..]) {
                     continue;
                 }
@@ -508,7 +559,9 @@ fn walk_field_tree(
     if depth > 64 || !seen.insert(id) {
         return;
     }
-    let Ok(d) = doc.get_dictionary(id) else { return };
+    let Ok(d) = doc.get_dictionary(id) else {
+        return;
+    };
 
     let local_name = d
         .get(b"T")
@@ -666,7 +719,11 @@ fn build_model(
                 .ok()
                 .and_then(|d| d.get(b"MaxLen").ok().and_then(|o| o.as_i64().ok()))
                 .map(|n| n.max(0) as usize);
-            FormField::Text { name: name.to_string(), value, max_len }
+            FormField::Text {
+                name: name.to_string(),
+                value,
+                max_len,
+            }
         }
         b"Btn" => {
             let radio = ff & (1 << 15) != 0;
@@ -677,7 +734,11 @@ fn build_model(
                 } else {
                     kids.iter().flat_map(|k| button_on_names(doc, *k)).collect()
                 };
-                FormField::Radio { name: name.to_string(), selected, options }
+                FormField::Radio {
+                    name: name.to_string(),
+                    selected,
+                    options,
+                }
             } else {
                 let raw = inherited_value_as_name_or_str(doc, id).unwrap_or_else(|| "Off".into());
                 let checked = !raw.is_empty() && raw != "Off";
@@ -685,17 +746,17 @@ fn build_model(
                     .into_iter()
                     .find(|n| n != "Off")
                     .unwrap_or_else(|| "Yes".into());
-                FormField::Checkbox { name: name.to_string(), checked, on_name }
+                FormField::Checkbox {
+                    name: name.to_string(),
+                    checked,
+                    on_name,
+                }
             }
         }
         b"Ch" => {
             let combo = ff & (1 << 17) != 0;
             let options = choice_options(doc, id);
-            let selected = match doc
-                .get_dictionary(id)
-                .ok()
-                .and_then(|d| d.get(b"V").ok())
-            {
+            let selected = match doc.get_dictionary(id).ok().and_then(|d| d.get(b"V").ok()) {
                 Some(Object::Array(a)) => a
                     .iter()
                     .filter_map(|o| o.as_str().ok())
@@ -708,11 +769,19 @@ fn build_model(
                     .unwrap_or_default(),
                 None => vec![],
             };
-            FormField::Choice { name: name.to_string(), selected, options, combo }
+            FormField::Choice {
+                name: name.to_string(),
+                selected,
+                options,
+                combo,
+            }
         }
         b"Sig" => {
             let signed = inherited_str(doc, id, b"V").is_some();
-            FormField::Signature { name: name.to_string(), signed }
+            FormField::Signature {
+                name: name.to_string(),
+                signed,
+            }
         }
         _ => FormField::Text {
             name: name.to_string(),
@@ -724,7 +793,9 @@ fn build_model(
 
 /// 按钮的「开」态名字：从 `/AP /N` 的键里读（**不能写死 /Yes**）。
 fn button_on_names(doc: &Document, id: ObjectId) -> Vec<String> {
-    let Ok(d) = doc.get_dictionary(id) else { return vec![] };
+    let Ok(d) = doc.get_dictionary(id) else {
+        return vec![];
+    };
     let ap = match d.get(b"AP").ok() {
         Some(Object::Reference(r)) => match doc.get_dictionary(*r) {
             Ok(x) => x,
@@ -746,12 +817,19 @@ fn button_on_names(doc: &Document, id: ObjectId) -> Vec<String> {
 
 /// 选择域的选项集（`/Opt` 可为字符串数组，或 [导出值, 显示名] 二元组）。
 fn choice_options(doc: &Document, id: ObjectId) -> Vec<String> {
-    let Ok(d) = doc.get_dictionary(id) else { return vec![] };
-    let Ok(opt) = d.get(b"Opt").and_then(Object::as_array) else { return vec![] };
+    let Ok(d) = doc.get_dictionary(id) else {
+        return vec![];
+    };
+    let Ok(opt) = d.get(b"Opt").and_then(Object::as_array) else {
+        return vec![];
+    };
     opt.iter()
         .filter_map(|o| match o {
             Object::String(s, _) => Some(decode_pdf_string(s)),
-            Object::Array(pair) => pair.first().and_then(|f| f.as_str().ok()).map(decode_pdf_string),
+            Object::Array(pair) => pair
+                .first()
+                .and_then(|f| f.as_str().ok())
+                .map(decode_pdf_string),
             _ => None,
         })
         .collect()
@@ -810,9 +888,11 @@ impl PdfForm {
     /// 值超 `/MaxLen` → [`FormError::InvalidValue`]（**不静默截断**：标书里
     /// 截断的金额/工期是废标级错误，宁可报错让人看见）。
     pub fn set_field(&mut self, name: &str, value: &str) -> Result<(), FormError> {
-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
-            FormError::FieldNotFound(name.to_string())
-        })?;
+        let raw = self
+            .fields
+            .get(name)
+            .cloned()
+            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
         match &raw.model {
             FormField::Text { max_len, .. } => {
                 if let Some(max) = max_len {
@@ -864,10 +944,17 @@ impl PdfForm {
 
     /// 勾选/取消复选框。
     pub fn set_checkbox(&mut self, name: &str, checked: bool) -> Result<(), FormError> {
-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
-            FormError::FieldNotFound(name.to_string())
-        })?;
-        let FormField::Checkbox { checked: was, on_name, .. } = &raw.model else {
+        let raw = self
+            .fields
+            .get(name)
+            .cloned()
+            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
+        let FormField::Checkbox {
+            checked: was,
+            on_name,
+            ..
+        } = &raw.model
+        else {
             return Err(FormError::WrongFieldType {
                 name: name.to_string(),
                 expected: "checkbox",
@@ -892,7 +979,11 @@ impl PdfForm {
             self.write_field_dict(w, b"AS", val.clone());
         }
         if let Some(m) = self.fields.get_mut(name) {
-            m.model = FormField::Checkbox { name: name.to_string(), checked, on_name };
+            m.model = FormField::Checkbox {
+                name: name.to_string(),
+                checked,
+                on_name,
+            };
         }
         self.report.changed += 1;
         Ok(())
@@ -900,9 +991,11 @@ impl PdfForm {
 
     /// 选单选组的一项。
     pub fn set_radio(&mut self, name: &str, option: &str) -> Result<(), FormError> {
-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
-            FormError::FieldNotFound(name.to_string())
-        })?;
+        let raw = self
+            .fields
+            .get(name)
+            .cloned()
+            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
         let FormField::Radio { options, .. } = &raw.model else {
             return Err(FormError::WrongFieldType {
                 name: name.to_string(),
@@ -922,7 +1015,11 @@ impl PdfForm {
         let widgets = raw.widget_ids.clone();
         for w in widgets {
             let hit = button_on_names(&self.doc, w).iter().any(|n| n == option);
-            let as_val = if hit { val.clone() } else { Object::Name(b"Off".to_vec()) };
+            let as_val = if hit {
+                val.clone()
+            } else {
+                Object::Name(b"Off".to_vec())
+            };
             self.write_field_dict(w, b"AS", as_val);
         }
         let options = options.clone();
@@ -939,9 +1036,11 @@ impl PdfForm {
 
     /// 选下拉/列表项（多选列表可传多个）。
     pub fn set_choice(&mut self, name: &str, values: &[&str]) -> Result<(), FormError> {
-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
-            FormError::FieldNotFound(name.to_string())
-        })?;
+        let raw = self
+            .fields
+            .get(name)
+            .cloned()
+            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
         let FormField::Choice { options, combo, .. } = &raw.model else {
             return Err(FormError::WrongFieldType {
                 name: name.to_string(),
@@ -1012,7 +1111,12 @@ impl PdfForm {
             .doc
             .get_dictionary(widget_id)
             .ok()
-            .and_then(|d| d.get(b"Rect").ok().and_then(|o| o.as_array().ok()).map(|a| a.to_vec()))
+            .and_then(|d| {
+                d.get(b"Rect")
+                    .ok()
+                    .and_then(|o| o.as_array().ok())
+                    .map(|a| a.to_vec())
+            })
             .map(|a| {
                 let n = |i: usize| match a.get(i) {
                     Some(Object::Real(r)) => *r as f64,
@@ -1022,10 +1126,8 @@ impl PdfForm {
                 [n(0), n(1), n(2), n(3)]
             });
         if let Some(rect) = rect {
-            self.appearance_jobs.insert(
-                name.to_string(),
-                AppearanceJob { widget_id, rect },
-            );
+            self.appearance_jobs
+                .insert(name.to_string(), AppearanceJob { widget_id, rect });
         }
     }
 }
@@ -1079,7 +1181,9 @@ impl PdfForm {
         let font = self.font.clone();
         let mut built = 0usize;
         for (name, job) in jobs {
-            let Some(model) = self.fields.get(&name).map(|r| r.model.clone()) else { continue };
+            let Some(model) = self.fields.get(&name).map(|r| r.model.clone()) else {
+                continue;
+            };
             let value = match &model {
                 FormField::Text { value, .. } => value.clone(),
                 FormField::Choice { selected, .. } => selected.join(","),
@@ -1116,7 +1220,9 @@ impl PdfForm {
 
     /// `/AcroForm /NeedAppearances` 开关。
     fn set_need_appearances(&mut self, on: bool) {
-        let Some(acro_id) = self.acroform_id() else { return };
+        let Some(acro_id) = self.acroform_id() else {
+            return;
+        };
         self.write_field_dict(acro_id, b"NeedAppearances", Object::Boolean(on));
     }
 
@@ -1214,16 +1320,19 @@ fn simple_appearance_styled(
     s.dict.set("Type", "XObject");
     s.dict.set("Subtype", "Form");
     s.dict.set("BBox", bbox(w, h));
-    s.dict.set("Resources", Object::Dictionary(dictionary! {
-        "Font" => Object::Dictionary(dictionary! {
-            "Helv" => Object::Dictionary(dictionary! {
-                "Type" => "Font",
-                "Subtype" => "Type1",
-                "BaseFont" => "Helvetica",
-                "Encoding" => "WinAnsiEncoding",
+    s.dict.set(
+        "Resources",
+        Object::Dictionary(dictionary! {
+            "Font" => Object::Dictionary(dictionary! {
+                "Helv" => Object::Dictionary(dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                    "Encoding" => "WinAnsiEncoding",
+                }),
             }),
         }),
-    }));
+    );
     s
 }
 /// CIDFont 外观流（Type0 / Identity-H）——中文域值的正确落点。
@@ -1254,9 +1363,12 @@ fn cid_appearance(
     s.dict.set("BBox", bbox(w, h));
     let font_obj = crate::generate::font_object(ttf)
         .ok_or_else(|| FormError::Save("字体对象构造失败（TTF 缺必需表）".into()))?;
-    s.dict.set("Resources", Object::Dictionary(dictionary! {
-        "Font" => Object::Dictionary(dictionary! { "C0" => font_obj }),
-    }));
+    s.dict.set(
+        "Resources",
+        Object::Dictionary(dictionary! {
+            "Font" => Object::Dictionary(dictionary! { "C0" => font_obj }),
+        }),
+    );
     Ok(s)
 }
 // ---------------------------------------------------------------------------
@@ -1311,7 +1423,9 @@ impl PdfForm {
                 _ => continue,
             };
             for wid in &f.widget_ids {
-                let Ok(wd) = self.doc.get_dictionary(*wid) else { continue };
+                let Ok(wd) = self.doc.get_dictionary(*wid) else {
+                    continue;
+                };
                 let Some(rect) = wd
                     .get(b"Rect")
                     .ok()
@@ -1361,17 +1475,14 @@ impl PdfForm {
         }
 
         for (page_no, ops) in &by_page {
-            let Some((_, page_id)) = self
-                .doc
-                .get_pages()
-                .into_iter()
-                .find(|(n, _)| n == page_no)
+            let Some((_, page_id)) = self.doc.get_pages().into_iter().find(|(n, _)| n == page_no)
             else {
                 continue;
             };
-            let stream_id = self
-                .doc
-                .add_object(lopdf::Stream::new(dictionary! {}, ops.join("\n").into_bytes()));
+            let stream_id = self.doc.add_object(lopdf::Stream::new(
+                dictionary! {},
+                ops.join("\n").into_bytes(),
+            ));
             if let Ok(page) = self.doc.get_dictionary_mut(page_id) {
                 let old = page.get(b"Contents").ok().cloned();
                 match old {
@@ -1455,9 +1566,9 @@ impl PdfForm {
             .map_err(|e| FormError::Save(format!("扁平化保存失败：{e}")))?;
         Ok(out)
     }
-}// ---------------------------------------------------------------------------
-// 任务 1：校验
-// ---------------------------------------------------------------------------
+} // ---------------------------------------------------------------------------
+  // 任务 1：校验
+  // ---------------------------------------------------------------------------
 
 impl PdfForm {
     /// 整表校验（必填 / 超长 / 选项集）。
@@ -1507,7 +1618,9 @@ impl PdfForm {
                         }
                     }
                 }
-                FormField::Choice { selected, options, .. } => {
+                FormField::Choice {
+                    selected, options, ..
+                } => {
                     if raw.flags.is_required() && selected.is_empty() {
                         errors.push(FieldError {
                             field: name.clone(),
@@ -1536,7 +1649,10 @@ impl PdfForm {
             }
         }
         errors.sort_by(|a, b| a.field.cmp(&b.field).then(a.kind.code().cmp(b.kind.code())));
-        ValidationResult { valid: errors.is_empty(), errors }
+        ValidationResult {
+            valid: errors.is_empty(),
+            errors,
+        }
     }
 
     /// 某域的标志位（校验/接线方可读）。
@@ -1550,7 +1666,9 @@ impl PdfForm {
     /// 的第二道防线（别的工具写进了超 `/MaxLen` 的值）。生产不要用。
     #[doc(hidden)]
     pub fn force_raw_value(&mut self, name: &str, value: &str) {
-        let Some(raw) = self.fields.get(name).cloned() else { return };
+        let Some(raw) = self.fields.get(name).cloned() else {
+            return;
+        };
         let encoded = encode_pdf_text(value);
         self.write_field_dict(raw.field_id, b"V", encoded.clone());
         for wid in &raw.widget_ids {
@@ -1639,7 +1757,11 @@ impl PdfForm {
                 Object::Real(bg as f32 / 255.0),
                 Object::Real(bb as f32 / 255.0),
             ]);
-            let base = self.doc.get_dictionary(raw.field_id).cloned().unwrap_or_default();
+            let base = self
+                .doc
+                .get_dictionary(raw.field_id)
+                .cloned()
+                .unwrap_or_default();
             let mut mk = match base.get(b"MK").ok() {
                 Some(Object::Dictionary(d)) => d.clone(),
                 _ => lopdf::Dictionary::new(),
@@ -1706,7 +1828,9 @@ fn find_page_with_annot(doc: &Document, id: ObjectId) -> Option<u32> {
 
 /// 给页资源字典挂 `/Font /Ffl`。
 fn attach_font(doc: &mut Document, page_id: ObjectId, font: Object) {
-    let Ok(page) = doc.get_dictionary_mut(page_id) else { return };
+    let Ok(page) = doc.get_dictionary_mut(page_id) else {
+        return;
+    };
     let mut res = match page.get(b"Resources").ok() {
         Some(Object::Dictionary(d)) => d.clone(),
         _ => lopdf::Dictionary::new(),
@@ -1747,7 +1871,9 @@ mod tests {
     #[test]
     fn pdf_string_roundtrip_utf16() {
         let obj = encode_pdf_text("投标函");
-        let Object::String(bytes, _) = obj else { panic!("应为字符串") };
+        let Object::String(bytes, _) = obj else {
+            panic!("应为字符串")
+        };
         assert_eq!(&bytes[..2], &[0xFE, 0xFF], "非 ASCII 必须带 UTF-16BE BOM");
         assert_eq!(decode_pdf_string(&bytes), "投标函");
     }
@@ -1755,7 +1881,9 @@ mod tests {
     #[test]
     fn ascii_stays_literal() {
         let obj = encode_pdf_text("ZFCG-2026-001");
-        let Object::String(bytes, _) = obj else { panic!() };
+        let Object::String(bytes, _) = obj else {
+            panic!()
+        };
         assert_eq!(String::from_utf8(bytes).unwrap(), "ZFCG-2026-001");
     }
 }

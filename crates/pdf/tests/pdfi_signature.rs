@@ -46,12 +46,20 @@ fn extracts_certificate_details() {
     assert_eq!(s.certificates.len(), 1, "CMS 内嵌 1 张证书");
     let c = &s.certificates[0];
     assert!(c.subject.contains("投标人签字人"), "subject: {}", c.subject);
-    assert!(c.subject.contains("某建设工程有限公司"), "subject: {}", c.subject);
+    assert!(
+        c.subject.contains("某建设工程有限公司"),
+        "subject: {}",
+        c.subject
+    );
     assert!(c.issuer.contains("投标人签字人"), "issuer: {}", c.issuer);
     assert_eq!(c.serial, "1234567890abcdef", "serial: {}", c.serial);
     assert!(c.not_before.is_some(), "notBefore 应可解析");
     assert!(c.not_after.is_some(), "notAfter 应可解析");
-    assert!(c.not_before.as_deref().unwrap().starts_with("2026-01-01"), "{:?}", c.not_before);
+    assert!(
+        c.not_before.as_deref().unwrap().starts_with("2026-01-01"),
+        "{:?}",
+        c.not_before
+    );
 }
 
 #[test]
@@ -60,14 +68,22 @@ fn signer_name_falls_back_to_cert_cn() {
     let s = &sigs[0];
     // /Name 未设时取证书 CN
     assert!(s.signer_name.is_some(), "应能取到签名人");
-    assert!(s.signer_name.as_deref().unwrap().contains("投标人签字人"), "{:?}", s.signer_name);
+    assert!(
+        s.signer_name.as_deref().unwrap().contains("投标人签字人"),
+        "{:?}",
+        s.signer_name
+    );
 }
 
 #[test]
 fn byte_range_is_even_and_ordered() {
     let sigs = read_signatures(&signed_pdf()).unwrap();
     let br = &sigs[0].byte_range;
-    assert_eq!(br.len(), 4, "ByteRange 应为 [start1 len1 start2 len2]：{br:?}");
+    assert_eq!(
+        br.len(),
+        4,
+        "ByteRange 应为 [start1 len1 start2 len2]：{br:?}"
+    );
     assert_eq!(br[0], 0, "第一段应从 0 开始");
     assert!(br[1] > 0 && br[2] > br[1], "段应递增：{br:?}");
     assert!(br[3] > 0, "第二段长度非零：{br:?}");

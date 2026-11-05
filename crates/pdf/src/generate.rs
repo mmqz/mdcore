@@ -123,8 +123,14 @@ pub(crate) fn font_object(ttf: &[u8]) -> Option<lopdf::Dictionary> {
         "FontFile2" => Object::Stream(font_file),
     };
     let mut csi = Dictionary::new();
-    csi.set("Registry", Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal));
-    csi.set("Ordering", Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal));
+    csi.set(
+        "Registry",
+        Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal),
+    );
+    csi.set(
+        "Ordering",
+        Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal),
+    );
     csi.set("Supplement", 0);
     let mut cid = Dictionary::new();
     cid.set("Type", "Font");
@@ -140,7 +146,10 @@ pub(crate) fn font_object(ttf: &[u8]) -> Option<lopdf::Dictionary> {
     t0.set("Subtype", "Type0");
     t0.set("BaseFont", Object::Name(b"EmbeddedCJK".to_vec()));
     t0.set("Encoding", "Identity-H");
-    t0.set("DescendantFonts", Object::Array(vec![Object::Dictionary(cid)]));
+    t0.set(
+        "DescendantFonts",
+        Object::Array(vec![Object::Dictionary(cid)]),
+    );
     t0.set("ToUnicode", Object::Stream(to_unicode));
     Some(t0)
 }

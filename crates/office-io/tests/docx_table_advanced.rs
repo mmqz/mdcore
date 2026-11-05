@@ -22,8 +22,8 @@
 use std::io::Read as _;
 
 use mdc_office_io::docx::{
-    Block, CellBorderEdge, CellBorderStyle, CellBorders, CellVMerge, DocxWriter, MergeRange,
-    TableCellSpec, TableData, TableSpec, read_docx_from_bytes,
+    read_docx_from_bytes, Block, CellBorderEdge, CellBorderStyle, CellBorders, CellVMerge,
+    DocxWriter, MergeRange, TableCellSpec, TableData, TableSpec,
 };
 
 fn tmp(name: &str) -> String {

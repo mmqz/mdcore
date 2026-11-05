@@ -34,17 +34,35 @@ fn reads_all_fields_from_real_bid_letter() {
     assert_eq!(form.len(), 8, "投标函模板应读出 8 个域");
 
     let names: Vec<String> = form.fields().iter().map(|f| f.name().to_string()).collect();
-    for want in ["project_name", "legal_rep", "duration_days", "bid_amount_upper", "consent", "project_type"] {
+    for want in [
+        "project_name",
+        "legal_rep",
+        "duration_days",
+        "bid_amount_upper",
+        "consent",
+        "project_type",
+    ] {
         assert!(names.iter().any(|n| n == want), "缺域 {want}：{names:?}");
     }
 
     // 类型识别
-    assert!(matches!(form.field("project_name"), Some(FormField::Text { .. })));
-    assert!(matches!(form.field("consent"), Some(FormField::Checkbox { .. })));
-    assert!(matches!(form.field("project_type"), Some(FormField::Choice { .. })));
+    assert!(matches!(
+        form.field("project_name"),
+        Some(FormField::Text { .. })
+    ));
+    assert!(matches!(
+        form.field("consent"),
+        Some(FormField::Checkbox { .. })
+    ));
+    assert!(matches!(
+        form.field("project_type"),
+        Some(FormField::Choice { .. })
+    ));
 
     // /MaxLen 必须读出来（填值时靠它防截断）
-    let Some(FormField::Text { max_len, .. }) = form.field("duration_days") else { panic!() };
+    let Some(FormField::Text { max_len, .. }) = form.field("duration_days") else {
+        panic!()
+    };
     assert_eq!(*max_len, Some(4), "duration_days 的 /MaxLen=4");
 }
 
@@ -73,11 +91,17 @@ fn fill_text_and_checkbox_then_save() {
 
     // 读回验证
     let back = PdfForm::read(&out).unwrap();
-    let Some(FormField::Text { value, .. }) = back.field("project_name") else { panic!() };
+    let Some(FormField::Text { value, .. }) = back.field("project_name") else {
+        panic!()
+    };
     assert_eq!(value, "智慧园区弱电工程", "中文往返必须无损");
-    let Some(FormField::Checkbox { checked, .. }) = back.field("consent") else { panic!() };
+    let Some(FormField::Checkbox { checked, .. }) = back.field("consent") else {
+        panic!()
+    };
     assert!(checked, "复选框应已勾选");
-    let Some(FormField::Text { value, .. }) = back.field("duration_days") else { panic!() };
+    let Some(FormField::Text { value, .. }) = back.field("duration_days") else {
+        panic!()
+    };
     assert_eq!(value, "120");
 }
 
@@ -123,14 +147,18 @@ fn maxlen_overflow_is_rejected_not_truncated() {
     assert!(matches!(err, FormError::InvalidValue { .. }), "{err:?}");
     assert!(err.to_string().contains("MaxLen"), "{}", err);
     // 只报错不改值
-    let Some(FormField::Text { value, .. }) = form.field("duration_days") else { panic!() };
+    let Some(FormField::Text { value, .. }) = form.field("duration_days") else {
+        panic!()
+    };
     assert_eq!(value, "", "被拒的值不得写入");
 }
 
 #[test]
 fn choice_rejects_value_outside_options() {
     let mut form = PdfForm::read(&bid_letter()).unwrap();
-    let err = form.set_choice("project_type", &["不存在的选项"]).unwrap_err();
+    let err = form
+        .set_choice("project_type", &["不存在的选项"])
+        .unwrap_err();
     assert!(matches!(err, FormError::InvalidValue { .. }), "{err:?}");
 }
 
@@ -146,7 +174,9 @@ fn cjk_without_font_warns_but_succeeds() {
     assert!(warnings[0].contains("NeedAppearances"), "{warnings:?}");
     let out = form.save().unwrap();
     let back = PdfForm::read(&out).unwrap();
-    let Some(FormField::Text { value, .. }) = back.field("project_name") else { panic!() };
+    let Some(FormField::Text { value, .. }) = back.field("project_name") else {
+        panic!()
+    };
     assert_eq!(value, "中文项目名", "值本身仍是正确的 UTF-16");
 }
 
@@ -156,7 +186,11 @@ fn cjk_with_font_builds_cid_appearance() {
     form.set_font(&test_font());
     // 测试字体只含部分汉字——选它覆盖的字
     form.set_field("project_name", "中标").unwrap();
-    assert!(form.report().warnings.is_empty(), "注入字体后不该再有字体告警：{:?}", form.report().warnings);
+    assert!(
+        form.report().warnings.is_empty(),
+        "注入字体后不该再有字体告警：{:?}",
+        form.report().warnings
+    );
     let out = form.save().unwrap();
     // 产物里必须出现 Type0 字体与 CIDFontType2（CID 嵌入的证据）
     let text = String::from_utf8_lossy(&out);

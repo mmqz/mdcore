@@ -133,10 +133,10 @@ pub use annotate::{read_annotations, PdfAnnotator, ReadReport};
 pub use cache::PageCache;
 pub use command::{Command, CommandError, Outcome, Source};
 pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
-#[cfg(feature = "engine-lopdf")]
-pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
 #[cfg(feature = "engine-pdfium")]
 pub use ocr::{ocr_available, ocr_page, OcrEnv};
+#[cfg(feature = "engine-lopdf")]
+pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};
