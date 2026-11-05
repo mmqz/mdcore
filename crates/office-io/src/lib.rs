@@ -106,6 +106,9 @@
 
 pub mod docx;
 pub mod docx_edit;
+// #226 R2：docx-rs 读层 panic 预检防御（私有 seam——docx 读面内部消费，
+// 模块文档含位点清单与修复策略）。
+mod docx_panic_guard;
 pub mod io;
 pub mod numbering;
 pub mod rebuild;
