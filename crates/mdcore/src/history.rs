@@ -42,7 +42,12 @@ pub enum Kind {
 pub struct Entry {
     pub revision: u64,
     pub ops: Vec<Op>,
-    /// 与 ops 逆序对应（undo 按数组顺序应用）。
+    /// 与 ops **组间逆序、组内保序**对应（undo 按数组顺序应用）。
+    /// `invert_op` 返回逆组（多数长度 1；RemoveBlock 的逆 = 先序重建
+    /// 整棵子树），组内序 = 重建发射序（父先子后），不可倒转（#220
+    /// / 审计 P1-27：扁平整体反转会在非叶删除场景倒转组内序 → undo
+    /// 先插子后插父 → BadPath 卡死或静默错挂）。仍为扁平 `Vec<Op>`：
+    /// serde/历史 JSON 形状不变，只改序。
     pub inverses: Vec<Op>,
     pub selection: Option<Selection>,
     #[serde(default)]
@@ -97,7 +102,8 @@ impl History {
             && !self.undo.is_empty()
     }
 
-    /// 新条目入栈（清空 redo）。`inverses` 必须已按逆序排好。
+    /// 新条目入栈（清空 redo）。`inverses` 必须已按「组间逆序、组内
+    /// 保序」排好（`apply_ops` 侧构造，见 Entry.inverses 注释）。
     /// `source` = 产生该条目的命令源（R12：随条目记入合并窗状态）。
     pub fn push_entry(&mut self, entry: Entry, source: Source) {
         self.note_boundary(entry.at_ms, entry.kind, source);
@@ -115,7 +121,10 @@ impl History {
         self.last_source = Some(source);
     }
 
-    /// 合并进最后一条：ops 追加，inverses 前插（保持逆序不变量）。
+    /// 合并进最后一条：ops 追加，inverses 前插（undo 序 = 最新组在前）。
+    /// 合并面只收文本类事务（`should_coalesce` 要求 kind==Text ⇒ 全部
+    /// `is_text_class` ⇒ 逆组全长度 1），前插 = 组前插，与组语义逐位一致
+    /// （#220 验证：r25 `coalesced_text_entry_undo_order_unchanged` 锁定）。
     pub fn coalesce_into_last(
         &mut self,
         ops: Vec<Op>,
