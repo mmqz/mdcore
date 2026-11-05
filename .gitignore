@@ -24,3 +24,7 @@ __pycache__/
 
 # #219 tab_workflow_tests：CWD 相对形态去重测试的临时夹具（测试自清，崩溃残留兜底）
 mang-shell/mdc-tab-rel-*/
+
+# #210 pdfium 取件位（本地 fetch / CI 下载产物——二进制不入库；
+# 版本 pin 与 SHA256 校验见 windows-test.yml 下载步骤）
+bin/
