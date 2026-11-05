@@ -2707,20 +2707,21 @@ mod tab_workflow_tests {
                 assert_eq!(shell.active, 0, "单标签循环不变");
             });
 
-            // 两标签：循环两周回原位；越界激活安全不改状态（标签点击
-            // 竞态/程序化调用的防御面）。
+            // 两标签（active 1 = b）：循环两周回原位（1→0→1——cycle 的
+            // eprintln 为 1 基展示，与本处 0 基状态勿混）；越界激活安全
+            // 不改状态（标签点击竞态/程序化调用的防御面）。
             open(&shell, cx, b.clone());
             shell.update(cx, |shell, cx| {
                 shell.cycle_tab(true, window, cx);
                 shell.cycle_tab(true, window, cx);
-                assert_eq!(shell.active, 0, "两标签循环两周回原位");
+                assert_eq!(shell.active, 1, "两标签循环两周回原位（b→a→b）");
 
                 shell.activate_tab(7, window, cx);
-                assert_eq!(shell.active, 0, "越界激活不改 active");
-                shell.activate_tab(1, window, cx);
-                assert_eq!(shell.active, 1);
+                assert_eq!(shell.active, 1, "越界激活不改 active");
+                shell.activate_tab(0, window, cx);
+                assert_eq!(shell.active, 0);
                 shell.activate_tab(2, window, cx);
-                assert_eq!(shell.active, 1, "越界激活不改 active（再证）");
+                assert_eq!(shell.active, 0, "越界激活不改 active（再证）");
             });
         });
 
