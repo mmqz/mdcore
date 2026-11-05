@@ -443,7 +443,7 @@ impl PdfForm {
         }
         let fields = collect_fields(&doc);
         let base_ids = doc.objects.keys().copied().collect();
-        Ok(PdfForm {
+        let mut form = PdfForm {
             doc,
             original: bytes.to_vec(),
             fields,
@@ -454,7 +454,17 @@ impl PdfForm {
             report: FillReport::default(),
             limits,
             base_ids,
-        })
+        };
+        // 已签名档的打开告知（保护可见化：调用方从 report() 即知后续
+        // 保存是增量追加、扁平化会被拒——不静默）。
+        if form.has_signed_signature_fields() {
+            form.report.warn(
+                "文档含已签署数字签名域：表单保存将追加增量修订（原字节前缀逐位不变，
+                 既有签名保持有效）；扁平化会被拒绝（会销毁签名）"
+                    .into(),
+            );
+        }
+        Ok(form)
     }
 
     /// 全部域（按域名字典序——确定性输出）。
@@ -1441,11 +1451,26 @@ fn cid_appearance(
 impl PdfForm {
     /// 扁平化：把域值画进页面内容流 + 删除 `/AcroForm` 与各页 `/Widget`。
     ///
-    /// 产物与打印扫描件等价——任何人再也改不了（投标常见要求）。
+    /// 产物与打印扫描件等价——任何人再也改不了（投标常见要求）。这是
+    /// **销毁性**操作，与 [`PdfForm::save`] 的增量路径（前缀逐位不变、
+    /// 签名保持）语义相反，故本方法保持全量重写。
     ///
     /// **拒绝条件**（[`FormError::FlattenRefused`]，宁可不错也不做错）：
-    /// 有非 ASCII 值却没有字体（画出来是乱码，比不扁平化更危险）、或字体缺字形。
+    /// - 文档含**已签署**的数字签名域（扁平化会删掉签名域，既有签名被
+    ///   销毁——即使是增量实现，当前修订视图里的签名也不复存在。要保
+    ///   签名的定稿请走 [`PdfForm::save`]；要不可编辑定稿请对**副本**
+    ///   扁平化并接受签名失效，或扁平后重新签署）；
+    /// - 有非 ASCII 值却没有字体（画出来是乱码，比不扁平化更危险）；
+    /// - 字体缺字形。
     pub fn flatten(mut self) -> Result<Vec<u8>, FormError> {
+        if self.has_signed_signature_fields() {
+            return Err(FormError::FlattenRefused(
+                "文档含已签署的数字签名域——扁平化会删除签名域，既有签名将被销毁，已拒绝。\
+                 要保留签名的可交付件：用 save()（增量修订，原字节前缀逐位不变，签名仍有效）；\
+                 要不可编辑的定稿：请先另存副本，对副本 flatten 并接受签名失效，或扁平后重新签署"
+                    .into(),
+            ));
+        }
         let mut needs_font = false;
         for f in self.fields.values() {
             if let FormField::Text { value, .. } = &f.model {
@@ -1715,6 +1740,39 @@ impl PdfForm {
         ValidationResult {
             valid: errors.is_empty(),
             errors,
+        }
+    }
+
+    /// 是否存在**已签署**的数字签名域（`/FT /Sig` 且 `/V` 已挂签名字典
+    /// ——直挂字典或间接引用两形态；未签署的占位签名域不算，删它不毁
+    /// 任何签名）。
+    ///
+    /// 两处用途：[`PdfForm::flatten`] 的拒绝判据（扁平化删掉签名域 =
+    /// 销毁既有签名）；调用方 UI 探针（对已签名档提示「保存走增量追加，
+    /// 签名保持有效」）。
+    pub fn has_signed_signature_fields(&self) -> bool {
+        self.fields.values().any(|raw| {
+            if !matches!(raw.model, FormField::Signature { .. }) {
+                return false;
+            }
+            // /V 可能在域字典（分离态）或 Widget 字典（合并态）上——两处都看。
+            std::iter::once(&raw.field_id)
+                .chain(raw.widget_ids.iter())
+                .any(|id| self.sig_value_present(*id))
+        })
+    }
+
+    /// 单个对象上 `/V` 是否挂了签名字典（直挂 / 间接引用两形态）。
+    fn sig_value_present(&self, id: ObjectId) -> bool {
+        let Ok(d) = self.doc.get_dictionary(id) else {
+            return false;
+        };
+        match d.get(b"V") {
+            Ok(Object::Dictionary(_)) => true,
+            Ok(Object::Reference(vid)) => {
+                matches!(self.doc.get_object(*vid), Ok(Object::Dictionary(_)))
+            }
+            _ => false,
         }
     }
 

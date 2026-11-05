@@ -252,3 +252,48 @@ fn signed_bid_letter_fill_keeps_signature_valid() {
         .find(|f| matches!(f, FormField::Signature { .. }));
     assert!(sig_field.is_some(), "签名域应保留在表单域集中");
 }
+
+#[test]
+fn signed_document_is_detected_and_reported_on_open() {
+    // 已签名档：探针为真 + 打开即告警（保护可见化，不静默）。
+    let form = PdfForm::read(&signed_pdf()).unwrap();
+    assert!(form.has_signed_signature_fields(), "夹具应检出已签署签名域");
+    let warnings = form.report().warnings.clone();
+    assert!(
+        warnings.iter().any(|w| w.contains("签名")),
+        "打开已签名档应在 report() 告警：{warnings:?}"
+    );
+
+    // 对照：未签名档不告警、探针为假（无误伤）。
+    let plain = PdfForm::read(&bid_letter()).unwrap();
+    assert!(!plain.has_signed_signature_fields(), "未签名档探针应为假");
+    assert!(
+        !plain.report().warnings.iter().any(|w| w.contains("签名")),
+        "未签名档不应有签名类告警：{:?}",
+        plain.report().warnings
+    );
+}
+
+#[test]
+fn flatten_refuses_signed_document_with_guidance() {
+    let mut form = PdfForm::read(&signed_pdf()).unwrap();
+    form.set_field("duration_days", "120").unwrap();
+    let err = form.flatten().unwrap_err();
+    assert!(matches!(err, FormError::FlattenRefused(_)), "{err:?}");
+    let msg = err.to_string();
+    assert!(msg.contains("签名"), "理由要说清签名会被销毁：{msg}");
+    // 可操作指引：两条出路都要点名（保签名的增量路径 / 定稿的副本路径）。
+    assert!(
+        msg.contains("save") && msg.contains("增量"),
+        "应指引走 save() 增量路径：{msg}"
+    );
+    assert!(
+        msg.contains("副本") || msg.contains("重新签署"),
+        "应给出定稿出路（副本 flatten / 重新签署）：{msg}"
+    );
+
+    // 对照：未签名档照常扁平化（既有语义不回归）。
+    let mut plain = PdfForm::read(&bid_letter()).unwrap();
+    plain.set_field("duration_days", "120").unwrap();
+    assert!(plain.flatten().is_ok(), "未签名档扁平化不受影响");
+}
