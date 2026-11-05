@@ -714,6 +714,76 @@ def w13_non_bmp_units(browser, port):
         page.close()
 
 
+def w14_fastpath_enter_integrity(browser, port):
+    """#225 P0-4（审计 P0-4）快路径编辑后的映射一致性 + 中段 Enter 切分完整性。
+
+    缺陷形状（修复前）：tryFastPath 成功后 byId.textChars 不更新——
+    handleEnter 的 split_block 以 stale textChars 为 replace_text 删除
+    区间端点 → list_item 中段插字后 Enter = 尾段重复（`- a|Xb` | Enter
+    → `- ab\n- Xb`，"b" 重复）。
+
+    双页独立序列（缺一不可）：
+    · 行为面（页 A）：插字后**不碰任何诊断探针**直接 Enter——
+      debugMapVsFullRebuild 内部会 rebuildMap（副作用），先跑会把 map
+      治好、掩盖 Enter 缺陷（对照验证时实测：未修复版页内先跑探针则
+      Enter 仍 PASS——探针副作用即修复，断言失效）；
+    · 映射面（页 B）：插字后 textChars 增量维护 vs 全量重建逐项一致。
+    另断言：快路径确实被采用 / CM6 doc 与核 to_markdown 恒等 /
+    split 为单事务（一次 undo 整体回退）。"""
+    # ---- 页 A：行为面（快路径 → 立即 Enter，无诊断探针）----
+    page, _ = open_page(browser, port)
+    try:
+        a = page.evaluate("""() => {
+          const v = window.__view;
+          const b = window.__bridge;
+          const out = {};
+          // 重置文档为单 list_item '- ab'（跨行替换 → fullResync 重建 map）
+          v.dispatch({changes: {from: 0, to: v.state.doc.length, insert: '- ab'}});
+          // 中段插字：'- a|b' → '- aXb'（单行 body 内单 change = 快路径；
+          // CM6 默认 selection 映射后 anchor 停在插入文本前 = '- a|Xb'）
+          v.dispatch({selection: {anchor: 3}});
+          v.dispatch({changes: {from: 3, to: 3, insert: 'X'}});
+          out.fastBail = b.lastFastBail;
+          // 立即 Enter（split_block 核驱动：replace_text 删尾 + insert_block）
+          out.enter = b.handleEnter();
+          out.mdAfter = window.__md();
+          out.docAfter = v.state.doc.toString();
+          // split 为单事务：一次 undo 整体回退到 '- aXb'
+          b.undo();
+          out.mdUndo = window.__md();
+          return out;
+        }""")
+    finally:
+        page.close()
+    # ---- 页 B：映射面（快路径 → textChars 一致性护栏）----
+    page, _ = open_page(browser, port)
+    try:
+        m = page.evaluate("""() => {
+          const v = window.__view;
+          const b = window.__bridge;
+          v.dispatch({changes: {from: 0, to: v.state.doc.length, insert: '- ab'}});
+          v.dispatch({selection: {anchor: 3}});
+          v.dispatch({changes: {from: 3, to: 3, insert: 'X'}});
+          return {fastBail: b.lastFastBail, mapEquiv: b.debugMapVsFullRebuild()};
+        }""")
+    finally:
+        page.close()
+    checks = [
+        check("fast path taken for mid-item typing",
+              a["fastBail"] == "ok" and m["fastBail"] == "ok",
+              f"A={a['fastBail']} B={m['fastBail']}"),
+        check("byId.textChars consistent (incremental vs full rebuild)",
+              m["mapEquiv"]["ok"], str(m["mapEquiv"])),
+        check("mid-item Enter splits without tail duplication",
+              a["enter"] is True and a["mdAfter"] == "- a\n- Xb", f"md={a['mdAfter']!r}"),
+        check("cm6 doc identical to core markdown after split",
+              a["docAfter"] == a["mdAfter"], f"doc={a['docAfter']!r}"),
+        check("split is one undo step back to '- aXb'",
+              a["mdUndo"] == "- aXb", f"md={a['mdUndo']!r}"),
+    ]
+    return checks
+
+
 def g1_cursor_latency(browser, port):
     """R14 Gate 2（§15.3 击键→光标响应 <16ms）三路拆分：
     a) selection-only dispatch = 纯光标路径（判 Gate 2）；
@@ -928,6 +998,8 @@ def main():
             results["tests"]["W11"] = w11_ai_loop(browser, port)
             results["tests"]["W12"] = w12_incremental_equivalence(browser, port)
             results["tests"]["W13"] = w13_non_bmp_units(browser, port)
+            # #225 P0-4：快路径 textChars 维护 + 中段 Enter 完整性（审计 P0-4）
+            results["tests"]["W14"] = w14_fastpath_enter_integrity(browser, port)
             # R14 硬 Gate 收口轮（G 前缀）
             results["tests"]["G1"] = g1_cursor_latency(browser, port)
             results["tests"]["G2"] = g2_10mb_progressive_memory(browser, port)
@@ -941,7 +1013,7 @@ def main():
     if errors:
         failures.append(f"pageerror: {errors}")
 
-    results["summary"] = {"total": 15, "failed": len(failures), "pass": len(failures) == 0,
+    results["summary"] = {"total": len(results["tests"]), "failed": len(failures), "pass": len(failures) == 0,
                           "failures": failures}
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(results, indent=2, ensure_ascii=False))
