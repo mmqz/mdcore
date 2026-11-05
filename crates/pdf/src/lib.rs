@@ -82,6 +82,11 @@ pub mod document;
 pub mod engine;
 #[cfg(feature = "engine-pdfium")]
 pub mod engine_pdfium;
+// #68 方向一：pdfium 部署自检（逐层探针 + 绑定走查 + 可操作修复
+// 指引——mang-shell --check-pdfium 的核心面；同 feature 门同退化为
+// 空目标，跨环境可构建纪律保持）。
+#[cfg(feature = "engine-pdfium")]
+pub mod deploy_check;
 pub mod outline;
 pub mod page;
 pub mod protocol;

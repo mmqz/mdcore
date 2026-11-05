@@ -31,4 +31,12 @@ Download the matching release archive and either place the native library (`libp
 
 ## Troubleshooting
 
+Run the deployment self-check to diagnose without opening a PDF:
+
+```
+mang-shell --check-pdfium
+```
+
+The command prints every layer of the resolution order — layer name, expected path, whether the file exists (and its size), and the loader's own error when a load was attempted — then either confirms the bound library (exit code `0`) or prints an actionable fix guide: what is missing, where to download it, where to put it (with the concrete exe-adjacent directory), and how to verify (exit code `3` means not bound).
+
 If PDFium cannot be loaded, the error reports the library name and every path that was tried. Confirm that the file exists, that its architecture matches the application (a 64-bit application needs the x64 library), and that any platform runtime dependencies are installed. Setting `MDC_PDFIUM_LIB` directly to the library file removes all search ambiguity — if that works but the exe-adjacent placement does not, check that the file name matches exactly (`pdfium.dll` on Windows, `libpdfium.so` on Linux).
