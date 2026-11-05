@@ -11,6 +11,9 @@
 //! - R21 / ADR-B4：undo 栈 = 交互编辑史——System 事务不入栈
 //!   （`note_boundary` 只推进合并窗边界，调用方跳过 push/coalesce）。
 //! - 序列化：整栈 JSON 往返（S6），entry.ops/inverses 均为物化 op（ID 具体）。
+//!   持久化格式带版本号（[`HISTORY_FORMAT_VERSION`]）：恢复路径对
+//!   缺版本/旧版本/未知版本的栈降级丢弃（#220 错序 inverses 不可执行），
+//!   见 [`History::from_json`] 版本闸门。
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +21,25 @@ use crate::anchor::Selection;
 use crate::op::Op;
 
 pub const COALESCE_MS: u64 = 1000;
+
+/// 持久化 History 格式版本（#221 补充修复，承 #220）。
+///
+/// - **v2**（当前）：`Entry.inverses` 存储序 = 组间逆序、组内保序
+///   （#220 修复后 `apply_ops` 构造，见 `Entry.inverses` 注释）。
+/// - 缺失（serde default = 0）= **#220 修复前**的旧档：inverses 为各组
+///   摊平后整体 `reverse()` 的形态——单 op 逆组（长度 1）下与 v2 逐位
+///   相同，但非叶块删除条目（逆组长度 ≥ 2）的组内重建序被倒转：undo
+///   先插子后插父，BadPath 硬失败（T1-F10 条目压回后整栈卡死）或
+///   顶替路径静默错挂（undo 返回 Some 但树损坏）。旧档打开后**不可
+///   执行 undo/redo**。
+/// - 未来版本（> 2）：语义未知，同样不执行（前向保护——宁可弃栈
+///   不赌树）。
+///
+/// 降级语义（[`History::from_json`]）：丢弃 undo/redo 栈与合并窗边界
+/// 元数据，回落全新 History；正文 / document_id / revision 由
+/// `open_document` 独立恢复，不受影响。JSON 本身畸形仍显式报错
+/// （“格式旧”降级、“格式坏”拒绝，两语义分开）。
+pub const HISTORY_FORMAT_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,8 +78,14 @@ pub struct Entry {
     pub kind: Kind,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct History {
+    /// 持久化格式版本（[`HISTORY_FORMAT_VERSION`]）。序列化**无条件**
+    /// 写出（不能 skip：新档缺此字段会被当作旧档降级）；反序列化缺失
+    /// = 0（旧档）→ `from_json` 版本闸门降级。内存新构造恒为当前版本
+    /// （`Default`），运行时方法不触碰此字段——它是格式标识，不是运行态。
+    #[serde(default)]
+    format_version: u32,
     undo: Vec<Entry>,
     redo: Vec<Entry>,
     #[serde(default)]
@@ -261,10 +289,38 @@ impl History {
         serde_json::to_string(self).expect("history serialize")
     }
 
+    /// 版本闸门：缺版本（旧档）/ 旧版本 / 未知未来版本的持久化栈
+    /// 不可信——降级为全新 History（丢弃 undo/redo 栈与合并窗边界：
+    /// 重载后第一击键必开新条目，不与旧会话残留合并）。JSON 畸形仍
+    /// 返回 Err（显式失败语义不变）。“不可信”的实锤见
+    /// [`HISTORY_FORMAT_VERSION`]：#220 前的非叶删除条目 inverses 组内
+    /// 序倒转，undo 必坏。
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         // R10 审查修正：合并窗元数据（last_at_ms/last_kind）随栈一并恢复——
         // save/open 往返要求逐字节一致；1s 窗口使跨档残留合并不可能发生。
-        serde_json::from_str(json)
+        // （版本闸门在解析成功之后：合法 v2 才走到这里恢复的语义。）
+        let h: History = serde_json::from_str(json)?;
+        if h.format_version != HISTORY_FORMAT_VERSION {
+            return Ok(History::default());
+        }
+        Ok(h)
+    }
+}
+
+/// 默认态 = 空 stacks + 当前格式版本（降级 / 新建共用此构造）。
+/// 手写 impl（不 derive）：u32 的 derive default = 0 会被版本闸门
+/// 当作旧档——内存态必须生而 v2。
+// 注意：此 impl 必须与字段声明同步维护（编译器无缺字段保护）。
+impl Default for History {
+    fn default() -> Self {
+        Self {
+            format_version: HISTORY_FORMAT_VERSION,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last_at_ms: 0,
+            last_kind: None,
+            last_source: None,
+        }
     }
 }
 

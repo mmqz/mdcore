@@ -1498,8 +1498,11 @@ r25_inverse_group_order.rs`（11 用例 = 9 复现 + 2 控制组）。缺陷链
 r25 控制组锁定）。
 
 **登记边界（不追溯/不动项）**：
-- 旧版本保存的历史（含子树删除条目）其存储序已是错的，修复不追溯
-  （载入后按其存储原样应用），只有新产生的条目按组语义存储；
+- ~~旧版本保存的历史（含子树删除条目）其存储序已是错的，修复不追溯
+  （载入后按其存储原样应用），只有新产生的条目按组语义存储~~
+  【已被同 PR 补充修复取代（见下节）：owner 审查指出「旧档照原样应用」
+  等于放任错序 inverses 执行，持久化面改为版本闸门降级——旧栈丢弃
+  不可执行，只有 v2 栈随档恢复】；
 - `tree.clone()` 备份机制**未换**——#220 验收红线：不把「用了
   tree.clone」当失败判据、不做 undo 性能重写，内存面留给 R22 候选 #2；
 - T1-F10 失败回退路径与公开 API 签名零改动；
@@ -1507,6 +1510,45 @@ r25 控制组锁定）。
   与序缺陷正交，r25 断言面刻意避开，另行治理。
 
 **验证面**：cargo test --workspace（除 shell-native，本沙箱缺 GTK
-dev 面）**1322 ok / 0 failed / 7 ignored**（基线 1311 + 新增 11），
+  dev 面）**1322 ok / 0 failed / 7 ignored**（基线 1311 + 新增 11），
 r25 RED→GREEN 留证；fmt 触及文件 0 diff；clippy 对拍无新警告；
 wasm32 check 过；既有测试无一需要改序（无钉死旧扁平序者）。
+
+**补充修复（owner 对 PR #221 审查意见，同分支追加）——持久化
+History 格式版本闸门（2026-11-05）**：
+
+- **审查发现**：#220 只修了新建条目，但 undo 历史随文档持久化
+  （`save_document` 写 meta.history、`open_document` 经
+  `set_history_json` 恢复）——旧版本保存的档携带整体反转形态的
+  错序 inverses，升级后打开照常恢复栈，一次 undo 即触发上述缺陷
+  链（BadPath 硬失败/静默错挂）。「旧档可读」不够，还须「旧栈
+  不可执行」。
+- **实现**：`history.rs` 新增 `HISTORY_FORMAT_VERSION = 2`，
+  `History` 增 `format_version` 字段（serde 无条件序列化、缺失
+  default 0；`Default` 手写生而 v2）；`History::from_json` 版本
+  闸门——解析成功但版本 ≠ 2（缺字段旧档/显式旧版本/未知未来
+  版本）→ 丢弃 undo/redo 栈与合并窗边界，回落全新 History；
+  JSON 畸形仍显式报错（「格式旧」降级、「格式坏」拒绝）。
+  `open_document`/`set_history_json`（含 wasm 透传面）自动获得
+  该行为：正文/document_id/revision 照常复原，旧 undo/redo 不
+  执行；降级档继续编辑正常、再存即升 v2。
+- **回归测试**：`r26_history_format_version.rs` 7 用例——旧档材料
+  用当前代码产出后降格（删版本字段 + 单事务单 RemoveBlock 逆组
+  整体反转，与修复前代码产出逐位一致），锁：①缺字段/v1/未来版
+  三途降级（正文/身份/revision 完整、栈空、undo/redo 不执行、
+  revision 不动）；②v2 往返「文本→非叶删除→文本」链 undo×3/
+  redo×3 精确复原（含重建子树物化原 ID 随 JSON 往返）；③新档
+  必带版本字段、降级档再存升 v2；④畸形 JSON 仍 Reject。
+- **附带修复**：`pdfb_skeleton.rs` `source_mirrors_mdcore_five_values`
+  的源文件镜像锁对 `history.rs` 做裸字节切片（`idx-200`/`idx+400`），
+  本修复新增的中文 doc 注释使切点落进多字节字符内 panic——两处
+  切界改 char boundary 对齐（窗只缩/只胀，contains 断言语义不变）；
+  第二处系首次暴露（此前被第一处 panic 掩盖）。
+- **验证面**：cargo test --workspace（除 shell-native，沙箱缺 GTK
+dev 面；shell 契约层传导面已测，shell-native 仅编译性盲区由
+  Windows CI 覆盖）**1329 ok / 0 failed**（= 1322 + r26 新增 7）；
+  CI 口径 check（--workspace --all-targets --exclude mdshell-native）
+  过；wasm32 check 过；fmt 触及文件 0 diff（r26 已格式化；
+  document.rs/pdfb_skeleton.rs 各自 1/2 处既有漂移系 #216 复位
+  领地，未触碰）；clippy 双面零新警告（mdcore-wasm 5+1 条既有
+  基线不变）。
