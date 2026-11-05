@@ -8,6 +8,9 @@
 //! mang-shell --smoke-sec N     烟雾模式：开窗 N 秒后自动退出（exit 0 +
 //!                               stdout 末行 "smoke: quit reached"——Xvfb
 //!                               无头验证通道）
+//! mang-shell --check-pdfium  pdfium 部署自检（#68 方向一）：定位序逐层
+//!                               探针 + 绑定走查 + 修复指引；纯 CLI 不开窗，
+//!                               退出码 0=已绑定 / 3=未绑定
 //! mang-shell --smoke-perf-keys N  #164 逐键测量：与启动 FILE + --smoke-sec
 //!                               组合——3.5s 装载稳定后合成 N 个可打印键
 //!                               （30ms 间隔，真实键处理链全管线）；
@@ -115,6 +118,18 @@ fn main() {
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("mang-shell {}", env!("CARGO_PKG_VERSION"));
         return;
+    }
+    // #68 方向一（PDF 实机闭环）：pdfium 部署自检子命令——在 zlog/GPUI
+    // 初始化之前退出（纯 CLI 面，零窗口依赖）。输出定位序逐层探针
+    // （层名/期望路径/文件状态/绑定尝试）+ 走查终态 + 可操作修复指引
+    // （没库的机器上能明确告出「缺什么、放哪、怎么验证」）。
+    // 退出码合同：0 = 已绑定（库加载 + 全符号表解析 + FPDF_InitLibrary
+    // 通过），3 = 未绑定——部署脚本/CI 冒烟可判。核心逻辑在
+    // mdc-pdf::deploy_check（与生产定位序同源同原语，见模块文档）。
+    if args.iter().any(|a| a == "--check-pdfium") {
+        let report = mdc_pdf::deploy_check::run_check();
+        print!("{}", mdc_pdf::deploy_check::render_report(&report));
+        std::process::exit(if report.outcome.is_bound() { 0 } else { 3 });
     }
     // 日志面（#68）：zlog 读 ZED_LOG/RUST_LOG（env_config 过滤语法与
     // env_logger 兼容，如 `gpui_wgpu=info,wgpu_hal=debug`）；未设环境变量时

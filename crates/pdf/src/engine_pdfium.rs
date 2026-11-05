@@ -154,27 +154,46 @@ impl PdfiumEngine {
     /// 绑定兜底。优先序实证见 `tests/pdfk_deploy.rs`（进程级首绑定
     /// 验证）；形状锁 `exe_dir_is_first_candidate`。
     pub fn library_candidates() -> Vec<PathBuf> {
+        Self::library_candidate_roles()
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect()
+    }
+
+    /// 候选清单（角色名 + 路径）——[`Self::library_candidates`] 的带角色面。
+    /// #68 方向一（`--check-pdfium` 部署自检）的逐层探针标题与绑定清单
+    /// **同源**（单一事实源：角色/顺序/路径只在本函数维护，探针展示与
+    /// 绑定走查不会漂移）。角色语义见 [`Self::library_candidates`] 文档。
+    pub fn library_candidate_roles() -> Vec<(&'static str, PathBuf)> {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut candidates: Vec<PathBuf> = Vec::with_capacity(4);
+        let mut candidates: Vec<(&'static str, PathBuf)> = Vec::with_capacity(4);
         // 0. exe 同目录（产品部署位——运行期推导，最前：用户放置位
         //    优先于开发取件位）。
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                candidates.push(Pdfium::pdfium_platform_library_name_at_path(dir));
+                candidates.push((
+                    "exe 同目录（产品部署位）",
+                    Pdfium::pdfium_platform_library_name_at_path(dir),
+                ));
             }
         }
         // 1-3. 开发/门禁取件位（编译期 manifest 相对）。
         candidates.extend(
             [
-                // 产品仓根/bin/lib（crates/pdf → 上两级）
-                manifest.join("../../bin/lib"),
-                // 分析仓 spike（crates/pdf → 上三级 = 仓根同级）
-                manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/bin/lib"),
-                // crate 本地
-                manifest.join("bin/lib"),
+                (
+                    "产品仓 bin/lib（开发取件位）",
+                    // 产品仓根/bin/lib（crates/pdf → 上两级）
+                    manifest.join("../../bin/lib"),
+                ),
+                (
+                    "分析仓 spike（门禁取件位）",
+                    // 分析仓 spike（crates/pdf → 上三级 = 仓根同级）
+                    manifest.join("../../../cleanroom-analysis/md-line/pdf-a/spike/bin/lib"),
+                ),
+                ("crate 本地 bin/lib", manifest.join("bin/lib")),
             ]
             .into_iter()
-            .map(|dir| Pdfium::pdfium_platform_library_name_at_path(&dir)),
+            .map(|(role, dir)| (role, Pdfium::pdfium_platform_library_name_at_path(&dir))),
         );
         candidates
     }
@@ -429,11 +448,8 @@ fn bind_by_resolution() -> Result<&'static Pdfium, CommandError> {
             Err(why) => tried.push(format!("{} → {why}", candidate.display())),
         }
     }
-    match Pdfium::bind_to_system_library() {
-        Ok(bindings) => {
-            let pdfium: &'static Pdfium = Box::leak(Box::new(Pdfium::new(bindings)));
-            return Ok(pdfium);
-        }
+    match try_bind_system() {
+        Ok(pdfium) => return Ok(pdfium),
         Err(why) => tried.push(format!(
             "system({}) → {why}",
             Pdfium::pdfium_platform_library_name().to_string_lossy()
@@ -455,8 +471,24 @@ fn pdfium_missing_library_hint() -> String {
     )
 }
 
-/// 单路径尝试（成功 = 进程单例就位）。
-fn try_bind(path: &Path) -> Result<&'static Pdfium, String> {
+/// 系统装载尝试（成功 = 进程单例就位）。pub(crate)：deploy_check
+/// 部署自检的绑定走查与生产定位序共用同一实现（行为面不双轨）。
+pub(crate) fn try_bind_system() -> Result<&'static Pdfium, String> {
+    match Pdfium::bind_to_system_library() {
+        Ok(bindings) => {
+            let pdfium: &'static Pdfium = Box::leak(Box::new(Pdfium::new(bindings)));
+            let _ = PDFIUM.set(pdfium);
+            Ok(pdfium)
+        }
+        Err(why) => Err(format!("库加载失败：{why}")),
+    }
+}
+
+/// 单路径尝试（成功 = 进程单例就位）。pub(crate)：deploy_check 的绑定
+/// 走查按定位序逐层调用本函数——与生产 [`bind_by_resolution`] 同一尝试
+/// 语义（成功副作用：crate 单例就位，后续 open 复用——自检进程与
+/// 应用进程的绑定行为面一致）。
+pub(crate) fn try_bind(path: &Path) -> Result<&'static Pdfium, String> {
     match Pdfium::bind_to_library(path) {
         Ok(bindings) => {
             let pdfium: &'static Pdfium = Box::leak(Box::new(Pdfium::new(bindings)));
