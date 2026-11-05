@@ -269,3 +269,53 @@ catch_unwind 在 runner 内捕获（测试不炸），**生产 wasm 面 = trap**
 2. `_x000D_` 实体面（批 2 #6）——随双载已可见化（cached 值面含实体文本），实体语义边界维持登记
 3. 13 件非精确往返的二轮定点点位（空表/richtext/链接族）——已收敛，模式登记不阻塞
 4. `renamed_workbook_part` 版本偏差（批 2 #7）——calamine 升级评估时以该件为验收锚点
+
+---
+
+# 批 6 报告（#226 R2：docx 面 4 处 panic 修复收口——预检防御落地）
+
+> 修复日期：2026-11-06 · 修复面：`crates/office-io/src/docx_panic_guard.rs`（新模块）+
+> `docx.rs` 读管线接线 + mang-shell `docx_doc.rs` 打开入口 catch_unwind 兜底
+> 依据：本报告批 4 #E1（docx-rs 0.4.22 四处 panic 实锤）+ 全仓审计 P0-2（issue #226）
+> 基线动作：`HC_REGEN_BASELINE=1` 再生（panic 4→0 入档）· 全量证据：`results/docx4j.json` 再生
+
+## 修复前后对照（docx4j 面，六维）
+
+| 维 | 修复前（批 4 基线） | 修复后 | 变化 |
+|---|---|---|---|
+| 崩溃率 | panic 4/501 | **panic 0/501** | **−4（清零）** |
+| 解析成功率 | ok 477 / err 20 / panic 4 | **ok 481 / err 20 / panic 0** | +4（四件 panic→**ok**，非降级 err） |
+| 内容保真 | 1.0000（477 件） | **1.0000（481 件）** | 恒（新增四件全满） |
+| 结构保真 | 477/477 | **481/481** | +4 |
+| 往返精确 | 383/477 | **386/481** | +3 |
+| 幂等（二轮定点） | 477/477 | **481/481** | +4 |
+
+四件逐一：`runprops_word365_props-{b,enum,u}-styles.docx` panic→**ok**（召回 1.0 +
+往返精确 + 定点）；`strict_strict-sample-docx.docx` panic→**ok**（召回 1.0 + 定点；
+往返非精确——宽度归一化的形态差异，登记见下）。POI 面（129 件）数值零漂移
+（`results/poi-docx.json` diff 仅 import_ms 计时噪音，classes/六维全等）。
+
+## 根因与修复（要点；全文见 office-io `docx_panic_guard` 模块文档 + gates.md #226 节）
+
+- **裸 run 属性**（3 件）：`<w:u/>`/`<w:highlight/>` 零属性 start tag——OOXML 规范允许
+ （ECMA-376 17.3.2.42：`w:u` 的 `w:val` 可省）而 docx-rs `run_property.rs:110/155`
+  直接索引 `attributes[0]` → index OOB。修复：注入规范缺省 `w:val`
+ （u=single / highlight=none / vertAlign=baseline / sz=0——结构不变只加属性）；
+- **通用度量**（1 件）：`w:w="178.05pt"` 等 ST_MeasurementOrPercent 合法带单位形态
+  ——docx-rs `width.rs:18` 只剥 `%` → `f64::from_str(...).expect` panic。修复：
+  换算 twips（pt×20 / pc×240 / in×1440 / cm×567 / mm×57），垃圾值归零；
+- 修复走既有 Warning 通道（裸元素=SkippedElement / 度量=MalformedXml——每修复
+  部件一条，不静默）；无命中 `Cow::Borrowed` 零成本直通（指针相等测试钉定）；
+  两模式（严格/兼容）恒等启用（裸元素是合法 OOXML，非「兼容模式才放宽」形态）。
+
+## 剩余登记（如实，不静默）
+
+1. **err 20 件恒在**（批 4 #E2 的 Word 365 属性形态族）：docx-rs 对 ST_OnOff /
+   ST_Color / 枚举非规范形态不容忍（read_bool / 枚举 from_str 层）——**不在 #226
+   范围**（任务 = 4 处 panic）；docx-rs 升版评估时以这 20 件 + 本批 4 件为验收锚点；
+2. **上游跟踪项**：docx-rs 同类 `attributes[0]` 位点 20+ 处未实证不修
+ （paragraph_property / table / numberings / level / style 族——完整清单见
+   gates.md #226 节），未知形态由 mang-shell 打开入口 catch_unwind 兜底（GUI 不崩、
+   未保存编辑不丢）；
+3. **strict 件往返非精确**（1 件）：表格宽度归一化（pt→dxa）后导出面差异——内容
+   零丢失（召回 1.0）+ 二轮定点，形态差异登记非阻塞。
