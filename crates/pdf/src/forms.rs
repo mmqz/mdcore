@@ -56,7 +56,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use lopdf::{dictionary, Document, Object, ObjectId};
+use lopdf::{dictionary, Document, IncrementalDocument, Object, ObjectId};
 
 use crate::security::Limits;
 
@@ -357,6 +357,10 @@ pub struct PdfForm {
     report: FillReport,
     /// 打开的限额（沿用 crate 纪律——`PdfForm::limits()` 读取）。
     limits: Limits,
+    /// 打开时既有对象的号集（增量写的基线：会话中 `add_object` 新增的
+    /// 对象不在其中——它们须随追加修订写出，既有对象则一字不动地留在
+    /// 原字节前缀里）。
+    base_ids: BTreeSet<ObjectId>,
 }
 
 /// 待生成外观流的作业。
@@ -438,6 +442,7 @@ impl PdfForm {
             return Err(FormError::Encrypted);
         }
         let fields = collect_fields(&doc);
+        let base_ids = doc.objects.keys().copied().collect();
         Ok(PdfForm {
             doc,
             original: bytes.to_vec(),
@@ -448,6 +453,7 @@ impl PdfForm {
             appearance_overrides: BTreeMap::new(),
             report: FillReport::default(),
             limits,
+            base_ids,
         })
     }
 
@@ -1136,7 +1142,19 @@ impl PdfForm {
 // ---------------------------------------------------------------------------
 
 impl PdfForm {
-    /// 写回（增量修订——原字节前缀逐位保持）。
+    /// 写回：**真增量修订**（spec 7.5.6）——原字节作前缀逐位保持，只把
+    /// 改动的那批对象与新增对象（外观流/字体）追加为一个修订段。
+    ///
+    /// # 语义（与 [`crate::writer_lopdf`] 同一纪律，三层守卫）
+    ///
+    /// 1. **xref 链守卫**：档以扫描重建装载（`xref_start == 0`，常见于
+    ///    行尾污染/真损坏）时拒绝写——追加修订无从回指 `/Prev`，产物
+    ///    页树不可达（2026-10-31 事故防线，详见 `writer_lopdf.rs`）；
+    /// 2. **前缀逐位不变断言**：产物必须以保存前字节为逐位相同前缀，
+    ///    违约 = typed 错误而非产出损坏文件——已签名文档的 `/ByteRange`
+    ///    覆盖段因此不变，既有数字签名保持有效（PAdES 硬约束）；
+    /// 3. **产物自检**：重载后页树可达 + 全部脏对象经新修订可解析，
+    ///    否则拒绝交付。
     ///
     /// 没改任何域时返回原字节（幂等，不产生空修订）。
     pub fn save(mut self) -> Result<Vec<u8>, FormError> {
@@ -1144,13 +1162,58 @@ impl PdfForm {
             return Ok(self.original);
         }
         self.build_appearances()?;
-        let mut doc = std::mem::replace(&mut self.doc, Document::with_version("1.5"));
-        for (id, dict) in std::mem::take(&mut self.dirty) {
-            doc.objects.insert(id, Object::Dictionary(dict));
+        // 守卫 1：xref 链可信（扫描重建档上做增量写 = 静默产毒，入口响亮拒绝）。
+        if self.doc.xref_start == 0 {
+            return Err(FormError::Save(
+                "xref 链不可信：档以扫描重建装载（无已知 xref 起点），增量写产物将丢失 \
+                 /Prev 链导致页树不可达。常见成因：二进制被行尾转换污染（如 Windows \
+                 git autocrlf）或 xref 损坏。请重取未污染原件或修复源文件后重试"
+                    .into(),
+            ));
+        }
+        let original = std::mem::take(&mut self.original);
+        let dirty = std::mem::take(&mut self.dirty);
+        let doc = std::mem::replace(&mut self.doc, Document::with_version("1.5"));
+        // 会话新增对象（外观流/CIDFont/新建 AcroForm）——原字节里没有，
+        // 必须随本轮修订写出；既有对象一字不重写（它们已逐位活在原字节
+        // 前缀里，重写既膨胀又是元数据噪声）。
+        let new_objects: Vec<(ObjectId, Object)> = doc
+            .objects
+            .iter()
+            .filter(|(id, _)| !self.base_ids.contains(*id))
+            .map(|(id, obj)| (*id, obj.clone()))
+            .collect();
+        // 增量文档：prev = 原字节 + 解析态（trailer/xref_start/max_id 均为
+        // 原档形态——save 路径不改它们）；new_document = 待追加修订。
+        let mut inc = IncrementalDocument::create_from(original.clone(), doc);
+        // 脏对象：同对象号在新修订里重定义（后修订覆盖前修订——增量更新
+        // 语义），原修订里的旧定义对新阅读器自然失效。
+        for (id, dict) in dirty {
+            inc.new_document.set_object(id, Object::Dictionary(dict));
+        }
+        for (id, obj) in new_objects {
+            inc.new_document.set_object(id, obj);
         }
         let mut out = Vec::new();
-        doc.save_to(&mut out)
-            .map_err(|e| FormError::Save(format!("lopdf 保存失败：{e}")))?;
+        inc.save_to(&mut out)
+            .map_err(|e| FormError::Save(format!("lopdf 增量保存失败：{e}")))?;
+        // 守卫 2：增量语义核心断言（违约不产出、不污染基线）。
+        if !out.starts_with(&original) {
+            return Err(FormError::Save(
+                "增量前缀违约：lopdf 产物未逐位保持原字节前缀".into(),
+            ));
+        }
+        // 守卫 3：产物自检——重载后页树可达 + 脏对象经新修订可解析（拒绝
+        // 交付「写入成功但阅读器看不到」的静默产毒形态）。
+        let reloaded = Document::load_mem(&out)
+            .map_err(|e| FormError::Save(format!("增量产物重载失败：{e}")))?;
+        if reloaded.get_pages().is_empty() {
+            return Err(FormError::Save(
+                "增量产物自检失败：重载后页树为空（产物 xref 链断裂，页对象经链不可达）\
+                 ——拒绝交付结构损坏产物"
+                    .into(),
+            ));
+        }
         Ok(out)
     }
 
