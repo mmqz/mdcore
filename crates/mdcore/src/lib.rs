@@ -295,7 +295,17 @@ impl Core {
 
         // 顺序求逆 + 应用；任一失败 → 整体回滚（事务原子性）
         let backup = self.tree.clone();
-        let mut inverses_seq: Vec<Op> = Vec::new();
+        // #220（审计 P1-27）：逆序构造是**组感知**的。`invert_op` 返回的是
+        // 逆组（多数长度 1；RemoveBlock 的逆 = 先序重建整棵子树，组内序 =
+        // `build_rebuild_ops` 的父先子后发射序，是重建语义的一部分，绝不可
+        // 倒转）。正确存储序 = **组间逆序**（后事务的逆组在前）+ **组内保序**。
+        // 此前实现把各组摊平后整体 `reverse()`：单 op 逆组（长度 1）摊平反转
+        // == 组反转，故既有测试全绿；但非叶块删除（子树删除公开可达）产生
+        // 长度 ≥2 的逆组，组内序被倒转 → undo 先插子后插父：子的 parent 路径
+        // 在移位后的树里要么解析失败（BadPath → undo 硬失败，T1-F10 条目压回
+        // 后整栈卡死），要么命中顶替被删块位置的节点（InsertBlock 路径寻址，
+        // 静默错挂，undo 返回 Some 但树损坏）。
+        let mut inverse_groups: Vec<Vec<Op>> = Vec::with_capacity(ops.len());
         for op in ops.iter_mut() {
             // 逐 op 求逆必须基于该 op 之前的现场
             let inv = match invert_op(&self.tree, op) {
@@ -309,9 +319,14 @@ impl Core {
                 self.tree = backup;
                 return Err(e.into());
             }
-            inverses_seq.extend(inv);
+            inverse_groups.push(inv);
         }
-        inverses_seq.reverse(); // 存储为逆序（undo 按数组序应用）
+        // 摊平只改序不改格式：Entry.inverses 仍是扁平 Vec<Op>（serde/历史
+        // JSON 形状不变，旧档可读）；undo 按数组序应用 = 组间逆序组内保序。
+        let mut inverses_seq: Vec<Op> = Vec::new();
+        for group in inverse_groups.into_iter().rev() {
+            inverses_seq.extend(group);
+        }
 
         if meta.source == Source::System {
             // ADR-B4：装载级事务——log + 事件 + 边界照常，历史栈跳过。

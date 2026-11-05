@@ -1153,14 +1153,29 @@ fn source_mirrors_mdcore_five_values() {
     // 属性前置断言（pdf-b-1r 审计增严）：rename_all 策略若漂移，serde 名
     // 镜像锁会在无属性时报假阳——先锁属性存在（作用域=枚举声明前紧邻
     // 200 字符，避免被文件中其他枚举的属性假阳）。
-    let attr_start = idx.saturating_sub(200);
+    // 字节窗起点必须先对齐 char boundary：history.rs 含多字节 UTF-8 中文
+    // 注释，`idx - 200` 可能切进中文字符中间（裸切片 panic——#221 补充
+    // 修复时踩中：Source 枚举上方新增中文 doc 注释使窗起点落进字符内）。
+    // 对齐手法=起点向前推进到最近边界：窗只缩小不放大，contains 断言
+    // 语义不变。
+    let mut attr_start = idx.saturating_sub(200);
+    while !md.is_char_boundary(attr_start) {
+        attr_start += 1;
+    }
     let attr_zone = &md[attr_start..idx];
     assert!(
         attr_zone.contains("rename_all = \"snake_case\"")
             || attr_zone.contains("rename_all=\"snake_case\""),
         "mdcore Source 带 rename_all=snake_case 属性——镜像锁前提（改名策略漂移必须在此报警）"
     );
-    let block = &md[idx..idx + 400];
+    // 同上：窗尾 idx+400 也须对齐 char boundary（Source 变体声明后有
+    // 中文 doc 注释，400 字节落点极可能切进字符内——此前被上一处
+    // panic 掩盖未暴露）。尾界前进对齐：窗只变大，contains 断言无碍。
+    let mut block_end = (idx + 400).min(md.len());
+    while block_end < md.len() && !md.is_char_boundary(block_end) {
+        block_end += 1;
+    }
+    let block = &md[idx..block_end];
     for v in ["View", "Undo", "Redo", "Ai", "System"] {
         assert!(
             block.contains(&format!("    {v},")),

@@ -24,7 +24,7 @@
 |---|------|-------------|----------|----------|----------|
 | R1 | 命令调用协议 | `Core::apply_ops`（lib.rs:253，唯一变异入口）+ 十原语（:387-618）+ `commit_transaction_as`（:610，gate+溯源）；wasm 面 `apply_ops/replace_text_at_anchor/undo/redo` | 默认面全量 + 契约门 18/18（web 面） | ①结构性命令带 `base_revision` 硬门禁（Stale 必拒绝不 rebase）；②文本命令无 base 门禁，靠锚点/expect 保护；③`Core` 字段 `pub tree/history/log` 直访旁路在类型层敞开——复用方自律或包装 | 零波及 |
 | R2 | 序列化五面 | `tree_to_markdown`（markdown.rs:32）/ `blocks_json(_range)`（debug.rs:39/69）/ `Snapshot`（snapshot.rs:44）/ `history_json` / revision JSONL（revision.rs:60） | 默认面全量（含 r13 往返 19 条 + r23_fingerprint 15 条） | **marks 不写入 MD、ID 不写入 MD**（markdown.rs:8）——持久身份走 meta/snapshot/log 面；`blocks_json` 不含 marks | 零波及 |
-| R3 | undo/redo 闭环 | `invert_op`（op.rs:243）× 1s 合并窗（COALESCE_MS）× 栈管理 + 失败全回滚（lib.rs:875-932） | t3_reuse_locks + r24_quality_fixes + r11_stress | ①合并窗五条件（R12 双端 View：AI/System 边界必开新条目）；②undo 不恢复选区（View 域）；③栈无上限（长会话内存形状，产品裁决项） | 零波及 |
+| R3 | undo/redo 闭环 | `invert_op`（op.rs:243）× 1s 合并窗（COALESCE_MS）× 栈管理 + 失败全回滚（lib.rs:920-962，整树备份恢复） | t3_reuse_locks + r24_quality_fixes + r11_stress + r25_inverse_group_order | ①合并窗五条件（R12 双端 View：AI/System 边界必开新条目）；②undo 不恢复选区（View 域）；③栈无上限（长会话内存形状，产品裁决项）；④`entry.inverses` 的序 = **组间逆序组内保序**（#220：`invert_op` 的逆组多为长度 1，RemoveBlock 逆 = 先序重建子树）——直接消费 inverses 的方面（重放/审计工具）不得假设逐 op 扁平逆序 | 零波及 |
 | R4 | 渐进打开 + 分片 dump | `extend_from_markdown`（lib.rs:849）+ `blocks_json_range`（debug.rs:69） | document_progressive + r16_blocks_range | ingest 窗口 `locked` 拒绝编辑；悬挂 fence 在 op 构造前拒绝（树零污染） | 零波及 |
 | R5 | 设置面基础设施 | **`crates/settings`（mdc-settings）**——本轮抽取件 | r24_settings 全套 + closure_lock | 域无关（对块核零依赖）；`undo_coalesce_ms` 为**登记保留键**（存储链齐备、当前不驱动引擎行为——接线属产品裁决） | 零波及（PDF 面未消费） |
 

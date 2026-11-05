@@ -64,7 +64,7 @@ core-only 旁路（WasmCore 同形 op）      p95  8.7ms / p50 8.5ms  ← 核内
 | 光标（selection p95） | **5.0ms**（R15）→ **0.8ms**（R18） | — | <16ms（硬门） | **PASS（R18）** |
 | IME（synthetic） | 三轮 + 取消零残留 | — | 硬门 4 | PASS(synthetic) |
 | undo | 全量回写 169.4ms（W4）；批量 127.3ms（W8） | **no-op（R21/ADR-B4：开档后 ingest 不在 undo 栈；桥穿透 0.3ms）**；R16 时代的 1898.5ms 撤段主体已不存在 | 非门 | 记录（语义变更，见 R21 段） |
-| 终态 JS 堆 | 168.8MB（G1，R14 旧口径） | **R22-a 口径：used=483.5MB = JS 58.7MB + wasm 424.8MB**（R21 基线 484.1 = 58.7 + 425.4；R22-a Arc<str> 实测 Δ-0.6MB ≈ 噪音，估算撤回见 R22-a 段） | 1MB <250MB；10MB <600MB（均非门） | 1MB 达标；10MB JS 堆 58.7MB 达标；wasm 509→425→424.8MB，高水位主驱动 = backup 克隆（R22-b 登记治理） |
+| 终态 JS 堆 | 168.8MB（G1，R14 旧口径） | **R22-a 口径：used=483.5MB = JS 58.7MB + wasm 424.8MB**（R21 基线 484.1 = 58.7 + 425.4；R22-a Arc<str> 实测 Δ-0.6MB ≈ 噪音，估算撤回见 R22-a 段） | 1MB <250MB；10MB <600MB（均非门） | 1MB 达标；10MB JS 堆 58.7MB 达标；wasm 509→425→424.8MB，高水位主驱动 = backup 克隆（R22 候选 #2 在册；「R22-b 已落地」系研究仓单方声称、未回流 mdcore——#220 勘误：序修正半边已落地、备份未换） |
 | 核侧单 op（旁路） | p50 5.97ms / p95 6.31ms；小文档对照 0.02ms | — | 增量解析 <10ms（非门） | 记录：成本随文档规模增长（300×），p95 在 10ms 内 |
 | 核侧重放 | 256.6ms（1.2MB 日志） | — | 非门 | 记录 |
 | 核侧 genesis | 217.5ms（1.2MB from_markdown） | — | 非门 | 记录 |
@@ -284,6 +284,13 @@ W1-W13+G1/G2 15 组全绿；W4 typing p95 13.5ms、G2 渐进 TTI 198ms
    （10MB 渐进开档 16 次 × 全树 Rope/slots/id_index 克隆）；候选路径：
    求逆回滚（inverses 已算出）/ 受影响子树范围备份。回滚正确性
    （部分应用失败时的逆序回放）需 ADR 先行。
+   【#220 注记（2026-11-05，审计 P1-27 对账）】研究仓 ADR-B5 自述
+   「已裁决并落地（R22-b）」，经静态比对（原型母本 + mdcore main）
+   核实**未回流**——`tree.clone` 备份与旧逆序构造两仓均在。#220 先
+   落地其**正确性半边**：逆组改为组间逆序组内保序（修复非叶删除
+   undo 硬失败/静默错挂，r25 复现测试锁定）；**内存半边（废备份）
+   本候选仍在册，未动**——#220 验收红线明确不把「用 tree.clone」
+   当失败判据、不做 undo 性能重写。
 3. **ingest 预分配 hint**（R20 路径 3；降级——高水位主驱动是 2 不是碎片，
    待 2 落地后复测构成再定）。
 4. **真 IME 人工验收**（协议已成文，待真实输入法环境；能自动化部分
@@ -447,7 +454,14 @@ take-external 交互史作废 + 合并窗状态重置；`BlockMatchReport::has_c
 **op 合成定谳**（ADR-B7 §3）：全量重建而非增量 diff-to-ops——RemoveBlock[0]×n + 先序
 InsertBlock 携带映射 id（preserved/moved/edited 旧 id / manifest 可信 added 声明 id /
 其余现场分配），与 undo 复原 build_rebuild_ops 同款物化形状，log 重放不变量保持；
-System 事务（ADR-B4）失败走 ADR-B5 求逆回滚。
+System 事务（ADR-B4）失败回滚 = 整树备份恢复（`apply_ops` 事务入口
+`backup = tree.clone()`、任一 op 失败 `self.tree = backup`）。#220 勘误
+（审计 P1-27）：本行原文「失败走 ADR-B5 求逆回滚」不实——研究仓
+ADR-B5（R22-b，2026-10-09）声称的 `apply_batch_invert_rollback`/
+「三处 tree.clone 全消」从未回流 mdcore（原型与 main 静态比对均无
+此实现）；其可落地的**序修正半边**（逆组组间逆序组内保序）已由
+#220 落地（r25 复现锁定），但**备份机制未换**——backup 克隆的内存面
+仍按 R22 候选 #2 在册治理。
 
 **实现期修正**：①manifest 快路径可信 added 计入 stats.manifest 桶（原只计 resolved
 配对，快路径用量被低估）；②重排/嵌套测试的身份断言改集合比较（文档序本就变，先序
@@ -502,7 +516,9 @@ P1-7 ✅ R23-b（ADR-B6）；P1-8 ✅ R23-c 核侧（ADR-B7）。R22 候选 4 �
 
 **遗留登记（非本阶段可闭环）**：真机物理输入法/视觉/对话框人工验收（协议已成文，
 待物理环境）；定名后商标检索（TRADEMARK_RULES §4）；R20 路径 3 ingest 预分配（待
-产品仓 R22-b 合流后复测构成）；take-external 全量重建的 log 内存杠杆（10MB 高频
+backup 克隆治理（R22 候选 #2）落地后复测构成；#220 勘误：原文「产品仓
+R22-b 合流」不成立——R22-b 系研究仓单方声称「已落地」、经比对未回流
+mdcore）；take-external 全量重建的 log 内存杠杆（10MB 高频
 重载场景再议，ADR-B7 §4）；merge 与区域级静默合并（ADR-B7 v1）。
 
 **R23 阶段结论**：宿主壳后的产品闭环第一段完成——IME 真实语义背书、外部重载身份
@@ -1443,3 +1459,96 @@ diff，main 上已红）；② links_corpus 语料缺失时不跳过而是 panic
 **用户机修复指引**（Windows 检出污染工作树）：合并本 PR 后
 `git checkout -f -- crates/pdf/fixtures/`（.gitattributes 生效后不再
 复发）；small.pdf 期望 1099 字节。
+
+## #220：ADR-B5 与 undo 实态对账（2026-11-05，审计 P1-27 复核 + 序修正落地）
+
+**触发**：审计分支 `audit/architecture-review-2026-11` final-report-phase3
+P1-27 / 研究仓审计笔记 25 F1（P0 对账级）：研究仓 ADR-B5
+（decisions/ADR-B5-inverse-rollback.md:13-40，2026-10-09 R22-b）自述
+「已裁决并落地」——`apply_batch_invert_rollback`、三处 `tree.clone()` 全消、
+逆组「组间逆序组内保序」修复「嵌套子树删除 undo 硬失败 / 多 op 事务静默
+错挂」。静态比对（原型母本 + mdcore main）两处均无此实现，mdcore 侧
+档案另有三处不实声称（本文件 :450「失败走 ADR-B5 求逆回滚」、:67/:505
+「R22-b」措辞、external.rs:99 doc 注释）——全部已于本条勘误。
+
+**复现核实（先写测试、不预设结论）**：`crates/mdcore/tests/
+r25_inverse_group_order.rs`（11 用例 = 9 复现 + 2 控制组）。缺陷链
+实证与预判**逐项吻合**：
+
+- 根因：`apply_ops` 把各 op 的逆组（`invert_op` 返回 `Vec<Op>`；多数
+  长度 1，`RemoveBlock` 的逆 = `build_rebuild_ops` **先序**重建子树，
+  组内序 = 父先子后的重建序）摊平后整体 `reverse()`——组内序被倒转。
+  单 op 逆组（长度 1）摊平反转 == 组反转，故既有测试全绿（漏网机制）；
+  **非叶块删除**（`delete_block` 对非叶无限制，子树删除公开可达）与
+  含非叶 RemoveBlock 的多 op 事务产生长度 ≥2 逆组，undo 时先插子后
+  插父，`InsertBlock` 的 parent 路径在移位后的树里：
+  - 解析失败（BadPath/BadIndex）→ `apply_raw_batch` 失败 → T1-F10
+    条目压回 → **undo 硬失败 None、整栈卡死**（复现 6 例：三根/两根
+    基座、混组事务双序、双子树删除、链式第 2 步）；
+  - 恰好命中顶替被删块位置的节点 → **静默错挂**（undo 返回 Some 但树
+    损坏；复现 1 例：独子 P 删除后子块错挂到顶位者名下、P 复原为空壳，
+    redo 重放进一步放大）。
+- 既有覆盖检索结论：r11/r17/spike/t1/t3/r12 全部只覆盖长度 1 逆组
+  （叶删除/MoveBlock/InsertBlock 族），无「非叶删除→undo→结构断言」。
+
+**修复（最小面）**：`apply_ops`（lib.rs）逆序构造改**组感知**——收集
+`Vec<Vec<Op>>` 后按组逆序摊平（组间逆序、组内保序）；`Entry.inverses`
+仍为扁平 `Vec<Op>`，**serde/历史 JSON 形状不变，只改序**（旧档可读）；
+`coalesce_into_last` 前插语义不变（合并面只收文本类事务 ⇒ 逆组全长度 1，
+r25 控制组锁定）。
+
+**登记边界（不追溯/不动项）**：
+- ~~旧版本保存的历史（含子树删除条目）其存储序已是错的，修复不追溯
+  （载入后按其存储原样应用），只有新产生的条目按组语义存储~~
+  【已被同 PR 补充修复取代（见下节）：owner 审查指出「旧档照原样应用」
+  等于放任错序 inverses 执行，持久化面改为版本闸门降级——旧栈丢弃
+  不可执行，只有 v2 栈随档恢复】；
+- `tree.clone()` 备份机制**未换**——#220 验收红线：不把「用了
+  tree.clone」当失败判据、不做 undo 性能重写，内存面留给 R22 候选 #2；
+- T1-F10 失败回退路径与公开 API 签名零改动；
+- RemoveBlock 逆不恢复 marks 是**另一缺陷**（审计 03 §1，P1 级），
+  与序缺陷正交，r25 断言面刻意避开，另行治理。
+
+**验证面**：cargo test --workspace（除 shell-native，本沙箱缺 GTK
+  dev 面）**1322 ok / 0 failed / 7 ignored**（基线 1311 + 新增 11），
+r25 RED→GREEN 留证；fmt 触及文件 0 diff；clippy 对拍无新警告；
+wasm32 check 过；既有测试无一需要改序（无钉死旧扁平序者）。
+
+**补充修复（owner 对 PR #221 审查意见，同分支追加）——持久化
+History 格式版本闸门（2026-11-05）**：
+
+- **审查发现**：#220 只修了新建条目，但 undo 历史随文档持久化
+  （`save_document` 写 meta.history、`open_document` 经
+  `set_history_json` 恢复）——旧版本保存的档携带整体反转形态的
+  错序 inverses，升级后打开照常恢复栈，一次 undo 即触发上述缺陷
+  链（BadPath 硬失败/静默错挂）。「旧档可读」不够，还须「旧栈
+  不可执行」。
+- **实现**：`history.rs` 新增 `HISTORY_FORMAT_VERSION = 2`，
+  `History` 增 `format_version` 字段（serde 无条件序列化、缺失
+  default 0；`Default` 手写生而 v2）；`History::from_json` 版本
+  闸门——解析成功但版本 ≠ 2（缺字段旧档/显式旧版本/未知未来
+  版本）→ 丢弃 undo/redo 栈与合并窗边界，回落全新 History；
+  JSON 畸形仍显式报错（「格式旧」降级、「格式坏」拒绝）。
+  `open_document`/`set_history_json`（含 wasm 透传面）自动获得
+  该行为：正文/document_id/revision 照常复原，旧 undo/redo 不
+  执行；降级档继续编辑正常、再存即升 v2。
+- **回归测试**：`r26_history_format_version.rs` 7 用例——旧档材料
+  用当前代码产出后降格（删版本字段 + 单事务单 RemoveBlock 逆组
+  整体反转，与修复前代码产出逐位一致），锁：①缺字段/v1/未来版
+  三途降级（正文/身份/revision 完整、栈空、undo/redo 不执行、
+  revision 不动）；②v2 往返「文本→非叶删除→文本」链 undo×3/
+  redo×3 精确复原（含重建子树物化原 ID 随 JSON 往返）；③新档
+  必带版本字段、降级档再存升 v2；④畸形 JSON 仍 Reject。
+- **附带修复**：`pdfb_skeleton.rs` `source_mirrors_mdcore_five_values`
+  的源文件镜像锁对 `history.rs` 做裸字节切片（`idx-200`/`idx+400`），
+  本修复新增的中文 doc 注释使切点落进多字节字符内 panic——两处
+  切界改 char boundary 对齐（窗只缩/只胀，contains 断言语义不变）；
+  第二处系首次暴露（此前被第一处 panic 掩盖）。
+- **验证面**：cargo test --workspace（除 shell-native，沙箱缺 GTK
+dev 面；shell 契约层传导面已测，shell-native 仅编译性盲区由
+  Windows CI 覆盖）**1329 ok / 0 failed**（= 1322 + r26 新增 7）；
+  CI 口径 check（--workspace --all-targets --exclude mdshell-native）
+  过；wasm32 check 过；fmt 触及文件 0 diff（r26 已格式化；
+  document.rs/pdfb_skeleton.rs 各自 1/2 处既有漂移系 #216 复位
+  领地，未触碰）；clippy 双面零新警告（mdcore-wasm 5+1 条既有
+  基线不变）。

@@ -216,7 +216,8 @@ impl Core {
     }
 
     /// 存档：返回 (markdown, meta json)。meta 自含 document_id / revision /
-    /// 历史栈（整栈 JSON 嵌入），重开 = `open_document` 一行复原。
+    /// 历史栈（整栈 JSON 嵌入，携带 `HISTORY_FORMAT_VERSION` 版本字段），
+    /// 重开 = `open_document` 一行复原。
     pub fn save_document(&self) -> (String, String) {
         let md = markdown::tree_to_markdown(&self.tree);
         let history: serde_json::Value =
@@ -231,6 +232,12 @@ impl Core {
 
     /// 开档：from_markdown + meta 复原（document_id / revision / 历史栈）。
     /// meta 畸形 = 显式 Reject（宁可开不了档，不静默错配身份）。
+    ///
+    /// 历史栈过 `History::from_json` 版本闸门（#221 补充修复）：缺版本/
+    /// 旧版本/未知未来版本的栈不可信（#220 修复前的 inverses 为整体
+    /// 反转形态，非叶删除条目 undo 必坏），降级丢弃 undo/redo 栈；
+    /// 正文 / document_id / revision 照常复原（旧档升级后可继续编辑，
+    /// 只是丢失撤销历史，不丢失文档）。
     pub fn open_document(markdown_src: &str, meta_json: &str) -> Result<Self, Reject> {
         let bad = |why: String| Reject::Invalid(format!("open_document meta: {why}"));
         let meta: serde_json::Value =
