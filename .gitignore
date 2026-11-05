@@ -21,3 +21,6 @@ test-artifacts/ocr-tessdata/*.traineddata
 # 此处兜底 python -m venv 等无自忽略的场景）
 .venv/
 __pycache__/
+
+# #219 tab_workflow_tests：CWD 相对形态去重测试的临时夹具（测试自清，崩溃残留兜底）
+mang-shell/mdc-tab-rel-*/

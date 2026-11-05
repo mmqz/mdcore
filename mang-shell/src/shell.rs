@@ -2302,3 +2302,429 @@ mod tests {
         assert!(left, "右栏翻转不影响左栏");
     }
 }
+
+// ---------------------------------------------------------------------------
+// #219：多标签文档工作流——运行时测试（真实 gpui::TestAppContext：
+// 实体/窗口/焦点全真，无头宿主窗口，与 editor 运行时测试同模式；
+// 经 bin 单测面随 `cargo test --tests` 执行）。
+//
+// 分工（三层互证，不重复钉定）：
+// - 纯逻辑三件（邻位规则/循环 wrap/同名消歧）→ tab_bar.rs 既有单测；
+// - 键位可配置面（S2/S3/S4 默认绑定+守卫+换绑）→ keymap.rs
+//   `shell_single_key_branches` 等既有单测；
+// - 本模块：**标签生命周期与 dirty 状态的运行时面**——多文档并存
+//   切换状态保持 / 同文件重复打开去重（相对+绝对两形态）/ 关闭
+//   邻位规则与末标签空态 / 脏标签关闭确认三选（取消-保存-放弃）。
+//
+// 宿主：ShellApp 不作根视图（render 路径的菜单/主题/资产面与本模块
+// 无关），空 div 宿主开窗只取真实 `Window`——EditorHost 同款口径。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tab_workflow_tests {
+    use super::*;
+    use crate::editor::buffer::Point;
+    use crate::editor::commands::Cmd;
+
+    /// 测试宿主（见模块注释）。
+    struct ShellHost(Entity<ShellApp>);
+
+    impl gpui::Render for ShellHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            gpui::div()
+        }
+    }
+
+    /// 临时夹具目录（OS 临时区，进程号隔离；测试首尾各清一次——
+    /// 崩溃残留也只是临时区垃圾，不污染工作树）。
+    fn fixture_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mdc-tab-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 写一个 md 夹具（返回绝对路径——对话框/文件树入参形态）。
+    fn write_md(dir: &Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    /// 空态 ShellApp + 宿主窗口（返回实体与窗口句柄）。
+    fn shell_window(
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<ShellApp>, gpui::WindowHandle<ShellHost>) {
+        // 主题全局：真实应用在 main.rs 开窗前 theme::init(JustBase)——
+        // 测试镜像同一序列（ShellApp::new 的 GlobalTheme::theme /
+        // theme_switch::apply_mode 首访即需；TestPlatform 的
+        // window_appearance 为固定 Light 桩，fallback 主题集不依赖
+        // 资产源——JustBase 与 main 同款可无头初始化）。
+        cx.update(|app| theme::init(theme::LoadThemes::JustBase, app));
+        // ShellApp::new 需要 &mut Window（on_window_should_close 等），
+        // 实体只能在 add_window 闭包内构造；槽位带出（FnOnce 一次性）。
+        let mut slot: Option<Entity<ShellApp>> = None;
+        let window = cx.add_window(|window, cx| {
+            let shell = cx.new(|cx| ShellApp::new(None, None, window, cx));
+            slot = Some(shell.clone());
+            ShellHost(shell)
+        });
+        (slot.expect("宿主构造即置"), window)
+    }
+
+    /// 打开一个文档标签（open_document_tab 的薄包装——无 window 面）。
+    fn open(shell: &Entity<ShellApp>, cx: &mut Context<ShellHost>, path: PathBuf) {
+        shell.update(cx, |shell, cx| {
+            shell.open_document_tab(path, cx);
+        });
+    }
+
+    /// #219 验收①：至少 3 个文档并存，切换后各自内容、光标/选区与
+    /// dirty 状态保持正确（tab0 脏+光标、tab1 全选区、tab2 干净基线；
+    /// 循环切换双向 wrap 后逐标签回读）。
+    #[gpui::test]
+    fn three_tabs_switch_preserves_state(cx: &mut gpui::TestAppContext) {
+        let dir = fixture_dir("preserve");
+        let a = write_md(&dir, "a.md", "A0\nA1\nA2\n");
+        let b = write_md(&dir, "b.md", "B0\nB1\n");
+        let c = write_md(&dir, "c.md", "C0\nC1\n");
+
+        let (shell, window) = shell_window(cx);
+        window.update(cx, |_host, _window, cx| {
+            open(&shell, cx, a.clone());
+            open(&shell, cx, b.clone());
+            open(&shell, cx, c.clone());
+            shell.update(cx, |shell, cx| {
+                assert_eq!(shell.tab_count(), 3, "三文档并存");
+                assert_eq!(shell.active, 2, "新开即激活");
+            });
+        });
+
+        // 各标签置入待保持的状态：tab0 脏 + 光标在插入点；tab1 全选；
+        // tab2 干净。tab0 的编辑不得波及 tab1/tab2 的脏位。（闭包内赋值
+        // 走 default 起始 + expect 收口——闭包捕获未初始化局部不可编译。）
+        let mut cursor_in_tab0 = Point::default();
+        let mut selection_in_tab1: Option<(Point, Point)> = None;
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                let ed0 = shell.tab_editor(0).unwrap().clone();
+                cursor_in_tab0 = ed0
+                    .update(cx, |ed, cx| ed.insert_text_at(1, 2, "X", cx))
+                    .expect("可编辑文档插入返回光标点");
+                assert!(shell.tab_is_modified(0, cx).unwrap(), "tab0 插入后脏");
+
+                shell.activate_tab(1, window, cx);
+                let ed1 = shell.tab_editor(1).unwrap().clone();
+                ed1.update(cx, |ed, cx| ed.run_command(Cmd::SelectAll, window, cx));
+                selection_in_tab1 = ed1.read(cx).selection_points();
+
+                shell.activate_tab(2, window, cx);
+                assert!(!shell.tab_is_modified(2, cx).unwrap(), "tab2 干净基线");
+            });
+        });
+        let selection_in_tab1 = selection_in_tab1.expect("tab1 全选有选区");
+
+        // 循环切换 2→0（wrap）→1→0（backward）——全程逐项回读保持。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.cycle_tab(true, window, cx);
+                assert_eq!(shell.active, 0, "末位 wrap 回首（方向）");
+                let ed0 = shell.tab_editor(0).unwrap().clone();
+                let ed = ed0.read(cx);
+                assert_eq!(ed.buffer_line(1), "A1X", "tab0 内容保持（编辑在）");
+                assert_eq!(ed.cursor_point(), cursor_in_tab0, "tab0 光标保持");
+                assert!(ed.is_modified(), "tab0 脏位跨切换保持");
+
+                shell.cycle_tab(true, window, cx);
+                assert_eq!(shell.active, 1);
+                let ed1 = shell.tab_editor(1).unwrap().clone();
+                assert_eq!(
+                    ed1.read(cx).selection_points(),
+                    Some(selection_in_tab1),
+                    "tab1 选区跨切换保持"
+                );
+                assert!(!ed1.read(cx).is_modified(), "tab1 不脏");
+
+                shell.cycle_tab(false, window, cx);
+                assert_eq!(shell.active, 0, "backward 方向");
+
+                // 脏位隔离：只有 tab0 脏。
+                assert!(shell.tab_is_modified(0, cx).unwrap());
+                assert!(!shell.tab_is_modified(1, cx).unwrap());
+                assert!(!shell.tab_is_modified(2, cx).unwrap());
+            });
+        });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #219 验收②/边界：同一文件重复打开（CLI 相对形态 + 对话框绝对
+    /// 形态）激活既有标签，不产生重复会话。
+    ///
+    /// 相对形态夹具必须落在 CWD 内（cargo test 的 CWD = mang-shell
+    /// workspace 根；Windows 上跨盘符构造不出相对路径）——目录名进
+    /// .gitignore，测试首尾自清。
+    #[gpui::test]
+    fn same_file_reopen_dedupes_to_existing_tab(cx: &mut gpui::TestAppContext) {
+        let tag_dir = std::env::current_dir()
+            .unwrap()
+            .join(format!("mdc-tab-rel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tag_dir);
+        std::fs::create_dir_all(&tag_dir).unwrap();
+        // 相对形态（原生分隔符：Windows 下 join 产反斜杠，与
+        // std::path::absolute 的 GetFullPathNameW 归一结果一致）。
+        let rel_dir = PathBuf::from(tag_dir.file_name().unwrap());
+        let rel_a = rel_dir.join("a.md");
+        let abs_a = tag_dir.join("a.md");
+        std::fs::write(&abs_a, "A\n").unwrap();
+        let abs_b = {
+            let p = tag_dir.join("b.md");
+            std::fs::write(&p, "B\n").unwrap();
+            p
+        };
+
+        let (shell, window) = shell_window(cx);
+        window.update(cx, |_host, _window, cx| {
+            // 相对形态首开：落一个标签，身份 = 绝对化结果。
+            open(&shell, cx, rel_a.clone());
+            shell.update(cx, |shell, cx| {
+                assert_eq!(shell.tab_count(), 1);
+                assert_eq!(shell.tab_path(0), Some(abs_a.clone()), "相对入参绝对化");
+            });
+
+            // 绝对形态开 b → 两标签。
+            open(&shell, cx, abs_b.clone());
+            shell.update(cx, |shell, cx| {
+                assert_eq!(shell.tab_count(), 2);
+                assert_eq!(shell.active, 1);
+            });
+
+            // 同文件绝对形态重开 → 激活既有标签，不增。
+            open(&shell, cx, abs_a.clone());
+            shell.update(cx, |shell, cx| {
+                assert_eq!(shell.tab_count(), 2, "绝对形态重开不重复开会话");
+                assert_eq!(shell.active, 0, "重开 = 激活既有");
+                assert_eq!(shell.tab_index_by_path(&abs_a), Some(0));
+            });
+
+            // 同文件相对形态重开 → 同样去重（两形态同身份）。
+            open(&shell, cx, rel_a.clone());
+            shell.update(cx, |shell, cx| {
+                assert_eq!(shell.tab_count(), 2, "相对形态重开不重复开会话");
+                assert_eq!(shell.active, 0);
+                assert_eq!(shell.tab_index_by_path(&rel_a), Some(0));
+            });
+        });
+
+        let _ = std::fs::remove_dir_all(&tag_dir);
+    }
+
+    /// #219 验收③/边界：关闭邻位规则（右邻优先/末位回左）、关非活动
+    /// 标签的 active 校正、关最后一个标签 → 空态不 panic、空态再关
+    /// 幂等。
+    #[gpui::test]
+    fn close_neighbor_rule_and_last_tab_empty_state(cx: &mut gpui::TestAppContext) {
+        let dir = fixture_dir("close");
+        let a = write_md(&dir, "a.md", "A\n");
+        let b = write_md(&dir, "b.md", "B\n");
+        let c = write_md(&dir, "c.md", "C\n");
+
+        let (shell, window) = shell_window(cx);
+        window.update(cx, |_host, _window, cx| {
+            open(&shell, cx, a.clone());
+            open(&shell, cx, b.clone());
+            open(&shell, cx, c.clone());
+        });
+
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                // [A,B,C] 激活 1，关 B → C 前移补位，active 仍 1。
+                shell.activate_tab(1, window, cx);
+                shell.close_active_tab(window, cx);
+                assert_eq!(shell.tab_count(), 2);
+                assert_eq!(shell.active, 1, "右邻前移补位");
+                assert_eq!(shell.tab_path(1), Some(c.clone()), "C 补位到 1");
+
+                // [A,C] active 1，关非活动左邻 A（idx 0）→ active 校正 0。
+                shell.close_tab_at(0, window, cx);
+                assert_eq!(shell.tab_count(), 1);
+                assert_eq!(shell.active, 0, "关左侧非活动标签 active 随减");
+
+                // 关最后一个标签 → 空态（editor() None，active 归零）。
+                shell.close_active_tab(window, cx);
+                assert_eq!(shell.tab_count(), 0, "关最后一个标签 → 空态");
+                assert_eq!(shell.active, 0);
+                assert!(shell.editor().is_none());
+
+                // 空态再关：幂等不 panic。
+                shell.close_active_tab(window, cx);
+                assert_eq!(shell.tab_count(), 0);
+            });
+        });
+
+        // 空态后可继续开新文档（生命周期闭环）。
+        window.update(cx, |_host, _window, cx| {
+            open(&shell, cx, a.clone());
+            shell.update(cx, |shell, cx| {
+                assert_eq!(shell.tab_count(), 1, "空态后再开正常");
+            });
+        });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #219 验收④：脏标签关闭确认三选——取消（原标签与内容不变）、
+    /// 保存（落盘后关）、不保存（直接关、盘上内容不动）。干净标签
+    /// 关闭无确认框。
+    #[gpui::test]
+    fn dirty_close_confirm_cancel_save_discard(cx: &mut gpui::TestAppContext) {
+        let dir = fixture_dir("confirm");
+        let a = write_md(&dir, "a.md", "L0\n");
+
+        let (shell, window) = shell_window(cx);
+        window.update(cx, |_host, _window, cx| {
+            open(&shell, cx, a.clone());
+        });
+
+        // 干净标签：直接关，无确认框。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.close_active_tab(window, cx);
+                assert!(shell.confirm.is_none(), "干净标签关闭不弹确认");
+                assert_eq!(shell.tab_count(), 0);
+            });
+        });
+
+        // 重开并置脏（L0 → L0X）。
+        window.update(cx, |_host, _window, cx| {
+            open(&shell, cx, a.clone());
+            shell.update(cx, |shell, cx| {
+                shell.tab_editor(0).unwrap().update(cx, |ed, cx| {
+                    ed.insert_text_at(0, 2, "X", cx);
+                });
+                assert!(shell.tab_is_modified(0, cx).unwrap());
+            });
+        });
+
+        // 关脏标签 → 确认框（文案/按钮/动作/默认选中）。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.close_active_tab(window, cx);
+                let confirm = shell.confirm.as_ref().expect("脏标签关闭弹确认");
+                assert!(confirm.message.contains("a.md"), "文案含文件名");
+                assert_eq!(
+                    confirm.buttons,
+                    CONFIRM_BUTTONS.to_vec(),
+                    "保存/不保存/取消三选"
+                );
+                assert!(matches!(confirm.action, ConfirmAction::CloseTab { idx: 0 }));
+                assert_eq!(confirm.selected, 0, "默认停在保存侧");
+            });
+        });
+
+        // 取消：原标签与内容原样保留，确认框清除。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.resolve_confirm(2, window, cx);
+                assert!(shell.confirm.is_none(), "取消清确认框");
+                assert_eq!(shell.tab_count(), 1, "取消不关标签");
+                let ed = shell.tab_editor(0).unwrap().clone();
+                assert_eq!(ed.read(cx).buffer_line(0), "L0X", "取消内容不变");
+                assert!(ed.read(cx).is_modified(), "取消后仍脏");
+            });
+        });
+
+        // 保存（choice 0）：落盘 + 关标签；盘上带 X。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.close_active_tab(window, cx);
+                assert!(shell.confirm.is_some());
+                shell.resolve_confirm(0, window, cx);
+                assert_eq!(shell.tab_count(), 0, "保存后关");
+                assert_eq!(
+                    std::fs::read_to_string(&a).unwrap(),
+                    "L0X\n",
+                    "保存 = 编辑落盘"
+                );
+            });
+        });
+
+        // 重开：内容带 X 且干净；再置脏（L0X → L0XY）后不保存（choice 1）：
+        // 直接关、盘上仍是无 Y 的版本。
+        window.update(cx, |_host, _window, cx| {
+            open(&shell, cx, a.clone());
+            shell.update(cx, |shell, cx| {
+                let ed = shell.tab_editor(0).unwrap().clone();
+                assert_eq!(ed.read(cx).buffer_line(0), "L0X", "重开 = 盘上内容");
+                assert!(!ed.read(cx).is_modified(), "重开干净");
+                ed.update(cx, |ed, cx| {
+                    ed.insert_text_at(0, 3, "Y", cx);
+                });
+            });
+        });
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.close_active_tab(window, cx);
+                shell.resolve_confirm(1, window, cx);
+                assert_eq!(shell.tab_count(), 0, "不保存直接关");
+                assert_eq!(
+                    std::fs::read_to_string(&a).unwrap(),
+                    "L0X\n",
+                    "放弃 = 盘上内容不动（Y 未落盘）"
+                );
+            });
+        });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #219 边界：循环切换在空态/单标签为 no-op；越界激活安全不改
+    /// 状态（标签点击竞态/程序化调用的防御面）。
+    #[gpui::test]
+    fn cycle_noop_edges_and_out_of_range_activate(cx: &mut gpui::TestAppContext) {
+        let dir = fixture_dir("edges");
+        let a = write_md(&dir, "a.md", "A\n");
+        let b = write_md(&dir, "b.md", "B\n");
+
+        let (shell, window) = shell_window(cx);
+
+        // 空态循环：no-op 不 panic。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.cycle_tab(true, window, cx);
+                shell.cycle_tab(false, window, cx);
+                assert_eq!(shell.tab_count(), 0);
+                assert_eq!(shell.active, 0);
+            });
+        });
+
+        window.update(cx, |_host, window, cx| {
+            open(&shell, cx, a.clone());
+            // 单标签循环：不变（len < 2 短路——shell 级方法验证短路
+            // 真的生效，焦点面不炸）。
+            shell.update(cx, |shell, cx| {
+                shell.cycle_tab(true, window, cx);
+                assert_eq!(shell.tab_count(), 1);
+                assert_eq!(shell.active, 0, "单标签循环不变");
+            });
+
+            // 两标签（active 1 = b）：循环两周回原位（1→0→1——cycle 的
+            // eprintln 为 1 基展示，与本处 0 基状态勿混）；越界激活安全
+            // 不改状态（标签点击竞态/程序化调用的防御面）。
+            open(&shell, cx, b.clone());
+            shell.update(cx, |shell, cx| {
+                shell.cycle_tab(true, window, cx);
+                shell.cycle_tab(true, window, cx);
+                assert_eq!(shell.active, 1, "两标签循环两周回原位（b→a→b）");
+
+                shell.activate_tab(7, window, cx);
+                assert_eq!(shell.active, 1, "越界激活不改 active");
+                shell.activate_tab(0, window, cx);
+                assert_eq!(shell.active, 0);
+                shell.activate_tab(2, window, cx);
+                assert_eq!(shell.active, 0, "越界激活不改 active（再证）");
+            });
+        });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
