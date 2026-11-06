@@ -80,8 +80,33 @@ fn corpus_dir() -> PathBuf {
         })
 }
 
-/// 语料文件（缺失 = 空表 + stderr 打印——调用方据此跳过）。
+/// 语料文件（未取件/目录缺席 = 空表 + stderr 打印——调用方据此跳过）。
+/// #262 同款防御：递归收集（不依赖层级）+ **已取件但收集到 0 件
+/// .pdf = panic**——office-io 语料门曾因顶层 read_dir + 静默 skip
+/// 空转 2 天无人察觉（204 件断言零验证）。
+///
+/// 「已取件」判定（Lead 评审 2026-11-06，方案 B 修正）：目录在任何
+/// git clone 里都**必然在场**（README/MANIFEST/取件脚本已提交），
+/// 所以「目录在场」不能当取件信号——用**清单件在场性**判定：
+///   · 清单（MANIFEST.json ∪ realworld/PROVENANCE.json）中**任一件
+///     在盘** = 已取件 → 收集到 0 = 收集逻辑坏 → 红；
+///   · 清单件**全缺** = 未取件（新鲜克隆 / CI 未跑取件步）→
+///     响亮 skip（带取件指引）。
 fn corpus_files() -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let rd = match std::fs::read_dir(dir) {
+            Ok(rd) => rd,
+            Err(_) => return,
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().map(|x| x == "pdf").unwrap_or(false) {
+                out.push(p);
+            }
+        }
+    }
     let dir = corpus_dir();
     if !dir.is_dir() {
         eprintln!(
@@ -90,14 +115,63 @@ fn corpus_files() -> Vec<PathBuf> {
         );
         return Vec::new();
     }
-    let mut v: Vec<_> = std::fs::read_dir(&dir)
-        .expect("read corpus dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "pdf").unwrap_or(false))
-        .collect();
+    let mut v = Vec::new();
+    walk(&dir, &mut v);
+    if v.is_empty() {
+        if manifest_any_present(&dir) {
+            panic!(
+                "corpus 已取件（清单件在盘）但递归收集到 0 件 .pdf——收集逻辑坏了？({})",
+                dir.display()
+            );
+        }
+        eprintln!(
+            "[pdff] corpus 未取件（清单件全缺，{}）— skipping real-corpus tests；\
+             取件：python3 test-artifacts/pdf-organize-corpus/fetch_corpus.py（多页真实件）\
+             或 build_corpus.py（LO 全量 92 件，需 soffice+poppler）",
+            dir.display()
+        );
+        return Vec::new();
+    }
+    println!("[pdff] 检查了 {} 件真实语料（{}）", v.len(), dir.display());
     v.sort();
     v
+}
+
+/// 清单（MANIFEST.json / realworld/PROVENANCE.json）里登记的语料件
+/// 是否**任一在盘**。清单是脚本生成的稳定格式（json indent=1，
+/// `"name": "xxx.pdf"` 每行一件）——行级扫描与 pdf_corpus.rs 的
+/// provenance_manifest_consistency 同风格（测试面不引 serde 依赖）。
+fn manifest_any_present(dir: &Path) -> bool {
+    fn quoted_value(line: &str, key: &str) -> Option<String> {
+        let i = line.find(key)? + key.len();
+        let rest = &line[i..];
+        let a = rest.find('"')? + 1;
+        let b = rest[a..].find('"')? + a;
+        let v = &rest[a..b];
+        (v.ends_with(".pdf") && !v.is_empty()).then(|| v.to_string())
+    }
+    // (清单文件, 清单内 name 的解析基目录)
+    for (manifest, base) in [
+        ("MANIFEST.json", ""),
+        ("realworld/PROVENANCE.json", "realworld"),
+    ] {
+        let Ok(text) = std::fs::read_to_string(dir.join(manifest)) else {
+            continue;
+        };
+        for line in text.lines() {
+            if let Some(name) = quoted_value(line, "\"name\"") {
+                let p = if base.is_empty() {
+                    dir.join(&name)
+                } else {
+                    dir.join(base).join(&name)
+                };
+                if p.is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn tool_available(name: &str) -> bool {

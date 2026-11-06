@@ -10,9 +10,10 @@ test-artifacts/large-file/*.xlsx
 test-artifacts/large-file/*.pdf
 test-artifacts/large-file/results-r1.json
 
-# S2-1 pdf-organize 语料（生成器 + MANIFEST + README 入库；
-# PDF 二进制不入库——37MB/92 件，重建见该目录 README）
-test-artifacts/pdf-organize-corpus/*.pdf
+# S2-1 pdf-organize 语料（生成器 + 取件脚本 + MANIFEST + README 入库；
+# PDF 二进制不入库——主语料 37MB/92 件重建见该目录 README，
+# realworld/ 轻量子集取件见 fetch_corpus.py）
+test-artifacts/pdf-organize-corpus/**/*.pdf
 # S2-4 OCR 语言包（取件脚本 + README 入库；traineddata 二进制不入库
 # ——chi_sim 2.4MB > 2MB 纪律，取件见该目录 fetch_tessdata.sh）
 test-artifacts/ocr-tessdata/*.traineddata

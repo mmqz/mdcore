@@ -1,20 +1,23 @@
 //! S1 多级列表自动编号——真实语料 + LibreOffice 开档验证
 //! （feat/79-multilevel-numbering）。
 //!
-//! 语料 = `test-artifacts/health-check/corpus/`（204 件——同
-//! style_corpus.rs；目录 untracked，缺席时空跑）。
+//! 语料 = `test-artifacts/health-check/corpus/`（630 件——同
+//! style_corpus.rs，三子目录递归收集；#262 修复：顶层 read_dir
+//! 空转 2 天，目录 untracked 缺席时 skip、在场空/缩水立红）。
 //!
-//! numbering 面实况（2026-10-31 首轮）：有 numbering.xml 52 / 多级
-//! ≥2 级 49 / lvlRestart 2 / isLgl 3 / startOverride 5 / 整级替换
-//! 2 / 最深 9 级。
+//! numbering 面实况（#262 重钉轮，2026-11-06，630 件）：有
+//! numbering.xml 137 / 多级 ≥2 级 129 / lvlRestart 2 / isLgl 2 /
+//! startOverride 35（per-num）/ 最深 9 级。
 //!
-//! 钉定样本（防跑空）：
-//! - `lo__2129393649.docx`：**真实文档的序号计算全链**——body 10
-//!   个列表段的计算器输出 `IX.A. → IX.A.1-4 → IX.B. → …`（upperRoman
-//!   渲染 + 上级新项级联重置——Word 语义实档锚点）；
-//! - `lo__cjklist30.docx`：`1. → 10.`（decimal 长序列）；
-//! - `poi__NumberingWOverrides.docx`：POI 编号全形态样本（ordinal
-//!   lvl0 + `%1` 无点 lvlText + 深引用字面混合形）。
+//! 钉定样本（防跑空；#262 重钉——原 lo__* 两件随语料换血缺席，
+//! 锚点按新语料实值迁移）：
+//! - `docx4j/bug65649.docx`：**真实文档的序号计算全链**——86 个列
+//!   表段：前 8 项 `1.→8.` 连续 decimal，后接新列表 `1. 2. 3.`
+//!   再深入多级 `3.1. → 3.1.1. → 3.1.2.`（重置 + 多级实档锚点）；
+//! - `docx4j/bug59058.docx`：79 项 decimal 长序列（前 14 项
+//!   `1.→14.` 无补零连续）；
+//! - `poi-docx/NumberingWOverrides.docx`：编号全形态样本（ordinal
+//!   lvl0 + `%1` 无点 lvlText——原 poi__ 同件同形，路径迁移）。
 
 use mdc_office_io::docx::{read_docx_from_bytes, Block, RunSpec};
 use mdc_office_io::numbering::{
@@ -34,17 +37,29 @@ fn corpus_dir() -> std::path::PathBuf {
         })
 }
 
+/// 递归收集 .docx（#262：同 style_corpus.rs——不依赖目录层级，
+/// 语料三子目录化后顶层 read_dir 空转 2 天）。
 fn corpus_files() -> Vec<std::path::PathBuf> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let rd = match std::fs::read_dir(dir) {
+            Ok(rd) => rd,
+            Err(_) => return,
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().map(|x| x == "docx").unwrap_or(false) {
+                out.push(p);
+            }
+        }
+    }
     let dir = corpus_dir();
     if !dir.is_dir() {
         return Vec::new();
     }
-    let mut v: Vec<_> = std::fs::read_dir(&dir)
-        .expect("read corpus dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "docx").unwrap_or(false))
-        .collect();
+    let mut v = Vec::new();
+    walk(&dir, &mut v);
     v.sort();
     v
 }
@@ -53,19 +68,31 @@ fn corpus_files() -> Vec<std::path::PathBuf> {
 fn real_corpus_numbering_stats_and_pinned() {
     let files = corpus_files();
     if files.is_empty() {
+        // 目录缺席 = CI/新克隆合法 skip；在场空 = 结构又变 → 红
+        //（#262：同 style_corpus.rs 的静默空转修复）。
+        assert!(
+            !corpus_dir().is_dir(),
+            "corpus dir 在场但递归收集到 0 件 .docx——目录结构又变了？({})",
+            corpus_dir().display()
+        );
         eprintln!(
             "[numbering-corpus] corpus dir absent ({}) — skipping real-document sweep",
             corpus_dir().display()
         );
         return;
     }
-    assert!(files.len() >= 200, "corpus shrank: {}", files.len());
+    println!(
+        "[numbering-corpus] 检查了 {} 件真实语料（{}）",
+        files.len(),
+        corpus_dir().display()
+    );
+    assert!(files.len() >= 600, "corpus shrank: {}", files.len());
 
     let (mut ok, mut with_num, mut multi, mut restart, mut is_lgl, mut start_over) =
         (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut deepest = 0usize;
-    let mut seq_212: Option<Vec<String>> = None;
-    let mut seq_cjk: Option<Vec<String>> = None;
+    let mut seq_649: Option<Vec<String>> = None;
+    let mut seq_058: Option<Vec<String>> = None;
     let mut pinned_overrides = false;
 
     for p in &files {
@@ -118,8 +145,8 @@ fn real_corpus_numbering_stats_and_pinned() {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        // 钉定①：真实文档的序号计算全链（body 驱动）。
-        if name == "lo__2129393649.docx" || name == "lo__cjklist30.docx" {
+        // 钉定①③：真实文档的序号计算全链（body 驱动）。
+        if name == "bug65649.docx" || name == "bug59058.docx" {
             if let Ok(doc) = read_docx_from_bytes(&bytes) {
                 let mut tr = NumberingTracker::new(&b.table);
                 let mut seq = Vec::new();
@@ -132,14 +159,14 @@ fn real_corpus_numbering_stats_and_pinned() {
                         }
                     }
                 }
-                if name == "lo__2129393649.docx" {
-                    seq_212 = Some(seq);
+                if name == "bug65649.docx" {
+                    seq_649 = Some(seq);
                 } else {
-                    seq_cjk = Some(seq);
+                    seq_058 = Some(seq);
                 }
             }
         }
-        if name == "poi__NumberingWOverrides.docx" {
+        if name == "NumberingWOverrides.docx" {
             if let Some(lv) = b.table.effective_levels(1) {
                 if let Some(l0) = lv.iter().find(|l| l.ilvl == 0) {
                     assert_eq!(l0.num_fmt, "ordinal");
@@ -150,34 +177,42 @@ fn real_corpus_numbering_stats_and_pinned() {
         }
     }
 
-    // 容差断言（首轮实况见模块文档）。
-    assert!(ok >= 180, "readable shrank: {ok}");
-    assert!(with_num >= 45, "{with_num}");
-    assert!(multi >= 40, "{multi}");
+    // 容差断言（#262 重钉轮实况见模块文档——630 件：ok 613 /
+    // with_num 137 / multi 129 / restart 2 / is_lgl 2 /
+    // start_over 35 / deepest 9）。
+    assert!(ok >= 600, "readable shrank: {ok}");
+    assert!(with_num >= 130, "{with_num}");
+    assert!(multi >= 120, "{multi}");
     assert!(restart >= 1, "{restart}");
-    assert!(is_lgl >= 2, "{is_lgl}");
-    assert!(start_over >= 3, "{start_over}");
+    assert!(is_lgl >= 1, "{is_lgl}");
+    assert!(start_over >= 30, "{start_over}");
     assert!(deepest >= 9, "deepest: {deepest}");
 
-    // 钉定①：upperRoman "IX" + 上级新项级联重置（A→B 时 1-4 重起）。
-    let s1 = seq_212.expect("lo__2129393649.docx not in corpus");
+    // 钉定①：bug65649（docx4j）——序号计算全链：前 8 项连续 decimal
+    // + 新列表重置 1.2.3. + 多级深入 3.1.→3.1.1.→3.1.2.（重置+
+    // 多级实档——原 lo__2129393649 锚点的 #262 迁移）。
+    let s1 = seq_649.expect("bug65649.docx not in corpus");
     let want1: Vec<String> = [
-        "IX.A.", "IX.A.1.", "IX.A.2.", "IX.A.3.", "IX.A.4.", "IX.B.", "IX.B.1.", "IX.B.2.",
-        "IX.B.3.", "IX.B.4.",
+        "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "1.", "2.", "3.", "3.1.",
+        "3.1.1.", "3.1.2.",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect();
-    assert_eq!(&s1[..10.min(s1.len())], &want1[..]);
-    // 钉定②：decimal 长序列 1..10（无补零）。
-    let s2 = seq_cjk.expect("lo__cjklist30.docx not in corpus");
-    let want2: Vec<String> = ["1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10."]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(&s2[..10.min(s2.len())], &want2[..]);
-    // 钉定③：POI 全形态样本。
-    assert!(pinned_overrides, "poi__NumberingWOverrides.docx structure");
+    assert_eq!(&s1[..14.min(s1.len())], &want1[..]);
+    // 钉定②：bug59058（docx4j）——79 项 decimal 长序列前 14 连续
+    //（原 lo__cjklist30 锚点的 #262 迁移；无补零）。
+    let s2 = seq_058.expect("bug59058.docx not in corpus");
+    let want2: Vec<String> = [
+        "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.",
+        "13.", "14.",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_eq!(&s2[..14.min(s2.len())], &want2[..]);
+    // 钉定③：编号全形态样本（原 poi__ 同件，#262 路径迁移）。
+    assert!(pinned_overrides, "NumberingWOverrides.docx structure");
 }
 
 #[test]

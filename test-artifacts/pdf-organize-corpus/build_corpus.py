@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1] / "mdcore"  # scripts/ → my-project/mdcore/
+REPO = Path(__file__).resolve().parents[2]  # pdf-organize-corpus → test-artifacts → 仓根（#262 顺带修复：脚本自 scripts/ 迁入后 parents[1] 指向不存在的 test-artifacts/mdcore，语料无法重建）
 CORPUS_SRC = REPO / "test-artifacts" / "health-check" / "corpus"
 OUT_DIR = REPO / "test-artifacts" / "pdf-organize-corpus"
 SOFFICE = "soffice"
