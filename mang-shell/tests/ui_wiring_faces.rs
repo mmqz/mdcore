@@ -248,15 +248,26 @@ fn face4_file_tree_click_opens_document() {
 
 /// 状态栏四项活数据（选中字数 / git 分支 / 编码 / 换行符）全部经
 /// `status_info` 纯函数计算 + shell 渲染状态栏（消费 Editor 现场态）。
+///
+/// #281（审计 R-e）：编码/EOL 与 git 分支改经 **mtime 失效缓存面**
+/// 消费（`detect_encoding_eol_cached` / `git_branch_at_cached`——
+/// 状态栏随 ShellApp 每次重渲被调，直连探测 = 每帧整文件读盘）；
+/// 缓存面内部仍调底层纯探测函数（status_info 单测锁），数据链
+/// 绑定语义不变。
 #[test]
 fn face5_status_bar_binds_data_sources() {
     let sb = src("status_bar.rs");
     for (call, what) in [
         ("status_info::selection_info", "选中字数（现场 selection）"),
         ("status_info::find_git_root", "git 仓库探测"),
-        ("status_info::git_branch_at", "git 分支名"),
-        ("status_info::detect_encoding", "文件编码探测"),
-        ("status_info::detect_eol", "换行符探测"),
+        (
+            "status_info::git_branch_at_cached",
+            "git 分支名（#281：HEAD mtime 缓存面）",
+        ),
+        (
+            "status_info::detect_encoding_eol_cached",
+            "编码+换行符探测（#281：mtime+size 缓存面）",
+        ),
     ] {
         assert!(
             sb.contains(call),
