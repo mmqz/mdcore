@@ -67,18 +67,51 @@ fn name(p: &Path) -> String {
     p.file_name().unwrap().to_string_lossy().into_owned()
 }
 
+/// PROVENANCE.json 里登记的语料件是否**任一在盘**（「已取件」信号，
+/// 与递归收集相互独立的两条代码路径——walk 退化时此处仍能发现件，
+/// #262 原事故形态照红）。清单是脚本生成的稳定格式（json indent=1，
+/// `"category"` 行在前 `"name"` 行在后），行级扫描不引 serde
+/// （测试面依赖纪律）。
+fn provenance_any_present(root: &Path) -> bool {
+    fn quoted_value(line: &str, key: &str) -> Option<String> {
+        let i = line.find(key)? + key.len();
+        let rest = &line[i..];
+        let a = rest.find('"')? + 1;
+        let b = rest[a..].find('"')? + a;
+        let v = &rest[a..b];
+        (!v.is_empty()).then(|| v.to_string())
+    }
+    let Ok(text) = std::fs::read_to_string(root.join("PROVENANCE.json")) else {
+        return false;
+    };
+    let mut cat = String::new();
+    for line in text.lines() {
+        if let Some(c) = quoted_value(line, "\"category\"") {
+            cat = c;
+        } else if let Some(name) = quoted_value(line, "\"name\"") {
+            if name.ends_with(".xlsx") && root.join(&cat).join(&name).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[test]
 fn real_xlsx_structural_corpus_lock() {
     let files = corpus_files();
     if files.is_empty() {
-        // 三态防御（#262）。
+        // 三态防御（#262，Lead 评审 2026-11-06 修正）：目录在任何
+        // clone 里都在场（README/取件脚本已提交）——「已取件」看
+        // **清单件在场性**：PROVENANCE.json 任一登记件在盘但收集
+        // 0 件 = 收集逻辑坏 → 红；清单件全缺 = 未取件 → 响亮 skip。
         assert!(
-            !corpus_root().is_dir(),
-            "corpus dir 在场但递归收集到 0 件 .xlsx——目录结构又变了？({})",
+            !provenance_any_present(&corpus_root()),
+            "corpus 已取件（PROVENANCE 登记件在盘）但递归收集到 0 件 .xlsx——收集逻辑坏了？({})",
             corpus_root().display()
         );
         eprintln!(
-            "[xlsx-struct-corpus] corpus dir absent ({}) — skipping；取件：python3 test-artifacts/xlsx-structural-corpus/fetch_corpus.py",
+            "[xlsx-struct-corpus] corpus 未取件（清单件全缺，{}）— skipping；取件：python3 test-artifacts/xlsx-structural-corpus/fetch_corpus.py",
             corpus_root().display()
         );
         return;

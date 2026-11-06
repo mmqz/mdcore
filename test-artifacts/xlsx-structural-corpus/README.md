@@ -10,9 +10,12 @@
 - **取件脚本 + PROVENANCE + README 入库；xlsx 二进制不入库**
   （.gitignore）。
 - 取件：`python3 test-artifacts/xlsx-structural-corpus/fetch_corpus.py`
-  （幂等；依赖 curl）。
+  （幂等；依赖 curl）。**CI 同款**：windows-test.yml 在
+  Test mdc-office-io 前跑本脚本——结构面锁在云端真跑。
 - 语料门 = `crates/office-io/tests/xlsx_structural_corpus.rs`：
-  #262 三态防御 + 每类数量下限（≥5）+ 全件 catch_unwind + 形态
+  #262 三态防御（Lead 评审 2026-11-06 修正：**清单件全缺 = 未取件
+  skip** / PROVENANCE 登记件在盘但收集 0 件 = 收集逻辑坏红 /
+  缩水红）+ 每类数量下限（≥5）+ 全件 catch_unwind + 形态
   实值断言。
 
 ## 分类目录

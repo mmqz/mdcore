@@ -92,6 +92,11 @@ def main():
         json.dumps({"fetched_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                     "files": prov}, ensure_ascii=False, indent=1))
     print(f"[done] {len(prov)} 件 / {sum(f['bytes'] for f in prov)/1024:.0f}KB / {time.time()-t0:.0f}s")
+    # 语料门断言 files.len() >= 26——取件不足在此显式退出（CI 快速
+    # 失败且信息直指上游漂移，而不是让测试断言兜底报「shrank」）。
+    if len(prov) < 26:
+        print(f"[WARN] 取件 {len(prov)} 件 < 26 下限——上游源漂移（[MISS] 见上）")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
