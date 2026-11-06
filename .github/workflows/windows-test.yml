@@ -68,6 +68,14 @@ jobs:
       - name: Test mdcore (core engine)
         run: cargo test -p mdcore
 
+      - name: Fetch xlsx-structural-corpus (#265 结构面语料 28 件, Apache-2.0)
+        # #265 语料门 CI 化：语料二进制不入库（.gitignore），CI 在
+        # Test mdc-office-io 前取件——结构面锁（隐藏行/外部链接/
+        # numFmt/xf 继承四类下限 + 零 panic + 形态实值断言）在云端
+        # 真跑而非 skip。幂等；依赖 curl（无 poppler/pdfinfo 面）。
+        shell: bash
+        run: python test-artifacts/xlsx-structural-corpus/fetch_corpus.py
+
       - name: Test mdc-office-io (docx/xlsx/pptx)
         run: cargo test -p mdc-office-io
 
