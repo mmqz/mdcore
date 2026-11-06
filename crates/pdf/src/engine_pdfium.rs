@@ -70,6 +70,7 @@ use crate::outline::{OutlineNode, OutlineTarget, OutlineTree};
 use crate::page::{PageGeometry, PageIndex, PageSpan, Rotation};
 use crate::render::{Rasterizer, RenderRequest, RenderedPage};
 use crate::security::{LimitBehavior, Limits, REASON_DECODE_OUTPUT};
+use crate::table::PositionedChar;
 
 /// 库定位环境变量（文件路径；优先级最高）。
 pub const PDFIUM_LIB_ENV: &str = "MDC_PDFIUM_LIB";
@@ -500,6 +501,41 @@ pub(crate) fn try_bind(path: &Path) -> Result<&'static Pdfium, String> {
             Err("进程已被绑定（外部绑定者不受支持——本 crate 单例未就位的竞争窗口）".to_string())
         }
         Err(why) => Err(format!("绑定失败：{why}")),
+    }
+}
+
+// #232 / R9·P1：表格结构化提取的位置层——逐字符 loose_bounds（整字型
+// 包围盒；tight 为字形精裁，行带聚类用 loose 跨字号更稳）+ 实际字号。
+// 算法层（行带/切格/列锚/落列）在 crate::table，纯函数零引擎依赖。
+impl PdfiumEngine {
+    /// 页位置字符流（表格结构化提取输入；pdfium 路径）。
+    ///
+    /// 无 unicode 映射的字符与包围盒读取失败项跳过（不静默丢文本面
+    /// 之外的语义——这些字符不参与几何聚类，登记于 crate::table 边界）。
+    pub fn positioned_chars(&self, page: PageIndex) -> Result<Vec<PositionedChar>, CommandError> {
+        let pages = self.document.pages();
+        let count = pages.len();
+        if page.0 as i64 >= i64::from(count) {
+            // 引擎层防御（与 extract_text 同口径——会话层已校验双保险）。
+            return Err(CommandError::InvalidPage(page));
+        }
+        let page_obj = pages.get(page.0 as i32).map_err(CommandError::engine)?;
+        let text = page_obj.text().map_err(CommandError::engine)?;
+        let mut out = Vec::new();
+        for ch in text.chars().iter() {
+            let (Some(c), Ok(rect)) = (ch.unicode_char(), ch.loose_bounds()) else {
+                continue;
+            };
+            out.push(PositionedChar {
+                ch: c,
+                left: rect.left().value,
+                bottom: rect.bottom().value,
+                right: rect.right().value,
+                top: rect.top().value,
+                font_size: ch.scaled_font_size().value,
+            });
+        }
+        Ok(out)
     }
 }
 
