@@ -1832,6 +1832,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-overlay"
+version = "0.1.0"
+dependencies = [
+ "mdc-evidence",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mdc-overlay-pdf"
+version = "0.1.0"
+dependencies = [
+ "mdc-evidence",
+ "mdc-overlay",
+ "mdc-pdf",
+]
+
+[[package]]
 name = "mdc-pdf"
 version = "0.1.0"
 dependencies = [

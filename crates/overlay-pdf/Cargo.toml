@@ -1,0 +1,21 @@
+[package]
+name = "mdc-overlay-pdf"
+version.workspace = true
+edition = "2021"
+publish = false
+description = "mdc-overlay 的 PDF 应用层适配器（#239 Phase 3/4，循 mdc-mdbridge 应用层组合点先例）：PdfOverlayViewAdapter（RenderHint → PDF 页坐标视图四边形）+ PdfNativeAdapter（Emphasis → /Highlight + QuadPoints 原生投影：plan 报告 → execute 指纹核对 → lopdf 增量写产物新文件字节）。依赖方向：mdc-overlay（契约）+ mdc-pdf（引擎）——overlay 自身零引擎依赖的纪律不破坏。"
+
+# 依赖纪律（镜像 mdc-pdf 的跨环境可构建纪律：default = []）：
+# - 默认构建零引擎 feature：view 适配器 + plan_with_geometry（几何
+#   注入面）可用；execute/完整 plan 返回显式「需要 feature」错误。
+# - engine-lopdf：execute（lopdf 增量写 + read_annotations 读回）。
+# - engine-pdfium：trait plan()（pdfium positioned_chars 字符几何）。
+[features]
+default = []
+engine-lopdf = ["mdc-pdf/engine-lopdf"]
+engine-pdfium = ["mdc-pdf/engine-pdfium"]
+
+[dependencies]
+mdc-overlay = { path = "../overlay" }
+mdc-pdf = { path = "../pdf", default-features = false }
+mdc-evidence = { path = "../evidence" }

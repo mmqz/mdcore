@@ -106,6 +106,22 @@ jobs:
       - name: Test mdc-formula (xlsx formula engine)
         run: cargo test -p mdc-formula
 
+      # #239 主线 P0：跨文档索引/标注/投影层。三步分层——契约层
+      # （零引擎依赖，cargo tree 断言在测试内）→ PDF 适配 lopdf 面
+      # （plan_with_geometry + execute + read_annotations 读回，纯
+      # Rust 可跑）→ PDF 适配 pdfium e2e（真实字符几何生产路径，
+      # 复用上一步已就位的 pdfium.dll）。
+      - name: Test mdc-overlay (overlay contract layer)
+        run: cargo test -p mdc-overlay
+
+      - name: Test mdc-overlay-pdf (lopdf face - plan/execute/readback)
+        run: cargo test -p mdc-overlay-pdf --features engine-lopdf
+
+      - name: Test mdc-overlay-pdf (pdfium e2e - real char geometry)
+        env:
+          MDC_PDFIUM_LIB: ${{ github.workspace }}/bin/lib/pdfium.dll
+        run: cargo test -p mdc-overlay-pdf --features engine-lopdf,engine-pdfium
+
       - name: Test mdc-canvas (rendering)
         # golden_svg_matches_fixture 是字节级黄金例比较，但夹具里含
         # 三角函数结果（旋转矩形的 sqrt(2) 分量，如 145.4437/31.1127）——
