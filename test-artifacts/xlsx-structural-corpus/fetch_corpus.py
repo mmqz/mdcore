@@ -16,8 +16,15 @@ xlsx 二进制不入库（.gitignore）；单件 ≤5MB；幂等（已存在跳�
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+# Windows CI：控制台/默认文件编码是 cp1252——中文注记（PROVENANCE
+# note / [WARN] 横幅）会 UnicodeEncodeError 炸取件步骤（CI 首跑实测）。
+# stdout/stderr 重配 UTF-8 + 写文件显式 encoding="utf-8"。
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 OUT = Path(__file__).resolve().parent
 POI = "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/"
@@ -90,7 +97,8 @@ def main():
         print(f"[{status}] {cat}/{name} {dest.stat().st_size}B")
     (OUT / "PROVENANCE.json").write_text(
         json.dumps({"fetched_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "files": prov}, ensure_ascii=False, indent=1))
+                    "files": prov}, ensure_ascii=False, indent=1),
+        encoding="utf-8")
     print(f"[done] {len(prov)} 件 / {sum(f['bytes'] for f in prov)/1024:.0f}KB / {time.time()-t0:.0f}s")
     # 语料门断言 files.len() >= 26——取件不足在此显式退出（CI 快速
     # 失败且信息直指上游漂移，而不是让测试断言兜底报「shrank」）。
