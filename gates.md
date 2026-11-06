@@ -19,7 +19,8 @@
 | #234 | .doc 旧格式识别 | [gates/234.md](gates/234.md) | ✅ |
 | #257 | office-io 多节分节符读写面 | [gates/257.md](gates/257.md) | ✅ |
 | #267 | DOCX 样式继承树 typed 解析面 | [gates/267.md](gates/267.md) | 🔄 PR 中 |
-| #280 | wasm 桥双税（备份分档 + 轮询守卫） | [gates/280.md](gates/280.md) | 🔄 PR 中 |
+| #280 | wasm 桥双税（备份分档 + 轮询守卫） | [gates/280.md](gates/280.md) | ✅ |
+| #281 | 状态栏 I/O 缓存 + 字数守卫（R-e/R-f 首批） | [gates/281.md](gates/281.md) | 🔄 PR 中 |
 
 
 > 主档 §15.3 四条硬 Gate 的量化判定 + §28 P0-3 拆分实测。
