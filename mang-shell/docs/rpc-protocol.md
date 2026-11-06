@@ -166,10 +166,15 @@ mang-shell 是编辑器进程。它开一个**本机 unix domain socket**，外�
 #### `open_file`
 
 ```json
-{"id":1,"cmd":"open_file","path":"/abs/a.md"}
+{"id":1,"cmd":"open_file","path":"/ws/a.md"}
 ```
 
-`path`：绝对路径。已打开的文件**不会重复开**，而是激活既有标签。
+`path`：绝对或相对（相对工作区根）。已打开的文件**不会重复开**，而是
+激活既有标签。
+
+**#275 起受沙箱门禁**：与 FS 命令同门（无工作区拒、根外拒——见
+[第 7 节](#7-沙箱与安全边界)）。此前 open_file 可开任意绝对路径，
+是组合逃逸链的源头（详见第 7 节「组合链闭合」）。
 
 #### `insert_text`
 
@@ -252,13 +257,17 @@ mang-shell 是编辑器进程。它开一个**本机 unix domain socket**，外�
 
 ```json
 {"cmd":"save"}
-→ {"id":1,"ok":true,"result":{"saved":true,"path":"/a.md","modified":false}}
+→ {"id":1,"ok":true,"result":{"saved":true,"path":"/ws/a.md","modified":false}}
 
-{"cmd":"save_as","path":"/tmp/b.md"}
+{"cmd":"save_as","path":"/ws/b.md"}
 ```
 
 - `save` 对**未命名文档拒绝**（提示先 `save_as`）；对**只读渲染态拒绝**。
 - `save_as` 会做标签身份迁移（path / display_name 更新）。
+- **#275 起 `save_as` 目标受沙箱门禁**（根外拒、无工作区拒——与
+  `open_file` 同批收口，见[第 7 节](#7-沙箱与安全边界)）。`save`
+  本身不引入新路径：file_path 只能源于已门禁的 `open_file`/`save_as`
+  或 GUI 对话框（用户意图）。
 
 ### 5.3 文件系统（沙箱内）
 
@@ -469,7 +478,8 @@ open_find  open_replace  goto_line  save  select_all  undo  redo
 
 ### 规则
 
-**全部 7 条 FS 命令 + `batch_replace` 只允许在工作区根目录内操作。**
+**全部 7 条 FS 命令 + `batch_replace` + `open_file` + `save_as` 只允许在
+工作区根目录内操作。**
 
 - **没有打开工作区 = 一律拒绝。** 设计取舍：「无边界」比「错误的边界」更
   危险，所以宁可全拒。
@@ -483,6 +493,20 @@ open_find  open_replace  goto_line  save  select_all  undo  redo
 - 符号链接指向根外 —— 拒绝（canonicalize 会解析掉链接再比）
 - 目标不存在时，canonicalize **最近存在的祖先**再拼回尾段 —— 所以新建
   文件也逃不出去
+
+### 组合链闭合（#275）
+
+`open_file`/`save_as` 在 #275 之前是 #134 沙箱的两处旁路
+（ControlCommand 族里带路径却不走 `resolve_sandboxed` 的命令），
+可组成两条越权链（经 sdk/mcp 接入敌意 LLM 即可达）：
+
+- **读链（S-1）**：`open_file(任意绝对路径)` → `run_command("select_all")`
+  → `get_state().selection.text`（≤2000 字符/次）——泄工作区外文件内容；
+- **写链（S-2）**：`open_file(工作区外.md)` → `insert_text` →
+  `run_command("save")`（fs::write 回原路径）——越权原地改写。
+
+两链源头同根（open_file 无门禁），收口后同批闭合：`save` 的 file_path
+源头只剩「已门禁的 open_file/save_as」与「GUI 对话框（用户意图）」。
 
 ### 附带影响
 

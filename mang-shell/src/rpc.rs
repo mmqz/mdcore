@@ -108,9 +108,19 @@
 //! - `undo`/`redo`：与 `Ctrl+Z`/`Ctrl+Y` 同链（多光标批合并）；栈空
 //!   不是错误（`undid`/`redid` = false）。
 //! - `save`：未命名文档拒绝（无路径——引导 `save_as`）；只读渲染态
-//!   拒绝（无保存语义）。`save_as`：绝对化后写盘 + 标签身份迁移。
+//!   拒绝（无保存语义）。`save_as`：沙箱解析后写盘 + 标签身份迁移
+//!   （#275 起与 `open_file` 同受工作区门禁——见下节）。
 //! - `subscribe`：幂等（重复订阅替换旧通道）；断连自动注销（事件泵
 //!   send 失败即移除）。
+//!
+//! ## 命令语义要点（#275 沙箱收口）
+//!
+//! - `open_file`/`save_as` 与 FS 命令族同门（`resolve_sandboxed` +
+//!   `workspace_root_of`）：无工作区拒、根外拒——补上 #134 沙箱在
+//!   ControlCommand 族的两处旁路（S-1 读链 / S-2 写链的源头，审计
+//!   P1-9）。`save` 的 file_path 源头由此全部受控（已门禁的
+//!   open_file/save_as + GUI 对话框用户意图）。GUI 菜单/对话框不经
+//!   RPC 命令面，不受影响。
 //!
 //! ## 命令语义要点（#134 文件系统面）
 //!
@@ -962,7 +972,16 @@ fn cmd_open_file(
     cx: &mut Context<ShellApp>,
     path: &str,
 ) -> Result<serde_json::Value, String> {
-    let path = std::path::absolute(Path::new(path)).unwrap_or_else(|_| PathBuf::from(path));
+    // #275 沙箱门禁：open_file 此前是 #134 沙箱旁路（ControlCommand 族
+    // 里唯一带路径却不走 resolve_sandboxed 的命令）——S-1 读链（open
+    // 任意路径 → run_command("select_all") → get_state/get_selection
+    // 每次泄 ≤2000 字符）与 S-2 写链（open 工作区外 → insert_text →
+    // run_command("save") 原地越权回写）的共同源头。与 FS 命令族同门：
+    // 无工作区拒、根外拒。resolve_sandboxed 产出 canonical 绝对路径，
+    // 后续标签匹配/打开逻辑零改动；GUI 菜单/对话框打开不经此命令
+    // （用户意图），不受影响。
+    let root = workspace_root_of(shell, cx)?;
+    let path = resolve_sandboxed(&root, Path::new(path))?;
     // 已开 → 激活既有标签（与 open_document_tab 语义一致；先探便于
     // 响应区分 already_open）。
     if let Some(idx) = shell.tab_index_by_path(&path) {
@@ -1221,7 +1240,15 @@ fn cmd_save_as(
     if editor.read(cx).is_read_only() {
         return Err("只读文档（渲染态）不可另存".into());
     }
-    let path = std::path::absolute(Path::new(path)).unwrap_or_else(|_| PathBuf::from(path));
+    // #275 沙箱门禁：save_as 此前可写任意绝对路径（审计笔记 23「全表
+    // 最危险单命令」——任意路径写盘 + 无覆盖确认 + socket 无认证）。
+    // 与 open_file 同批收口：无工作区拒、根外拒（新目标不存在时
+    // resolve_sandboxed 经最近存在祖先解析，新建文件同样逃不出根）。
+    // save 的 file_path 源头由此只剩「已门禁的 open_file/save_as」与
+    // 「GUI 对话框（用户意图）」——S-2 写链整体闭合。GUI 另存对话框
+    // 不经此命令，不受影响。
+    let root = workspace_root_of(shell, cx)?;
+    let path = resolve_sandboxed(&root, Path::new(path))?;
     // 走 ShellApp::save_active_as 完整链（editor.save_as + TabItem.path
     // 迁移 + 文件树 active 同步 + notify）——直调 editor.save_as 会漏
     // tab 身份迁移（tab_index_by_path 按旧路径查找失败——#111 烟雾

@@ -55,12 +55,10 @@ mkdir -p "$OUT/config"
 
 SOCK="$OUT/rpc.sock"
 rm -f "$SOCK"
-FILE1="$PWD/tests/fixtures/smoke.md"
-FILE2="$PWD/tests/fixtures/mouse_smoke.md"
 
 # #134：FS 序列战场——独立工作区夹具（不碰 FILE1/FILE2 的烟雾链）。
 WS="$OUT/ws"
-mkdir -p "$WS/src" "$WS/docs/deep" "$WS/batch"
+mkdir -p "$WS/src" "$WS/docs/deep" "$WS/batch" "$WS/fixtures"
 printf '# smoke workspace\n' > "$WS/readme.md"
 printf 'fn main() { println!("a"); }\n' > "$WS/src/a.rs"
 printf "b original\n" > "$WS/src/b.md"
@@ -72,6 +70,15 @@ printf 'no match here\n' > "$WS/batch/b3.md"
 # #134 任务 2：smoke-cmd 战场（独立干净文件——避开 FILE2 的合成键入
 # 残留：smoke2 结束时 FILE2 的 Buffer 仍含 user-typed 内容未保存）
 printf '# cmd battlefield\n\nplain body line for format tests\n' > "$WS/cmd.md"
+
+# #275：open_file/save_as 沙箱收口后，六命令/扩展序列的战场也必须在
+# 工作区内——原仓内 fixtures 路径（mang-shell/tests/fixtures/）在
+# $OUT/ws 根外，会被新门禁拒。复制进 WS（内容不变，每轮重建无状态
+# 污染；smoke2 的 FILE2 快照恢复机制照常工作）。
+cp "$PWD/tests/fixtures/smoke.md" "$WS/fixtures/smoke.md"
+cp "$PWD/tests/fixtures/mouse_smoke.md" "$WS/fixtures/mouse_smoke.md"
+FILE1="$WS/fixtures/smoke.md"
+FILE2="$WS/fixtures/mouse_smoke.md"
 
 # 选空闲显示号（PID 基准避开残留 Xvfb 锁——锁存在即换号；带锁但
 # 服务器已死的场景由锁清理责任方处理，这里不碰）。
