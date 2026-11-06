@@ -288,6 +288,13 @@ impl DocxEditor {
                 entry: None,
             }));
         }
+        // #234：OLE2 魔数前置（与读面 read_bytes_gated 同款——编辑面
+        // 同陷阱：异源 .doc 改名 .docx 不再误报 EOCD 损坏）。
+        if io::is_ole2(bytes) {
+            return Err(DocxError::Container(io::ReadError::LegacyOfficeFormat {
+                expect: "docx",
+            }));
+        }
         let cursor = std::io::Cursor::new(bytes);
         let mut za = zip::ZipArchive::new(cursor)
             .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;

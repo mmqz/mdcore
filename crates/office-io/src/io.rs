@@ -109,6 +109,18 @@ pub const LIMIT_INPUT_MARGIN: u64 = 2 * 1024 * 1024;
 pub const LIMIT_INPUT_BYTES: u64 = LIMIT_TOTAL_DECLARED + LIMIT_INPUT_MARGIN;
 /// 输入字节上限（docx 族，r4-t2）：= docx 族声明总量 + 结构边距。
 pub const LIMIT_INPUT_BYTES_DOCX: u64 = LIMIT_TOTAL_DECLARED_DOCX + LIMIT_INPUT_MARGIN;
+
+/// OLE2 复合文档魔数（CFB——Word 97-2003 .doc / Excel .xls 旧格式的
+/// 容器签名）。#234：异源 .doc 改名 .docx 后 zip 读入口误报「EOCD
+/// 容器损坏」误导用户；魔数识别 → 专用错误 + 可操作指引。
+pub const OLE2_CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+
+/// OLE2 复合文档魔数探测（前 8 字节；不足 8 字节 = false——短输入走
+/// 既有 zip 容器错误路径，不劫持）。pub：docx 读/编两入口共用，
+/// wasm 错误码面同步映射。
+pub fn is_ole2(bytes: &[u8]) -> bool {
+    bytes.len() >= OLE2_CFB_MAGIC.len() && bytes[..OLE2_CFB_MAGIC.len()] == OLE2_CFB_MAGIC
+}
 /// 条目数上限（v1 新设 10,000；mal6d 实测校准）。
 pub const LIMIT_ENTRY_COUNT: usize = 10_000;
 /// XML 部件元素嵌套深度上限（门 3，Phase 2）。真实 xlsx 部件深度
@@ -150,6 +162,14 @@ pub enum ReadError {
     /// 静默变空/部分数据——typed reject；[`ReadOptions::compat`]
     /// 兼容模式下降级为 [`CompatibilityWarning`]。
     InvalidPart { part: String, detail: String },
+    /// 旧版 Office 二进制格式（OLE2 复合文档——Word 97-2003 .doc /
+    /// Excel .xls，#234）：不是 zip 容器——改名 .docx/.xlsx 不改变
+    /// 载荷形态。此前误报 EOCD 容器损坏，误导用户以为文件已损坏；
+    /// 专用错误 + 可操作指引（Display 面）。
+    LegacyOfficeFormat {
+        /// 期望的入口格式（"docx" 等——错误文案上下文）。
+        expect: &'static str,
+    },
 }
 
 impl std::fmt::Display for ReadError {
@@ -167,6 +187,10 @@ impl std::fmt::Display for ReadError {
             ReadError::InvalidPart { part, detail } => {
                 write!(f, "invalid part: {part}: {detail}")
             }
+            ReadError::LegacyOfficeFormat { expect } => write!(
+                f,
+                "legacy office format: OLE2 复合文档（Word 97-2003 旧格式 .doc），不是 {expect} zip 容器——请用 Word「另存为 .docx」或 soffice --headless --convert-to docx 转换后再打开"
+            ),
         }
     }
 }
