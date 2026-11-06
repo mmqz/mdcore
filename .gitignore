@@ -22,6 +22,10 @@ test-artifacts/ocr-tessdata/*.traineddata
 # PDF 二进制不入库——28.3MB/78 件，取件见该目录 fetch_corpus.py）
 test-artifacts/pdf-corpus/**/*.pdf
 
+# #265 XLSX 结构面语料（取件脚本 + PROVENANCE + README 入库；
+# xlsx 二进制不入库——1.2MB/28 件，取件见该目录 fetch_corpus.py）
+test-artifacts/xlsx-structural-corpus/**/*.xlsx
+
 # sdk/python：uv/venv 虚拟环境不入库（uv 会在 .venv 内自放 .gitignore，
 # 此处兜底 python -m venv 等无自忽略的场景）
 .venv/

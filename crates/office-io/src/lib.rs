@@ -117,3 +117,6 @@ pub mod write;
 pub mod xlsx_chart;
 pub mod xlsx_condfmt;
 pub mod xlsx_edit;
+// #265：结构面读取——隐藏行列/外部链接/xf 继承链（calamine 值面之外
+// 的结构增强，独立 zip 解析零嵌主流程）。
+pub mod xlsx_structural;

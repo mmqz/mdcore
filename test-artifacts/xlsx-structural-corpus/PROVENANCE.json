@@ -1,0 +1,257 @@
+{
+ "fetched_at": "2026-11-06T11:09:13",
+ "files": [
+  {
+   "category": "hidden_rows",
+   "name": "55640.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/55640.xlsx",
+   "note": "sheet1 四行隐藏（r=1..4）——POI bug 附件",
+   "bytes": 6184,
+   "sha256": "d062756457e79efed42655700f454e6e7ad69a9499e011570aa99216adbbbd09"
+  },
+  {
+   "category": "hidden_rows",
+   "name": "AverageTaxRates.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/AverageTaxRates.xlsx",
+   "note": "真实税率表：三表 19 行次隐藏 + B 列隐藏×3",
+   "bytes": 23107,
+   "sha256": "094b2facaf85870a3230a3b097b82b4bedd7659583e34977d196d04be3211367"
+  },
+  {
+   "category": "hidden_rows",
+   "name": "ConditionalFormattingSamples.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/ConditionalFormattingSamples.xlsx",
+   "note": "条件格式样本：14 行隐藏 + 0%/$/mm/dd 格式",
+   "bytes": 654688,
+   "sha256": "8dfa997a642c00a1da8c0750c371f204553a98c537ca046028b052f9b424a074"
+  },
+  {
+   "category": "hidden_rows",
+   "name": "FillWithoutColor.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/FillWithoutColor.xlsx",
+   "note": "47 行 + AA..宽列段隐藏（大范围形态）",
+   "bytes": 18806,
+   "sha256": "95d1e35be1ab210c1e9ac29e53fe53c764379931b1df8ab9f98a71c060ef143e"
+  },
+  {
+   "category": "hidden_rows",
+   "name": "GroupTest.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/GroupTest.xlsx",
+   "note": "分组形态：13 行隐藏（组折叠）",
+   "bytes": 8149,
+   "sha256": "a14e6d478004720480cb99844fd6b00260c804bfa02b3da3f496e2c1fb5c8949"
+  },
+  {
+   "category": "hidden_rows",
+   "name": "WidthsAndHeights.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/WidthsAndHeights.xlsx",
+   "note": "宽高设置件：2 行 + 1 列隐藏",
+   "bytes": 8597,
+   "sha256": "72a84c23b2939f31fa6357867e6b34d3454efb84c830739c10797f767de1007e"
+  },
+  {
+   "category": "hidden_rows",
+   "name": "bug65464.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/bug65464.xlsx",
+   "note": "POI bug 附件：5 行 + 3 列隐藏",
+   "bytes": 13664,
+   "sha256": "f2edc77ca170b11940e69a31b3ec5b88849b08ee493a0155fffb0ebdda961420"
+  },
+  {
+   "category": "hidden_rows",
+   "name": "clone_sheet.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/clone_sheet.xlsx",
+   "note": "克隆表形态：2 列隐藏",
+   "bytes": 12465,
+   "sha256": "c562b328818341d7daa28d5dbd2168946aeecbdb30a6e49d9b982da511879875"
+  },
+  {
+   "category": "external_links",
+   "name": "54399.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/54399.xlsx",
+   "note": "双外部链接（Top 150 + Craft venue 两个外部源）",
+   "bytes": 17761,
+   "sha256": "ac1770a7887c87ddffca3c1f692089e1c718136704b6199c19520bd10e28d450"
+  },
+  {
+   "category": "external_links",
+   "name": "56502.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/56502.xlsx",
+   "note": "外部链接（POI bug 附件）",
+   "bytes": 11902,
+   "sha256": "e03e09742a9ef67b3c988d83371b92bd25c771d17896d827a8af97c816a63fed"
+  },
+  {
+   "category": "external_links",
+   "name": "63934.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/63934.xlsx",
+   "note": "外部链接 + #,##0 builtin 格式",
+   "bytes": 13740,
+   "sha256": "8c9b96204e289ce6dffbf60d3a348c8045bdec10645a92ac0b7ff97ec0d78230"
+  },
+  {
+   "category": "external_links",
+   "name": "HsGetVal.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/HsGetVal.xlsx",
+   "note": "三表外部链接（HsGetVal 跨簿引用）",
+   "bytes": 16441,
+   "sha256": "d4f4ee2a7f1a539f887f044bad19d33fb6476c60bf68640b5a64aa80a49cd65d"
+  },
+  {
+   "category": "external_links",
+   "name": "bug67784.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/bug67784.xlsx",
+   "note": "外部链接（POI bug 附件）",
+   "bytes": 6211,
+   "sha256": "cc5996a1f9f4a0357553d4e32197d40379a9dcf9656121d4b10f4bb709ace76b"
+  },
+  {
+   "category": "external_links",
+   "name": "link-external-workbook-b.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/link-external-workbook-b.xlsx",
+   "note": "外部链接对之 b（a↔b 链接形态）",
+   "bytes": 4080,
+   "sha256": "6e0e5c2aa3bf870cfeba03cb2350c312c639f2875b6501029d0bc134916b2361"
+  },
+  {
+   "category": "external_links",
+   "name": "ref-56737.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/ref-56737.xlsx",
+   "note": "跨簿引用（POI bug 附件）",
+   "bytes": 10427,
+   "sha256": "8d319dad6cbcd0d2279add01365d59f5ef4f5a60938d6dafdbe8d1cfbf47cc87"
+  },
+  {
+   "category": "external_links",
+   "name": "ref2-56737.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/ref2-56737.xlsx",
+   "note": "跨簿引用 2（双链接）",
+   "bytes": 11474,
+   "sha256": "7ee59e3710f1aa75cbc6585ac6548f8ce3b3bca04a4cbebb079c455773bce344"
+  },
+  {
+   "category": "num_formats",
+   "name": "45540_classic_Header.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/45540_classic_Header.xlsx",
+   "note": "5 自定义格式（classic 页眉表）",
+   "bytes": 40213,
+   "sha256": "f1096655276b5cb2301c830f190017499b4e5a6aefb113cff434868b85178e7a"
+  },
+  {
+   "category": "num_formats",
+   "name": "45544.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/45544.xlsx",
+   "note": "5 自定义格式（7 表）",
+   "bytes": 43042,
+   "sha256": "a6ed1a727f7b741128565512d4b55d9cb74b52efec391109d783ece5dcbe81d8"
+  },
+  {
+   "category": "num_formats",
+   "name": "47804.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/47804.xlsx",
+   "note": "4 自定义格式（POI bug 附件）",
+   "bytes": 29533,
+   "sha256": "35eaa8a561cdc57f6eda13ef97006391103b4d424cab7ab82fc369a4a9367a36"
+  },
+  {
+   "category": "num_formats",
+   "name": "48962.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/48962.xlsx",
+   "note": "4 自定义 + builtin 日期段（m/d/yyyy/d-mmm）",
+   "bytes": 50260,
+   "sha256": "58a34dbdf0233db433aec6b8ddfacc47f4a5e59ecc2013e8ec56a7b8dd2d2044"
+  },
+  {
+   "category": "num_formats",
+   "name": "52348.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/52348.xlsx",
+   "note": "3 自定义格式（POI bug 附件）",
+   "bytes": 5292,
+   "sha256": "0021fa21968bb6083b7f58506269cac214faecaf81d79c3091f36d0fca9cae76"
+  },
+  {
+   "category": "num_formats",
+   "name": "56274.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/56274.xlsx",
+   "note": "自定义格式（POI bug 附件）",
+   "bytes": 12782,
+   "sha256": "6a6ba76a44b725c7c465aa65f5a0c4ad6a21707b04a8386181d1625f48320548"
+  },
+  {
+   "category": "style_inherit",
+   "name": "49156.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/49156.xlsx",
+   "note": "xf 继承（POI bug 附件）",
+   "bytes": 25064,
+   "sha256": "7376a8118afc503a82759ad2277f5781a44dce057b2b0984a5b3b5b805db347d"
+  },
+  {
+   "category": "style_inherit",
+   "name": "49273.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/49273.xlsx",
+   "note": "466 cellXfs（样式洪水——结构面吞吐锚点）",
+   "bytes": 11057,
+   "sha256": "f99d52971bc5bed1b18fb23743c330611a5d011504d7f0991a4f2b9426ab8041"
+  },
+  {
+   "category": "style_inherit",
+   "name": "53568.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/53568.xlsx",
+   "note": "3088 cellStyleXfs（巨型样式表）",
+   "bytes": 125896,
+   "sha256": "2a134d6a424f9dc60b80dd002917ffdbe3f0bba7c46883ed3562e958826ae048"
+  },
+  {
+   "category": "style_inherit",
+   "name": "54288-ref.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/54288-ref.xlsx",
+   "note": "外部引用样式（6 自定义格式 + xf 链）",
+   "bytes": 42893,
+   "sha256": "91273f55a578438ab8fe57cb3dc8b2fc6e8c8274c18d215e75511567e642992d"
+  },
+  {
+   "category": "style_inherit",
+   "name": "54288.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/54288.xlsx",
+   "note": "9 cellXfs + 19 cellStyleXfs（xfId 继承链）",
+   "bytes": 28988,
+   "sha256": "31eb4f7ca7b345d44265bb07212207dce09a53060f93ad03e51ed2d7e0e6e292"
+  },
+  {
+   "category": "style_inherit",
+   "name": "55406_Conditional_formatting_sample.xlsx",
+   "repo": "apache/poi",
+   "url": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/55406_Conditional_formatting_sample.xlsx",
+   "note": "641 cellStyleXfs（条件格式样式族）",
+   "bytes": 12646,
+   "sha256": "882c71f142549f67cfb1231352f0d87059054d9016582de6531142783f2353df"
+  }
+ ]
+}
