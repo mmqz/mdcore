@@ -1285,25 +1285,27 @@ fn rewrite_zip_stored_with_duplicate(src: &str, out: &str, dup_name: &str, dup_d
     std::fs::write(out, zw.into_inner()).unwrap();
 }
 
-/// 媒体清单 zip 层语义钉定：重复条目名 = 最后条目胜（zip 8.6
-/// IndexMap insert 后胜——read/zip_archive.rs:49-51；门 2 按索引
-/// 验全部副本；读层与引擎读路径同语义）。zip 8.6 ZipWriter 拒绝
-/// 重名（write.rs:1380-1386）——重复名档案须净室手造（敌意面来自
-/// 其他写入器的现实，our own writer 恒不产出）。
+/// 媒体清单 zip 层语义钉定（#233 行为变更：重复条目名 = **容器层
+/// 守恒拒绝**）。docx-r1 时代曾钉「最后条目胜」容忍语义（zip 8.6
+/// IndexMap insert 后胜——read/zip_archive.rs:49-51）；#233（审计
+/// INTEG-002：zip-exotica 防线缺口）升级为拒绝——EOCD 声明计数 ≠
+/// crate 吸收后条目数 = 守恒破坏（敌意载体：同名字条目的 by_name
+/// 取条歧义 + 声明/实取分歧；见 tests/zip_exotica.rs 五族负向）。
+/// zip 8.6 ZipWriter 拒绝重名（write.rs:1380-1386）——重复名档案须
+/// 净室手造（敌意面来自其他写入器的现实，our own writer 恒不产出）。
 #[test]
-fn image_inventory_duplicate_zip_entries_last_wins() {
+fn image_inventory_duplicate_zip_entries_rejected_by_conservation() {
     let (p, media) = write_image_doc("img_dup");
     let last_bytes = b"\x89PNG\r\n\x1a\n__later_copy_payload__";
     let p2 = tmp("img_dup2");
     rewrite_zip_stored_with_duplicate(&p, &p2, &media, last_bytes);
 
-    let doc = read_docx(&p2).unwrap();
-    assert_eq!(doc.images.len(), 1, "重名折叠为单资产（IndexMap 键去重）");
-    assert_eq!(doc.images[0].bytes, last_bytes, "最后条目胜");
-    assert_eq!(doc.images[0].body_uses, 1);
+    // #233：守恒门拒绝（EOCD 声明 4 ≠ 吸收后 3——同名媒体条目对）。
+    let err = read_docx(&p2).unwrap_err();
+    let repr = format!("{err:?}");
     assert!(
-        doc.warnings.is_empty(),
-        "重复名非违面——不警告（门 2 验过两副本）"
+        repr.contains("PrescanRejected") && err.to_string().contains("conservation"),
+        "重复名档案 = 守恒拒绝，得 {err:?}"
     );
     let _ = std::fs::remove_file(&p);
     let _ = std::fs::remove_file(&p2);

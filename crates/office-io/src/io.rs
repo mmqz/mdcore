@@ -141,6 +141,17 @@ pub const LIMIT_SHEET_COUNT: usize = 1_000;
 /// ~400MB 级（examples/bench_limits.rs 可复现基准在档，不设性能
 /// 门禁阈值）。
 pub const LIMIT_TOTAL_CELLS: u64 = 4_000_000;
+/// 压缩比观察门限（#233 / zip-exotica 防线——**警告口径不拒**）。
+/// 硬拒有实证误报面：研究仓 engine-probe s7b 合法 149:1 高压缩比
+/// 件被引擎正常接受（6000 段全解析）——100:1 硬门会误杀合法件。
+/// 威胁面上界已由既有门钉死：门 0 输入字节 + 门 1 声明总量（膨胀
+/// 上限 = 声明总量）+ 门 2 谎言头 CountingReader（实读超 declared
+/// 即拒）——本门限 = 纵深可见性（超限 → CompatibilityWarning，
+/// 两模式恒登记，不静默也不阻断）。乘法判据：
+/// `declared > LIMIT_COMPRESS_RATIO × max(compressed, 1)`（研究仓
+/// R5 P-2 整数除法截断漏洞[100,999/1000 商 100 不>100 过门]的教训
+/// 同源——必须乘法比较）。
+pub const LIMIT_COMPRESS_RATIO: u64 = 100;
 
 // ---------------------------------------------------------------------------
 // 统一错误面
@@ -242,6 +253,98 @@ pub(crate) fn prescan_docx<R: std::io::Read + std::io::Seek>(
     prescan_family(za, LIMIT_TOTAL_DECLARED_DOCX, LIMIT_TOTAL_DECLARED_DOCX)
 }
 
+/// EOCD 守恒门（#233 / zip-exotica 防线——研究仓 guard.rs M1.6 镜像的
+/// 轻量移植：只比计数，不重建目录解析）。
+///
+/// 背景：zip crate（4.6.1 与 8.6 同——#233 实测）解析层用名字映射
+/// **吸收**中央目录里的物理同名条目：`len()`/`by_index` 视野看不到
+/// 重复，重复名门对字节级 patch 的同名对失效。守恒门比对
+/// **EOCD/zip64 声明条目数**与 crate 实际解析条目数：分歧（EOCD 双
+/// 计数字段互异，或声明 ≠ 实际）= 守恒破坏 → 拒（fail-closed）。
+///
+/// 宽松回扫（与研究仓 M1.6 同口径）：自 EOF 反向找 `PK\x05\x06` 候选，
+/// 合法 = `pos + 22 + comment_len ≤ len`（容忍尾垃圾——crate 同款宽松
+/// 接受；影子 EOCD 的 comment 越 EOF → 不合法 → 继续向前）。全部候选
+/// 不可验证 → 拒（fail-closed 非跳过）。zip64：计数/尺寸/偏移任一为
+/// 标记（0xFFFF / 0xFFFFFFFF）→ 经 EOCD 前 locator（`PK\x06\x07`）
+/// 链取 zip64 EOCD 记录（`PK\x06\x06`）的真实双计数；标记而无合法
+/// 链 = 不可验证 → 拒。
+pub(crate) fn eocd_conservation<R: std::io::Read + std::io::Seek>(
+    bytes: &[u8],
+    za: &zip::ZipArchive<R>,
+) -> Result<(), ReadError> {
+    let actual = za.len() as u64;
+    match eocd_declared_count(bytes)? {
+        None => Err(ReadError::ContainerCorrupt(
+            "eocd unverifiable (no candidate fits the file)".into(),
+        )),
+        Some((this_disk, total)) => {
+            if this_disk != total {
+                return Err(ReadError::PrescanRejected {
+                    reason: "eocd count fields diverge (this disk vs total)",
+                    entry: None,
+                });
+            }
+            if this_disk != actual {
+                return Err(ReadError::PrescanRejected {
+                    reason: "eocd declared entry count != archive entries (conservation)",
+                    entry: None,
+                });
+            }
+            Ok(())
+        }
+    }
+}
+
+/// EOCD/zip64 声明条目数（宽松回扫 + zip64 链；不可验证 = None——
+/// 调用方 fail-closed）。见 [`eocd_conservation`] 文档。
+fn eocd_declared_count(bytes: &[u8]) -> Result<Option<(u64, u64)>, ReadError> {
+    let _ = &bytes; // （形态检查在下方；空/短文件 = None）
+    if bytes.len() < 22 {
+        return Ok(None);
+    }
+    let mut pos: Option<usize> = None;
+    let mut i = bytes.len() - 22;
+    loop {
+        if &bytes[i..i + 4] == b"PK\x05\x06" {
+            let comment = u16::from_le_bytes(bytes[i + 20..i + 22].try_into().unwrap()) as usize;
+            if i + 22 + comment <= bytes.len() {
+                pos = Some(i);
+                break;
+            }
+        }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    let Some(eocd) = pos else {
+        return Ok(None);
+    };
+    let this = u16::from_le_bytes(bytes[eocd + 8..eocd + 10].try_into().unwrap()) as u64;
+    let total = u16::from_le_bytes(bytes[eocd + 10..eocd + 12].try_into().unwrap()) as u64;
+    let cd_size = u32::from_le_bytes(bytes[eocd + 12..eocd + 16].try_into().unwrap()) as u64;
+    let cd_off = u32::from_le_bytes(bytes[eocd + 16..eocd + 20].try_into().unwrap()) as u64;
+    let is_zip64_marker =
+        this == 0xFFFF || total == 0xFFFF || cd_size == 0xFFFF_FFFF || cd_off == 0xFFFF_FFFF;
+    if !is_zip64_marker {
+        return Ok(Some((this, total)));
+    }
+    // zip64 链：locator 紧邻 EOCD 之前（20B：sig + 盘号 + z64 偏移 u64 + 总盘数）。
+    if eocd >= 20 && &bytes[eocd - 20..eocd - 16] == b"PK\x06\x07" {
+        let z64_off = u64::from_le_bytes(bytes[eocd - 12..eocd - 4].try_into().unwrap()) as usize;
+        // zip64 EOCD 记录：sig(0-4) + 尺寸(4-12) + 版本对(12-16) +
+        // 盘号对(16-24) + 本盘条目(24-32) + 总条目(32-40) + …（56B 定长）。
+        if z64_off + 56 <= bytes.len() && &bytes[z64_off..z64_off + 4] == b"PK\x06\x06" {
+            let z_this = u64::from_le_bytes(bytes[z64_off + 24..z64_off + 32].try_into().unwrap());
+            let z_total = u64::from_le_bytes(bytes[z64_off + 32..z64_off + 40].try_into().unwrap());
+            return Ok(Some((z_this, z_total)));
+        }
+    }
+    // 标记而无合法 zip64 链 = 不可验证（fail-closed）。
+    Ok(None)
+}
+
 /// 预扫共享核（单点实现——xlsx/docx 两族仅限额数字不同，检查面恒同）。
 fn prescan_family<R: std::io::Read + std::io::Seek>(
     za: &mut zip::ZipArchive<R>,
@@ -256,11 +359,23 @@ fn prescan_family<R: std::io::Read + std::io::Seek>(
     }
     let mut total: u64 = 0;
     let mut max_single: u64 = 0;
+    // #233（zip-exotica 防线）：重复条目名拒绝。OPC/zip 规范不允许
+    // 同名条目；攻击面 = EOCD/zip64 守恒绕过族的端态载体（研究仓
+    // guard.rs R5 实证 V6/V7/V8/zip64-dup：crate 层 HashMap 吸收后
+    // 声明数与实取数分歧、by_name 取条歧义）。合法 office 文档零
+    // 同名（Word/Excel 产档验证）。两族共享（单点实现）。
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for i in 0..za.len() {
         let zf = za
             .by_index(i)
             .map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
         let declared = zf.size();
+        if !seen.insert(zf.name().to_string()) {
+            return Err(ReadError::PrescanRejected {
+                reason: "duplicate entry name",
+                entry: Some(zf.name().to_string()),
+            });
+        }
         if declared > single_limit {
             return Err(ReadError::PrescanRejected {
                 reason: "single entry declared size over limit",
@@ -315,6 +430,11 @@ pub enum WarningKind {
     /// #39：面外元素跳过（当前唯一使用面：嵌套表深度超限——敌意/
     /// 退化嵌套整块跳过而非栈溢出崩溃；诚实降级登记）。
     SkippedElement,
+    /// #233（zip-exotica）：单条目压缩比超观察门限
+    /// （[`LIMIT_COMPRESS_RATIO`]，警告口径不拒——硬拒有实证误报面
+    /// s7b 149:1 合法件；膨胀上界已由门 0/1/2 钉死，见常量文档）。
+    /// 两模式恒登记——炸弹面可见性，不静默。
+    HighCompressionRatio,
 }
 
 /// 兼容模式结构化警告（随 [`Book::warnings`] 返回）。
@@ -696,6 +816,21 @@ fn verify_pass<R: std::io::Read + std::io::Seek>(
             .map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
         let name = zf.name().to_string();
         let declared = zf.size();
+        // #233：压缩比观察（警告口径——见 [`LIMIT_COMPRESS_RATIO`]
+        // 常量文档：s7b 149:1 合法件实证误报面 + 既有门钉死膨胀上界）。
+        // 乘法判据（整数除法截断漏洞教训同源）。
+        let compressed = zf.compressed_size();
+        if declared > LIMIT_COMPRESS_RATIO.saturating_mul(compressed.max(1)) {
+            warnings.push(CompatibilityWarning {
+                part: name.clone(),
+                kind: WarningKind::HighCompressionRatio,
+                detail: format!(
+                    "compression ratio {declared}:{} over {LIMIT_COMPRESS_RATIO} \
+                     (observability only — declared-sum/lie-header gates bound the inflation)",
+                    compressed.max(1)
+                ),
+            });
+        }
         let is_xml = validate_parts && (name.ends_with(".xml") || name.ends_with(".rels"));
         let mut counting = CountingReader::new(&mut zf, declared, is_xml);
         if is_xml {
@@ -1319,6 +1454,11 @@ pub fn read_book_from_bytes_with_options(
     let cursor = std::io::Cursor::new(bytes);
     let mut za =
         zip::ZipArchive::new(cursor).map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
+    // #233：EOCD 守恒门（zip-exotica 防线）——crate 吸收物理同名条目
+    // 使 by_index 视野失明；字节入口全量在手，先于 prescan。
+    //（路径入口 read_book_with_options 保惰性 Seek 无全量分配设计，
+    // 不接本门——登记：路径面为桌面本地消费，敌意主面在 bytes 入口。）
+    eocd_conservation(bytes, &za)?;
     prescan(&mut za)?; // 门 1：声明值四检查
     let mut warnings = Vec::new();
     // 门 2+3 融合趟：尺寸诚实性 + 部件良构性 + 稠密包围盒扫描（单次解压）。
