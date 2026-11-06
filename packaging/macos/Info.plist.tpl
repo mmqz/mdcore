@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- macOS .app bundle 元数据模板（R24-c；实体验证留 R24-d）
-     注入：mang {{VERSION}} {{BUNDLE_ICON}}
-     说明：可执行名 = mdcore（自研命名域，TRADEMARK_RULES §1）；
-           mang（显示名/Bundle display name）待定名后注入
-           （checklist A4）；Bundle ID 三件套随定名复核（packaging/README）。 -->
+<!-- macOS .app bundle 元数据模板（R24-c；#228 起渲染落地）
+     注入：VERSION（build-app.sh 经 packaging/version.py 单源注入 =
+           mdcore::VERSION）；BUNDLE_ICON 待资产轮（checklist C5）——
+           渲染时剥离 CFBundleIconFile 键值对，资产到位后恢复注入。
+     说明：显示名 = mang（A4 定名 2026-10-27 已替换）；可执行名 = mdcore
+           （自研命名域，TRADEMARK_RULES §1）；Bundle ID 待定名复核
+           （packaging/README 变量表）。渲染器：packaging/macos/build-app.sh。 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

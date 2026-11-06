@@ -8,7 +8,8 @@
 >
 > **2026-11-06 更新（#228 R4·P0 打包链修复）**：§3 Windows NSIS 由
 > 「阻塞登记」更新为「链路就位」（本节内含三断链处置与实机复核清单）；
-> macOS 构建路径由后续分支收口（issue #228 任务 4）。
+> §4 macOS 构建路径已由 #228 第二支（feat/packaging-macos）落地（脚本
+> 就位，实体构建待 Lead/macOS 复核）。
 
 ---
 
@@ -161,17 +162,57 @@ python packaging/nsis/build-installer.py
 
 ---
 
-## 4. 汇总
+## 4. macOS .app ⏳ 脚本就位（#228 任务 4——待 Lead/macOS 环境复核）
+
+> 原状：仅 Info.plist 模板（纸面平台）。#228 第二支（feat/packaging-macos）
+> 落地构建路径；本沙箱无 macOS，实体构建按 issue 验收口径由 Lead/macOS
+> 复核，如实登记。
+
+**命令**（可复现；Lead/macOS 实机）：
+
+```bash
+# 前置：macOS 12+ / rustup / python3（CLT 自带）
+bash packaging/macos/build-app.sh
+# 产物：build/macos/mang.app + mang-<VERSION>-macos.zip（含 SHA256）
+```
+
+**链路**（build-app.sh 单脚本全链）：
+
+1. `cargo build --release --locked`（mang-shell 主线壳，独立 workspace）；
+2. pdfium univ 自动取件（pin chromium/8086 mac-univ，SHA256 校验——与
+   windows-test.yml 同 release 同 pin 纪律；升级两处同步改）；
+3. bundle：`mang.app/Contents/MacOS/mdcore`（= mang-shell 重命名）+
+   `libpdfium.dylib` 同束（exe 同目录 = 定位序 exe-dir 候选，#223/#224
+   ——与 Windows 安装包 pdfium.dll 同语义）+ Info.plist 渲染；
+4. Info.plist：`{{VERSION}}` 单源注入（packaging/version.py）+
+   CFBundleIconFile 键剥离（图标资产 = checklist C5 轮）+ 良构断言
+   （plistlib + CFBundleExecutable=mdcore / CFBundleName=mang）；
+5. ad-hoc 签名（`codesign --force --sign -`；正式签名/公证 = checklist F3）；
+6. 部署自检：`--check-pdfium`（#224 复用，退出码非零即脚本失败）；
+7. 分发 zip + SHA256（checklist F2）。
+
+**本地（Linux）已验证面**：`bash -n` 语法过；`--render-only` 模板面全链
+——版本 0.1.0 注入 ×2、占位符零残留、图标键剥离、plistlib 良构 +
+命名域断言过。
+
+**待 Lead/macOS 实机复核清单**：cargo release 构建通过；bundle 布局与
+Finder 显示（mang / 芒）；ad-hoc 签名后本机启动；`--check-pdfium` 退出
+码 0（同束 dylib 命中 exe-dir 候选）；Gatekeeper 首启引导文案
+（checklist D3）；zip 解包可用 + 校验和一致。
+
+---
+
+## 5. 汇总
 
 | 平台 | 构建 | 包体检验 | 启动 | 安装到干净系统 | 产物 |
 |---|---|---|---|---|---|
 | Linux deb | ✅ | ✅ 四面 | ✅ GUI | ⛔ 无 docker（命令已备） | 2.4 MiB |
 | Linux AppImage | ✅ | ✅ | ✅ GUI | ⚠️ webkit 助手路径限制（登记） | 100.5 MiB |
 | Windows NSIS | ✅（CI + 本地 makensis 3.11） | ✅ 版本注入断言（#228） | —（CI 不装包） | ⛔ 待 Lead 实机（清单见 §3） | 见 §3 |
-| macOS .app | ⏳ 待后续分支（#228 任务 4） | — | — | — | — |
+| macOS .app | ⏳ 脚本就位（实体待 Lead/macOS，清单 §4） | ✅ plist 良构 + 命名域断言 | ⏳ 待实机 | ⏳ 待实机 | 见 §4 |
 
 **Q3-3 结论**：deb/AppImage 两条构建链在修复 5 个实测缺陷后**可构建、
 可启动**；NSIS 链路已由 #228 修复就位（见 §3——安装行为面待 Lead 实机
-复核）；macOS 构建路径待 #228 后续分支；docker 安装面阻塞原因明确
-可复现。定名/商标流程（checklist A1/A2）未完成，`{{APP_NAME}}`/`mang`
-面零触碰，未发布。
+复核）；macOS 构建路径已落地脚本（见 §4——实体构建待 Lead/macOS 复核）；
+docker 安装面阻塞原因明确可复现。定名/商标流程（checklist A1/A2）未
+完成，`{{APP_NAME}}`/`mang` 面零触碰，未发布。

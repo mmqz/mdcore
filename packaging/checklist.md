@@ -54,7 +54,8 @@
       安装包捆载 pdfium.dll 并复用 #224 自检；WebView2 面已随主线壳
       mang-shell 的 GPU 自绘（DirectX 后端）架构移除）
 - [ ] D3 macOS：Info.plist 文档类型（.md）+ URL scheme（mdcore://）声明，
-      Gatekeeper 冒烟（未签名时的用户引导文案）
+      Gatekeeper 冒烟（ad-hoc 签名 + 未公证时的用户引导文案；构建路径 =
+      packaging/macos/build-app.sh，#228——pdfium dylib 同束 + 部署自检）
 
 ## E. 隐私与安全
 

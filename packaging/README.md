@@ -123,7 +123,9 @@ packaging/
 │   │                    #   主线化 + pdfium 载荷 + 安装后自检）
 │   └── build-installer.py # NSIS 构建器（staging→渲染→断言→makensis，#228）
 └── macos/
-    └── Info.plist.tpl   # .app bundle 元数据（文档类型 + URL scheme）
+    ├── Info.plist.tpl   # .app bundle 元数据（文档类型 + URL scheme）
+    └── build-app.sh     # .app 构建脚本（#228：bundle + pdfium 同束 +
+                         #   版本单源注入 + ad-hoc 签名 + 自检 + zip）
 ```
 
 ## 运行时依赖（#228 后：Windows/macOS = mang-shell 主线壳，GPU 自绘渲染；Linux = mdshell-native tao+wry+GTK3，ADR-H1）

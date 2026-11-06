@@ -1799,3 +1799,18 @@ release 命令，Lead 实机）；mang-shell 为独立 workspace，版本号未�
 实机复核清单（BUILD-VERIFY §3）；图标仍占位（checklist C5 资产轮，
 非本件范围）。
 
+**macOS 支补记（feat/packaging-macos，stacked on fix/packaging-nsis-chain，
+任务 4 收口）**：`packaging/macos/build-app.sh` 单脚本全链——release 构建
+（mang-shell 独立 workspace）→ pdfium univ pin 取件（chromium/8086
+mac-univ，SHA256 校验，与 windows-test.yml 同 release 同 pin 纪律）→
+`mang.app` 布局（`Contents/MacOS/mdcore` = mang-shell 重命名 +
+`libpdfium.dylib` 同束 = 定位序 exe-dir 候选，与 Windows 安装包
+pdfium.dll 同语义）→ Info.plist 渲染（`{{VERSION}}` 单源注入 +
+CFBundleIconFile 键剥离[C5 资产轮] + plistlib 良构与命名域断言）→
+ad-hoc 签名（正式签名/公证 = F3）→ `--check-pdfium` 自检（非零即失败）→
+ditto zip + SHA256（F2）；`--render-only` 模板面验证通道（任意平台可跑）。
+本地（Linux）已验：`bash -n` + render-only 全绿（版本 0.1.0 注入、占位符
+零残留、图标键剥离、plist 良构断言）；实体构建待 Lead/macOS 复核（清单
+BUILD-VERIFY §4）。Info.plist.tpl 头注刷新为 A4 定名后的渲染契约
+（模板体零改动——r24 门锁锚不受扰）。
+
