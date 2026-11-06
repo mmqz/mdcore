@@ -80,8 +80,25 @@ fn corpus_dir() -> PathBuf {
         })
 }
 
-/// 语料文件（缺失 = 空表 + stderr 打印——调用方据此跳过）。
+/// 语料文件（目录缺席 = 空表 + stderr 打印——调用方据此跳过）。
+/// #262 同款防御：递归收集（不依赖层级）+ **目录在场但收集到 0 件
+/// .pdf = panic**——office-io 语料门曾因顶层 read_dir + 静默 skip
+/// 空转 2 天无人察觉（204 件断言零验证）。
 fn corpus_files() -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let rd = match std::fs::read_dir(dir) {
+            Ok(rd) => rd,
+            Err(_) => return,
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().map(|x| x == "pdf").unwrap_or(false) {
+                out.push(p);
+            }
+        }
+    }
     let dir = corpus_dir();
     if !dir.is_dir() {
         eprintln!(
@@ -90,12 +107,14 @@ fn corpus_files() -> Vec<PathBuf> {
         );
         return Vec::new();
     }
-    let mut v: Vec<_> = std::fs::read_dir(&dir)
-        .expect("read corpus dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "pdf").unwrap_or(false))
-        .collect();
+    let mut v = Vec::new();
+    walk(&dir, &mut v);
+    assert!(
+        !v.is_empty(),
+        "corpus dir 在场但递归收集到 0 件 .pdf——目录结构又变了？({})",
+        dir.display()
+    );
+    println!("[pdff] 检查了 {} 件真实语料（{}）", v.len(), dir.display());
     v.sort();
     v
 }

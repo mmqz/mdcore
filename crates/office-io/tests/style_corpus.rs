@@ -1,26 +1,27 @@
 //! S1 样式模板体系——真实语料 + LibreOffice 开档 + 写读 XML diff
 //! 验证（feat/79-style-template）。
 //!
-//! 语料 = `test-artifacts/health-check/corpus/`（204 件真实 docx：Apache
-//! POI test-data 130 + LibreOffice core 主题相关 73 + 仓库夹具 1——
-//! 2026-10-31 经 GitHub 公开仓收集；目录 untracked，CI 缺席时测试
-//! 空跑通过[1 test/pass]，本地在场全量断言）。
+//! 语料 = `test-artifacts/health-check/corpus/`（630 件真实 docx，三
+//! 子目录结构：docx4j 501 + poi-docx 129——2026-11-05 语料重组；目录
+//! untracked，CI 缺席时 skip，本地在场全量断言）。**收集 = 递归扫描**
+//!（#262：语料三子目录化后顶层 `read_dir` 收集为空 → `is_empty` 静默
+//! skip → 204 件断言空转 2 天无人察觉，第 19 条假绿）。
 //!
-//! 实况（2026-10-31 首轮，204 件）：可读 187（**17 件容器损坏 =
-//! POI fuzzer 故意破坏样本，门 1 zip 拒绝 typed——与 `read_docx`
-//! 同门同拒**）；有样式表 183 / docDefaults 151 / `w:default` 位
-//! 169 / basedOn 链 137 / themeColor 引用 37 / 完整 12 槽主题 171；
-//! 真实生态**零环零悬空**（Word 自产干净——异常面留给手搓测试）；
-//! 最深链 10（NumberedList.docx，322 个样式）。
+//! 实况（#262 重钉轮，2026-11-06，630 件）：可读 613（**17 件容器
+//! 损坏 = fuzzer 故意破坏样本，门 1 zip 拒绝 typed——与 `read_docx`
+//! 同门同拒**）；有样式表 575 / basedOn 链 527 / themeColor 引用
+//! 364 / 完整 12 槽主题 533；真实生态**零环零悬空**（自产干净——
+//! 异常面留给手搓测试）；最深链 10。
 //!
-//! 钉定样本（防跑空断言）：
-//! - `lo__ThemeDocument.docx`（LibreOffice desktop/qa/data）：theme
-//!   12 槽 + accent1=4472C4/accent5=5B9BD5/hyperlink=0563C1（标准
-//!   Office 主题色值——**w:themeColor 解析链的实值锚点**）；
-//! - `lo__NumberedList.docx`（LibreOffice ooxmlexport）：322 样式 +
-//!   最深链 10（DSTOC8-9 → DSTOC7-9 → … → DSTOC1-9 → Heading9 →
-//!   Normal；v2 重校：本批 Heading6-9 basedOn 直接 Normal[LO 导出
-//!   风格]，chain("Heading9") 实深 2）。
+//! 钉定样本（防跑空断言；#262 重钉——语料换血后原 lo__* 两件缺席，
+//! 锚点按新语料实值迁移）：
+//! - `docx4j/bib-chernigovka.netdo.ru_download_docs_17459.docx`：
+//!   theme 12 槽 + accent1=4472C4/accent5=5B9BD5/hyperlink=0563C1
+//!   （标准 Office 主题色值——**w:themeColor 解析链的实值锚点**）
+//!   + 433 样式（大样式表读面吞吐）；
+//! - `docx4j/NumberingImplicitNumId.docx`：`Legal2L9` 链深 10
+//!   （Normal → Legal2L1 → Legal2L2 → … → Legal2L9——10 级线性
+//!   basedOn 链，深链解析锚点）。
 
 use mdc_office_io::docx::{DocxWriter, RunSpec};
 use mdc_office_io::style::{
@@ -41,17 +42,30 @@ fn corpus_dir() -> std::path::PathBuf {
         })
 }
 
+/// 递归收集 .docx（#262：walkdir 同构，不依赖目录层级——语料
+/// 2026-11-05 起为三子目录结构 `corpus/{docx4j,poi-docx,…}`，顶层
+/// `read_dir` 收集为空导致 204 件断言静默空转 2 天）。
 fn corpus_files() -> Vec<std::path::PathBuf> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let rd = match std::fs::read_dir(dir) {
+            Ok(rd) => rd,
+            Err(_) => return,
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().map(|x| x == "docx").unwrap_or(false) {
+                out.push(p);
+            }
+        }
+    }
     let dir = corpus_dir();
     if !dir.is_dir() {
         return Vec::new();
     }
-    let mut v: Vec<_> = std::fs::read_dir(&dir)
-        .expect("read corpus dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "docx").unwrap_or(false))
-        .collect();
+    let mut v = Vec::new();
+    walk(&dir, &mut v);
     v.sort();
     v
 }
@@ -60,13 +74,28 @@ fn corpus_files() -> Vec<std::path::PathBuf> {
 fn real_corpus_style_stats_and_pinned() {
     let files = corpus_files();
     if files.is_empty() {
+        // 目录缺席 = CI/新克隆合法 skip；**目录在场却收集到 0 件 =
+        // 目录结构又变了 → 必须红**（#262：此前该分支静默 return，
+        // 顶层收集空转 2 天无人察觉）。
+        assert!(
+            !corpus_dir().is_dir(),
+            "corpus dir 在场但递归收集到 0 件 .docx——目录结构又变了？({})",
+            corpus_dir().display()
+        );
         eprintln!(
             "[style-corpus] corpus dir absent ({}) — skipping real-document sweep",
             corpus_dir().display()
         );
         return;
     }
-    assert!(files.len() >= 200, "corpus shrank: {}", files.len());
+    // 件数可见性（#262：打印到 stdout——`--nocapture` 与失败时 CI
+    // 日志直接可见，空转无处藏身）。
+    println!(
+        "[style-corpus] 检查了 {} 件真实语料（{}）",
+        files.len(),
+        corpus_dir().display()
+    );
+    assert!(files.len() >= 600, "corpus shrank: {}", files.len());
 
     let (mut ok, mut reject) = (0usize, 0usize);
     let (mut with_styles, mut with_basedon, mut with_theme_color, mut theme_full) =
@@ -118,13 +147,13 @@ fn real_corpus_style_stats_and_pinned() {
                     }
                 }
                 if p.file_name()
-                    .map(|n| n == "lo__ThemeDocument.docx")
+                    .map(|n| n == "bib-chernigovka.netdo.ru_download_docs_17459.docx")
                     .unwrap_or(false)
                 {
                     pinned_theme = Some(b.clone());
                 }
                 if p.file_name()
-                    .map(|n| n == "lo__NumberedList.docx")
+                    .map(|n| n == "NumberingImplicitNumId.docx")
                     .unwrap_or(false)
                 {
                     pinned_list = Some(b.clone());
@@ -134,43 +163,52 @@ fn real_corpus_style_stats_and_pinned() {
         }
     }
 
-    // 容差断言（untracked 语料防缩水；首轮实况见模块文档）。
-    assert!(ok >= 180, "readable corpus shrank: {ok}");
+    // 容差断言（untracked 语料防缩水；#262 重钉轮实况见模块文档——
+    // 630 件：ok 613 / reject 17 / with_styles 575 / with_basedon
+    // 527 / with_theme_color 364 / theme_full 533 / deepest 10）。
+    assert!(ok >= 600, "readable corpus shrank: {ok}");
     assert!(reject >= 10, "hostile fuzzer samples missing: {reject}");
-    assert!(with_styles >= 175, "{with_styles}");
-    assert!(with_basedon >= 120, "{with_basedon}");
-    assert!(with_theme_color >= 30, "{with_theme_color}");
-    assert!(theme_full >= 160, "{theme_full}");
+    assert!(with_styles >= 560, "{with_styles}");
+    assert!(with_basedon >= 510, "{with_basedon}");
+    assert!(with_theme_color >= 350, "{with_theme_color}");
+    assert!(theme_full >= 520, "{theme_full}");
     assert_eq!(warn_cycle, 0, "real corpus is cycle-clean");
     assert_eq!(warn_dangling, 0, "real corpus is dangling-clean");
     assert!(deepest >= 10, "deepest chain: {deepest}");
 
-    // 钉定①ThemeDocument：12 槽 + Office 主题色实值（w:themeColor
-    // 解析链锚点——accent1 4472C4 是 Word 2016+ 默认主题）。
-    let td = pinned_theme.expect("lo__ThemeDocument.docx not in corpus");
+    // 钉定①bib-chernigovka（docx4j）：12 槽 + Office 主题色实值
+    //（w:themeColor 解析链锚点——accent1 4472C4 是 Word 2016+ 默认
+    // 主题）+ 433 样式大样式表（读面吞吐——#262 迁移：原 lo__ 两
+    // 锚点 ThemeDocument→主题色、NumberedList→大表，实值承接）。
+    let td = pinned_theme
+        .expect("bib-chernigovka.netdo.ru_download_docs_17459.docx not in corpus");
     assert_eq!(td.theme.len(), 12);
     assert_eq!(td.theme.lookup("accent1").as_deref(), Some("4472C4"));
     assert_eq!(td.theme.lookup("accent5").as_deref(), Some("5B9BD5"));
     assert_eq!(td.theme.lookup("hyperlink").as_deref(), Some("0563C1"));
     assert_eq!(td.theme.lookup("dark1").as_deref(), Some("000000"));
-
-    // 钉定②NumberedList：322 样式 + Heading 链深 10 + basedOn 在场
-    //（Word 全量样式表——读面吞吐面）。
-    let nl = pinned_list.expect("lo__NumberedList.docx not in corpus");
     assert!(
-        nl.tree.style_ids().len() >= 300,
-        "{}",
-        nl.tree.style_ids().len()
+        td.tree.style_ids().len() >= 400,
+        "bib big styles table: {}",
+        td.tree.style_ids().len()
     );
-    let h1 = nl.tree.get("Heading1").expect("Heading1 style");
-    assert!(h1.based_on.is_some(), "Heading1 basedOn chain");
-    // v2 重校（rebase 到 main 82f8ec2e 后语料实测）：本批该文件
-    // Heading6-9 basedOn 直接 Normal（LO 导出风格），chain(
-    // "Heading9") 实深 2；真实最深链 = DSTOC8-9 → DSTOC7-9 → … →
-    // DSTOC1-9 → Heading9 → Normal（10 节点，穿过 Heading9 落
-    // Normal）——首轮「链深 10」即此链，钉定按实值迁移。
-    let chain = nl.tree.chain("DSTOC8-9").expect("DSTOC8-9 chain");
-    assert_eq!(chain.len(), 10, "DSTOC8-9 chain depth");
+
+    // 钉定②NumberingImplicitNumId（docx4j）：Legal2L9 链深 10
+    //（Normal → Legal2L1 → … → Legal2L9——10 级线性 basedOn 链，
+    // 深链解析锚点；#262 重钉：原 DSTOC8-9 链随 lo__ 语料换血缺席）。
+    let nl = pinned_list.expect("NumberingImplicitNumId.docx not in corpus");
+    let chain = nl.tree.chain("Legal2L9").expect("Legal2L9 chain");
+    assert_eq!(chain.len(), 10, "Legal2L9 chain depth");
+    // 链形态实值：根 Normal（default），每级 basedOn 指上一级。
+    assert_eq!(chain[0].id, "Normal");
+    for i in 1..chain.len() {
+        assert_eq!(
+            chain[i].based_on.as_deref(),
+            Some(chain[i - 1].id.as_str()),
+            "Legal2 chain link at {i}"
+        );
+    }
+    assert_eq!(chain[9].id, "Legal2L9");
 }
 
 #[test]
