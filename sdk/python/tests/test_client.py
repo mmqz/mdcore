@@ -505,6 +505,53 @@ def test_malformed_response_is_protocol_violation(server: MockEditor) -> None:
         c.get_state()
 
 
+def test_hostile_non_numeric_id_dropped_reader_survives(server: MockEditor) -> None:
+    """P2-29（#282）：敌意响应 ``"id":"evil"`` → 无法匹配被丢弃，reader 存活。
+
+    旧行为：裸 ``int("evil")`` 抛 ValueError——reader 的 except 面只接
+    OSError/ProtocolViolation，线程直接炸；在途请求以 ConnectionLost
+    失败，后续调用全靠重连。新行为：该行走既有「无法匹配 → 丢弃」路径，
+    正常响应仍按 id 匹配交付。
+    """
+
+    def hostile_then_normal(req: Mapping[str, Any]) -> dict[str, Any]:
+        server.send_raw({"id": "evil", "ok": True, "result": {}})
+        return dict(_STATE)
+
+    server.handlers["get_state"] = hostile_then_normal
+    with Client.connect(server.path) as c:
+        st = c.get_state()  # 敌意行已吞——正常响应照常交付
+        assert st.active is not None and st.active.char_count == 1337
+        st2 = c.get_state()  # reader 未崩——连接与 id 匹配机制完好
+        assert st2.active is not None and c.connected
+
+
+def test_hostile_id_variants_dropped_not_reader_crash(server: MockEditor) -> None:
+    """P2-29（#282）：列表/对象/inf/id 缺席等敌意形态同走丢弃路径不炸 reader。
+
+    ``1e999`` 经 Python json 两端宽容解析为 float("inf")——钉住
+    OverflowError 分支（裸 int(inf) 的第三种异常面）。
+    """
+    variants: list[dict[str, Any]] = [
+        {"id": ["evil"], "ok": True, "result": {}},  # TypeError 面
+        {"id": {"evil": 1}, "ok": True, "result": {}},  # TypeError 面
+        {"id": 1e999, "ok": True, "result": {}},  # OverflowError 面
+        {"ok": True, "result": {}},  # id 缺席（旧代码靠 is not None 守卫，新代码统一走 None）
+    ]
+
+    def hostile_then_normal(req: Mapping[str, Any]) -> dict[str, Any]:
+        for v in variants:
+            server.send_raw(v)
+        return dict(_STATE)
+
+    server.handlers["get_state"] = hostile_then_normal
+    with Client.connect(server.path) as c:
+        st = c.get_state()  # 四行敌意全吞——正常响应照常交付
+        assert st.active is not None
+        st2 = c.get_state()  # reader 仍活
+        assert st2.active is not None and c.connected
+
+
 def test_request_timeout_keeps_connection_usable(server: MockEditor) -> None:
     """第一次不回 → RequestTimeout；连接与 id 匹配机制完好，第二次照常。"""
     seen = {"n": 0}
@@ -828,6 +875,25 @@ def test_async_error_wrapped(server: MockEditor) -> None:
             with pytest.raises(RpcError) as ei:
                 await ac.save()
         assert ei.value.message == "未命名文档无路径——先 save_as 指定目标"
+
+    asyncio.run(main())
+
+
+def test_async_hostile_non_numeric_id_dropped_reader_survives(server: MockEditor) -> None:
+    """P2-29（#282）：async reader 同修——敌意 id 不炸任务，后续调用照常。"""
+
+    async def main() -> None:
+        def hostile_then_normal(req: Mapping[str, Any]) -> dict[str, Any]:
+            server.send_raw({"id": "evil", "ok": True, "result": {}})
+            server.send_raw({"id": 1e999, "ok": True, "result": {}})
+            return dict(_STATE)
+
+        server.handlers["get_state"] = hostile_then_normal
+        async with await AsyncClient.connect(server.path) as ac:
+            st = await ac.get_state()
+            assert st.active is not None and st.active.char_count == 1337
+            st2 = await ac.get_state()  # reader 任务未炸——后续照常
+            assert st2.active is not None and ac.connected
 
     asyncio.run(main())
 

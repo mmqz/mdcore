@@ -160,6 +160,21 @@ def _is_event(obj: Mapping[str, Any]) -> bool:
     return "type" in obj
 
 
+def _pending_key(req_id: Any) -> int | None:
+    """响应 id → pending 查找键；无法转整数的敌意形态 → None（无法匹配）。
+
+    #282（P2-29）：敌意/损坏服务端回 ``"id":"evil"``、列表、``inf`` 等形态时，
+    裸 :func:`int` 会抛 ValueError/TypeError/OverflowError——两个 reader 的
+    except 面只接 OSError/ProtocolViolation，异常直接炸掉 reader 线程/任务
+    （连接与 id 匹配机制随后失灵）。此处统一转 None，走既有的
+    「无法匹配 → 丢弃」语义，reader 存活、连接不受损。
+    """
+    try:
+        return int(req_id)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _reply_result(reply: Mapping[str, Any], cmd: str) -> dict[str, Any]:
     """响应二分类：ok → result dict；否则 → :class:`RpcError`。"""
     if reply.get("ok"):
@@ -390,7 +405,8 @@ class Client:
                     self._events.put(DocEvent.from_payload(obj))
                     continue
                 req_id = obj.get("id")
-                pend = self._pending.get(int(req_id)) if req_id is not None else None
+                key = _pending_key(req_id)
+                pend = self._pending.get(key) if key is not None else None
                 if pend is not None:
                     pend.reply = obj
                     pend.event.set()
@@ -880,7 +896,8 @@ class AsyncClient:
                     self._events.put_nowait(DocEvent.from_payload(obj))
                     continue
                 req_id = obj.get("id")
-                fut = self._pending.get(int(req_id)) if req_id is not None else None
+                key = _pending_key(req_id)
+                fut = self._pending.get(key) if key is not None else None
                 if fut is not None and not fut.done():
                     fut.set_result(obj)
                 else:
