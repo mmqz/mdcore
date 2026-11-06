@@ -80,4 +80,16 @@ mkdirSync('dist/pkg', { recursive: true });
 cpSync('pkg/mdcore_wasm.js', 'dist/pkg/mdcore_wasm.js');
 cpSync('pkg/mdcore_wasm_bg.wasm', 'dist/pkg/mdcore_wasm_bg.wasm');
 
+// ---- #282（P1-21）：wasm-bindgen snippets 内联 JS（存在时）----
+// wasm-bindgen --out-dir pkg 会为含内联 JS 片段的依赖（Cargo.lock 依赖图
+// 里的 ironcalc_base 0.9.1 即此类）产出 pkg/snippets/<crate>/*.js，胶水
+// 以相对 './snippets/...' import 引用——main.js 打包侧被 esbuild 内联，
+// 但运行时 URL import 的独立胶水副本（上一段）需要 dist/pkg/snippets/
+// 就位，缺席 = Canvas 视图 boot 失败（phase2 实证）。无内联 JS 依赖时
+// wasm-bindgen 不产该目录——缺席 = 无需拷贝，不炸标准构建。
+if (existsSync('pkg/snippets')) {
+  cpSync('pkg/snippets', 'dist/pkg/snippets', { recursive: true });
+  console.log('pkg/snippets -> dist/pkg/snippets/');
+}
+
 console.log('build ok -> dist/');
