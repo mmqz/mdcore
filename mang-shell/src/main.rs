@@ -99,6 +99,8 @@ mod status_info;
 // #185：系统原生错误对话框——GPU/图形栈初始化失败（GPUI 起不来）
 // 时的「用户看得见」兑底（zenity/kdialog/xmessage/notify-send 候选链）。
 mod native_dialog;
+mod pdf_pages;
+mod right_dock;
 mod shell;
 mod status_bar;
 mod tab_bar;

@@ -1,4 +1,4 @@
-//! 设置面板（#182——纠正 #165/#172 的「移除设置钮」裁决）。
+//! 设置弹窗（#182 立项；#289-⑤ 改形态为模态弹窗）。
 //!
 //! ## 定位
 //!
@@ -13,12 +13,16 @@
 //! | 缩进单位 | 三态钮（4 空格/2 空格/Tab） | `save_indent_unit` + 全部标签 `Editor::set_indent_unit`（`ShellApp::set_indent_unit_all`） |
 //! | 面板宽度 | 「重置默认」钮 | `save_panel_widths` + 运行时宽度恢复（`ShellApp::reset_panel_widths`） |
 //!
-//! ## 形态裁决
+//! ## 形态裁决（#289-⑤ 重裁）
 //!
-//! 占右栏（与属性/来源面板互斥的视图，非浮层）：#68 布局规格「右栏
-//! 280px 可折叠」现成可用，宽度拖拽热区（G4）与折叠开关一并继承，
-//! 不另造浮层层级。入口 = 图标条设置钮（`activity_bar.rs` 恢复的
-//! `act-settings`），再点收起（`ShellApp::toggle_settings`）。
+//! **模态弹窗**（zed「设置是独立界面不是 dock 视图」/ vscode「设置
+//! 打开为独立窗格」的同款语义）：
+//! - 旧版（#182）：占右栏、与属性/来源互斥——用户实测反馈「左侧边栏
+//!   成了右侧按钮的详情菜单」（左图标条设置钮驱动右栏视图，语义
+//!   错位）；
+//! - 新版：`ShellApp::settings_open` 为真时渲染居中卡片 + 半透明遮罩
+//!   （确认框 confirm_overlay 同款模态机制）；入口 = 左图标条底部
+//!   设置钮 / 菜单栏「查看 → 设置」；Esc 或点遮罩关闭。
 //!
 //! ## 写法参照
 //!
@@ -35,8 +39,10 @@ use crate::editor::buffer::IndentUnit;
 use crate::shell::ShellApp;
 use crate::theme_switch;
 
-/// 面板主内边距（px，与 panels.rs 同规格）。
-const PANEL_PADDING: Pixels = px(12.);
+/// 弹窗卡片宽度（px）。
+const MODAL_W: Pixels = px(400.);
+/// 卡片主内边距（px，与 panels.rs 同规格）。
+const PANEL_PADDING: Pixels = px(16.);
 /// 分组标题上缘留白（px）。
 const GROUP_MARGIN: Pixels = px(8.);
 /// 控件钮纵向高度（px）。
@@ -44,36 +50,91 @@ const CONTROL_H: Pixels = px(26.);
 /// 「标签 + 控件」行的标签列宽（px）。
 const LABEL_W: Pixels = px(64.);
 
-/// 渲染设置面板（右栏视图——`ShellApp::settings_view` 为真时挂载）。
+/// 渲染设置弹窗（`ShellApp::settings_open` 为真时由 shell 渲染链尾
+/// 挂载——模态遮罩拦截外部点按，后画的卡片承接内部交互）。
 ///
 /// `theme_mode` / `font_size` / `indent_unit` 均为 ShellApp 运行时状态
 /// （调用处传入），点击经 `cx.listener` 回写 ShellApp（单一状态源，
-/// 面板自身零状态）。
-pub fn settings_panel(
+/// 弹窗自身零状态）。
+pub fn settings_modal(
     theme_mode: &'static str,
     font_size: f32,
     indent_unit: IndentUnit,
-    width: Pixels,
     cx: &mut Context<ShellApp>,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
+    div()
+        .id("settings-modal-layer")
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        // 半透明遮罩：点外关闭（弹窗内卡片是后画兄弟，点击不穿透）。
+        .bg(gpui::black().opacity(0.35))
+        .on_mouse_down(gpui::MouseButton::Left, {
+            cx.listener(|this, _, _, cx| this.close_settings(cx))
+        })
+        .child(settings_card(
+            theme_mode,
+            font_size,
+            indent_unit,
+            &colors,
+            cx,
+        ))
+}
+
+/// 弹窗卡片（居中、固定宽、标题行 + 可滚动内容体）。
+fn settings_card(
+    theme_mode: &'static str,
+    font_size: f32,
+    indent_unit: IndentUnit,
+    colors: &theme::ThemeColors,
+    cx: &mut Context<ShellApp>,
+) -> impl IntoElement {
     let hover = colors.element_hover;
     let selected = colors.element_selected;
-
     v_flex()
-        .id("settings-panel")
-        .w(width)
-        .flex_none()
-        .h_full()
-        .min_w_0()
-        .bg(colors.panel_background)
+        .id("settings-card")
+        .w(MODAL_W)
+        .max_h(px(520.))
+        .min_h_0()
+        .bg(colors.elevated_surface_background)
+        .border_1()
+        .border_color(colors.border)
+        .rounded_md()
+        .shadow_lg()
         .p(PANEL_PADDING)
         .gap_1()
+        .overflow_y_scroll()
+        // 标题行：「设置」+ 右侧关闭钮（与 Esc / 点遮罩同一条 close 链）。
         .child(
-            Label::new("设置")
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-                .mb(GROUP_MARGIN),
+            h_flex()
+                .id("settings-header")
+                .w_full()
+                .justify_between()
+                .items_center()
+                .mb(GROUP_MARGIN)
+                .child(
+                    Label::new("设置")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    div()
+                        .id("settings-close")
+                        .size(CONTROL_H)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_sm()
+                        .hover(|el| el.bg(hover))
+                        .tooltip(Tooltip::text("关闭（Esc）"))
+                        .child(Icon::new(IconName::Close).size(IconSize::XSmall))
+                        .on_click(cx.listener(|this, _, _, cx| this.close_settings(cx))),
+                ),
         )
         // ── 外观 ───────────────────────────────────────────
         .child(group_header("sg-appearance", "外观"))
@@ -309,7 +370,7 @@ fn action_button(
         .rounded_sm()
         .hover(|el| el.bg(hover_bg))
         .child(
-            Label::new(label)
+            Label::new(label.to_string())
                 .size(LabelSize::Small)
                 .color(Color::Default),
         )

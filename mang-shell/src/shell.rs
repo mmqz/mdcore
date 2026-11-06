@@ -47,7 +47,9 @@ use crate::menu_bar_view;
 // #217：键位表（shell 键钩子的单一事实源——默认表 = 原分支精确镜像）。
 use crate::keymap::{self, ShellAction};
 use crate::panels;
+use crate::pdf_pages::PdfPagesView;
 use crate::recent::RecentStore;
+use crate::right_dock;
 use crate::settings_panel;
 use crate::status_bar;
 use crate::tab_bar::{self, TabItem};
@@ -140,9 +142,15 @@ pub struct ShellApp {
     git_panel: Option<Entity<GitPanel>>,
     /// F7：左栏视图（文件树 / git——图标条切换）。
     git_view: bool,
-    /// #182：右栏视图（属性/来源 ↔ 设置——图标条设置钮切换；
-    /// 右栏折叠开关打开时恒回属性视图）。
-    settings_view: bool,
+    /// #289-⑤：设置弹窗开关（模态——并替代旧 `settings_view` 右栏视图；
+    /// 左条设置钮/菜单「设置」打开，Esc/点遮罩/关闭钮关闭）。
+    settings_open: bool,
+    /// #289-④：pdf 页面视图（当前 pdf 标签的位图渲染实体 + 归属路径
+    /// ——切到不同 pdf 标签时重建；关闭该标签时丢弃）。
+    pdf_pages: Option<(PathBuf, Entity<PdfPagesView>)>,
+    /// #289-④：pdf 显示模式（true = 页面位图视图——缺省；false =
+    /// 文本行模型。状态栏「页面/文本」钮切换；Ctrl+F 自动切文本）。
+    pdf_view_mode: bool,
     /// #164 1c：首帧计时基点（ShellApp 构造时置 = perf::boot()，首个
     /// render 呈现时消费——`perf: first-frame` 证据行；MANG_PERF 未开
     /// 恒 None，零开销）。
@@ -362,7 +370,9 @@ impl ShellApp {
             workspace,
             git_panel: None,
             git_view: false,
-            settings_view: false,
+            settings_open: false,
+            pdf_pages: None,
+            pdf_view_mode: true,
             perf_first_frame: crate::perf::on().then(crate::perf::boot),
             chord: None,
             confirm: None,
@@ -601,27 +611,102 @@ impl ShellApp {
         Some(focus)
     }
 
-    /// 折叠/展开右栏（属性/来源）。图标条底部开关触发。#182：展开
-    /// 时回属性/来源视图（设置视图是设置钮的专属入口——两入口各管
-    /// 各的视图，不互相穿透）。
+    /// 折叠/展开右栏（属性/来源）。右缘 dock 条 `dock-toggle-right`
+    /// 触发（#289-⑤：右栏开关归右缘——不再占用左图标条）。
     pub fn toggle_right(&mut self, cx: &mut Context<Self>) {
         self.right_open = !self.right_open;
-        if self.right_open {
-            self.settings_view = false;
+        cx.notify();
+    }
+
+    /// #289-⑤：打开设置弹窗（左条设置钮 / 菜单「查看 → 设置」入口；
+    /// 弹窗形态——zed「设置是独立界面不是 dock 视图」同款语义）。
+    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_open = true;
+        cx.notify();
+    }
+
+    /// #289-⑤：关闭设置弹窗（Esc / 点遮罩 / 卡片关闭钮）。
+    pub fn close_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_open = false;
+        cx.notify();
+    }
+
+    /// #289-⑤：设置弹窗开合切换（左条设置钮——再点收起；与
+    /// toggle_git 同构的「一键直达」语义）。
+    pub fn toggle_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_open = !self.settings_open;
+        cx.notify();
+    }
+
+    // ── #289-④：pdf 页面视图（位图渲染面） ──────────────────────
+
+    /// 当前活动标签是否 pdf 态（页视图的挂载判据）。
+    fn active_is_pdf(&self, cx: &Context<Self>) -> bool {
+        self.editor()
+            .is_some_and(|ed| ed.read(cx).doc_kind() == "pdf")
+    }
+
+    /// 确保当前 pdf 标签的页视图实体在场（非 pdf 态 / 已在同路径实体
+    /// 上 = 无操作）。切到不同 pdf 标签时重建（旧实体 drop——页缓存
+    /// 随之释放，单实体生命周期与单 pdf 标签对齐）。
+    fn ensure_pdf_pages(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        if tab.editor.read(cx).doc_kind() != "pdf" {
+            return;
+        }
+        let path = tab.path.clone();
+        if let Some((owned, _)) = &self.pdf_pages {
+            if *owned == path {
+                return;
+            }
+        }
+        // 读盘（pdf_doc::load 同源 100MB 前置门——超限不入页视图，
+        // 文本模型不受影响）。
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                let message = format!("页面视图装载失败（{}）：{err}", path.display());
+                self.show_notice(message, cx);
+                self.pdf_pages = None;
+                return;
+            }
+        };
+        if bytes.len() as u64 > 100 * 1024 * 1024 {
+            self.show_notice("页面视图仅支持 ≤100MB 文件（文本视图不受限）".into(), cx);
+            self.pdf_pages = None;
+            return;
+        }
+        let entity = cx.new(|cx| PdfPagesView::new(bytes, cx));
+        self.pdf_pages = Some((path, entity));
+        cx.notify();
+    }
+
+    /// #289-④：切换 pdf 显示模式（状态栏「页面/文本」钮）。
+    pub fn toggle_pdf_view_mode(&mut self, cx: &mut Context<Self>) {
+        if !self.active_is_pdf(cx) {
+            return;
+        }
+        self.pdf_view_mode = !self.pdf_view_mode;
+        if self.pdf_view_mode {
+            self.ensure_pdf_pages(cx);
         }
         cx.notify();
     }
 
-    /// #182：切到设置视图（图标条 `act-settings` 触发——已开且在设置
-    /// 视图时折叠右栏，再开切回；与 toggle_git 同构）。
-    pub fn toggle_settings(&mut self, cx: &mut Context<Self>) {
-        if self.right_open && self.settings_view {
-            self.right_open = false;
-        } else {
-            self.right_open = true;
-            self.settings_view = true;
+    /// #289-④：页视图滚到指定页（书签跳转锚；1 基页号，非 pdf 态/
+    /// 文本模式/无实体 = 无操作）。
+    pub fn scroll_pdf_to_page(&mut self, page_1based: usize, cx: &mut Context<Self>) {
+        if !self.pdf_view_mode {
+            return;
         }
-        cx.notify();
+        if let Some((_, entity)) = &self.pdf_pages {
+            entity
+                .read(cx)
+                .scroll_to_page(page_1based.saturating_sub(1));
+            cx.notify();
+        }
     }
 
     // ── #63 打磨：右键菜单 ─────────────────────────────────────
@@ -785,6 +870,15 @@ impl ShellApp {
         let Some(editor) = self.editor().cloned() else {
             return;
         };
+        // #289-④：页视图下 Ctrl+F → 先切回文本视图（查找是文本面能力
+        // ——明示而非无响应；后续轮做跨视图高亮）。
+        if matches!(cmd, crate::editor::commands::Cmd::OpenFind)
+            && self.pdf_view_mode
+            && editor.read(cx).doc_kind() == "pdf"
+        {
+            self.pdf_view_mode = false;
+            self.show_notice("已切换到文本视图（页面视图暂不支持查找）".into(), cx);
+        }
         editor.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
     }
 
@@ -926,6 +1020,9 @@ impl ShellApp {
                     editor.update(cx, |ed, cx| ed.toggle_command_palette(cx));
                 }
             }
+            // #289-⑤：设置弹窗（查看菜单「设置」项——与左条设置钮同一
+            // 条 open_settings 链）。
+            Act::OpenSettings => self.open_settings(cx),
             Act::SetTheme(mode) => self.set_theme_mode(mode, cx),
             // 字号：与 Ctrl+=/-/0 键位同一换算（±1 / 重置 15；域钳制在
             // apply_font_size 收口）。
@@ -994,6 +1091,8 @@ impl ShellApp {
                         cx.notify();
                     });
                 }
+                // #289-④：pdf 标签 → 页视图落位（位图渲染主显示面）。
+                self.ensure_pdf_pages(cx);
                 cx.notify();
                 Some(focus)
             }
@@ -1017,8 +1116,10 @@ impl ShellApp {
 
     /// 激活核心（无 window——焦点句柄返回，调用方落焦）。
     fn activate_tab_focus(&mut self, idx: usize, cx: &mut Context<Self>) -> Option<FocusHandle> {
-        let tab = self.tabs.get(idx)?;
+        let tab = self.tabs.get(idx)?.clone();
         self.active = idx;
+        // #289-④：pdf 标签 → 页视图随标签落位（同路径复用，异路径重建）。
+        self.ensure_pdf_pages(cx);
         let focus = tab.editor.read(cx).focus_handle().clone();
         cx.notify();
         Some(focus)
@@ -1063,6 +1164,13 @@ impl ShellApp {
         if idx >= old_len {
             return;
         }
+        // #289-④：被关标签若持有页视图，一并丢弃（缓存随实体释放）。
+        let closed_path = self.tabs[idx].path.clone();
+        if let Some((owned, _)) = &self.pdf_pages {
+            if *owned == closed_path {
+                self.pdf_pages = None;
+            }
+        }
         self.tabs.remove(idx);
         self.active = if idx < self.active {
             self.active - 1
@@ -1076,6 +1184,8 @@ impl ShellApp {
             self.tabs.len(),
             self.active
         );
+        // #289-④：新活动标签若是 pdf → 页视图随标签重建。
+        self.ensure_pdf_pages(cx);
         // 焦点跟到新活动标签（空态回退 shell 根域）。
         self.focus_active(window, cx);
         cx.notify();
@@ -1699,6 +1809,13 @@ impl Render for ShellApp {
                     return;
                 }
 
+                // #289-⑤：设置弹窗 Esc 关闭（与点遮罩/关闭钮同一条
+                // close_settings 链；与确认框互斥——两弹窗不同时开）。
+                if key == "escape" && this.settings_open {
+                    this.close_settings(cx);
+                    return;
+                }
+
                 // F4：确认框模态拦截（最高优先——开启时其余键位全部隔离）。
                 if this.confirm.is_some() {
                     match key.as_str() {
@@ -1838,8 +1955,7 @@ impl Render for ShellApp {
                     .child(activity_bar::activity_bar(
                         self.left_open,
                         self.git_view,
-                        self.right_open,
-                        self.settings_view,
+                        self.settings_open,
                         cx,
                     ))
                     .when(self.left_open, |el| {
@@ -1850,6 +1966,8 @@ impl Render for ShellApp {
                             self.git_view,
                             // G4：可拖拽宽度（域钳制 + settings 持久化）
                             self.left_width,
+                            // #289-④：书签点击在 pdf 页面视图下随页滚动。
+                            Some(cx.entity().downgrade()),
                             cx,
                         ))
                         // G4：左栏右缘 4px 拖拽热区
@@ -1859,26 +1977,17 @@ impl Render for ShellApp {
                     .when(self.right_open, |el| {
                         // G4：右栏左缘 4px 拖拽热区
                         el.child(self.panel_resize_handle(PanelSide::Right, cx))
-                            // #182：右栏双视图——设置面板（图标条设置钮
-                            // 入口）/ 属性・来源（缺省）。
-                            .child(if self.settings_view {
-                                settings_panel::settings_panel(
-                                    self.theme_mode,
-                                    self.font_size,
-                                    self.indent_unit,
-                                    self.right_width,
-                                    cx,
-                                )
-                                .into_any_element()
-                            } else {
-                                panels::right_panel(
-                                    self.editor().cloned().as_ref(),
-                                    self.right_width,
-                                    cx,
-                                )
-                                .into_any_element()
-                            })
-                    }),
+                            // #289-⑤：右栏单一视图——属性/来源（设置已改
+                            // 弹窗，不再占右栏位）。
+                            .child(panels::right_panel(
+                                self.editor().cloned().as_ref(),
+                                self.right_width,
+                                cx,
+                            ))
+                    })
+                    // #289-⑤：右缘 dock 条（属性/来源开关归右缘——
+                    // 恒在，右栏收起时是唯一入口；zed 折叠 dock 同构）。
+                    .child(right_dock::right_dock_strip(self.right_open, cx)),
             )
             // F1：提示横幅（状态栏上方一条——有消息时才渲染）。
             .map(|el| match self.notice_board.message() {
@@ -1890,11 +1999,22 @@ impl Render for ShellApp {
                 Some(confirm) => el.child(confirm_overlay(confirm, &self.confirm_focus, cx)),
                 None => el,
             })
+            // #289-⑤：设置弹窗模态（链尾最上层——后画盖前画；与确认框
+            // 互斥，两弹窗不同时开）。
+            .when(self.settings_open, |el| {
+                el.child(settings_panel::settings_modal(
+                    self.theme_mode,
+                    self.font_size,
+                    self.indent_unit,
+                    cx,
+                ))
+            })
             .child(status_bar::status_bar(
                 self.editor().cloned().as_ref(),
                 self.workspace
                     .as_ref()
                     .map(|tree| tree.read(cx).root().to_path_buf()),
+                self.pdf_view_mode,
                 cx,
             ))
             // G4：面板拖拽收尾钩（窗口级 mouseup——canvas paint 期每帧
@@ -2092,9 +2212,19 @@ fn notice_bar(message: &str, colors: &theme::ThemeColors) -> impl IntoElement {
 /// 点击提示「文件不存在」）。
 fn editor_area(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
-    match shell.editor() {
-        Some(editor) => editor.clone().into_any_element(),
-        None => {
+    // #289-④：pdf 标签的页面视图（位图渲染主显示面）——模式开且有
+    // 实体时替代文本编辑器呈现（查找/书签锚仍在文本模型上，Ctrl+F
+    // 自动切回文本视图）。
+    let pdf_pages_entity = shell
+        .editor()
+        .filter(|ed| ed.read(cx).doc_kind() == "pdf")
+        .and_then(|_| shell.pdf_view_mode.then(|| ()))
+        .and_then(|_| shell.pdf_pages.as_ref().map(|(_, e)| e.clone()));
+    let active_editor = shell.editor().cloned();
+    match (pdf_pages_entity, active_editor) {
+        (Some(pages), _) => pages.into_any_element(),
+        (None, Some(editor)) => editor.into_any_element(),
+        (None, None) => {
             // F5：最近列表数据（文件至多 8 / 工作区至多 3 展示面——
             // 记忆上限仍为 20/10，展示截断防长列表挤爆空态页）。
             let recent_files: Vec<PathBuf> = shell

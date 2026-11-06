@@ -321,7 +321,6 @@ impl BracketCache {
         }
         self.value.unwrap_or(brackets::BracketMatch::None)
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,6 +1119,13 @@ impl Editor {
         Some(format!("第 {} / {} 页", no, p.props.pages))
     }
 
+    /// #289-④：行号 → pdf 页号（1 基；页面视图的书签跳转锚——
+    /// [`crate::pdf_pages::PdfPagesView::scroll_to_page`] 消费）。
+    /// 非 pdf 态 / 行不在页表 → `None`。
+    pub fn pdf_page_for_line(&self, line: usize) -> Option<usize> {
+        self.pdf.as_ref()?.page_of_line(line)
+    }
+
     /// 标题树（左栏「文档结构」）；md 态为空。
     /// docx = 标题树；pdf = 书签树（扁平文档序——批 4）；
     /// xlsx = 工作表树（G6——扁平簿序，锚点=表分隔行）。
@@ -1667,10 +1673,7 @@ impl Editor {
         }
         let heads = self.display_map.fold_heads();
         crate::settings::save_folds(&key, &heads);
-        eprintln!(
-            "fold: persist {} head(s) for {key}",
-            heads.len()
-        );
+        eprintln!("fold: persist {} head(s) for {key}", heads.len());
     }
 
     /// #132-3：按当前文本恢复已落盘的折叠（装载/首次渲染后调用一次）。
@@ -2932,18 +2935,14 @@ impl Editor {
         let m = brackets::find_match_lang(&text, (cursor.line, cursor.col), self.bracket_lang);
         let mut out = Vec::new();
         let (shape, marks) = match m {
-            brackets::BracketMatch::Matched { open, close } => {
-                (
-                    format!("matched open={:?} close={:?}", open, close),
-                    vec![(open, false), (close, false)],
-                )
-            }
+            brackets::BracketMatch::Matched { open, close } => (
+                format!("matched open={:?} close={:?}", open, close),
+                vec![(open, false), (close, false)],
+            ),
             brackets::BracketMatch::Unmatched { pos } => {
                 (format!("unmatched pos={pos:?}"), vec![(pos, true)])
             }
-            brackets::BracketMatch::None => {
-                ("none".to_string(), Vec::new())
-            }
+            brackets::BracketMatch::None => ("none".to_string(), Vec::new()),
         };
         out.push(format!(
             "bracket: cursor=({},{}) {}",
@@ -4217,22 +4216,19 @@ impl Editor {
             .collect();
         // #132 任务 1：主光标下的括号匹配（缓存——版本/光标不变时零扫描）。
         // 只读态（docx/pdf/xlsx）无括号语法语义，恒不标记；多光标同秒不取。
-        let bracket_marks: Option<brackets::BracketMatch> = if self.read_only
-            || self.docx.is_some()
-            || self.pdf.is_some()
-            || self.xlsx.is_some()
-        {
-            None
-        } else {
-            let text = self.buffer.to_plain_text();
-            let cp = cursor;
-            Some(self.bracket_cache.get(
-                self.buffer.revision(),
-                (cp.line, cp.col),
-                &text,
-                self.bracket_lang,
-            ))
-        };
+        let bracket_marks: Option<brackets::BracketMatch> =
+            if self.read_only || self.docx.is_some() || self.pdf.is_some() || self.xlsx.is_some() {
+                None
+            } else {
+                let text = self.buffer.to_plain_text();
+                let cp = cursor;
+                Some(self.bracket_cache.get(
+                    self.buffer.revision(),
+                    (cp.line, cp.col),
+                    &text,
+                    self.bracket_lang,
+                ))
+            };
         (visible.start..visible.end)
             .map(|row| {
                 // r42：display row → (buffer 行, 段)；折叠行 seg=FOLD_SEG
@@ -5211,7 +5207,11 @@ mod tests {
     #[test]
     fn heading_span_covers_subtree_until_same_level() {
         let lines = ["# A", "正文", "正文2", "# B", "后文"];
-        assert_eq!(heading_span_in(&lines, 0), Some((0, 3)), "到下一个同级标题前");
+        assert_eq!(
+            heading_span_in(&lines, 0),
+            Some((0, 3)),
+            "到下一个同级标题前"
+        );
         assert_eq!(heading_span_in(&lines, 3), Some((3, 5)), "末尾标题到文末");
         assert_eq!(heading_span_in(&lines, 1), None, "正文不可折叠");
     }

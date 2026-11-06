@@ -16,13 +16,14 @@
 //! 业务面（#171 裁决：标书侧后端未迁移前不接入），等能力就位再随
 //! 功能一起回来，不先摆死节点。
 
-use gpui::{App, Entity, Hsla, MouseButton, Pixels, px};
+use gpui::{App, Entity, Hsla, MouseButton, Pixels, WeakEntity, px};
 use ui::prelude::*;
 use ui::{Icon, IconName, IconSize, Label, LabelSize};
 
 use crate::editor::Editor;
 use crate::file_tree::FileTree;
 use crate::git_panel::GitPanel;
+use crate::shell::ShellApp;
 
 /// 左栏缺省宽度（px）——G4 起实际宽度是 ShellApp 状态（可拖拽，
 /// settings `panel_widths` 键持久化；域 [`LEFT_PANEL_MIN`]-[`LEFT_PANEL_MAX`]）。
@@ -61,6 +62,9 @@ pub fn clamp_panel_width(left: bool, width: f32) -> f32 {
 /// 左栏：工作区文件树（F2——真实目录懒加载/虚拟化，占剩余高度）+
 /// 首组「打开的文档」+ docx/pdf「文档结构」树。
 ///
+/// `shell`：#289-④——书签点击在 pdf 页面视图下随页滚动（行号 →
+/// 页号 → ShellApp::scroll_pdf_to_page）。
+///
 /// #183 A-3（#188）：`git_view` 双视图路由——true 渲染 GitPanel 本体
 /// （改动/历史双视图 + 刷新钮；图标条 act-git 入口），false 渲染文件树。
 /// 此前形参收了 git_panel/git_view 却从不使用——左栏恒为文件树，
@@ -71,6 +75,7 @@ pub fn left_panel(
     git_panel: Option<&Entity<GitPanel>>,
     git_view: bool,
     width: Pixels,
+    shell: Option<WeakEntity<ShellApp>>,
     cx: &App,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
@@ -140,17 +145,19 @@ pub fn left_panel(
                     colors.element_selected,
                 ))
                 .when_some((!headings.is_empty()).then_some(()), |el, _| {
-                    el.child(heading_tree("tg-outline", &headings, editor, hover))
+                    el.child(heading_tree("tg-outline", &headings, editor, shell, hover))
                 })
         })
 }
 
 /// 结构树（批 3 docx 标题树 + 批 4 pdf 书签树）：层级缩进 +
-/// 点击跳转（光标落条目行首 + 滚入可视区顶部）。
+/// 点击跳转（光标落条目行首 + 滚入可视区顶部；pdf 页面视图下
+/// 书签随页滚动——#289-④）。
 fn heading_tree(
     id: &'static str,
     headings: &[(String, usize, usize)],
     editor: Option<&Entity<Editor>>,
+    shell: Option<WeakEntity<ShellApp>>,
     hover_bg: Hsla,
 ) -> impl IntoElement {
     v_flex()
@@ -179,6 +186,7 @@ fn heading_tree(
                 .enumerate()
                 .map(|(i, (label, level, line))| {
                     let editor = editor.cloned();
+                    let shell = shell.clone();
                     let line = *line;
                     h_flex()
                         .id(SharedString::from(format!("{id}-item-{i}")))
@@ -190,6 +198,16 @@ fn heading_tree(
                         .when_some(editor, |el, ed| {
                             el.on_mouse_down(MouseButton::Left, move |_, window, cx| {
                                 ed.update(cx, |ed, _| ed.jump_to_line(line));
+                                // #289-④：pdf 页面视图下书签随页滚动
+                                //（行号 → 页号 → scroll_pdf_to_page；
+                                // 文本模式/非 pdf 态该方法自为无操作）。
+                                if let Some(page) = ed.read(cx).pdf_page_for_line(line) {
+                                    if let Some(shell) = shell.as_ref() {
+                                        let _ = shell.update(cx, |shell, cx| {
+                                            shell.scroll_pdf_to_page(page, cx)
+                                        });
+                                    }
+                                }
                                 // 点击后面板焦点不影响编辑区键盘域；防窗口默认行为。
                                 window.prevent_default();
                             })

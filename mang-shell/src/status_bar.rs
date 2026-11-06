@@ -20,23 +20,27 @@
 //! | 编码 | 源文件字节（md 态——容器格式无编码语义） | 读不到/判不出 |
 //! | 换行符 | 源文件字节扫描（md 态） | 无换行 |
 
-use gpui::{App, Entity, Pixels, px};
+use gpui::{ClickEvent, Context, Entity, Pixels, Window, px};
 use ui::prelude::*;
 use ui::{Label, LabelSize};
 
 use crate::editor::Editor;
 use crate::file_tree::workspace_display;
+use crate::shell::ShellApp;
 use crate::status_info;
 
 /// 状态栏高度（px）。
 pub const STATUS_BAR_HEIGHT: Pixels = px(24.);
 
 /// 渲染状态栏。`editor`：打开的编辑器实体（`None` = 无文档就绪态）；
-/// `workspace`：工作区根（F2——`None` = 未打开）。
+/// `workspace`：工作区根（F2——`None` = 未打开）；`pdf_view_mode`：
+/// #289-④ pdf 页面视图开关态（仅 pdf 标签活跃时消费——切换钮挂
+/// 右侧信息区）。
 pub fn status_bar(
     editor: Option<&Entity<Editor>>,
     workspace: Option<std::path::PathBuf>,
-    cx: &App,
+    pdf_view_mode: bool,
+    cx: &mut Context<ShellApp>,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
     let workspace_label = workspace
@@ -129,6 +133,15 @@ pub fn status_bar(
     // Editor::after_edit 收割 → locked_notice ——此前只有 stderr
     // 留痕，GUI 用户敲字无反应（#178 本修）。
     let locked_notice = editor.and_then(|ed| ed.read(cx).locked_notice().cloned());
+    // #289-④：pdf 标签 → 页面/文本视图切换钮（右侧信息区，git 分支
+    // 前——文档形态面）。非 pdf 态不占位。
+    let is_pdf = editor.is_some_and(|ed| ed.read(cx).doc_kind() == "pdf");
+    let pdf_toggle_label = if pdf_view_mode {
+        "切换到文本视图"
+    } else {
+        "切换到页面视图"
+    };
+    let hover = colors.element_hover;
 
     h_flex()
         .id("status-bar")
@@ -153,6 +166,27 @@ pub fn status_bar(
                         Label::new(notice.label())
                             .size(LabelSize::XSmall)
                             .color(ui::Color::Error),
+                    )
+                })
+                // #289-④：pdf 页面/文本视图切换（真实行为钮——
+                // toggle_pdf_view_mode；非 pdf 标签不占位）。
+                .when(is_pdf, |el| {
+                    el.child(
+                        div()
+                            .id("pdf-view-toggle")
+                            .px_2()
+                            .rounded_sm()
+                            .hover(move |el| el.bg(hover))
+                            .on_click(cx.listener(
+                                |this, _ev: &ClickEvent, _window: &mut Window, cx| {
+                                    this.toggle_pdf_view_mode(cx);
+                                },
+                            ))
+                            .child(
+                                Label::new(pdf_toggle_label)
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Muted),
+                            ),
                     )
                 })
                 // #188：git 分支（如  main）——非 git 目录不占位。

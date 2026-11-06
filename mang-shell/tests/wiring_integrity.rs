@@ -275,18 +275,42 @@ fn activity_bar_no_dead_buttons() {
         }
     }
 
-    // ③ 按钮基线：图标条 5 个按钮（文件树/git/搜索/设置/右栏开关）。
-    // #182：设置钮回归（#172 曾按「无面板可接」移除、基线随 #181 5→4
-    // ——纠正裁决：设置面板已实现，钮接真实行为，基线同步回 5）。
+    // ③ 按钮基线：图标条 4 个按钮（文件树/git/搜索/设置）。
+    // #289-⑤：右栏开关移至右缘 dock 条（act-toggle-right → dock-
+    // toggle-right，基线 5→4）；设置钮保留（#182 恢复，现开弹窗）。
     // 这不是放过死按钮，而是锚定「现存按钮全部真实接线」这一事实；
     // 未来新增/删除按钮时请同步本基线。
     let buttons = string_literals(&file)
         .into_iter()
         .filter(|(_, lit)| lit.starts_with("act-"))
         .count();
+    assert_eq!(
+        buttons, 4,
+        "图标条按钮数 {buttons} ≠ 4（文件树/git/搜索/设置——#289-⑤ 后基线；按钮增删时同步本基线）"
+    );
+
+    // ④ #289-⑤：右缘 dock 条同口径扫描（空闭包 = 0 + 无自曝措辞）
+    //    ——bar_button 复用自 activity_bar，同一套铁律。
+    let dock = src("right_dock.rs");
+    let dead_dock = dead_closures(&dock);
     assert!(
-        buttons >= 5,
-        "图标条按钮数 {buttons} < 5（文件树/git/搜索/设置/右栏开关——按钮被移除时请同步本基线）"
+        dead_dock.is_empty(),
+        "右缘 dock 条存在死按钮（on_click 空闭包）：{dead_dock:?}——
+         铁律（#171）：接不了就从界面移除，不装作能点。"
+    );
+    for (pos, lit) in string_literals(&dock) {
+        for word in ["未接线", "骨架"] {
+            assert!(
+                !lit.contains(word),
+                "right_dock.rs:{} 的界面文案 {:?} 含「{word}」——#171 验收口径同样适用",
+                line_of(&dock, pos),
+                lit
+            );
+        }
+    }
+    assert!(
+        dock.contains("dock-toggle-right"),
+        "右缘 dock 条缺少 dock-toggle-right（#289-⑤：右栏开关归右缘）"
     );
 }
 

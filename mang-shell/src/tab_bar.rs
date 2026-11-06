@@ -22,6 +22,7 @@ use crate::editor::Editor;
 use crate::shell::ShellApp;
 
 /// 一个标签（打开的文档）。
+#[derive(Clone)]
 pub struct TabItem {
     pub path: std::path::PathBuf,
     pub editor: Entity<Editor>,
