@@ -217,7 +217,9 @@ fn collect_text_rows(
                 });
             }
         }
-        BlockKind::Paragraph | BlockKind::CodeBlock => {
+        BlockKind::Paragraph | BlockKind::CodeBlock | BlockKind::Math => {
+            // #261：数学块同构 CodeBlock——LaTeX 源逐字行入表
+            // （非 bold 通道；源码零丢失，公式语义降级登记）。
             for line in text_lines(&text) {
                 rows.push(TextRow {
                     text: line.to_string(),

@@ -74,6 +74,9 @@ pub enum BlockKind {
     ListItem,
     Blockquote,
     CodeBlock,
+    /// 数学块（#261）：LaTeX 显示公式，text = 源码逐字（语义同构
+    /// CodeBlock——own-text 叶块，非容器）。
+    Math,
     Table,
     ThematicBreak,
 }
@@ -109,6 +112,7 @@ impl BlockKind {
             BlockKind::ListItem => "li",
             BlockKind::Blockquote => "blockquote",
             BlockKind::CodeBlock => "pre",
+            BlockKind::Math => "math",
             BlockKind::Table => "tbl",
             BlockKind::ThematicBreak => "hr",
         }
@@ -121,6 +125,7 @@ impl BlockKind {
             "li" => Some(BlockKind::ListItem),
             "blockquote" => Some(BlockKind::Blockquote),
             "pre" => Some(BlockKind::CodeBlock),
+            "math" => Some(BlockKind::Math),
             "tbl" => Some(BlockKind::Table),
             "hr" => Some(BlockKind::ThematicBreak),
             _ => None,

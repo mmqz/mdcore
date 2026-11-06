@@ -130,11 +130,12 @@ fn kind_from_tag(tag: &str) -> Result<BlockKind, ClError> {
         "li" => Ok(BlockKind::ListItem),
         "blockquote" => Ok(BlockKind::Blockquote),
         "pre" => Ok(BlockKind::CodeBlock),
+        "math" => Ok(BlockKind::Math),
         "tbl" => Ok(BlockKind::Table),
         "hr" => Ok(BlockKind::ThematicBreak),
         other => Err(bad_json(
             "kind",
-            format!("unknown `{other}` (p|h|li|blockquote|pre|tbl|hr)"),
+            format!("unknown `{other}` (p|h|li|blockquote|pre|math|tbl|hr)"),
         )),
     }
 }
@@ -146,6 +147,7 @@ fn kind_tag(kind: BlockKind) -> &'static str {
         BlockKind::ListItem => "li",
         BlockKind::Blockquote => "blockquote",
         BlockKind::CodeBlock => "pre",
+        BlockKind::Math => "math",
         BlockKind::Table => "tbl",
         BlockKind::ThematicBreak => "hr",
     }

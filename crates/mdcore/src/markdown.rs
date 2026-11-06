@@ -2,29 +2,47 @@
 //!
 //! v0 规则（刻意保持最小，偏差已登记 README）：
 //! - 行级解析：fence 聚合多行；`|` 开头连续行合并为 table；其余一行一块。
+//! - 数学块（#261）：`$$` 定界——单独 `$$` 行 fence 同构聚合（开行起、收行止）；
+//!   `$$x$$` 同行自含形态（行首尾皆 `$$` 且内容非空）；其余含 `$` 行不猜
+//!   （段落，行内 `$...$` 由 [`crate::inline`] 消费时派生，不进块级）。
 //! - 嵌套：list_item / blockquote 参与深度栈建树；quote 同深度连续行
-//!   复用同一容器（children = 段落）；paragraph/heading/fence/thematic 落根层。
+//!   复用同一容器（children = 段落）；paragraph/heading/fence/math/thematic 落根层。
 //! - 序列化：list 祖先贡献 2 空格缩进，quote 祖先贡献 "> " 前缀；
 //!   marks 不写入 MD（spike 同行为）；ID 不写入 MD（§8.3）。
-//! - round-trip 保证方向：parse → serialize → parse 结构等价（canonical 输入）。
+//! - round-trip 保证方向：parse → serialize → parse 结构等价（canonical 输入；
+//!   数学块恒规范化为 fence 形态，单行形态序列化后不再保留——结构等价口径）。
 
 use crate::tree::{Attrs, BlockKind, BlockTree, NodeId};
 
 // ---------- 渐进打开的 chunk 完整性（R10-a） ----------
 
-/// chunk 是否收在块边界上（无悬挂状态）。与 `markdown_to_tree` 的 fence
-/// 判定同规：任何以 ``` 开头的行翻转开合态（v0 语法不查闭合行 info string）。
-/// 悬挂 = 扫描结束时 fence 仍开启（闭合收在下一个 chunk）→ 调用方必须
+/// chunk 是否收在块边界上（无悬挂状态）。与 `markdown_to_tree` 的 fence/math
+/// 判定同规（状态机互斥：fence 内的 `$$` 行与 math 内的 ``` 行不翻对面状态——
+/// 两类围栏内文都是逐字面，不猜）；`$$x$$` 同行自含形态无悬挂态。
+/// 悬挂 = 扫描结束时任一围栏仍开启（闭合收在下一个 chunk）→ 调用方必须
 /// 重切边界；核内 `extend_from_markdown` 据此返回 Reject::IncompleteChunk。
 /// 其余块型（段落/列表/quote/table）单行自含，无悬挂态可检测。
 pub fn is_complete_chunk(md: &str) -> bool {
-    let mut open = false;
+    let mut fence_open = false;
+    let mut math_open = false;
     for line in md.split('\n') {
-        if line.starts_with("```") {
-            open = !open;
+        if fence_open {
+            // fence 判定不 trim——与解析器 strip_prefix 同规（历史行为，
+            // 不在本单改动面）。
+            if line.starts_with("```") {
+                fence_open = false;
+            }
+        } else if math_open {
+            if line.trim() == "$$" {
+                math_open = false;
+            }
+        } else if line.starts_with("```") {
+            fence_open = true;
+        } else if line.trim() == "$$" {
+            math_open = true;
         }
     }
-    !open
+    !fence_open && !math_open
 }
 
 // ---------- 序列化 ----------
@@ -67,6 +85,13 @@ fn render(
             emit(&format!("```{lang}"), out);
             emit(&node.text.to_string(), out);
             emit("```", out);
+        }
+        // 数学块恒规范化为 fence 形态（单行自含形态序列化后不再保留——
+        // round-trip 结构等价口径，见模块文档）。
+        BlockKind::Math => {
+            emit("$$", out);
+            emit(&node.text.to_string(), out);
+            emit("$$", out);
         }
         BlockKind::ThematicBreak => emit("---", out),
         BlockKind::ListItem => {
@@ -148,6 +173,28 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
             );
             attach(&mut tree, root, id);
             i = j + 1;
+            continue;
+        }
+        // 数学块（#261）：单独 `$$` 行 = fence 同构聚合；`$$x$$` 同行自含。
+        // 其余形态（`$$ x` 无收界 / 行中 `$`）不猜——落 paragraph（行内
+        // `$...$` 是消费时派生面，见 inline.rs，不进块级判定）。
+        let trimmed = line.trim();
+        if trimmed == "$$" {
+            let mut j = i + 1;
+            while j < lines.len() && lines[j].trim() != "$$" {
+                j += 1;
+            }
+            let inner = lines[i + 1..j.min(lines.len())].join("\n");
+            let id = tree.create_node(BlockKind::Math, &inner, Attrs::new(), Vec::new());
+            attach(&mut tree, root, id);
+            i = j + 1;
+            continue;
+        }
+        if trimmed.starts_with("$$") && trimmed.ends_with("$$") && trimmed.len() > 4 {
+            let inner = &trimmed[2..trimmed.len() - 2];
+            let id = tree.create_node(BlockKind::Math, inner, Attrs::new(), Vec::new());
+            attach(&mut tree, root, id);
+            i += 1;
             continue;
         }
         if line.trim().is_empty() {

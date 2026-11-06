@@ -25,6 +25,9 @@ pub enum BlockKind {
     ListItem,
     Blockquote,
     CodeBlock,
+    /// 数学块（#261）：`$$` 定界的 LaTeX 显示公式，text = 源码逐字。
+    /// 语义同构 CodeBlock（own-text 叶块、无子块、内容不参与行内解析）。
+    Math,
     Table,
     ThematicBreak,
 }

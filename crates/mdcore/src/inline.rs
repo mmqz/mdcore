@@ -18,6 +18,7 @@
 //! | `_斜体_` | `em` | 下划线；**词内禁用**（`snake_case_name` 防误伤——CommonMark `_` 语义） |
 //! | `***粗斜***` | `strong` + `em` | 三星 = 双 mark 叠加（同区间） |
 //! | `` `代码` `` | `code` | 单反引号对；内容逐字（内部不再解析任何定界符） |
+//! | `$数学$` | `math` | #261：单 dollar 对；净文本内容逐字（code 同构，含 pass B 叠加口径——内部 `*`/`_` 仍可产 em/strong mark，同 `` `a*b*c``` 既有行为）；opener 后随非空白 / closer 前邻非空白（`$5` 价格缘拒配）；`$$` 连跑整跑字面量（显示数学是块级域——markdown.rs）；`\$` 转义 |
 //! | `~~删除~~` | `del` | GFM 双波浪线（恰 2——1/3+ 按字面量） |
 //! | `<u>下划线</u>` | `u` | 小写精确标签对 |
 //!
@@ -55,6 +56,9 @@
 //!
 //! - 多字符 code span（``` ``a`b`` ```）——单反引号对足够覆盖编辑器
 //!   工具条（Mod-e 单星包裹）与常规文档；
+//! - 词内 `$` 数字缘（`$5$` / `总价 $5，另一处 $6$`）——flanking 仅挡空白缘
+//!   不挡数字缘（`$5^2$` 是合法数学，数字缘挡则误伤）；价格语境建议转义
+//!   `\$` 或依赖无闭合落字面量（`$5 and $10` 第二 `$` 前邻空白天然拒配）；
 //! - 链接/图片 `[t](u)`——模型无链接载荷（html.rs 同口径登记）；
 //! - HTML 行内标签（除 `<u>`）——透明字面量；
 //! - 嵌套**部分消费**（CommonMark 混合长度拆跑）——等长配对子集化；
@@ -114,6 +118,42 @@ pub fn parse_inline_marks(text: &str) -> (String, Vec<MarkSpan>) {
                 }
             }
             i += 1; // 未闭合 / 空内容 → 字面量
+        } else if c == '$' && !escaped[i] {
+            // $...$ 行内数学（#261）：单 dollar 对，净文本内容逐字
+            // （code span 同构——含 pass B 在内部叠加 em/strong 的既有
+            // 口径，文本不受影响）。
+            // 连跑规则：极大 $ 连跑长度 1 参与配对，≥2 整跑字面量
+            // （`$$` 是块级显示数学定界——markdown.rs 域，行内不消费；
+            // pass B `*`/`_` 4+ 同构裁决）。
+            let mut run_end = i + 1;
+            while run_end < len && chars[run_end] == '$' && !escaped[run_end] {
+                run_end += 1;
+            }
+            if run_end - i == 1 {
+                // 找下一个「孤 $」closer：自身未转义，且两侧都不是 $
+                // （连跑成员不可作 closer——`$x$$y` 不许拿连跑尾配对）。
+                if let Some(j) = (i + 1..len).find(|&j| {
+                    chars[j] == '$'
+                        && !escaped[j]
+                        && (j + 1 >= len || chars[j + 1] != '$')
+                        && chars[j - 1] != '$'
+                }) {
+                    // 内容非空 + flanking（opener 后随非空白 / closer 前邻
+                    // 非空白——`$5 and $10` 第二 `$` 前邻空白拒配；
+                    // 边界位视同满足，同 flanking() 口径）。
+                    let after_open = i + 1 < len && !chars[i + 1].is_whitespace();
+                    let before_close = !chars[j - 1].is_whitespace();
+                    if j > i + 1 && after_open && before_close {
+                        spans.push((i + 1, j, "math"));
+                        consumed[i] = true;
+                        consumed[j] = true;
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            // 连跑 ≥2 / 未闭合 / 空内容 / flanking 拒绝 → 整跑字面量。
+            i = run_end;
         } else {
             i += 1;
         }
@@ -213,9 +253,9 @@ pub fn parse_inline_marks(text: &str) -> (String, Vec<MarkSpan>) {
 }
 
 /// 转义域（CommonMark ASCII 标点子集——本模块涉及的定界符 + 反斜杠
-/// 自身）。域外 `\x` 原样保留（反斜杠字面量，非转义）。
+/// 自身；#261 起 `$` 入域）。域外 `\x` 原样保留（反斜杠字面量，非转义）。
 fn is_escapable(c: char) -> bool {
-    matches!(c, '*' | '_' | '~' | '`' | '<' | '\\')
+    matches!(c, '*' | '_' | '~' | '`' | '<' | '\\' | '$')
 }
 
 /// chars 是否以标签字面量开头（精确、大小写敏感）。
@@ -500,5 +540,125 @@ mod tests {
         let (clean, marks) = one("**壹佰贰拾万元整**：含税总价");
         assert_eq!(clean, "壹佰贰拾万元整：含税总价");
         assert_eq!(marks, vec![(0, 7, "strong".to_string())]);
+    }
+
+    // ---- $...$ 行内数学（#261）----
+
+    #[test]
+    fn math_basic() {
+        let (clean, marks) = one("$E=mc^2$ 是质能方程");
+        assert_eq!(clean, "E=mc^2 是质能方程");
+        assert_eq!(marks, vec![(0, 6, "math".to_string())]);
+    }
+
+    #[test]
+    fn math_two_pairs_sequential() {
+        let (clean, marks) = one("$a$ 与 $b$ 并列");
+        assert_eq!(clean, "a 与 b 并列");
+        assert_eq!(
+            marks,
+            vec![(0, 1, "math".to_string()), (4, 5, "math".to_string())]
+        );
+    }
+
+    #[test]
+    fn math_price_single_dollar_literal() {
+        // 无闭合 → 字面量（$5 价格不误伤）。
+        let (clean, marks) = one("总价 $5 元");
+        assert_eq!(clean, "总价 $5 元");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_price_pair_flanking_reject() {
+        // closer 前邻空白 → 拒配 → 两个 $ 全字面量（价格语境主防线）。
+        let (clean, marks) = one("price $5 and $10 total");
+        assert_eq!(clean, "price $5 and $10 total");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_opener_flanking_reject() {
+        // opener 后随空白 → 拒配（`$ a $` 不猜）。
+        let (clean, marks) = one("公式 $ a $ 不是数学");
+        assert_eq!(clean, "公式 $ a $ 不是数学");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_unclosed_literal() {
+        let (clean, marks) = one("没闭合 $x 的公式");
+        assert_eq!(clean, "没闭合 $x 的公式");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_escaped_dollar() {
+        // `\$` 转义：反斜杠剔除、$ 字面保留（`$` 入转义域——#261）。
+        let (clean, marks) = one(r"\$5\$ 不配对");
+        assert_eq!(clean, "$5$ 不配对");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_double_dollar_run_literal_inline() {
+        // `$$` 连跑 = 块级显示数学域，行内整跑字面量。
+        let (clean, marks) = one("行内 $$x$$ 不消费");
+        assert_eq!(clean, "行内 $$x$$ 不消费");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_run_member_not_closer() {
+        // 连跑成员不可作 closer：`$x$$y` 孤 $ 无孤 closer → 全字面量。
+        let (clean, marks) = one("$x$$y");
+        assert_eq!(clean, "$x$$y");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_empty_pair_literal() {
+        // 空内容（`$$` 相邻）→ 连跑字面量（块级域；空 math 不可表达）。
+        let (clean, marks) = one("空 $$ 对");
+        assert_eq!(clean, "空 $$ 对");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn math_code_span_priority_by_position() {
+        // 左先赢：反引号在前的 code span 先消费，其后 $ 无闭合落字面量。
+        let (clean, marks) = one("`$x` 后面 $y$");
+        assert_eq!(clean, "$x 后面 y");
+        assert_eq!(
+            marks,
+            vec![(0, 2, "code".to_string()), (6, 7, "math".to_string())]
+        );
+    }
+
+    #[test]
+    fn math_inside_code_span_not_paired() {
+        // code span 内的 $ 是内容（i 跳过区域不扫描）。
+        let (clean, marks) = one("`$a$` 代码内不配对");
+        assert_eq!(clean, "$a$ 代码内不配对");
+        assert_eq!(marks, vec![(0, 3, "code".to_string())]);
+    }
+
+    #[test]
+    fn math_pass_b_overlay_code_isomorphic() {
+        // pass B 叠加口径（code 同构）：内部 `*` 产 em，净文本逐字。
+        // 输出定序 (start,end,kind)：math(0,3) 先于 em(1,2)。
+        let (clean, marks) = one("$a*b*c$");
+        assert_eq!(clean, "abc");
+        assert_eq!(
+            marks,
+            vec![(0, 3, "math".to_string()), (1, 2, "em".to_string())]
+        );
+    }
+
+    #[test]
+    fn math_cjk_content() {
+        let (clean, marks) = one("设 $速度v$ 为常量");
+        assert_eq!(clean, "设 速度v 为常量");
+        assert_eq!(marks, vec![(2, 5, "math".to_string())]);
     }
 }

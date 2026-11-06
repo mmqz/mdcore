@@ -388,3 +388,51 @@ fn shadow_full_rematerialize_equivalence_after_mixed_ops() {
     must_op(&mut h, &mut o);
     assert!(md(&h).starts_with("# 头"), "got {}", md(&h));
 }
+
+// ---------------------------------------------------------------------------
+// #261：Math 块过桥（协作域 tag "math" 双射 + 重物化 kind 保真）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_block_bridge_roundtrip_kind_preserved() {
+    // mdcore Math 过桥 → 协作域元素 tag = "math" → 全量重物化回 Math。
+    let mut h = host(7_300_777);
+    let mut o = insert_text(vec![], 0, BlockKind::Math, "\\int_0^1 x\\,dx");
+    let r = must_op(&mut h, &mut o);
+    let bid = match r.outcome {
+        mdc_collab::CommandOutcome::BlockInserted { block_id } => block_id,
+        o => panic!("outcome {o:?}"),
+    };
+    // 协作域读回：kind = Math（wire 元素 tag math → from_tag 双射）。
+    let doc = h.session().document();
+    assert_eq!(doc.len(), 1);
+    assert_eq!(doc[0].kind, mdc_collab::BlockKind::Math);
+    assert_eq!(doc[0].text, "\\int_0^1 x\\,dx");
+    // shadow 增量投影（kind + 文本）。
+    assert_eq!(md(&h), "$$\n\\int_0^1 x\\,dx\n$$");
+    // 全量重物化：kind 保真（增量 vs 重物化覆盖等价）。
+    let incremental = h.tree().clone();
+    h.materialize().expect("rematerialize");
+    assert_trees_coverage_eq(&incremental, h.tree(), "math rematerialize");
+    assert_eq!(h.tree().node(h.tree().top_level()[0]).kind, BlockKind::Math);
+    // block_id 稳定（family 身份跨物化不变）。
+    assert!(h.path_of(&bid).is_some(), "family 身份跨物化稳定");
+}
+
+#[test]
+fn math_block_dual_run_matches_bare_tree() {
+    // 双跑对照：Math 插入过桥 vs 裸树直施——覆盖等价（翻译不改写）。
+    let seq = vec![
+        insert_text(vec![], 0, BlockKind::Paragraph, "前文"),
+        insert_text(vec![], 1, BlockKind::Math, "E=mc^2"),
+        Op::ReplaceText {
+            path: vec![1],
+            start: 0,
+            end: 0,
+            insert: "公式：".into(),
+        },
+    ];
+    let (h, bare) = dual_run(seq, "math dual run");
+    assert_eq!(md(&h), md_of(&bare));
+    assert_eq!(md(&h), "前文\n$$\n公式：E=mc^2\n$$");
+}

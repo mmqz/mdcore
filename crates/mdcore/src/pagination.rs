@@ -268,6 +268,13 @@ fn walk(
                 b.code_lines += 1;
             }
         }
+        // 数学块同构 CodeBlock：LaTeX 源逐字，字面行数即行消耗
+        // （#261——导出面同构降级为等宽逐行，分页口径与发射对齐）。
+        BlockKind::Math => {
+            for _ in node.text.to_string().split('\n') {
+                b.code_lines += 1;
+            }
+        }
         BlockKind::Table => {
             b.table_lines += table_line_count(&node.text.to_string(), params);
         }
