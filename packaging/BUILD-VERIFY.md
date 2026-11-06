@@ -1,10 +1,14 @@
 # Q3-3 构建可行性验证报告（BUILD-VERIFY）
 
 > 范围：**只做技术验证，不发布**（checklist A1/A2 定名与商标流程未完成，
-> `{{APP_NAME}}`/`mang` 命名面零触碰——CI 内测包按既有约定以 `mdcore`
+> `{{APP_NAME}}`/mang 命名面零触碰——CI 内测包按既有约定以 `mdcore`
 > 工作名出）。验证环境：Debian 13 沙箱（x86_64，无 docker / 无 sudo /
 > 无 makensis；GTK3+WebKit2GTK 4.1 开发栈来自仓外 optroot 提取树）。
 > 日期：2026-10-28 · 版本单源 `mdcore::VERSION` = **0.1.0**（#29 任务 3）
+>
+> **2026-11-06 更新（#228 R4·P0 打包链修复）**：§3 Windows NSIS 由
+> 「阻塞登记」更新为「链路就位」（本节内含三断链处置与实机复核清单）；
+> macOS 构建路径由后续分支收口（issue #228 任务 4）。
 
 ---
 
@@ -98,13 +102,62 @@ SHA256 `b71580d61aa871aadc75d1d5554a4e8e1db7b29240ae4adb4f3a6d34bfce86d5`
 
 ---
 
-## 3. Windows NSIS ❌ 阻塞（明确原因）
+## 3. Windows NSIS ✅ 链路就位（#228 R4 修复，2026-11-06 更新）
 
-`makensis` 不在环境（Linux 交叉构建 NSIS 需 `nsis` 包；本沙箱无 sudo
-不可装；亦无 Windows 环境）。`packaging/nsis/installer.nsi.tpl` 模板在档
-未验。解除路径：任一有 `makensis` 的环境跑
-`makensis -DVERSION=0.1.0 packaging/nsis/installer.nsi.tpl`（模板的
-`{{}}` 注入面届时需先核对一遍——与 AppRun 同类占位符风险）。
+> Q3-3 原状（阻塞登记）：`makensis` 不在环境、模板未验——本节保留
+> 历史事实，修复后链路如下。**安装行为面（注册表/快捷方式/.md 关联/
+> 自检弹窗）仍需 Lead Windows 实机复核**（CI 只产包不装包）。
+
+### 三断链处置（审计 P2-37 → #228）
+
+| 断链 | 根因 | 处置 |
+|---|---|---|
+| 1. `{{VERSION}}` 无注入机制 | 模板占位符零机制；示例 `-DVERSION` 与 NSIS 方言不匹配（Windows 为 `/D`，且模板从不消费 define）→ 字面进 exe 名/注册表 | `packaging/nsis/build-installer.py` 从根 Cargo.toml `[workspace.package].version`（= `mdcore::VERSION` 单源，r24 锁背书）渲染注入；残留占位符 / APPVERSION 不一致 / 产物名不含版本 → 非零退出（链路可验证） |
+| 2. WebView2 引导链（URL 定义未用 + `ExecWait` 幽灵 `$TEMP\wv2setup.exe`） | 该面属旧 tao+wry 壳（mdshell-native） | **面移除**：主线壳 mang-shell 走 GPU 自绘渲染（DirectX 后端），无 WebView 运行时依赖（windows-check.yml 对 mdshell-native 的 GTK 排除注释同源）；旧壳为 Linux GTK 面，不随 Windows 安装包分发 |
+| 3. `File "..\.."` 与仓根执行示例矛盾 | **NSIS `File`/`OutFile` 按脚本目录解析而非调用 CWD**（本轮探针实证：脚本在 X 目录、cwd=Y 时，`File "a/f"` 找 X/a/f、OutFile 落 X/）——相对路径在「脚本目录 vs CWD」两套语义下天然歧义，旧模板与仓根示例任一单侧假设都必 not-found | 载荷统一 staging（`build/nsis/payload/mdcore.exe` = mang-shell.exe 重命名 + `pdfium.dll`），模板路径一律构建器注入**绝对路径**（as_posix，Windows makensis 同收正斜杠）——任何解析语义/平台零歧义；构建器与 makensis 均以仓根为工作目录（统一口径，双层保险） |
+
+### 新增：安装后部署自检（#224 能力复用）
+
+`Call DeploySmoke` 跑 `mdcore.exe --check-pdfium`（退出码合同：0 = 已
+绑定 / 3 = 未绑定）。失败弹窗给修复指引（复跑命令），**不回滚安装**
+（Markdown/Word 面不依赖 pdfium）；报告全文进安装日志（详情页）。
+
+### 命令（可复现；Lead Windows 实机正式出包口径）
+
+```bash
+# 0) 前置：NSIS 3.x（`choco install nsis -y` 或官网安装）+ python3 + rustup
+# 1) 构建主线壳（release）
+cargo build --manifest-path mang-shell/Cargo.toml --release --locked
+# 2) pdfium 取件（pin chromium/8086，与 windows-test.yml / docs/INSTALL.md 同源）
+#    https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8086/pdfium-win-x64.tgz
+#    SHA256 1fd8af952832dbb0eb16d9249f68fe09e5f5ebf7c3dd9f6066ea2720cc28487d
+#    解出 bin/pdfium.dll 放到 bin/lib/pdfium.dll
+# 3) 一键出包（仓根执行；版本注入断言内置）
+python packaging/nsis/build-installer.py
+# 产物：build/nsis/mdcore-setup-<VERSION>.exe + SHA256 输出
+```
+
+### 验证状态
+
+- **本地（Linux，Debian nsis 3.11 + NSISDIR 指路）**：stub 载荷全链绿
+  ——版本提取 0.1.0 → staging → 渲染（占位符零残留）→ makensis 编译 →
+  产物 `mdcore-setup-0.1.0.exe`（109,192 B，stub）+ SHA256；
+- **CI（`windows-installer.yml`）**：debug 内测口径（restore 复用
+  test-shell 的 mang-shell 缓存面控分钟数）产 installer artifact；
+- **待 Lead Windows 实机复核清单**：安装/卸载走查；注册表
+  `DisplayName=mang` / `DisplayVersion=<版本>` / `InstallDir`；开始菜单
+  快捷方式；.md 关联；安装后自检弹窗（拔掉 `pdfium.dll` 复跑安装应见
+  告警而非静默）。
+
+### 登记边界（诚实面）
+
+- CI 内测包 = **debug** 构建（正式出包走上文 release 命令）；
+- mang-shell 为独立 workspace，版本号未接入根 `[workspace.package]`
+  单源机制（结构上无法 `version.workspace` 继承）——当前两值一致
+  （0.1.0）；若根版本 bump 后漂移，安装包版本以 mdcore::VERSION
+  （根单源）为准，mang-shell `--version` 对齐留后续任务；
+- NSIS 方言验证 = Debian makensis 3.11（本地）+ choco nsis 3.x（CI）
+  双实证；安装行为面无法在 CI 复现（不装包），以实机复核清单收口。
 
 ---
 
@@ -114,8 +167,11 @@ SHA256 `b71580d61aa871aadc75d1d5554a4e8e1db7b29240ae4adb4f3a6d34bfce86d5`
 |---|---|---|---|---|---|
 | Linux deb | ✅ | ✅ 四面 | ✅ GUI | ⛔ 无 docker（命令已备） | 2.4 MiB |
 | Linux AppImage | ✅ | ✅ | ✅ GUI | ⚠️ webkit 助手路径限制（登记） | 100.5 MiB |
-| Windows NSIS | ⛔ | — | — | — | — |
+| Windows NSIS | ✅（CI + 本地 makensis 3.11） | ✅ 版本注入断言（#228） | —（CI 不装包） | ⛔ 待 Lead 实机（清单见 §3） | 见 §3 |
+| macOS .app | ⏳ 待后续分支（#228 任务 4） | — | — | — | — |
 
 **Q3-3 结论**：deb/AppImage 两条构建链在修复 5 个实测缺陷后**可构建、
-可启动**；NSIS 与 docker 安装面阻塞原因明确可复现。定名/商标流程
-（checklist A1/A2）未完成，`{{APP_NAME}}`/`mang` 面零触碰，未发布。
+可启动**；NSIS 链路已由 #228 修复就位（见 §3——安装行为面待 Lead 实机
+复核）；macOS 构建路径待 #228 后续分支；docker 安装面阻塞原因明确
+可复现。定名/商标流程（checklist A1/A2）未完成，`{{APP_NAME}}`/`mang`
+面零触碰，未发布。
