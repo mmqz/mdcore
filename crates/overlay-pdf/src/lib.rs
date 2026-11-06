@@ -33,6 +33,7 @@
 //! - `engine-pdfium`：`NativeAnnotationAdapter::plan`（pdfium
 //!   `positioned_chars` 字符几何——库经 mdc-pdf 定位序绑定）。
 
+pub mod native;
 pub mod view;
 
 use mdc_overlay::geometry::{CharBox, PageBox};
@@ -49,6 +50,7 @@ pub struct PageChars {
     pub page_box: PageBox,
 }
 
+pub use native::{PdfNativeAdapter, PROJECTION_AUTHOR_DEFAULT};
 pub use view::{PdfOverlayViewAdapter, ViewError};
 
 /// Emphasis → /Highlight 的默认颜色（PDF 惯例黄）。
