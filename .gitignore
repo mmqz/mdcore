@@ -18,6 +18,10 @@ test-artifacts/pdf-organize-corpus/**/*.pdf
 # ——chi_sim 2.4MB > 2MB 纪律，取件见该目录 fetch_tessdata.sh）
 test-artifacts/ocr-tessdata/*.traineddata
 
+# #264 真实 PDF 语料（取件脚本 + PROVENANCE + README 入库；
+# PDF 二进制不入库——28.3MB/78 件，取件见该目录 fetch_corpus.py）
+test-artifacts/pdf-corpus/**/*.pdf
+
 # sdk/python：uv/venv 虚拟环境不入库（uv 会在 .venv 内自放 .gitignore，
 # 此处兜底 python -m venv 等无自忽略的场景）
 .venv/

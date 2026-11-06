@@ -1,0 +1,785 @@
+{
+ "fetched_at": "2026-11-06T10:53:32",
+ "files": [
+  {
+   "category": "encrypted",
+   "name": "AES128ExposedMeta.pdf",
+   "repo": "apache/pdfbox",
+   "note": "AES-128 加密、元数据可读",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/AES128ExposedMeta.pdf",
+   "bytes": 18885,
+   "pages": null,
+   "sha256": "998e95a72db2ae5c89dcec07be00530cc4ad75df1ae82e27357f8ce735be690f"
+  },
+  {
+   "category": "encrypted",
+   "name": "AES256ExposedMeta.pdf",
+   "repo": "apache/pdfbox",
+   "note": "AES-256 加密、元数据可读",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/AES256ExposedMeta.pdf",
+   "bytes": 26953,
+   "pages": null,
+   "sha256": "c8dbdfb034d7deb98f2d2b05d63228db1336a26bfe7c74ecd1e60400cae1ee21"
+  },
+  {
+   "category": "encrypted",
+   "name": "AESkeylength128.pdf",
+   "repo": "apache/pdfbox",
+   "note": "AES-128 密钥长度探针",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/AESkeylength128.pdf",
+   "bytes": 11591,
+   "pages": null,
+   "sha256": "4c9633e68c8a6ece14bc79ae997d44b24868d38d2beea182314807b51d925b7b"
+  },
+  {
+   "category": "encrypted",
+   "name": "AESkeylength256.pdf",
+   "repo": "apache/pdfbox",
+   "note": "AES-256 密钥长度探针",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/AESkeylength256.pdf",
+   "bytes": 11180,
+   "pages": null,
+   "sha256": "a6701f87b613013d960c740efe52ca7fb2ae61e52a109b0bbaee4affffe26d72"
+  },
+  {
+   "category": "encrypted",
+   "name": "PasswordSample-128bit.pdf",
+   "repo": "apache/pdfbox",
+   "note": "128bit 密码加密样张",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/PasswordSample-128bit.pdf",
+   "bytes": 8377,
+   "pages": null,
+   "sha256": "1919480aba35617d69a1f9e1dce30bbe6864b3906d5c136fd7a8837826f9f750"
+  },
+  {
+   "category": "encrypted",
+   "name": "PasswordSample-256bit.pdf",
+   "repo": "apache/pdfbox",
+   "note": "256bit 密码加密样张",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/PasswordSample-256bit.pdf",
+   "bytes": 7664,
+   "pages": null,
+   "sha256": "a2f0661092483478686d92891905d9e715c9783b45ecf26376d7119fe5ab4747"
+  },
+  {
+   "category": "encrypted",
+   "name": "PasswordSample-40bit.pdf",
+   "repo": "apache/pdfbox",
+   "note": "RC4-40bit 密码加密（老式）",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/PasswordSample-40bit.pdf",
+   "bytes": 8374,
+   "pages": null,
+   "sha256": "7dac5439bed47d4630866f2acb75fd22386069649c2dcb88236c2ed5f020b05b"
+  },
+  {
+   "category": "encrypted",
+   "name": "preEnc_20141025_105451.pdf",
+   "repo": "apache/pdfbox",
+   "note": "真实预加密件（扫描产物）",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/preEnc_20141025_105451.pdf",
+   "bytes": 41305,
+   "pages": 1,
+   "sha256": "3d756cc7b12b54955288646d846202c5e09038c8e5a32fc49c65a316a937f209"
+  },
+  {
+   "category": "encrypted",
+   "name": "Acroform-PDFBOX-2333.pdf",
+   "repo": "apache/pdfbox",
+   "note": "加密 + AcroForm 混合形态",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/Acroform-PDFBOX-2333.pdf",
+   "bytes": 982290,
+   "pages": 1,
+   "sha256": "88dd0f53b5e9d0596aba4853bce26a11d25790fc7f25a20462c4908e9e68bd99"
+  },
+  {
+   "category": "encrypted",
+   "name": "test.pdf",
+   "repo": "apache/pdfbox",
+   "note": "加密基线件",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/org/apache/pdfbox/encryption/test.pdf",
+   "bytes": 12418,
+   "pages": 1,
+   "sha256": "93256e712348392f3841a51d6e6e16774dcf5e2405073ebc55c64b64ac606446"
+  },
+  {
+   "category": "encrypted",
+   "name": "encrypted-attachment.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "加密容器内嵌附件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/encrypted-attachment.pdf",
+   "bytes": 2719,
+   "pages": 1,
+   "sha256": "0f44da5152adf8cafcd7b0057d840310d78e17d033ee5414da0881b6dcd130ab"
+  },
+  {
+   "category": "forms",
+   "name": "annotation-button-widget.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "按钮控件 AcroForm",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-button-widget.pdf",
+   "bytes": 23785,
+   "pages": 1,
+   "sha256": "f7b1c9c7b2ecb909f6b168cc1b137230076533f977a205472b212b7f0d3a78d7"
+  },
+  {
+   "category": "forms",
+   "name": "annotation-choice-widget.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "选择控件 AcroForm",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-choice-widget.pdf",
+   "bytes": 91556,
+   "pages": 1,
+   "sha256": "2fcab2aed82afe9775359c1d166fb7aae77e99d25fe03be177e233d02d572538"
+  },
+  {
+   "category": "forms",
+   "name": "annotation-text-widget.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "文本控件 AcroForm",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-text-widget.pdf",
+   "bytes": 93171,
+   "pages": 1,
+   "sha256": "9f091ceb368ad0406094efaa6c50d5033735ee52f383e0973dc53a7467089d7c"
+  },
+  {
+   "category": "forms",
+   "name": "acroform_calculation_order.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "字段计算顺序 CO 数组",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/acroform_calculation_order.pdf",
+   "bytes": 1041,
+   "pages": 1,
+   "sha256": "9081aad78cb6bb1871eb5c51addbe75ce73e4617a3e1fa15aa3da21232b6b755"
+  },
+  {
+   "category": "forms",
+   "name": "file_pdfjs_form.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "pdf.js 自产基础表单",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/file_pdfjs_form.pdf",
+   "bytes": 8586,
+   "pages": 1,
+   "sha256": "808af1e794952475e8af824ad1ee6ac41d6646de122e5ac91975e75b0951c80b"
+  },
+  {
+   "category": "forms",
+   "name": "form_two_pages.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "跨两页表单字段",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/form_two_pages.pdf",
+   "bytes": 23136,
+   "pages": 2,
+   "sha256": "6d7c608d0102fa1e1b3cbc2c3b0a989783e90f84ff1a7fe7cbdb6dc2a1b60fbd"
+  },
+  {
+   "category": "forms",
+   "name": "checkbox-bad-appearance.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "坏 appearance 流的复选框",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/checkbox-bad-appearance.pdf",
+   "bytes": 19872,
+   "pages": 1,
+   "sha256": "0cd13bf7375a2b6b9b01bb694aefcfe9dac225105cb9ad7e03798783b3318ad9"
+  },
+  {
+   "category": "forms",
+   "name": "annotation-tx.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "文本字段 appearance",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-tx.pdf",
+   "bytes": 11672,
+   "pages": 1,
+   "sha256": "c7be52654eaede8a9f33757168957f938f56e73fcd4c53539db5672dee426208"
+  },
+  {
+   "category": "forms",
+   "name": "annotation-tx2.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "文本字段 appearance 变体",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-tx2.pdf",
+   "bytes": 21285,
+   "pages": 1,
+   "sha256": "9612df43f8c48b574ddc7a81c0781b864235f7ff328dc9b9e646b924a8706650"
+  },
+  {
+   "category": "forms",
+   "name": "xfa_issue14315.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "XFA 动态表单",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/xfa_issue14315.pdf",
+   "bytes": 11568,
+   "pages": 1,
+   "sha256": "d039a40ea28384bae8d1a24929a4288aae1aeb433c441fd39c04fad618fa6f19"
+  },
+  {
+   "category": "forms",
+   "name": "xfa_filled_imm1344e.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "真实加拿大移民表单（已填写 XFA，2.9MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/xfa_filled_imm1344e.pdf",
+   "bytes": 3023968,
+   "pages": 1,
+   "sha256": "8313c52ea97b49908137fd744e85fc37584b502210fcc0a73d6c272cca9d7889"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-border-styles.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "边框样式族",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-border-styles.pdf",
+   "bytes": 89833,
+   "pages": 1,
+   "sha256": "ba3a3c67030f9be2ad2c1989b78ec302501f71cecb4e5ebf193f6ce9ca51ff56"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-caret-ink.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "插入符 + 墨迹",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-caret-ink.pdf",
+   "bytes": 93680,
+   "pages": 1,
+   "sha256": "afdc6fb72e8dcb8f0796a48388fc011e9db212e18d1d7b8cf95b327e88cf6ce9"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-fileattachment.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "文件附件注释",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-fileattachment.pdf",
+   "bytes": 93322,
+   "pages": 1,
+   "sha256": "b2f3751cd63e2402d95673f763e52fb105e6ce8e0b41406ca6d9965f5c894d43"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-freetext.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "自由文本",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-freetext.pdf",
+   "bytes": 86024,
+   "pages": 1,
+   "sha256": "318ed4bead93fa6ff023571b17ddca41e82fe2347b497ea24903a11e1892fb71"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-highlight.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "高亮",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-highlight.pdf",
+   "bytes": 92397,
+   "pages": 1,
+   "sha256": "72b6387356ccfdfb95a0a5eff5e1ceb9b7667019807d7b04abaf64dad7ea143a"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-line.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "线条",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-line.pdf",
+   "bytes": 84943,
+   "pages": 1,
+   "sha256": "cea9ed8cf5726fa643da0c083bc8db8df790ab5e7ee9a2b62224aab73d9fa742"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-link-text-popup.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "链接 + 弹窗",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-link-text-popup.pdf",
+   "bytes": 98997,
+   "pages": 1,
+   "sha256": "06917202feda6b6bb8b57b048655f946f749bdff5a8bfcb35eb0116f38910312"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-polyline-polygon.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "折线/多边形",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-polyline-polygon.pdf",
+   "bytes": 88691,
+   "pages": 1,
+   "sha256": "66303646dd550366994f6715678863536617093335825dda3c123616555b69e2"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-square-circle.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "矩形/椭圆",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-square-circle.pdf",
+   "bytes": 88740,
+   "pages": 1,
+   "sha256": "88ed9ed813c3585b3098b9f4eef5107426f7829044117cd87f77bdc38a8e3f72"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-squiggly.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "波浪线",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-squiggly.pdf",
+   "bytes": 93644,
+   "pages": 1,
+   "sha256": "95a2af9d01c2e532711a1483d58a258e469f3ff0e7dd1c2ae45c70bd8f9bb6e8"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-stamp.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "图章",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-stamp.pdf",
+   "bytes": 88903,
+   "pages": 1,
+   "sha256": "76d566c092c23ccbec4bb488c40dc6daec8a381cb5386452b186728652436704"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-strikeout.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "删除线",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-strikeout.pdf",
+   "bytes": 91804,
+   "pages": 1,
+   "sha256": "ca7225dbdc6f8a26814cf0d67f5c509589e2cc09ace6bdb04a375a266db5b708"
+  },
+  {
+   "category": "annotations",
+   "name": "annotation-underline.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "下划线",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-underline.pdf",
+   "bytes": 92151,
+   "pages": 1,
+   "sha256": "ef04b7049d5cab49c702887c423f20cfecf76d36905772209cc6781425d8f671"
+  },
+  {
+   "category": "bookmarks",
+   "name": "outline_goto_action.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "大纲 + GoTo 动作",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/outline_goto_action.pdf",
+   "bytes": 1061,
+   "pages": 2,
+   "sha256": "7b653d3e95ca550509abcfd3887754d2ec0c68da330ec03a95c77bdb47479ecc"
+  },
+  {
+   "category": "bookmarks",
+   "name": "outlines_for_editor.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "编辑器大纲",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/outlines_for_editor.pdf",
+   "bytes": 2982,
+   "pages": 5,
+   "sha256": "084e3b2eb28f5d512f12cd3871bb8b161226f5ee43c82f89c7c5ee0987f58d1e"
+  },
+  {
+   "category": "bookmarks",
+   "name": "nested_outline.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "嵌套大纲",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/nested_outline.pdf",
+   "bytes": 5929,
+   "pages": 9,
+   "sha256": "1283aa2173bc57def82323ea2601a4e08ada5beb2466873aec8aa04ddd74c013"
+  },
+  {
+   "category": "bookmarks",
+   "name": "outlines_se.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "瑞典语大纲（非 ASCII 标题）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/outlines_se.pdf",
+   "bytes": 30444,
+   "pages": 2,
+   "sha256": "11d268780724faf63110612a4625923420d2f60075c07d5365d2c9197d1c04cd"
+  },
+  {
+   "category": "scanned",
+   "name": "scan-bad.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "坏扫描件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/scan-bad.pdf",
+   "bytes": 29832,
+   "pages": 1,
+   "sha256": "d40f31f182cf254ab134826d379875acacb1f7b48bf1a57bce2e30b38d16628e"
+  },
+  {
+   "category": "scanned",
+   "name": "perf_images_scan_bilevel.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "双级扫描图像",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/perf_images_scan_bilevel.pdf",
+   "bytes": 124234,
+   "pages": 1,
+   "sha256": "3fabd640596805188db89117c50613e1897502329ac16ac4cab8a1049fb86ad8"
+  },
+  {
+   "category": "scanned",
+   "name": "perf_images_scan_gray.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "灰度扫描图像（1.7MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/perf_images_scan_gray.pdf",
+   "bytes": 1736302,
+   "pages": 1,
+   "sha256": "a2404eebb2dd6f7451009dc8034e0236c03db43d36c5f49f916d0a67257e39e8"
+  },
+  {
+   "category": "multicolumn",
+   "name": "tracemonkey_with_editable_annotations.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "学术论文双栏 + 可编辑注释（pdf.js 渲染基准件，1.2MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/tracemonkey_with_editable_annotations.pdf",
+   "bytes": 1212647,
+   "pages": 14,
+   "sha256": "1c673d35678a8fde066ed70ada527a07f8674e4f6d8ef817ab97f742b1405d38"
+  },
+  {
+   "category": "multicolumn",
+   "name": "freeculture.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "《Free Culture》整书（Lawrence Lessig，书籍排版，2.5MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/freeculture.pdf",
+   "bytes": 2598727,
+   "pages": 352,
+   "sha256": "753441c619c529c8d0fc3e7e470f07c9547838fc7229bea8c1dcf854acee03b4"
+  },
+  {
+   "category": "multicolumn",
+   "name": "survey.pdf",
+   "repo": "apache/pdfbox",
+   "note": "学术调查问卷（双栏 + 表格）",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/input/rendering/survey.pdf",
+   "bytes": 127295,
+   "pages": 9,
+   "sha256": "2e8b87ea72de7dd54176354706a5d7ff9e64a12624e603ffac64aa55743bf581"
+  },
+  {
+   "category": "mixed",
+   "name": "comments.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "tracemonkey 论文注释版（真实评论导出，1MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/comments.pdf",
+   "bytes": 1065760,
+   "pages": 14,
+   "sha256": "283b215db9937fcdf148b22e7310892d148e43047bccffa6bf56eb4156592e5d"
+  },
+  {
+   "category": "mixed",
+   "name": "highlights.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "真实高亮集（946KB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/highlights.pdf",
+   "bytes": 969276,
+   "pages": 14,
+   "sha256": "025a8235824da8fdc2a73503d78ec0a658eb9f6620380108807e27013ae3a07d"
+  },
+  {
+   "category": "mixed",
+   "name": "issue5567.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "用户 bug 附件（2.1MB 真实文档）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue5567.pdf",
+   "bytes": 2169844,
+   "pages": 1,
+   "sha256": "35431e73744702c34b0a4295867550dba020afca0c85c5d7d3100533d27abfdc"
+  },
+  {
+   "category": "mixed",
+   "name": "issue6961.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "用户 bug 附件（2.1MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue6961.pdf",
+   "bytes": 2156587,
+   "pages": 2,
+   "sha256": "7d3431ea9aa0256ca3cc65a850d7f1389b204f1629cb98bc17e1dd5d30d60110"
+  },
+  {
+   "category": "mixed",
+   "name": "issue6286.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "用户 bug 附件（1.9MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue6286.pdf",
+   "bytes": 1909445,
+   "pages": 1,
+   "sha256": "3499439d8b1b51fcc62c908f8cbd4b08beaf18248b81bf2d73d552ae42fef9aa"
+  },
+  {
+   "category": "mixed",
+   "name": "issue19971.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "用户 bug 附件（1.7MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue19971.pdf",
+   "bytes": 1729186,
+   "pages": 6,
+   "sha256": "178c6207203151cf4036cd377d233e92a3cfb07e7787dd68bc2b2203d5ef3ce1"
+  },
+  {
+   "category": "mixed",
+   "name": "issue8795_reduced.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "裁剪后的真实件（4.1MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue8795_reduced.pdf",
+   "bytes": 4244537,
+   "pages": 1,
+   "sha256": "6d8595632bf38ba15fe333dd9a11d5dffc3454bfa8374e6f1622826112735447"
+  },
+  {
+   "category": "mixed",
+   "name": "issue10529.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "隐藏文本编码件（真实用户场景）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10529.pdf",
+   "bytes": 120681,
+   "pages": 1,
+   "sha256": "01e1abc883c25e4b7d952d260717da5f533b23ccd8d5b10d95f4d8581b294f42"
+  },
+  {
+   "category": "mixed",
+   "name": "issue10301.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "希伯来文 RTL 文本件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10301.pdf",
+   "bytes": 31364,
+   "pages": 1,
+   "sha256": "8f0824799c19c3385b90dadd2f0a58494b245962e8a62e9f36f559b01cb2e572"
+  },
+  {
+   "category": "mixed",
+   "name": "issue1045.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "用户件（裁剪字体形）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue1045.pdf",
+   "bytes": 22741,
+   "pages": 1,
+   "sha256": "12cc65e222f51d7885ef5c5901bf38bd331315c9f599611939620fcdb4a4bbc4"
+  },
+  {
+   "category": "mixed",
+   "name": "issue10402.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "用户件（裁剪字体形）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10402.pdf",
+   "bytes": 20955,
+   "pages": 1,
+   "sha256": "f19aa17aae85e18e441363ce927d8d793d41eb59ea811d0332ebbb536f0c58f9"
+  },
+  {
+   "category": "mixed",
+   "name": "issue11144_reduced.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "裁剪后的真实件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue11144_reduced.pdf",
+   "bytes": 98144,
+   "pages": 1,
+   "sha256": "3342fa04cb3bd01bed1be5ee26256951f7b9ef900132ee2dd2b20a2621b22a2d"
+  },
+  {
+   "category": "mixed",
+   "name": "issue11150_reduced.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "裁剪后的真实件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue11150_reduced.pdf",
+   "bytes": 32378,
+   "pages": 1,
+   "sha256": "39b6f068dccd68989952f5aa1d412933f1157fecb001b1428aa672e7b257ba8f"
+  },
+  {
+   "category": "mixed",
+   "name": "issue10084_reduced.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "裁剪后的真实件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10084_reduced.pdf",
+   "bytes": 15165,
+   "pages": 1,
+   "sha256": "7920065ec84e4b2fa3224736ce9f1dd35623be1d147a0204512a65a1ac78fb5e"
+  },
+  {
+   "category": "mixed",
+   "name": "4PP-Highlighting.pdf",
+   "repo": "apache/pdfbox",
+   "note": "双栏高亮渲染 4 页件",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/input/rendering/4PP-Highlighting.pdf",
+   "bytes": 2497,
+   "pages": 1,
+   "sha256": "38c5add7f2ab569d67bce57191686d27ff3cd67f694cebad753121b0d22af7e9"
+  },
+  {
+   "category": "mixed",
+   "name": "tiger-as-form-xobject.pdf",
+   "repo": "apache/pdfbox",
+   "note": "Form XObject 嵌套绘制",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/input/rendering/tiger-as-form-xobject.pdf",
+   "bytes": 50798,
+   "pages": 1,
+   "sha256": "ab356726b3d0bc0e48d0312a4369aa45d21e68d8db2ac2f61f71d99d52eec68f"
+  },
+  {
+   "category": "mixed",
+   "name": "PDFJS-9279-reduced.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "裁剪后的真实件（3MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/PDFJS-9279-reduced.pdf",
+   "bytes": 3090252,
+   "pages": 1,
+   "sha256": "b3067f37e7b2ea17ac0cc547644c32f77174d2d409106893a939b702b0bde617"
+  },
+  {
+   "category": "broken",
+   "name": "bad-PageLabels.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "坏 PageLabels 数组",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/bad-PageLabels.pdf",
+   "bytes": 798,
+   "pages": 1,
+   "sha256": "eff0ee7d1cf2e1a7ccfb25a8fc4c2bbea0ec23c838b61a199a57dbb732ddeaad"
+  },
+  {
+   "category": "broken",
+   "name": "boundingBox_invalid.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "无效 boundingBox",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/boundingBox_invalid.pdf",
+   "bytes": 1263,
+   "pages": 3,
+   "sha256": "f85be7aaf217f8f1864b910501d4aeea53f3d7a503df5b81dd6aaa267e5968ad"
+  },
+  {
+   "category": "broken",
+   "name": "helloworld-bad.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "坏 HelloWorld",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/helloworld-bad.pdf",
+   "bytes": 745,
+   "pages": 1,
+   "sha256": "c3e22ea5d7e6f5b7218d76abce4284728889df516a93c1b74a82c4fd69aa1639"
+  },
+  {
+   "category": "broken",
+   "name": "devicen-none-zero-domain.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "DeviceN 零域",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/devicen-none-zero-domain.pdf",
+   "bytes": 780,
+   "pages": 1,
+   "sha256": "aff262dc5d70f832cadf2c705b5cf7a0651825e4b0627f25cd4129aa1d10d09e"
+  },
+  {
+   "category": "broken",
+   "name": "zerowidthline.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "零宽线",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/zerowidthline.pdf",
+   "bytes": 6569,
+   "pages": 1,
+   "sha256": "cc3ee77c644b2824af036500a2c69955d27869ea03773eeebe75ab4dc142ac3d"
+  },
+  {
+   "category": "broken",
+   "name": "multiple-filters-length-zero.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "多过滤器零长度流",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/multiple-filters-length-zero.pdf",
+   "bytes": 18374,
+   "pages": 1,
+   "sha256": "7988a74a1a2a383c42a80631ce196d1a895ce88fe9b16d0bf9fdab9c6d63542f"
+  },
+  {
+   "category": "broken",
+   "name": "zero_descent.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "零下降字体度量",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/zero_descent.pdf",
+   "bytes": 66554,
+   "pages": 1,
+   "sha256": "9f49dae4e2ee60c81283e2d42fc39ca4ab9308345ef9bcef1ddcce746ae45619"
+  },
+  {
+   "category": "broken",
+   "name": "annotation-line-without-appearance-empty-Rect.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "空 Rect 注释",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/annotation-line-without-appearance-empty-Rect.pdf",
+   "bytes": 969,
+   "pages": 1,
+   "sha256": "920062508a60278f9dabb25992538b45ccf13deda97687365b81cf775d034bd5"
+  },
+  {
+   "category": "broken",
+   "name": "issue10438_reduced.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "结构异常裁剪件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10438_reduced.pdf",
+   "bytes": 723,
+   "pages": 1,
+   "sha256": "c30600728c95c1c851e7fc3c36a3e95b71c431bf89d2277cfe5c04ad569623f8"
+  },
+  {
+   "category": "broken",
+   "name": "issue10542_reduced.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "结构异常裁剪件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10542_reduced.pdf",
+   "bytes": 930,
+   "pages": 1,
+   "sha256": "7dccc9576825869cc5cef1baa9982551b6c91928fdbef4d91183bd1ad5febbc5"
+  },
+  {
+   "category": "broken",
+   "name": "issue1055r.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "结构异常件",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue1055r.pdf",
+   "bytes": 1016,
+   "pages": 1,
+   "sha256": "72b7e38e23c71d59baaee17be567ee6b9b06eebdc280301b547e15b543c8906e"
+  },
+  {
+   "category": "broken",
+   "name": "issue11124.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "零页结构异常",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue11124.pdf",
+   "bytes": 756,
+   "pages": 1,
+   "sha256": "6d81255db53b94e361cd33245114de781172b8b75a9a62562f8b7aabd091be62"
+  },
+  {
+   "category": "captions",
+   "name": "issue11045.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "机翼图 Figure 1 图注（X_NP/X_CG 标注）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue11045.pdf",
+   "bytes": 40875,
+   "pages": 1,
+   "sha256": "16e57e98a1a5560f2dcaa8315570da1193d5f52e20393ea8572ce37c54c7a755"
+  },
+  {
+   "category": "captions",
+   "name": "issue10640.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "Open Sans LATEX 文档（figure 引用排版）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10640.pdf",
+   "bytes": 50264,
+   "pages": 1,
+   "sha256": "2f07579b9f8044cb887e6da59a92df65047e0ed42d79b67085d0f89045b1d53b"
+  },
+  {
+   "category": "tables",
+   "name": "issue10900.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "四列数值对齐表格（真实数据）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue10900.pdf",
+   "bytes": 34085,
+   "pages": 1,
+   "sha256": "54f5e3a559cc7c053051e716a09245abd7cf1835ea777c62f050f7f54963caec"
+  },
+  {
+   "category": "tables",
+   "name": "source.pdf",
+   "repo": "apache/pdfbox",
+   "note": "捷克语报纸表格布局（mBank 框架表格）",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/input/rendering/source.pdf",
+   "bytes": 231552,
+   "pages": 1,
+   "sha256": "2db2bc95562d7a98c20f3294cca6e87b8c47867c60c2debbcb2081e42e0d62e9"
+  }
+ ]
+}
