@@ -64,6 +64,15 @@ MAKENSIS_FALLBACKS = [
 PLACEHOLDER_RE = re.compile(r"\{\{[A-Z_]+\}\}")
 
 
+def nsis_path(p: Path) -> str:
+    """路径 → NSIS 脚本内字符串：**原生分隔符**（Windows 反斜杠 /
+    Linux 正斜杠）。CI 二跑实证（run 42148862647）：Windows makensis 的
+    File 命令对正斜杠绝对路径报 no files found（NSIS 路径预处理不吃
+    正斜杠）；Debian 侧正斜杠即原生。NSIS 字符串中反斜杠为字面量
+    （仅 $-token 转义，路径不含 $）。"""
+    return str(p.resolve())
+
+
 def die(msg: str) -> None:
     print(f"[build-installer] FAIL: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -151,12 +160,16 @@ def main() -> None:
     )
 
     # ── 2) 模板渲染（占位符集：VERSION/OUT_FILE/PAYLOAD_EXE/PAYLOAD_DLL）──
-    # 路径一律绝对（as_posix——Windows makensis 同收正斜杠）：NSIS 的
-    # File/OutFile 按脚本目录解析而非调用 CWD（探针实证见模板头注与
-    # BUILD-VERIFY §3），绝对路径在任何解析语义/平台下零歧义。
-    out_file = (out_dir / f"mdcore-setup-{version}.exe").resolve().as_posix()
-    payload_exe = exe_dst.resolve().as_posix()
-    payload_dll = pdfium_dst.resolve().as_posix()
+    # 路径一律绝对且用**原生分隔符**（nsis_path）：Windows makensis 的
+    # File 不收正斜杠绝对路径（CI 二跑实证），NSIS File/OutFile 又按
+    # 脚本目录解析而非调用 CWD（探针实证，模板头注）——两个坑叠加，
+    # 绝对原生路径是唯一零歧义形。
+    # 编码 = utf-8-sig（带 BOM）：Windows makensis 对无 BOM 脚本按 ACP
+    # 读（CI 二跑实证 "(ACP)"——中文注释乱码）；BOM = 显式 UTF-8，
+    # 双平台 makensis 均正确识别（Debian 3.11 本地 (UTF8) 验证）。
+    out_file = nsis_path(out_dir / f"mdcore-setup-{version}.exe")
+    payload_exe = nsis_path(exe_dst)
+    payload_dll = nsis_path(pdfium_dst)
     tpl = tpl_path.read_text(encoding="utf-8")
     rendered = (
         tpl.replace("{{VERSION}}", version)
@@ -165,7 +178,7 @@ def main() -> None:
         .replace("{{PAYLOAD_DLL}}", payload_dll)
     )
     nsi_out.parent.mkdir(parents=True, exist_ok=True)
-    nsi_out.write_text(rendered, encoding="utf-8", newline="\n")
+    nsi_out.write_text(rendered, encoding="utf-8-sig", newline="\n")
     print(f"[build-installer] 渲染：{tpl_path.relative_to(ROOT)} -> {nsi_out.relative_to(ROOT)}")
 
     # ── 3) 渲染校验（链路可验证：不匹配即失败）───────────────────────
