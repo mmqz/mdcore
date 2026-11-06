@@ -1733,6 +1733,13 @@ pub fn read_docx_from_bytes_with_options(
 /// 模型解析 → 关系联接提取 + run 级图片引用计数。
 fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, DocxError> {
     let strict = !opts.compat;
+    // #234：OLE2 魔数前置（异源 .doc 改名 .docx 的真实形态）——先于
+    // zip 装载识别，不再误报 EOCD 容器损坏（可操作指引随错误变体）。
+    if io::is_ole2(bytes) {
+        return Err(DocxError::Container(io::ReadError::LegacyOfficeFormat {
+            expect: "docx",
+        }));
+    }
     let cursor = std::io::Cursor::new(bytes);
     let mut za = zip::ZipArchive::new(cursor)
         .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
