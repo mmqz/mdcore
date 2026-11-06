@@ -217,6 +217,13 @@ fn map_error(e: &ReadError) -> ImportError {
             code: "container_invalid_part",
             message: e.to_string(),
         },
+        // #234：防御性映射（xlsx 读入口未接 OLE2 嗅探——.xls 改名
+        // .xlsx 同构问题守边界登记于 #234；变体可达性：仅 docx 入口产
+        // 生。若未来 xlsx 接线，码面随之专化）。
+        ReadError::LegacyOfficeFormat { .. } => ImportError {
+            code: "container_legacy_format",
+            message: e.to_string(),
+        },
     }
 }
 
@@ -1138,6 +1145,10 @@ mod tests {
             detail: "truncated".into(),
         });
         assert_eq!(e.code, "container_invalid_part");
+        // #234：防御性臂（xlsx 入口不可达——见 map_error 注释）。
+        let e = map_error(&ReadError::LegacyOfficeFormat { expect: "xlsx" });
+        assert_eq!(e.code, "container_legacy_format");
+        assert!(e.message.contains("OLE2"));
     }
 
     /// 敌意面：垃圾字节 → container_corrupt typed 拒。
