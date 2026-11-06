@@ -1523,7 +1523,7 @@ mod tests {
     /// 直构单块树（marks/attrs 精确控制——op/html 导入面的模型等价物）。
     fn single(kind: BlockKind, text: &str, attrs: Attrs, marks: Vec<MarkSpan>) -> BlockTree {
         let mut tree = BlockTree::new();
-        let id = tree.create_node(kind, text, attrs, marks, None);
+        let id = tree.create_node(kind, text, attrs, marks);
         let root = tree.root();
         let len = tree.node(root).children.len();
         tree.insert_child(root, len, id).expect("test attach");

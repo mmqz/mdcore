@@ -117,7 +117,11 @@ pub fn apply_op(tree: &mut BlockTree, op: &mut Op) -> Result<(), OpError> {
                 None => tree.alloc_id(),
             };
             *id = Some(block_id.0);
-            let node = tree.create_node(*kind, text, attrs.clone(), Vec::new(), Some(block_id));
+            // #244（I4/I5）：物化 ID 落树必经撞号守卫——undo 跨会话回放
+            // 携旧 ID 撞上重解析存活块时，此处显式 Err（事务回滚），绝不
+            // 静默覆盖 id_index。新分配路径结构性无撞（分配器单调）。
+            let node =
+                tree.create_node_with_id(*kind, text, attrs.clone(), Vec::new(), block_id)?;
             tree.insert_child(parent_id, *index, node)?;
         }
         Op::RemoveBlock { path } => {

@@ -192,13 +192,19 @@ fn to_snap(data: &NodeData) -> SnapNode {
 }
 
 fn build(tree: &mut BlockTree, parent: NodeId, snap: &SnapNode) {
-    let node = tree.create_node(
-        snap.kind,
-        &snap.text,
-        snap.attrs.clone(),
-        snap.marks.clone(),
-        Some(BlockId(snap.id)),
-    );
+    // #244：物化 ID 落树走撞号守卫。from_json 产物已过 validate（重复
+    // ID 在反序列化边界拒收）——此 expect 仅对「程序化构造未 validate」
+    // 的误用路径响亮报错（Core::restore 文档要求先自行 validate），此前
+    // 为静默覆盖毒化树。
+    let node = tree
+        .create_node_with_id(
+            snap.kind,
+            &snap.text,
+            snap.attrs.clone(),
+            snap.marks.clone(),
+            BlockId(snap.id),
+        )
+        .expect("snapshot rebuild: duplicate block id — from_json output is validated; programmatic snapshots must call validate() first");
     let len = tree.node(parent).children.len();
     tree.insert_child(parent, len, node)
         .expect("snapshot rebuild: append under parent");

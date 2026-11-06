@@ -526,7 +526,7 @@ mod tests {
     /// 直构单块树（t18 测试助手同款——attrs/marks 精确控制）。
     fn single(kind: BlockKind, text: &str, attrs: Attrs, marks: Vec<MarkSpan>) -> BlockTree {
         let mut tree = BlockTree::new();
-        let id = tree.create_node(kind, text, attrs, marks, None);
+        let id = tree.create_node(kind, text, attrs, marks);
         let root = tree.root();
         let len = tree.node(root).children.len();
         tree.insert_child(root, len, id).expect("test attach");

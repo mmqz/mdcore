@@ -179,16 +179,39 @@ impl Core {
     pub fn from_markdown_with_clock(md: &str, clock: ClockFn) -> Self {
         let mut core = Self::with_clock(clock);
         core.tree = markdown::markdown_to_tree(md);
-        // genesis 记录：使 Revision 日志自含初始文档（重放 = 空核 + 日志即可复原）。
-        // 物化 ID（Some）：重放时按原身份重建（R8 §8.2 语义）。
+        core.record_genesis();
+        core
+    }
+
+    /// #244 路线 A：按持久化 ID 表构建（`open_document` 主路径）。
+    ///
+    /// ID 表 = `save_document` 写出的文档先序表（父先子后，跳过虚根）；
+    /// 数量/重复校验在 [`BlockTree::reassign_ids`]（先校验后动手，失败零
+    /// 副作用）。Err 仅源自数量失配（meta 与正文失同步）——调用方
+    /// （open_document）据此降级：先序重发 + 丢弃历史（宁可丢撤销，
+    /// 不赌旧结构路径静默写错位置）。
+    pub fn from_markdown_with_ids(md: &str, ids: &[BlockId]) -> Result<Self, Reject> {
+        let mut core = Self::with_clock(Arc::new(system_ms));
+        core.tree = markdown::markdown_to_tree(md);
+        core.tree
+            .reassign_ids(ids)
+            .map_err(|e| Reject::Invalid(format!("open_document blocks: {e:?}")))?;
+        core.record_genesis();
+        Ok(core)
+    }
+
+    /// genesis 记录：使 Revision 日志自含初始文档（重放 = 空核 + 日志即可
+    /// 复原）。物化 ID（Some）：重放时按原身份重建（R8 §8.2 语义）——
+    /// from_markdown_with_ids 路径下携带的是持久化恢复后的 ID。
+    fn record_genesis(&mut self) {
         let mut ops = Vec::new();
         let root_path: NodePath = Vec::new();
-        for (i, &t) in core.tree.top_level().iter().enumerate() {
-            push_subtree_ops(&core.tree, t, &root_path, i, &mut ops, true);
+        let top: Vec<tree::NodeId> = self.tree.top_level().to_vec();
+        for (i, &t) in top.iter().enumerate() {
+            push_subtree_ops(&self.tree, t, &root_path, i, &mut ops, true);
         }
-        core.log
+        self.log
             .record(0, &ops, Source::View, Some("genesis".into()));
-        core
     }
 
     /// 宿主时钟注入（wasm32 无 SystemTime；合并窗 / entry.at_ms 由宿主提供）。
