@@ -1,0 +1,228 @@
+//! pdfm_acrobat_parity —— issue #229：Acrobat Reader 1:1 功能对齐验收面
+//! （高频六面之五：打开/渲染/表单/签名/标注；打印 = 已登记缺口，见
+//! `docs/pdf-acrobat-parity.md` §缺口清单与跟进 issue）。
+//!
+//! 定位：**验收聚合**（用户旅程口径），不是新语义——各面精细语义锁在
+//! 既有测试组（pdfc_engine / pdfg_forms / pdfj_forms_adv / pdfi_signature /
+//! pdff2_annotate / pdfl_forms_incremental …），本文件把高频面串成
+//! 「Acrobat 用户能完成这件事」的最小闭环断言，作为 parity 清单
+//! （`docs/pdf-acrobat-parity.md`）的自动化锚点——清单每行的「测试锚点」
+//! 列指向本文件对应 `parity_*` 函数（或既有测试组）。
+//!
+//! 高频面 × 本文件映射：
+//! 1. 打开 → `parity_open_all_fixtures_pdfium_loads_and_counts` /
+//!    `parity_open_all_fixtures_lopdf_writer_parses`（双路装载全夹具谱）
+//! 2. 渲染 → `parity_render_first_page_bitmap`（位图合同 + 真实落笔）
+//! 3. 表单 → `parity_form_fill_save_reopen`（填值→增量保存→重开可见）
+//! 4. 签名 → `parity_signature_read_and_signed_probe`（读签名 + 已签名探针）
+//! 5. 标注 → `parity_annotation_add_persist_remove`（增→存→重开→删→零残留）
+//! 6. 打印 → **无测试**（能力缺失：全仓零打印管线——Rust 侧无 print API/
+//!    命令/菜单；P1 缺口已开 issue 跟进，不静默）。
+//!
+//! 环境合同与 pdfc_engine.rs 同源（不静默 skip）：pdfium 库走引擎定位序
+//! （env `MDC_PDFIUM_LIB` → 候选清单 → 系统），fixtures 走 crate 本地
+//! `fixtures/`（env `MDC_PDF_TEST_FIXTURES` 覆盖面见 pdfc_engine.rs）。
+
+#![cfg(any(feature = "engine-pdfium", feature = "engine-lopdf"))]
+
+use std::path::PathBuf;
+
+use mdc_pdf::page::PageIndex;
+
+fn fixtures() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
+}
+
+fn fixture_bytes(name: &str) -> Vec<u8> {
+    let path = fixtures().join(name);
+    std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {name} 读取失败：{e}"))
+}
+
+/// parity 打开面夹具谱：普通/书签/表单×3/签名/扫描——覆盖仓内全部
+/// 真实形态 PDF（`crates/pdf/fixtures/`，生成器 gen_*.py 在档）。
+const PARITY_FIXTURES: &[&str] = &[
+    "small.pdf",
+    "bookmarked.pdf",
+    "form_probe.pdf",
+    "form_advanced.pdf",
+    "form_bid_letter.pdf",
+    "signed_sample.pdf",
+    "scanned_mixed.pdf",
+];
+
+// ---------------------------------------------------------------- 1. 打开
+
+/// 高频面①打开（pdfium 读路）：全夹具谱装载成功 + 页数 ≥1 + 基线夹具
+/// 页数精确锚（small.pdf = 3 页，Letter 构造参数——pdfc_engine 锁 1 同锚）。
+#[cfg(feature = "engine-pdfium")]
+#[test]
+fn parity_open_all_fixtures_pdfium_loads_and_counts() {
+    use mdc_pdf::engine::DocumentEngine;
+    use mdc_pdf::engine_pdfium::PdfiumEngine;
+    for name in PARITY_FIXTURES {
+        let engine = PdfiumEngine::open(fixture_bytes(name))
+            .unwrap_or_else(|e| panic!("{name} pdfium 打开失败：{e:?}"));
+        assert!(
+            engine.page_count() >= 1,
+            "{name} 页数应 ≥ 1（0 页 = OpenError::EmptyDocument 语义）"
+        );
+    }
+    let small = PdfiumEngine::open(fixture_bytes("small.pdf")).unwrap();
+    assert_eq!(small.page_count(), 3, "基线夹具页数精确锚");
+}
+
+/// 高频面①打开（lopdf 写路装载）：写侧管线对全夹具谱可解析
+/// （`LopdfWriter::from_bytes`——注释/表单保存的装载入口）。
+#[cfg(feature = "engine-lopdf")]
+#[test]
+fn parity_open_all_fixtures_lopdf_writer_parses() {
+    use mdc_pdf::writer_lopdf::LopdfWriter;
+    for name in PARITY_FIXTURES {
+        LopdfWriter::from_bytes(fixture_bytes(name))
+            .unwrap_or_else(|e| panic!("{name} lopdf 装载失败：{e:?}"));
+    }
+}
+
+// ---------------------------------------------------------------- 2. 渲染
+
+/// 高频面②渲染：首页位图合同（缓冲 w*h*4 + Letter 等比 300→388）+
+/// 真实落笔（非全零 + 白底主导——pdfc_engine 锁 8/9 的验收聚合）。
+#[cfg(feature = "engine-pdfium")]
+#[test]
+fn parity_render_first_page_bitmap() {
+    use mdc_pdf::engine_pdfium::PdfiumEngine;
+    use mdc_pdf::render::{Rasterizer, RenderRequest};
+
+    let mut engine = PdfiumEngine::open(fixture_bytes("small.pdf")).unwrap();
+    let page = engine
+        .rasterize(RenderRequest {
+            page: PageIndex(0),
+            width_px: 300,
+        })
+        .unwrap();
+
+    assert_eq!(page.width_px, 300, "渲染宽度 = 请求宽");
+    assert_eq!(page.height_px, 388, "Letter 等比高（612×792 → 300×388）");
+    assert_eq!(page.bgra.len(), 300 * 388 * 4, "位图缓冲合同 w*h*4（BGRA）");
+
+    let nonzero = page.bgra.iter().filter(|&&b| b != 0).count();
+    assert!(nonzero > 0, "渲染缓冲非全零（pdfium 确实落笔）");
+    let white: usize = page
+        .bgra
+        .chunks_exact(4)
+        .filter(|px| px[0] >= 240 && px[1] >= 240 && px[2] >= 240 && px[3] == 255)
+        .count();
+    assert!(
+        white * 2 > 300 * 388,
+        "白底应主导（白像素 {} / 总 {}——真实文档页非噪声图）",
+        white,
+        300 * 388
+    );
+}
+
+// ---------------------------------------------------------------- 3. 表单
+
+/// 高频面③表单：填值 → **增量保存**（前缀逐位不变——#227 语义）→
+/// 重开新值可见（Acrobat「填表并保存」旅程的最小闭环）。
+/// 精细语义（修订段计数/链传递/守卫）锁在 pdfl_forms_incremental。
+#[cfg(feature = "engine-lopdf")]
+#[test]
+fn parity_form_fill_save_reopen() {
+    use mdc_pdf::forms::{FormField, PdfForm};
+
+    let original = fixture_bytes("form_bid_letter.pdf");
+    let mut form = PdfForm::read(&original).unwrap();
+    form.set_field("project_name", "智慧园区弱电工程").unwrap();
+    let out = form.save().unwrap();
+
+    assert!(
+        out.starts_with(&original),
+        "增量保存产物必须以原字节为逐位前缀（全量重写 = #227 修复前缺陷形态）"
+    );
+
+    let back = PdfForm::read(&out).unwrap();
+    let Some(FormField::Text { value, .. }) = back.field("project_name") else {
+        panic!("project_name 应为文本域");
+    };
+    assert_eq!(value, "智慧园区弱电工程", "填值重开可见（中文往返无损）");
+}
+
+// ---------------------------------------------------------------- 4. 签名
+
+/// 高频面④签名：读签名（签名人/结构有效）+ 已签名探针（表单保存保护面
+/// 的判定原语，#227）。密码学验签不在 v1 范围（pdfi_signature 头注登记
+/// ——自签证书夹具，结构面与真实签名一致）。
+#[cfg(feature = "engine-lopdf")]
+#[test]
+fn parity_signature_read_and_signed_probe() {
+    use mdc_pdf::forms::PdfForm;
+    use mdc_pdf::signature::read_signatures;
+
+    let sigs = read_signatures(&fixture_bytes("signed_sample.pdf")).unwrap();
+    assert_eq!(sigs.len(), 1, "应读出 1 个签名域");
+    assert!(
+        sigs[0].structurally_valid,
+        "结构应完整：{:?}",
+        sigs[0].structural_issue
+    );
+    assert!(
+        sigs[0].signer_name.is_some(),
+        "签名人应可读（/Name 缺省回退证书 CN）"
+    );
+
+    let signed_form = PdfForm::read(&fixture_bytes("signed_sample.pdf")).unwrap();
+    assert!(
+        signed_form.has_signed_signature_fields(),
+        "已签名探针：signed_sample.pdf 应阳性"
+    );
+    let plain_form = PdfForm::read(&fixture_bytes("form_bid_letter.pdf")).unwrap();
+    assert!(
+        !plain_form.has_signed_signature_fields(),
+        "已签名探针：未签署表单应阴性（不误伤）"
+    );
+}
+
+// ---------------------------------------------------------------- 5. 标注
+
+/// 高频面⑤标注：增（Note）→ 存（增量）→ **重开可见** → 删 → 存 →
+/// 重开零残留（Acrobat「加批注/保存/删除」旅程的最小闭环）。
+/// 11 kind 字段级往返锁在 pdff2_annotate；增量/脏集锁在 pdfd_writer。
+#[cfg(feature = "engine-lopdf")]
+#[test]
+fn parity_annotation_add_persist_remove() {
+    use mdc_pdf::annotate::PdfAnnotator;
+    use mdc_pdf::annotation::{AnnotationKind, Origin, Rect};
+
+    let src = fixture_bytes("small.pdf");
+    let mut writer = PdfAnnotator::open(src.clone()).unwrap();
+    assert_eq!(writer.list(None).len(), 0, "small.pdf 无既有标注");
+
+    let id = writer
+        .add(
+            PageIndex(0),
+            AnnotationKind::Note {
+                rect: Rect::new(80.0, 700.0, 100.0, 720.0).unwrap(),
+            },
+            "parity",
+            Origin::Human,
+        )
+        .unwrap();
+    let _ = id;
+    writer.save().unwrap();
+    let product = writer.product_bytes();
+    assert!(
+        product.starts_with(&src),
+        "标注保存 = 增量修订（前缀逐位不变——PDF-d 语义）"
+    );
+
+    // 重开可见（持久化实证——非仅内存态）。
+    let mut reopened = PdfAnnotator::open(product).unwrap();
+    assert_eq!(reopened.list(None).len(), 1, "保存产物重开应含 1 条标注");
+
+    // 删除 → 保存 → 重开零残留。
+    let id = reopened.list(None)[0].id;
+    reopened.remove(id).unwrap();
+    reopened.save().unwrap();
+    let after = PdfAnnotator::open(reopened.product_bytes()).unwrap();
+    assert_eq!(after.list(None).len(), 0, "删除保存后重开应零标注");
+}
