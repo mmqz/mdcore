@@ -57,8 +57,10 @@
 pub mod anchor;
 pub mod contract;
 pub mod geometry;
+pub mod index;
 pub mod mark;
 pub mod render;
+pub mod store;
 
 pub use anchor::{
     AnchorError, Bounds, CoordSpace, FallbackLocator, GeometricSpan, PdfOrigin, PrimaryLocator,
@@ -69,8 +71,10 @@ pub use contract::{
     ProjectionPlan, ProjectionReport, ProjectionResult, ProjectionTarget,
 };
 pub use geometry::{quads_for_range, CharBox, GeometryError, PageBox, PointF, Quad};
+pub use index::{IndexError, IndexKey, OverlayIndex};
 pub use mark::{AnnotationId, EntryError, MarkError, OverlayEntry, OverlayMark};
 pub use render::{OverlayStyle, RenderHint, RenderSemantic};
+pub use store::{OverlaySidecar, OverlayStore, OverlayStoreError, OVERLAY_SCHEMA_VERSION};
 
 /// 标注目标文档的格式域（issue #239 §三：格式域知识，非引擎依赖）。
 ///
