@@ -1,0 +1,9181 @@
+{
+ "spec": [
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Tabs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Backslash escapes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Entity and numeric character references",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Precedence",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.3333,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.5,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.7273,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.6667,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Thematic breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "ATX headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Setext headings",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Indented code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8889,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Fenced code blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.75,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "HTML blocks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Link reference definitions",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Paragraphs",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Blank lines",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.7273,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.7778,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8667,
+   "error": null
+  },
+  {
+   "section": "Block quotes",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8571,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8462,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "List items",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Lists",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Inlines",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Code spans",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Emphasis and strong emphasis",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Links",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Images",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Autolinks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Raw HTML",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Hard line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Soft line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Soft line breaks",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Textual content",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Textual content",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "Textual content",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  }
+ ],
+ "markdown_it": [
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.3333,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.5,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.7273,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.6667,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8889,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.75,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.7273,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.7778,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8667,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8571,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 0.8462,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  },
+  {
+   "section": "markdown-it",
+   "idempotent": true,
+   "alive": true,
+   "preserve": 1.0,
+   "error": null
+  }
+ ],
+ "low_preserve_sections": {
+  "Thematic breaks": {
+   "n": 3,
+   "avg": 0.111
+  }
+ },
+ "stats": {
+  "spec": {
+   "total": 655,
+   "idempotent": 655,
+   "alive": 655,
+   "preserve_sum": 649.9413000000001,
+   "idempotent_rate": 1.0,
+   "alive_rate": 1.0,
+   "preserve_avg": 0.9923
+  },
+  "markdown_it": {
+   "total": 652,
+   "idempotent": 652,
+   "alive": 652,
+   "preserve_sum": 646.9413000000001,
+   "idempotent_rate": 1.0,
+   "alive_rate": 1.0,
+   "preserve_avg": 0.9922
+  }
+ }
+}

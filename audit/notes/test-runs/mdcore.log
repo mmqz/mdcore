@@ -1,0 +1,367 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdcore-77c83839bbcf9e04)
+
+running 79 tests
+test chunk::tests::children_inherit_parent_fields_and_concat ... ok
+test chunk::tests::block_range_matches_blocks_json_preorder ... ok
+test chunk::tests::cjk_and_ascii_sentence_boundaries ... ok
+test chunk::tests::code_block_verbatim_no_inline_strip ... ok
+test chunk::tests::content_addressed_id_change_localized ... ok
+test chunk::tests::determinism_custom_policy_and_plain_doc ... ok
+test chunk::tests::empty_document_no_chunks ... ok
+test chunk::tests::exact_parent_limit_closes_chunk ... ok
+test chunk::tests::fingerprint_matches_fingerprint_content_domain ... ok
+test chunk::tests::heading_enters_text_and_updates_path ... ok
+test chunk::tests::heading_path_ancestor_chain_correctness ... ok
+test chunk::tests::heading_path_three_levels_and_deep_truncation ... ok
+test chunk::tests::determinism_same_document_two_passes_byte_equal ... ok
+test chunk::tests::nested_list_and_quote_traversal ... ok
+test chunk::tests::no_sentence_boundary_hard_split ... ok
+test chunk::tests::oversized_single_block_own_parent ... ok
+test chunk::tests::parent_child_id_domain_separation ... ok
+test chunk::tests::plain_text_length_split_multi_parents ... ok
+test chunk::tests::plain_text_no_headings_single_section ... ok
+test chunk::tests::policy_validation_rejects ... ok
+test chunk::tests::section_boundary_flushes_with_old_path ... ok
+test chunk::tests::table_projection_net_cells_delimiter_dropped ... ok
+test chunk::tests::thematic_break_skipped_but_spanned ... ok
+test fingerprint::tests::hasher_is_deterministic_and_domain_tagged ... ok
+test document::tests::uuidv7_layout_bits ... ok
+test fingerprint::tests::normalize_folds_whitespace_only ... ok
+test fingerprint::tests::similarity_corners ... ok
+test history::tests::note_boundary_updates_merge_window_without_stack_effects ... ok
+test id::tests::monotonic_never_recycles ... ok
+test inline::tests::adjacent_code_and_strong_overlay ... ok
+test inline::tests::backslash_escape ... ok
+test inline::tests::cjk_flanking_full_width_punctuation ... ok
+test inline::tests::closer_after_opener_unmatched_then_opener_role ... ok
+test inline::tests::code_span_verbatim_no_inner_parsing ... ok
+test inline::tests::em_star_and_underscore ... ok
+test inline::tests::empty_content_literal ... ok
+test inline::tests::gfm_del ... ok
+test inline::tests::mixed_length_no_pairing ... ok
+test inline::tests::multiple_spans_same_line ... ok
+test inline::tests::nesting_via_overlay ... ok
+test inline::tests::opener_before_whitespace_not_opener ... ok
+test inline::tests::plain_text_unchanged ... ok
+test inline::tests::run_over_three_literal ... ok
+test inline::tests::star_intraword_allowed ... ok
+test inline::tests::strong_basic ... ok
+test inline::tests::strong_closer_cjk_colon ... ok
+test inline::tests::tilde_domain_exactly_two ... ok
+test inline::tests::triple_is_strong_plus_em_overlay ... ok
+test inline::tests::two_strong_pairs_sequential ... ok
+test inline::tests::unclosed_all_literal ... ok
+test inline::tests::underline_tag ... ok
+test inline::tests::underscore_intraword_forbidden_snake_case_safe ... ok
+test tests::empty_core_invariants ... ok
+test tests::op_text_shared_across_log_events_and_clones ... ok
+test tests::system_apply_ops_filtered_from_undo_stack ... ok
+test word_count::tests::blockquote_child_paragraph_counted ... ok
+test word_count::tests::boundary_cjk_range_ends_exact ... ok
+test word_count::tests::boundary_extension_b_not_counted ... ok
+test word_count::tests::boundary_fullwidth_digits_and_cjk_punctuation ... ok
+test word_count::tests::code_block_counted_verbatim ... ok
+test word_count::tests::code_span_content_verbatim ... ok
+test word_count::tests::empty_document_all_zero ... ok
+test word_count::tests::core_word_count_forwards_tree_count ... ok
+test word_count::tests::heading_counted_exclusively ... ok
+test word_count::tests::inline_marks_stripped_net_text ... ok
+test word_count::tests::list_items_counted_not_paragraphs ... ok
+test word_count::tests::marks_present_text_counted_verbatim ... ok
+test word_count::tests::mixed_cjk_and_western ... ok
+test word_count::tests::pure_cjk_paragraph ... ok
+test word_count::tests::pure_western_words ... ok
+test word_count::tests::table_cells_counted_structure_symbols_not ... ok
+test word_count::tests::table_escaped_pipe_unescaped_to_literal ... ok
+test word_count::tests::table_separator_only_after_first_row_dropped ... ok
+test word_count::tests::thematic_break_zero_contribution ... ok
+test word_count::tests::total_words_is_sum_invariant ... ok
+test word_count::tests::unclosed_marks_literal_kept ... ok
+test word_count::tests::whitespace_excluded_everywhere ... ok
+test word_count::tests::word_boundary_not_crossing_blocks_or_cells ... ok
+test word_count::tests::word_separators_underscore_apostrophe_hyphen ... ok
+
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/document_progressive.rs (/home/z/my-project/audit-target/debug/deps/document_progressive-9676e2d44a35a685)
+
+running 11 tests
+test document_id_display_parse_validation ... ok
+test extend_appends_never_touches_existing ... ok
+test document_id_survives_save_open_and_replay ... ok
+test extend_pipeline_events_revision_and_log ... ok
+test extend_rejects_incomplete_fence_without_pollution ... ok
+test extend_not_undoable_and_system_boundary_breaks_group ... ok
+test genesis_carries_document_id_and_replay_restores ... ok
+test history_json_roundtrip_with_system_boundary_state ... ok
+test save_open_roundtrip_restores_all_state ... ok
+test set_document_id_idempotent_conflict_rejected ... ok
+test oneshot_vs_chunked_extend_triple_equality ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.39s
+
+     Running tests/external_corpus.rs (/home/z/my-project/audit-target/debug/deps/external_corpus-3ed45ec797440b2c)
+
+running 1 test
+test l1_external_corpus_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/n3_word_count.rs (/home/z/my-project/audit-target/debug/deps/n3_word_count-2c3b1daa5290be63)
+
+running 3 tests
+test n3_generator_deterministic ... ok
+test n3_word_count_tracks_live_edits ... ok
+test n3_acceptance_400k_vs_python_reference ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+     Running tests/n5_pagination.rs (/home/z/my-project/audit-target/debug/deps/n5_pagination-db8e24c1d1ebbfc7)
+
+running 7 tests
+test code_and_table_lines ... ok
+test engine_default_math ... ok
+test block_line_consumption ... ok
+test line_height_formulas ... ok
+test error_margin_tiers ... ok
+test spacing_per_paragraph ... ok
+test line_multiple_scales_pages ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/r11_stress.rs (/home/z/my-project/audit-target/debug/deps/r11_stress-b6752606d6d29a13)
+
+running 3 tests
+test bulk_transactions_are_atomic_and_undoable_at_scale ... ok
+test move_and_undo_keep_identity_at_scale ... ok
+test one_shot_and_progressive_big_documents_converge ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.19s
+
+     Running tests/r12_ai_loop.rs (/home/z/my-project/audit-target/debug/deps/r12_ai_loop-4f86964e7c27a0bb)
+
+running 10 tests
+test ai_batch_is_atomic_on_bad_op ... ok
+test ai_batch_undo_reverts_whole_batch_not_human_edit ... ok
+test ai_entries_survive_save_open_and_undo_whole_batch ... ok
+test ai_fills_empty_paragraph_via_command_boundary ... ok
+test ai_reads_human_edited_state_as_decision_input ... ok
+test ai_stale_transaction_rejected_then_retries_with_fresh_base ... ok
+test ai_inclusive_log_replays_to_identical_state ... ok
+test ai_text_command_bumps_own_revision_never_coalesces ... ok
+test scripted_ai_plan_is_deterministic_and_primitive_only ... ok
+test human_and_ai_alternate_on_one_document_state ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r13_html_roundtrip.rs (/home/z/my-project/audit-target/debug/deps/r13_html_roundtrip-45781e8856489807)
+
+running 19 tests
+test export_escapes_all_text_nodes ... ok
+test degenerate_table_falls_back_to_raw_paragraph ... ok
+test import_never_produces_executable_semantics ... ok
+test html_paste_sample_maps_to_markdown ... ok
+test loss_report_fields_are_populated ... ok
+test md_to_html_rendering_contract ... ok
+test md_to_html_table_structure ... ok
+test malformed_input_degrades_without_panic ... ok
+test rt_identity_blockquote_nested_with_list ... ok
+test rt_identity_code_fence_with_lang ... ok
+test rt_identity_marks_strong_em_code_del ... ok
+test rt_identity_headings_paragraphs_cjk ... ok
+test rt_identity_nested_lists ... ok
+test rt_identity_ordered_list_start_number ... ok
+test rt_identity_u_mark_and_br_linebreak ... ok
+test rt_identity_table_and_hr ... ok
+test script_style_iframe_dropped_no_execution_semantics ... ok
+test unknown_container_demotes_with_loss ... ok
+test workspace_module_wired_via_lib ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r14_gates.rs (/home/z/my-project/audit-target/debug/deps/r14_gates-40381233f2b11717)
+
+running 5 tests
+test gate2_core_op_latency_at_1mb ... ok
+test gate1_core_ingest_and_replay_at_1mb ... ok
+test gate3_restore_then_editing_and_undo_continue ... ok
+test gate3_snapshot_restore_identity_at_1mb ... ok
+test gate3_tree_build_and_snapshot_chain ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.66s
+
+     Running tests/r16_blocks_range.rs (/home/z/my-project/audit-target/debug/deps/r16_blocks_range-c40c0c4134a133c3)
+
+running 4 tests
+test blocks_count_matches_blocks_json_length ... ok
+test range_out_of_bounds_truncates ... ok
+test range_slices_concatenate_to_full ... ok
+test progressive_extend_range_feeds_match_oneshot ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/r17_id_boundaries.rs (/home/z/my-project/audit-target/debug/deps/r17_id_boundaries-f1289ec84f29e20c)
+
+running 15 tests
+test deep_nest_sync_child_insert_keeps_existing_ids ... ok
+test cross_block_paste_undo_redo_identity ... ok
+test nested_list_merge_survivor_prev_sibling ... ok
+test nested_list_split_inherits_marker_depth_new_id ... ok
+test ordered_marker_split_inherits ... ok
+test nested_top_split_children_stay_with_head ... ok
+test paste_head_mid_tail_rewrite_all_ids_kept ... ok
+test paste_middle_delete_slot_inheritance ... ok
+test paste_table_aligns_into_slot_keeps_id ... ok
+test paste_middle_insert_aligned_prefix_keeps_ids ... ok
+test paste_table_and_fence_tail_new_ids_undo_identity ... ok
+test paste_tail_grow_shrink_id_stability ... ok
+test table_middle_break_aligned_prefix_keeps_id_tail_new ... ok
+test table_row_append_is_text_growth_not_new_block ... ok
+test table_single_block_row_edit_keeps_identity ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r17_utf16_mapping.rs (/home/z/my-project/audit-target/debug/deps/r17_utf16_mapping-ab3a971124bda150)
+
+running 11 tests
+test anchor_resolution_non_bmp ... ok
+test code_block_multiline_non_bmp_text_offsets ... ok
+test fixture_units_sanity ... ok
+test heading_and_marker_prefix_offsets_are_code_points ... ok
+test replace_text_offsets_are_code_points ... ok
+test replace_text_via_json_boundary_keeps_cp_offsets ... ok
+test roundtrip_identity_non_bmp ... ok
+test split_list_item_non_bmp_inherits_marker_and_depth ... ok
+test property_mixed_scripts_edits_undo_redo_identity ... ok
+test split_merge_non_bmp_offsets ... ok
+test sync_from_markdown_non_bmp ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/r23_external.rs (/home/z/my-project/audit-target/debug/deps/r23_external-86d53abd088ec4d3)
+
+running 14 tests
+test adopt_added_fresh_ids_monotonic ... ok
+test adopt_deterministic ... ok
+test adopt_edit_preserves_identity ... ok
+test adopt_empty_and_clear ... ok
+test adopt_manifest_trusted_added_carries_id ... ok
+test adopt_nested_move_inner_carried ... ok
+test adopt_noop_idempotent ... ok
+test adopt_removed_drops_identity ... ok
+test adopt_reorder_preserves_identity ... ok
+test adopt_take_external_drains_undo ... ok
+test plan_noop_when_unchanged ... ok
+test plan_offer_choice_when_dirty ... ok
+test plan_silent_adopt_when_clean ... ok
+test stamp_stale_semantics ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r23_fingerprint.rs (/home/z/my-project/audit-target/debug/deps/r23_fingerprint-2ea4f86b6125258f)
+
+running 15 tests
+test decorative_edit_keeps_structure_changes_content ... ok
+test block_reorder_reports_moved ... ok
+test empty_document_and_full_delete ... ok
+test heading_level_change_flips_structural_keeps_identity ... ok
+test manifest_fast_path_preserves_identity_through_rewrite ... ok
+test manifest_verification_failure_falls_back ... ok
+test determinism_across_runs ... ok
+test matching_is_readonly ... ok
+test merge_blocks_two_to_one ... ok
+test nested_subtree_move_inner_preserved ... ok
+test non_bmp_fingerprint_is_codepoint_semantics ... ok
+test similarity_threshold_semantics_locked ... ok
+test split_block_one_to_two ... ok
+test table_single_block_fingerprint_and_match ... ok
+test perf_1mb_smoke ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+
+     Running tests/r24_quality_fixes.rs (/home/z/my-project/audit-target/debug/deps/r24_quality_fixes-520b6d5d2660a8d2)
+
+running 4 tests
+test probe_coalesced_adds_undo_reverts_whole_group ... ok
+test probe_redundant_add_mark_undo_must_be_noop ... ok
+test probe_remove_absent_mark_undo_must_be_noop ... ok
+test probe_setmark_range_validation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/spike_semantics.rs (/home/z/my-project/audit-target/debug/deps/spike_semantics-5869e20a52fca3d4)
+
+running 14 tests
+test invariants_shared_op_stream ... ok
+test spike_a_markdown_roundtrip_idempotent ... ok
+test spike_a_tree_shape_and_nesting ... ok
+test spike_a_snapshot_roundtrip_preserves_state_and_ids ... ok
+test spike_b_delete_invalidates_copy_reallocates ... ok
+test spike_b_identity_invariants_matrix ... ok
+test spike_c_all_first_stage_primitives ... ok
+test spike_d_ai_ops_are_first_class_history ... ok
+test spike_d_coalescing_window_and_semantic_break ... ok
+test spike_d_snapshot_midstream_and_allocator_watermark ... ok
+test spike_e_anchor_mapping_and_rejects ... ok
+test spike_e_marks_edit_semantics ... ok
+test spike_e_structural_stale_must_reject ... ok
+test spike_d_history_json_roundtrip_and_log_replay ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sync_resync.rs (/home/z/my-project/audit-target/debug/deps/sync_resync-bd1a293caa6fa29c)
+
+running 10 tests
+test diff_inplace_type_and_attrs_change ... ok
+test commit_source_rebuild_does_not_collide_ids ... ok
+test diff_minimality_inplace_text_only ... ok
+test diff_nested_children ... ok
+test diff_tail_remove_then_insert ... ok
+test diff_shrink_and_fence ... ok
+test sync_advances_revision ... ok
+test sync_empty_doc_boundaries ... ok
+test sync_goes_through_pipeline ... ok
+test undo_reverts_sync ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/t1_quality_fixes.rs (/home/z/my-project/audit-target/debug/deps/t1_quality_fixes-b674fed2ef0a643f)
+
+running 5 tests
+test probe_byanchor_inverted_range_rejects_before_slice ... ok
+test probe_redo_failure_keeps_entry_stack_and_tree ... ok
+test probe_corrupt_snapshot_json_rejected_at_from_json ... ok
+test probe_snapshot_validate_typed_rejects ... ok
+test probe_undo_failure_keeps_entry_stack_and_tree ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/t3_reuse_locks.rs (/home/z/my-project/audit-target/debug/deps/t3_reuse_locks-5943c918ddee4662)
+
+running 4 tests
+test coalesced_event_shares_revision_with_group_head ... ok
+test push_entry_clears_redo_stack_on_new_entry ... ok
+test save_open_renumbers_ids_after_structural_edit_current_behavior ... ok
+test save_open_undo_rematerialization_id_collision_boundary ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tr1_line_endings.rs (/home/z/my-project/audit-target/debug/deps/tr1_line_endings-1fab7aa4cb9b5e9e)
+
+running 6 tests
+test tr1_crlf_paragraph_texts_are_lf_canonical ... ok
+test tr1_crlf_inside_code_fence_heading_and_table ... ok
+test tr1_lone_cr_is_a_line_ending ... ok
+test tr1_lf_fast_path_unchanged ... ok
+test tr1_roundtrip_projection_has_zero_cr ... ok
+test tr1_sync_and_extend_entry_points_mirror_main_entry ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdcore
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

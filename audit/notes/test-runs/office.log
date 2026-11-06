@@ -1,0 +1,797 @@
+   Compiling unicode-ident v1.0.26
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling cfg-if v1.0.5
+   Compiling rustversion v1.0.23
+   Compiling syn v3.0.6
+   Compiling memchr v2.8.3
+   Compiling serde_core v1.0.229
+   Compiling bumpalo v3.20.3
+   Compiling autocfg v1.5.1
+   Compiling libm v0.2.16
+   Compiling num-traits v0.2.19
+   Compiling crc32fast v1.5.2
+   Compiling libc v0.2.190
+   Compiling rand_core v0.10.1
+   Compiling simd-adler32 v0.3.10
+   Compiling getrandom v0.4.3
+   Compiling encoding_rs v0.8.42
+   Compiling serde v1.0.229
+   Compiling adler2 v2.0.1
+   Compiling thiserror v2.0.21
+   Compiling miniz_oxide v0.9.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling itoa v1.0.18
+   Compiling core_detect v1.0.0
+   Compiling hashbrown v0.17.1
+   Compiling scopeguard v1.2.0
+   Compiling zlib-rs v0.6.8
+   Compiling simdutf8 v0.1.5
+   Compiling siphasher v1.0.4
+   Compiling equivalent v1.0.2
+   Compiling multiversion_no_op v1.0.0
+   Compiling log v0.4.34
+   Compiling zopfli v0.8.4
+   Compiling flate2 v1.1.10
+   Compiling indexmap v2.14.2
+   Compiling phf_shared v0.12.1
+   Compiling aho-corasick v1.1.5
+   Compiling syn v2.0.119
+   Compiling typed-path v0.12.3
+   Compiling iana-time-zone v0.1.65
+   Compiling chrono-tz v0.10.4
+   Compiling cpufeatures v0.3.1
+   Compiling regex-syntax v0.8.11
+   Compiling zip v8.6.0
+   Compiling regex-automata v0.4.18
+   Compiling chacha20 v0.10.2
+   Compiling chrono v0.4.45
+   Compiling bitcode_derive v0.6.9
+   Compiling phf v0.12.1
+   Compiling approx v0.5.1
+   Compiling csv-core v0.1.13
+   Compiling ryu v1.0.23
+   Compiling ironcalc_base v0.9.1
+   Compiling wasm-bindgen-shared v0.2.129
+   Compiling bytemuck v1.25.2
+   Compiling csv v1.4.0
+   Compiling bitcode v0.6.9
+   Compiling statrs v0.19.1
+   Compiling regex v1.13.1
+   Compiling rand v0.10.3
+   Compiling quick-xml v0.41.0
+   Compiling debug_unsafe v0.1.4
+   Compiling atoi_simd v0.18.1
+   Compiling codepage v0.1.3
+   Compiling fast-float2 v0.2.4
+   Compiling byteorder v1.5.0
+   Compiling calamine v0.36.1
+   Compiling wasm-bindgen-macro-support v0.2.129
+   Compiling wasm-bindgen v0.2.129
+   Compiling once_cell v1.21.4
+   Compiling zmij v1.0.23
+   Compiling rustix v1.1.5
+   Compiling wasm-bindgen-macro v0.2.129
+   Compiling serde_json v1.0.151
+   Compiling futures-core v0.3.34
+   Compiling pin-project-lite v0.2.17
+   Compiling linux-raw-sys v0.12.1
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.34
+   Compiling bitflags v2.13.2
+   Compiling futures-util v0.3.34
+   Compiling mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling js-sys v0.3.106
+   Compiling smallvec v1.16.2
+   Compiling base64 v0.22.1
+   Compiling docx-rs v0.4.22
+   Compiling rust_xlsxwriter v0.99.1
+   Compiling mdc-office-io v0.1.0 (/home/z/my-project/mdcore-audit/crates/office-io)
+   Compiling mdc-office v0.1.0 (/home/z/my-project/mdcore-audit/crates/office)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 10s
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_formula-3f9fffd13d072bab)
+
+running 16 tests
+test engine_tests::build_and_first_eval ... ok
+test engine_tests::circular_detected ... ok
+test engine_tests::dependencies_errors ... ok
+test engine_tests::cross_sheet_reference ... ok
+test engine_tests::dependencies_relative_absolute ... ok
+test engine_tests::error_codes_stable ... ok
+test engine_tests::edit_then_recalc_chain ... ok
+test engine_tests::error_propagation ... ok
+test engine_tests::sheet_name_rules_passthrough ... ok
+test engine_tests::limits_enforced ... ok
+test engine_tests::unevaluated_formula_reads_typed_error ... ok
+test engine_tests::value_error_write_rejected ... ok
+test refs::tests::a1_format_roundtrip ... ok
+test refs::tests::a1_rejects_invalid ... ok
+test engine_tests::text_number_distinction ... ok
+test refs::tests::a1_roundtrip_basic ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/functions_vs_excel.rs (/home/z/my-project/audit-target/debug/deps/functions_vs_excel-5ffae7f0942e19e7)
+
+running 7 tests
+test datetime_family ... ok
+test criteria_family ... ok
+test error_semantics_typed ... ok
+test logical_family ... ok
+test lookup_family ... ok
+test math_family ... ok
+test text_family ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/perf.rs (/home/z/my-project/audit-target/debug/deps/perf-541a17709b29f50d)
+
+running 2 tests
+test edit_one_cell_full_recalc_latency ... ok
+test recalc_10k_x_20_under_1s_release ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+
+     Running tests/real_xlsx_lo.rs (/home/z/my-project/audit-target/debug/deps/real_xlsx_lo-7e00ad2727bee899)
+
+running 2 tests
+test financial_model_vs_libreoffice_cached_truth ... ok
+test soffice_live_recalc_pipeline ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_office-8839689f42851211)
+
+running 16 tests
+test sanitize::url_policy::tests::u01_javascript_rejected ... ok
+test sanitize::url_policy::tests::custom_whitelist_and_full_reject ... ok
+test sanitize::url_policy::tests::u02_case_evasion_rejected ... ok
+test sanitize::url_policy::tests::u03_whitespace_normalization_rejected ... ok
+test sanitize::url_policy::tests::u05_vbscript_rejected ... ok
+test sanitize::url_policy::tests::u04_data_uri_rejected ... ok
+test sanitize::url_policy::tests::u06_file_rejected ... ok
+test sanitize::url_policy::tests::u07_unc_rejected ... ok
+test sanitize::url_policy::tests::u09_https_allowed ... ok
+test sanitize::url_policy::tests::u08_protocol_relative_allowed ... ok
+test sanitize::url_policy::tests::u10_mailto_allowed ... ok
+test sanitize::url_policy::tests::u11_internal_link_allowed ... ok
+test sanitize::url_policy::tests::u12_attribute_glue_rejected ... ok
+test sanitize::url_policy::tests::u13_nul_truncation_rejected ... ok
+test sanitize::url_policy::tests::u14_whitelist_case_insensitive ... ok
+test sanitize::url_policy::tests::u15_empty_mailto_and_edges ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sanitize_gates.rs (/home/z/my-project/audit-target/debug/deps/sanitize_gates-670f737bd1ec150d)
+
+running 18 tests
+test csv_prefix_modes_rewrite_and_passthrough ... ok
+test csv_all_four_triggers_all_modes_matrix ... ok
+test csv_trigger_set_exactly_four_chars ... ok
+test csv_reject_mode_typed_error ... ok
+test field_embedded_deny_token_injection_blocked ... ok
+test field_deny_families_rejected ... ok
+test field_policy_modes_and_unknown_family ... ok
+test field_whitelist_default_allows_audit_set ... ok
+test html_href_injection_neutralized ... ok
+test xml_corrupt_tier_contrast_output_is_legal ... ok
+test xml_decode_external_convention_and_edges ... ok
+test xml_entities_text_minimal_and_attr_five ... ok
+test xml_escape_boundary_closer_multibyte_members ... ok
+test office_crate_zero_dependencies_self_lock ... ok
+test xml_legal_controls_and_del_pass_through ... ok
+test xml_literal_pattern_disambiguation_regressions ... ok
+test xml_escape_set_boundary_sweep ... ok
+test xml_roundtrip_property_lcg ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/sanitize_security.rs (/home/z/my-project/audit-target/debug/deps/sanitize_security-646fb2573d3b3b7b)
+
+running 44 tests
+test c01_dde_injection_prefixed ... ok
+test c01_mode_comparisons ... ok
+test c02_plus_trigger_prefixed ... ok
+test c03_minus_trigger_prefixed ... ok
+test c04_at_trigger_prefixed ... ok
+test c05_leading_space_untouched ... ok
+test c06_already_disinfected_untouched ... ok
+test c07_legal_apostrophe_text_untouched ... ok
+test c09_plain_formula_still_prefixed ... ok
+test c08_fullwidth_equals_untouched ... ok
+test c10_tab_prefix_untouched ... ok
+test e01_all_entities_baseline ... ok
+test e03_attribute_injection_neutralized ... ok
+test e02_already_escaped_treated_as_literal ... ok
+test e04_cdata_terminator_escaped ... ok
+test e05_control_char_integrated_path ... ok
+test e06_numeric_entity_smuggling_neutralized ... ok
+test e07_tag_smuggling_neutralized ... ok
+test f02_ddeauto_rejected ... ok
+test f01_includetext_rejected ... ok
+test f03_nested_injection_after_switch_rejected ... ok
+test f04_switch_position_injection_rejected ... ok
+test f05_case_evasion_rejected ... ok
+test f06_quoted_deny_keyword_word_semantics_pinned ... ok
+test f07_whitelist_families_allowed ... ok
+test f08_shorter_prefix_not_keyword_allowed ... ok
+test f09_conservative_false_positive_registered ... ok
+test f10_superset_prefix_caught_same_class_as_f09 ... ok
+test h02_attribute_breakout_neutralized ... ok
+test h01_tag_injection_neutralized ... ok
+test h03_url_scheme_attack_ineffective_to_char_escaping ... ok
+test h05_single_quote_breakout_neutralized ... ok
+test h04_data_uri_ineffective_to_char_escaping ... ok
+test h06_already_escaped_literal_roundtrip ... ok
+test x01_nul_escaped ... ok
+test x03_reencode_prefix_grows_level_by_level ... ok
+test x02_literal_form_disambiguated ... ok
+test x05_legal_char_spoof_form_disambiguated ... ok
+test x04_legal_controls_and_del_untouched ... ok
+test x06_uppercase_x_not_a_form ... ok
+test x08_non_hex_digit_not_a_form ... ok
+test x07_wrong_hex_length_not_a_form ... ok
+test x09_ffff_two_paths_symmetric ... ok
+test x10_fffe_real_char_escaped ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_office_io-016b075acfebc567)
+
+running 181 tests
+test docx::tests::anchor_t2_priority_over_external_link ... ok
+test docx::tests::anchor_t1_roundtrip_attribute_form_zero_rels ... ok
+test docx::tests::anchor_t4_bookmark_paragraph_xml_face ... ok
+test docx::tests::anchor_t5_validation_matrix_v1_to_v6 ... ok
+test docx::tests::anchor_t7_constructor_identity ... ok
+test docx::tests::anchor_v7_empty_anchor_sticky_reject_at_save ... ok
+test docx::tests::anchor_t3_dangling_is_legal_form ... ok
+test docx::tests::content_types_garbage_strict_rejects_compat_degrades ... ok
+test docx::tests::content_types_parse_and_lookup ... ok
+test docx::tests::content_types_missing_and_duplicate_entries ... ok
+test docx::tests::content_types_unknown_element_strict_compat ... ok
+test docx::tests::document_scale_limit_boundaries ... ok
+test docx::tests::docx_family_declared_limit_end_to_end ... ok
+test docx::tests::docx_input_size_limit_bytes_entry ... ok
+test docx::tests::docx_paragraph_run_counting_wiring ... ok
+test docx::tests::docx_save_funnel_rejects_over_scale_no_artifact ... ok
+test docx::tests::field_machine_volatile_matrix_and_lifecycle ... ok
+test docx::tests::g1_t1_toc_five_part_emission ... ok
+test docx::tests::g1_t2_toc_full_range_no_switch ... ok
+test docx::tests::g1_t3_v8_domain_reject ... ok
+test docx::tests::g1_t4_toc_mixed_with_page_fields ... ok
+test docx::tests::g2_t1_page_geometry_emission ... ok
+test docx::tests::docx_input_size_limit_path_entry ... ok
+test docx::tests::g2_t3_v9_domain_reject ... ok
+test docx::tests::g2_t4_baseline_unchanged ... ok
+test docx::tests::g2_t2_default_typography_emission ... ok
+test docx::tests::g3_t1_new_face_already_anonymous_and_idempotent ... ok
+test docx::tests::g3_t3_missing_docprops_tolerated ... ok
+test docx::tests::g3_t4_not_docx_rejected ... ok
+test docx::tests::heading_level_validation ... ok
+test docx::tests::hyperlink_resolution_dispatch ... ok
+test docx::tests::image_write_validation ... ok
+test docx::tests::indent_carry_variants ... ok
+test docx::tests::list_item_ilvl_validation ... ok
+test docx::tests::list_item_lines_model_level ... ok
+test docx::tests::numbering_index_and_carry_paths ... ok
+test docx::tests::part_path_normalization ... ok
+test docx::tests::rels_duplicate_id_strict_rejects_compat_first_wins ... ok
+test docx::tests::rels_garbage_strict_rejects_compat_degrades ... ok
+test docx::tests::rels_garbage_weird_names_strict_rejects_compat_tolerates ... ok
+test docx::tests::rels_missing_attributes_strict_rejects_compat_skips ... ok
+test docx::tests::rels_owner_part_derivation ... ok
+test docx::tests::rels_parse_basic_with_entity_compensation ... ok
+test docx::tests::rels_unknown_element_strict_rejects_compat_skips ... ok
+test docx::tests::rels_wrong_root_strict_rejects_compat_tolerates ... ok
+test docx::tests::run_spec_constructors ... ok
+test docx::tests::specs_expand_footnote_marker ... ok
+test docx::tests::specs_expand_mono_strike_underline ... ok
+test docx::tests::specs_expand_simple_fields ... ok
+test docx::tests::style_index_resolution_matrix ... ok
+test docx::tests::t8a_field_pageref_five_part_xml_face ... ok
+test docx::tests::t8b_toc_entries_block_structure_and_jump_closure ... ok
+test docx::tests::t8c_heading_bookmarked_validation ... ok
+test docx::tests::t8d_write_read_roundtrip_semantics ... ok
+test docx::tests::t8e_sticky_validation_v11_v8 ... ok
+test docx::tests::g3_t2_darkmark_full_scrub ... ok
+test docx::tests::t8f_bookmark_generation_avoids_user_collisions ... ok
+test docx::tests::t9a_heading_visual_face ... ok
+test docx::tests::t8g_empty_entries_degrades_to_legacy_shape ... ok
+test docx::tests::t9b_char_style_emission ... ok
+test docx::tests::t9c_v12_reference_matrix ... ok
+test docx::tests::t9d_preset_char_styles_injected_and_roundtrip ... ok
+test docx_edit::tests::core_container_gates_hostile_input ... ok
+test docx_edit::tests::core_control_chars_and_break_conventions ... ok
+test docx_edit::tests::core_fallback_copy_refuses ... ok
+test docx_edit::tests::core_index_text_conventions_and_last_write_wins ... ok
+test docx_edit::tests::core_table_textbox_paragraphs_and_nesting_guard ... ok
+test docx_edit::tests::core_roundtrip_ten_cycles_no_bloat ... ok
+test docx_edit::tests::core_textless_paragraph_insert_and_selfclosing_form ... ok
+test docx_edit::tests::core_untouched_bytes_and_regions_identical ... ok
+test docx_edit::tests::field_and_text_edits_merged_save ... ok
+test docx_edit::tests::field_degenerate_no_separate_refuses_edit ... ok
+test docx_edit::tests::field_empty_result_region_refuses ... ok
+test docx_edit::tests::field_kind_parsing_matrix ... ok
+test docx_edit::tests::field_fldsimple_instr_attr_and_editable ... ok
+test docx_edit::tests::field_multi_span_result_first_replaced_rest_removed ... ok
+test docx_edit::tests::field_page_edit_keeps_five_part_structure ... ok
+test docx_edit::tests::field_toc_crosspara_readonly_pageref_nested_editable ... ok
+test docx_edit::tests::field_unknown_coords_rejected ... ok
+test docx_edit::tests::field_value_defense_and_tab_br_emission ... ok
+test docx_edit::tests::notes_edit_first_replace_rest_removed_shells_kept ... ok
+test docx_edit::tests::notes_list_shapes_anchors_separator_exclusion ... ok
+test docx_edit::tests::notes_fields_text_mixed_one_save ... ok
+test docx_edit::tests::notes_transparency_without_edits ... ok
+test docx_edit::tests::notes_rejections_and_tab_br_emission ... ok
+test docx_edit::tests::pit1_multi_run_first_text_run_rpr_kept_rest_merged ... ok
+test docx_edit::tests::pit3_field_code_refuses_edit ... ok
+test docx_edit::tests::pit2_special_nodes_preserved_not_deleted ... ok
+test docx_edit::tests::pit4_revision_policy_refuse_and_edit ... ok
+test docx_edit::tests::pit5_hyperlink_emptied_shell_removed ... ok
+test docx_edit::tests::pit5_hyperlink_text_stays_inside_link ... ok
+test docx_edit::tests::pit6_whitespace_preserved_with_xml_space ... ok
+test docx_edit::tests::sdt_wrapped_table_cells_flagged_in_table ... ok
+test docx_edit::tests::pit7_xml_escaping_roundtrip ... ok
+test docx_edit::tests::table_cells_gridspan_repeats_anchor ... ok
+test docx_edit::tests::sdt_wrapped_toc_paragraphs_flagged_and_counted ... ok
+test docx_edit::tests::table_cells_multiple_tables_in_document_order ... ok
+test docx_edit::tests::table_cells_is_read_only_and_save_stays_identical ... ok
+test docx_edit::tests::table_cells_nested_table_excluded_from_outer_grid ... ok
+test docx_edit::tests::table_cells_plain_grid ... ok
+test docx_edit::tests::table_cells_self_closing_cell_paragraph ... ok
+test docx_edit::tests::table_cells_set_cell_text_keeps_tcpr_and_surrounding_bytes ... ok
+test docx_edit::tests::table_cells_vmerge_continue_points_to_restart ... ok
+test io::tests::bytes_entry_garbage_and_truncated_reject ... ok
+test io::tests::bytes_entry_matches_path_entry ... ok
+test io::tests::control_char_tolerance_pinned ... ok
+test io::tests::declared_huge_rejected ... ok
+test io::tests::cumulative_grid_area_over_limit_rejected ... ok
+test io::tests::eocd_corrupt_is_container_error ... ok
+test io::tests::garbage_part_strict_reject_compat_warns ... ok
+test io::tests::gate3_depth_limit_enforced ... ok
+test io::tests::gate3_empty_xml_part_rejected ... ok
+test io::tests::gate3_multiple_roots_rejected ... ok
+test io::tests::gate3_non_xml_parts_not_validated ... ok
+test io::tests::grid_area_boundary_exact_limit_passes_over_rejected ... ok
+test io::tests::grid_scan_mirror_semantics ... ok
+test io::tests::hyperlink_face_roundtrip_five_forms ... ok
+test io::tests::input_size_limit_bytes_entry ... ok
+test io::tests::input_size_limit_path_entry ... ok
+test io::tests::lie_header_rejected_at_gate2 ... ok
+test io::tests::normal_file_reads ... ok
+test io::tests::path_escape_rejected ... ok
+test io::tests::prescan_docx_family_limits ... ok
+test io::tests::sheet_count_limit_enforced ... ok
+test io::tests::sparse_grid_bomb_rejected_both_modes ... ok
+test io::tests::truncation_boundary_pinned ... ok
+test io::tests::verify_actual_sizes_standalone_still_works ... ok
+test numbering::tests::dangling_and_num_style_link ... ok
+test numbering::tests::numfmt_rendering_set ... ok
+test numbering::tests::parse_numbering_full_face ... ok
+test numbering::tests::tracker_cascade_and_restart ... ok
+test numbering::tests::tracker_lvl_restart_zero_and_two ... ok
+test numbering::tests::write_face_validation_matrix ... ok
+test numbering::tests::write_read_roundtrip_full ... ok
+test style::tests::chain_cycle_and_dangling ... ok
+test style::tests::effective_format_layering ... ok
+test style::tests::parse_styles_chain_and_fields ... ok
+test style::tests::parse_theme_scheme_empty_slots_kept_out ... ok
+test style::tests::parse_theme_scheme_full ... ok
+test style::tests::styled_paragraph_xml_face ... ok
+test style::tests::theme_lookup_mapping_and_fallbacks ... ok
+test style::tests::theme_resolution_end_to_end ... ok
+test style::tests::theme_shade_spec_example ... ok
+test style::tests::theme_shade_wins_over_tint ... ok
+test style::tests::theme_tint_spec_example ... ok
+test style::tests::write_face_validation_matrix ... ok
+test style::tests::write_read_roundtrip_full ... ok
+test write::tests::cache_result_string_forms ... ok
+test write::tests::cell_budget_limit_and_arithmetic ... ok
+test write::tests::coordinate_bounds_enforced ... ok
+test write::tests::formula_prefix_normalization ... ok
+test write::tests::merge_order_and_single_cell ... ok
+test write::tests::numfmt_format_codes ... ok
+test write::tests::save_to_vec_produces_zip_magic ... ok
+test write::tests::sheet_count_write_limit ... ok
+test write::tests::sheet_name_rules_enforced ... ok
+test write::tests::streaming_backward_write_typed_rejected ... ok
+test write::tests::streaming_merge_backward_rejected ... ok
+test write::tests::streaming_sheet_count_256_fd_face ... ok
+test write::tests::text_and_formula_length_limits ... ok
+test write::tests::write_row_column_width_boundary ... ok
+test write::tests::write_row_sequential ... ok
+test xlsx_chart::tests::emu_conversion_bounds ... ok
+test xlsx_chart::tests::kind_validation ... ok
+test xlsx_chart::tests::parse_range_forms ... ok
+test xlsx_edit::tests::broken_container_rejected ... ok
+test xlsx_edit::tests::cell_info_reads_all_storage_forms ... ok
+test xlsx_edit::tests::cell_ref_parsing_boundaries ... ok
+test xlsx_edit::tests::escaped_and_special_text_roundtrip_form ... ok
+test xlsx_edit::tests::formula_cell_rejected ... ok
+test xlsx_edit::tests::insert_cell_into_existing_row_keeps_order ... ok
+test xlsx_edit::tests::insert_missing_row_at_sorted_position ... ok
+test xlsx_edit::tests::invalid_values_rejected ... ok
+test xlsx_edit::tests::multi_sheet_edits_and_xml_declaration_kept ... ok
+test xlsx_edit::tests::non_worksheet_sheet_rejected ... ok
+test xlsx_edit::tests::replace_cell_three_value_forms ... ok
+test xlsx_edit::tests::selfclosed_row_expands_with_attrs ... ok
+test xlsx_edit::tests::selfclosed_sheetdata_expands ... ok
+test xlsx_edit::tests::worksheet_part_resolution ... ok
+test xlsx_edit::tests::zero_edit_save_is_byte_identical ... ok
+test io::tests::entry_count_rejected ... ok
+
+test result: ok. 181 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.57s
+
+     Running tests/cell_types.rs (/home/z/my-project/audit-target/debug/deps/cell_types-1e89a5ff65c07a2a)
+
+running 9 tests
+test data_face_seven_kinds_pinned ... ok
+test date_serial_components_and_1904_epoch ... ok
+test display_face_data_to_string_pinned ... ok
+test formula_at_safe_join_and_replay_junction ... ok
+test formula_text_channel_distinct_from_cached_value ... ok
+test typed_display_equivalence_with_data_display ... ok
+test typed_explicit_conversions_ruled_by_evidence ... ok
+test typed_face_seven_kinds_pinned ... ok
+test kind_preserving_replay_roundtrip ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/corpus_harness.rs (/home/z/my-project/audit-target/debug/deps/corpus_harness-a84de655e681fa7e)
+
+running 3 tests
+test corpus_compat_mode_classification ... ok
+test corpus_tolerance_discoveries_anchored ... ok
+test corpus_seventeen_files_three_way_classification ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/docx_fields.rs (/home/z/my-project/audit-target/debug/deps/docx_fields-2ae55eca93dccc92)
+
+running 8 tests
+test golden_fields_all_shapes ... ok
+test golden_fixture_present ... ok
+test golden_edit_chain_keeps_structure ... ok
+test real_docx4j_if_nested ... ok
+test real_docx4j_toc_nested_readonly ... ok
+test real_word_complex_page_field_edit ... ok
+test soffice_open_and_field_alive_falsification ... ok
+test soffice_real_word_complex_after_edit ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+     Running tests/docx_merged_cells.rs (/home/z/my-project/audit-target/debug/deps/docx_merged_cells-0d273d70fafd80c7)
+
+running 9 tests
+test block_merge_single_rectangle ... ok
+test chain_gap_closes_at_last_continued_row ... ok
+test horizontal_grid_span_covers_columns ... ok
+test missing_tbl_grid_falls_back_to_row_sums ... ok
+test orphan_continue_keeps_content ... ok
+test single_row_restart_is_not_a_merge ... ok
+test span_mismatch_continue_is_orphan ... ok
+test vertical_merge_chain_content_once ... ok
+test word_merged_fixture_two_merges_content_once ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/docx_nested_tables.rs (/home/z/my-project/audit-target/debug/deps/docx_nested_tables-6d13c476279847ed)
+
+running 4 tests
+test depth_three_chain_depth_first ... ok
+test hostile_deep_nesting_capped_with_warning ... ok
+test nested_table_emitted_as_block_with_marker ... ok
+test nested_tables_in_document_order ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/docx_notes.rs (/home/z/my-project/audit-target/debug/deps/docx_notes-6def8a6bb0a08ed1)
+
+running 6 tests
+test golden_fixture_present ... ok
+test golden_notes_list_and_edit_chain ... ok
+test real_word_complex_comment_edit ... ok
+test real_d2a_absent_part_transparency ... ok
+test soffice_open_edited_golden_notes ... ok
+test soffice_real_word_complex_after_comment_edit ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+     Running tests/docx_roundtrip.rs (/home/z/my-project/audit-target/debug/deps/docx_roundtrip-2552f8a4e67f4792)
+
+running 32 tests
+test byte_entry_runs_same_gates ... ok
+test control_chars_in_docx_engine_rejects ... ok
+test first_even_header_footer_roundtrip ... ok
+test engine_rels_unknown_element_tolerated ... ok
+test footnote_write_xml_level_roundtrip ... ok
+test header_footer_roundtrip ... ok
+test gates_shared_with_xlsx_path ... ok
+test hyperlink_anchor_read ... ok
+test header_reference_hostile_strict_compat ... ok
+test hyperlink_dangling_strict_rejects_compat_unresolved ... ok
+test hyperlink_roundtrip_external ... ok
+test hyperlink_inside_header_resolved_via_header_rels ... ok
+test image_inventory_dangling_embed_strict_compat ... ok
+test image_inventory_duplicate_zip_entries_last_wins ... ok
+test image_inventory_dangling_rel_strict_compat ... ok
+test image_write_read_roundtrip ... ok
+test r4t3_numbering_and_indent_read_carry ... ok
+test image_inventory_undeclared_and_orphan_media ... ok
+test r4t3_roundtrip_read_modify_write ... ok
+test r4t3_numbering_dangling_custom_format_injected_ind ... ok
+test r5t2_engine_anchor_and_bookmark_write_spike ... ok
+test r5t2_bookmark_definitions_dropped_anchor_carried ... ok
+test r5t2_hyperlink_anchor_wins_over_rid ... ok
+test r5t2_hyperlink_internal_target_read ... ok
+test rels_duplicate_id_in_package_strict_compat ... ok
+test save_to_vec_bytes_are_reopenable ... ok
+test rels_unknown_element_in_package_strict_compat ... ok
+test simple_fields_write_xml_level_roundtrip ... ok
+test t20_numbering_lazy_registration_and_reset ... ok
+test t20_write_faces_xml_level ... ok
+test t22_list_item_multiline_xml_level ... ok
+test write_read_full_roundtrip ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/docx_roundtrip_matrix.rs (/home/z/my-project/audit-target/debug/deps/docx_roundtrip_matrix-f8743f75598b65c8)
+
+running 4 tests
+test lo_probe_matrix_fixture_edited ... ignored, 矩阵探针：需 LO 环境显式跑
+test matrix_textbox_editable_face ... ok
+test matrix_revision_policy_faces ... ok
+test matrix_thirteen_faces_single_edit_perfect ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/docx_table_advanced.rs (/home/z/my-project/audit-target/debug/deps/docx_table_advanced-6133b78b7c87dc87)
+
+running 9 tests
+test block_merge_roundtrip_single_rectangle ... ok
+test merge_xml_tokens ... ok
+test merges_roundtrip_vertical_and_horizontal ... ok
+test no_grid_falls_back_to_row_sums ... ok
+test plain_spec_equivalent_to_table ... ok
+test shading_borders_widths_xml_tokens ... ok
+test v10_boundary_accepts ... ok
+test v10_matrix_sticky_rejects ... ok
+test libreoffice_opens_full_bid_table ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+
+     Running tests/external_corpus.rs (/home/z/my-project/audit-target/debug/deps/external_corpus-4d194fec75a283c4)
+
+running 1 test
+test l3_external_corpus_poi_docx_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/g1_lo_probe.rs (/home/z/my-project/audit-target/debug/deps/g1_lo_probe-0fb418e36b691182)
+
+running 1 test
+test g1_lo_emit_fixture ... ignored, 探针：需 LO 环境显式跑
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/g2_lo_probe.rs (/home/z/my-project/audit-target/debug/deps/g2_lo_probe-35cdd67b6d1a789f)
+
+running 1 test
+test g2_lo_emit_fixture ... ignored, 探针：需 LO 环境显式跑
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/g3_probe.rs (/home/z/my-project/audit-target/debug/deps/g3_probe-a79c11030f516ab0)
+
+running 1 test
+test g3_docx_docprops_inventory ... ignored, 探针：显式跑（issue #6 G3 现状登记件）
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/n4_table_header.rs (/home/z/my-project/audit-target/debug/deps/n4_table_header-540b503b754cb281)
+
+running 6 tests
+test header_repeat_marks_first_row_only ... ok
+test mixed_tables_document_order_indexing ... ok
+test marked_document_roundtrips_through_reader ... ok
+test plain_table_bytes_unchanged ... ok
+test single_row_table_not_marked ... ok
+test non_document_parts_raw_copied ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/numbering_corpus.rs (/home/z/my-project/audit-target/debug/deps/numbering_corpus-3dcd34cbd185e622)
+
+running 2 tests
+test real_corpus_numbering_stats_and_pinned ... ok
+test libreoffice_opens_define_numbering_output ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/range_anchor_pinned.rs (/home/z/my-project/audit-target/debug/deps/range_anchor_pinned-59da26a119f3c4ea)
+
+running 1 test
+test range_anchoring_semantics_pinned ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/rebuild.rs (/home/z/my-project/audit-target/debug/deps/rebuild-733214620bbe6f36)
+
+running 10 tests
+test rebuild_applies_edits ... ok
+test rebuild_duplicate_long_names_terminate ... ok
+test rebuild_edit_on_formula_sheet_keeps_other_formulas ... ok
+test rebuild_merge_flattening_registered ... ok
+test rebuild_rejects_noncharacter_edit ... ok
+test rebuild_rejects_sheet_index_edit ... ok
+test rebuild_sanitizes_sheet_name ... ok
+test rebuild_roundtrip_five_faces ... ok
+test rebuild_skips_hostile_entries ... ok
+test rebuild_sheet_name_quote31_passes ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/rebuild_recalc.rs (/home/z/my-project/audit-target/debug/deps/rebuild_recalc-4aba9aedc37ed9f1)
+
+running 14 tests
+test recalc_array_formula_single_cell ... ok
+test recalc_circular_reference_circ_code ... ok
+test recalc_disabled_keeps_source_cache ... ok
+test recalc_default_is_on ... ok
+test recalc_edit_formula_cell ... ok
+test recalc_engine_failure_degrades_to_passthrough ... ok
+test recalc_error_const_cell_excluded_and_registered ... ok
+test recalc_external_ref_keeps_cache_and_registers ... ok
+test recalc_formula_edit_overwrites_formula ... ok
+test recalc_no_cache_formula_cell ... ok
+test recalc_rejects_noncharacter_formula_edit ... ok
+test recalc_shared_formula_expanded_and_recalculated ... ok
+test recalc_updates_dependents ... ok
+test recalc_lo_display_cross_check ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+
+     Running tests/style_corpus.rs (/home/z/my-project/audit-target/debug/deps/style_corpus-ae3ea974ec5f711e)
+
+running 3 tests
+test real_corpus_style_stats_and_pinned ... ok
+test write_read_xml_diff_define_style ... ok
+test libreoffice_opens_define_style_output ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/tr13_heading_styles.rs (/home/z/my-project/audit-target/debug/deps/tr13_heading_styles-d2a282cfd242d61c)
+
+running 2 tests
+test real_word_chinese_styleids_map_to_heading_levels ... ok
+test non_heading_styles_stay_paragraphs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/tr14_field_machine.rs (/home/z/my-project/audit-target/debug/deps/tr14_field_machine-4ce2944c16d1ae0e)
+
+running 3 tests
+test content_field_toc_result_kept_roundtrip ... ok
+test real_word_page_field_result_stripped ... ok
+test unnumbered_headings_verbatim_no_overcorrection ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/tr17_revision_insert.rs (/home/z/my-project/audit-target/debug/deps/tr17_revision_insert-39a8551bd3b21cb3)
+
+running 2 tests
+test revision_delete_registered_as_warning ... ok
+test revision_insert_text_extracted_with_flag ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/tr18_text_box.rs (/home/z/my-project/audit-target/debug/deps/tr18_text_box-5d59775fc38455b5)
+
+running 5 tests
+test drawingml_text_box_read_from_handbuilt_package ... ok
+test pretty_printed_vml_textbox_not_rejected ... ok
+test host_paragraphs_intact_no_truncation ... ok
+test text_box_positioned_after_host ... ok
+test vml_text_box_clauses_in_block_flow ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/tr19_comments_notes.rs (/home/z/my-project/audit-target/debug/deps/tr19_comments_notes-5b1734be51a39afc)
+
+running 3 tests
+test handbuilt_footnotes_endnotes_read ... ok
+test tr2_word_complex_comment ... ok
+test d2a_comment_anchor_and_text ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/tr31_degenerate_field.rs (/home/z/my-project/audit-target/debug/deps/tr31_degenerate_field-7d59c74540ca050c)
+
+running 4 tests
+test literal_quoted_wt_text_preserved_verbatim ... ok
+test multi_run_instruction_accumulates_not_emitted ... ok
+test real_corpus_songjiang_rendered_truth_probe ... ignored, 真实语料不在仓（/tmp/abr 部署面）——按需显式运行
+test wps_degenerate_field_instruction_not_in_body ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/write_roundtrip.rs (/home/z/my-project/audit-target/debug/deps/write_roundtrip-d7df70d8ccc82469)
+
+running 6 tests
+test control_chars_escaped_and_roundtrip ... ok
+test five_face_full_circle ... ok
+test save_to_vec_bytes_are_reopenable ... ok
+test read_modify_rebuild_path_evidence ... ok
+test style_xml_nine_assertions_via_product_api ... ok
+test streaming_sheet_full_circle ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/xlsx_chart.rs (/home/z/my-project/audit-target/debug/deps/xlsx_chart-0365843a9259ac95)
+
+running 5 tests
+test four_kinds_chart_parts_and_refs ... ok
+test series_split_rows_vs_columns ... ok
+test validation_typed_rejections ... ok
+test variant_options_written ... ok
+test lo_render_chart_ink_visible ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.38s
+
+     Running tests/xlsx_condfmt.rs (/home/z/my-project/audit-target/debug/deps/xlsx_condfmt-37c8cf4199a2543e)
+
+running 9 tests
+test condfmt_colorscale_2_and_3_written ... ok
+test condfmt_cellrule_written_with_dxf ... ok
+test condfmt_databar_written ... ok
+test condfmt_duplicate_written ... ok
+test condfmt_iconset_written ... ok
+test condfmt_multiple_rules_coexist ... ok
+test condfmt_range_parse_matrix ... ok
+test condfmt_validation_rejects ... ok
+test condfmt_lo_render_pixel_check ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+
+     Running tests/xlsx_edit_roundtrip.rs (/home/z/my-project/audit-target/debug/deps/xlsx_edit_roundtrip-f89622de8fd9dd20)
+
+running 6 tests
+test formula_cell_in_engine_fixture_rejected ... ok
+test pending_model_last_write_wins ... ok
+test fin_lo_real_file_edit_and_zero_touch ... ok
+test rich_fixture_zero_edit_parts_identical ... ok
+test rich_fixture_edit_keeps_style_merge_formula_cache ... ok
+test soffice_opens_edited_fin_lo ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+
+   Doc-tests mdc_formula
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_office
+
+running 5 tests
+test crates/office/src/sanitize/csv_formula.rs - sanitize::csv_formula (line 19) ... ok
+test crates/office/src/sanitize/field_whitelist.rs - sanitize::field_whitelist (line 20) ... ok
+test crates/office/src/sanitize/xml_control.rs - sanitize::xml_control (line 31) ... ok
+test crates/office/src/sanitize/html_escape.rs - sanitize::html_escape (line 15) ... ok
+test crates/office/src/sanitize/xml_entities.rs - sanitize::xml_entities (line 14) ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+   Doc-tests mdc_office_io
+
+running 3 tests
+test crates/office-io/src/docx_edit.rs - docx_edit::DocxEditor (line 240) ... ignored
+test crates/office-io/src/xlsx_edit.rs - xlsx_edit::XlsxEditor (line 833) - compile ... ok
+test crates/office-io/src/numbering.rs - numbering::NumberingTracker (line 252) ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.45s
+

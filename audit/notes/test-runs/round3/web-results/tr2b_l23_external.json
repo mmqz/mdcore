@@ -1,0 +1,139 @@
+{
+ "l2_pandoc": [
+  {
+   "input": "writer.markdown",
+   "export_ok": true,
+   "docx_bytes": 92886,
+   "lo_open_ok": true,
+   "lo_recall": 0.9703
+  },
+  {
+   "input": "tables.markdown",
+   "export_ok": true,
+   "docx_bytes": 29350,
+   "lo_open_ok": true,
+   "lo_recall": 1.0
+  },
+  {
+   "input": "markdown-reader-more.txt",
+   "export_ok": true,
+   "docx_bytes": 28391,
+   "lo_open_ok": true,
+   "lo_recall": 0.9485
+  },
+  {
+   "input": "lhs-test.markdown",
+   "export_ok": true,
+   "docx_bytes": 23343,
+   "lo_open_ok": true,
+   "lo_recall": 0.9204
+  }
+ ],
+ "l3_poi": [
+  {
+   "input": "51921-Word-Crash067.docx",
+   "import_ok": true,
+   "alive": true,
+   "result_shape": {
+    "ok": true
+   },
+   "structure": {
+    "headings": 0,
+    "table_rows": 0,
+    "list_items": 0,
+    "blocks": 0
+   },
+   "lo_open_ok": true,
+   "lo_vs_engine_recall": 0.0
+  },
+  {
+   "input": "52288.docx",
+   "import_ok": true,
+   "alive": true,
+   "result_shape": {
+    "ok": true
+   },
+   "structure": {
+    "headings": 0,
+    "table_rows": 0,
+    "list_items": 0,
+    "blocks": 1
+   },
+   "lo_open_ok": true,
+   "lo_vs_engine_recall": 0.9783
+  },
+  {
+   "input": "52449.docx",
+   "import_ok": true,
+   "alive": true,
+   "result_shape": {
+    "ok": true
+   },
+   "structure": {
+    "headings": 5,
+    "table_rows": 0,
+    "list_items": 0,
+    "blocks": 1
+   },
+   "lo_open_ok": true,
+   "lo_vs_engine_recall": 0.9956
+  },
+  {
+   "input": "55733.docx",
+   "import_ok": true,
+   "alive": true,
+   "result_shape": {
+    "ok": true
+   },
+   "structure": {
+    "headings": 0,
+    "table_rows": 0,
+    "list_items": 0,
+    "blocks": 1
+   },
+   "lo_open_ok": true,
+   "lo_vs_engine_recall": 0.8
+  },
+  {
+   "input": "56392.docx",
+   "import_ok": true,
+   "alive": true,
+   "result_shape": {
+    "ok": true
+   },
+   "structure": {
+    "headings": 0,
+    "table_rows": 0,
+    "list_items": 0,
+    "blocks": 1
+   },
+   "lo_open_ok": true,
+   "lo_vs_engine_recall": 0.9978
+  },
+  {
+   "input": "59030.docx",
+   "import_ok": true,
+   "alive": true,
+   "result_shape": {
+    "ok": true
+   },
+   "structure": {
+    "headings": 0,
+    "table_rows": 3,
+    "list_items": 0,
+    "blocks": 1
+   },
+   "lo_open_ok": true,
+   "lo_vs_engine_recall": 0.9375
+  }
+ ],
+ "meta": {
+  "lo": "26.8.1.1 headless"
+ },
+ "verdict": {
+  "l2_pass_rate": "4/4",
+  "l2_lo_recall_min": 0.9204,
+  "l3_alive_rate": "6/6",
+  "l3_import_ok_rate": "6/6"
+ }
+}

@@ -1,0 +1,2760 @@
+ Downloading crates ...
+  Downloaded dpi v0.1.2
+  Downloaded crossbeam-channel v0.5.17
+  Downloaded dlopen2_derive v0.4.3
+  Downloaded futures-io v0.3.34
+  Downloaded cairo-sys-rs v0.18.2
+  Downloaded field-offset v0.3.6
+  Downloaded futures-macro v0.3.34
+  Downloaded gdkwayland-sys v0.18.2
+  Downloaded gdk-pixbuf-sys v0.18.0
+  Downloaded gdkx11-sys v0.18.2
+  Downloaded gdkx11 v0.18.2
+  Downloaded version_check v0.9.5
+  Downloaded toml_datetime v0.6.3
+  Downloaded instant v0.1.13
+  Downloaded javascriptcore-rs-sys v1.1.1
+  Downloaded heck v0.4.1
+  Downloaded proc-macro-crate v1.3.1
+  Downloaded gtk3-macros v0.18.2
+  Downloaded lazy_static v1.5.1
+  Downloaded version-compare v0.2.1
+  Downloaded utf8_iter v1.0.4
+  Downloaded proc-macro-error-attr v1.0.4
+  Downloaded serde_spanned v0.6.9
+  Downloaded rustc_version v0.4.1
+  Downloaded proc-macro-crate v2.0.2
+  Downloaded atk-sys v0.18.2
+  Downloaded futures-executor v0.3.34
+  Downloaded toml_datetime v1.1.2+spec-1.1.0
+  Downloaded dlopen2 v0.7.0
+  Downloaded proc-macro-error v1.0.4
+  Downloaded target-lexicon v0.12.16
+  Downloaded futures-channel v0.3.34
+  Downloaded gdk-pixbuf v0.18.5
+  Downloaded javascriptcore-rs v1.1.2
+  Downloaded memoffset v0.9.1
+  Downloaded soup3-sys v0.5.0
+  Downloaded pkg-config v0.3.34
+  Downloaded raw-window-handle v0.6.2
+  Downloaded thiserror-impl v1.0.69
+  Downloaded toml_writer v1.1.3+spec-1.1.0
+  Downloaded gobject-sys v0.18.0
+  Downloaded thiserror v1.0.69
+  Downloaded pango-sys v0.18.0
+  Downloaded system-deps v6.2.2
+  Downloaded atk v0.18.2
+  Downloaded cfg-expr v0.15.8
+  Downloaded toml_parser v1.1.5+spec-1.1.0
+  Downloaded soup3 v0.5.0
+  Downloaded pango v0.18.3
+  Downloaded webkit2gtk-sys v2.0.1
+  Downloaded cairo-rs v0.18.5
+  Downloaded parking_lot v0.12.5
+  Downloaded glib-sys v0.18.1
+  Downloaded toml v0.8.2
+  Downloaded glib-macros v0.18.5
+  Downloaded x11 v2.21.0
+  Downloaded x11-dl v2.21.0
+  Downloaded gdk-sys v0.18.2
+  Downloaded toml_edit v0.25.17+spec-1.1.0
+  Downloaded gio-sys v0.18.1
+  Downloaded toml_edit v0.19.15
+  Downloaded gdk v0.18.2
+  Downloaded toml_edit v0.20.2
+  Downloaded webkit2gtk v2.0.1
+  Downloaded gtk-sys v0.18.2
+  Downloaded wry v0.46.3
+  Downloaded winnow v0.5.40
+  Downloaded winnow v1.0.4
+  Downloaded gio v0.18.4
+  Downloaded syn v1.0.109
+  Downloaded glib v0.18.5
+  Downloaded gtk v0.18.2
+  Downloaded tao v0.30.8
+   Compiling syn v3.0.6
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.9.1
+   Compiling zlib-rs v0.6.8
+   Compiling flate2 v1.1.10
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.229
+   Compiling serde v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling thiserror v2.0.21
+   Compiling futures-macro v0.3.34
+   Compiling serde_core v1.0.229
+   Compiling wasm-bindgen-macro-support v0.2.129
+   Compiling futures-util v0.3.34
+   Compiling zip v8.6.0
+   Compiling wasm-bindgen-macro v0.2.129
+   Compiling bitcode_derive v0.6.9
+   Compiling statrs v0.19.1
+   Compiling wasm-bindgen v0.2.129
+   Compiling bitcode v0.6.9
+   Compiling ironcalc_base v0.9.1
+   Compiling toml_datetime v0.6.3
+   Compiling pkg-config v0.3.34
+   Compiling winnow v0.5.40
+   Compiling calamine v0.36.1
+   Compiling async-trait v0.1.92
+   Compiling yrs v0.28.0
+   Compiling mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+   Compiling mdcore v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore)
+   Compiling serde_spanned v0.6.9
+   Compiling toml_edit v0.20.2
+   Compiling target-lexicon v0.12.16
+   Compiling mdc-collab v0.1.0 (/home/z/my-project/mdcore-audit/crates/collab)
+   Compiling js-sys v0.3.106
+   Compiling docx-rs v0.4.22
+   Compiling rust_xlsxwriter v0.99.1
+error: couldn't create a temp dir: No space left on device (os error 28) at path "/home/z/my-project/mdcore-audit/target/debug/deps/rustc9L7ZWe"
+
+error: could not compile `docx-rs` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: couldn't create a temp dir: No space left on device (os error 28) at path "/home/z/my-project/mdcore-audit/target/debug/deps/rmeta3GPv6N"
+
+error: could not compile `rust_xlsxwriter` (lib) due to 1 previous error
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.26
+   Compiling quote v1.0.47
+   Compiling memchr v2.8.3
+   Compiling cfg-if v1.0.5
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.6
+   Compiling libc v0.2.190
+   Compiling serde v1.0.229
+   Compiling equivalent v1.0.2
+   Compiling itoa v1.0.18
+   Compiling hashbrown v0.17.1
+   Compiling indexmap v2.14.2
+   Compiling serde_derive v1.0.229
+   Compiling zmij v1.0.23
+   Compiling serde_json v1.0.151
+   Compiling smallvec v1.16.2
+   Compiling rustversion v1.0.23
+   Compiling scopeguard v1.2.0
+   Compiling thiserror v2.0.21
+   Compiling cpufeatures v0.3.1
+   Compiling thiserror-impl v2.0.21
+   Compiling once_cell v1.21.4
+   Compiling pin-project-lite v0.2.17
+   Compiling bitflags v2.13.2
+   Compiling fastrand v2.5.0
+   Compiling typenum v1.20.1
+   Compiling log v0.4.34
+   Compiling crc32fast v1.5.2
+   Compiling rand_core v0.10.1
+   Compiling getrandom v0.4.3
+   Compiling simd-adler32 v0.3.10
+   Compiling hybrid-array v0.4.15
+   Compiling encoding_rs v0.8.42
+   Compiling crypto-common v0.2.2
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.9.1
+   Compiling core_detect v1.0.0
+   Compiling multiversion_no_op v1.0.0
+   Compiling simdutf8 v0.1.5
+   Compiling zlib-rs v0.6.8
+   Compiling syn v2.0.119
+   Compiling flate2 v1.1.10
+   Compiling block-buffer v0.12.1
+   Compiling chacha20 v0.10.2
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling rand v0.10.3
+   Compiling sha2 v0.11.0
+   Compiling autocfg v1.5.1
+   Compiling futures-core v0.3.34
+   Compiling futures-macro v0.3.34
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.34
+   Compiling bumpalo v3.20.3
+   Compiling futures-util v0.3.34
+   Compiling parking_lot_core v0.9.12
+   Compiling crossbeam-utils v0.8.23
+   Compiling libm v0.2.16
+   Compiling num-traits v0.2.19
+   Compiling lock_api v0.4.14
+   Compiling wasm-bindgen-shared v0.2.129
+   Compiling siphasher v1.0.4
+   Compiling phf_shared v0.12.1
+   Compiling wasm-bindgen-macro-support v0.2.129
+   Compiling zopfli v0.8.4
+   Compiling wasm-bindgen v0.2.129
+   Compiling aho-corasick v1.1.5
+   Compiling chrono-tz v0.10.4
+   Compiling regex-syntax v0.8.11
+   Compiling iana-time-zone v0.1.65
+   Compiling typed-path v0.12.3
+   Compiling zip v8.6.0
+   Compiling regex-automata v0.4.18
+   Compiling chrono v0.4.45
+   Compiling wasm-bindgen-macro v0.2.129
+   Compiling approx v0.5.1
+   Compiling phf v0.12.1
+   Compiling bitcode_derive v0.6.9
+   Compiling csv-core v0.1.13
+   Compiling ironcalc_base v0.9.1
+   Compiling ryu v1.0.23
+   Compiling parking v2.2.1
+   Compiling bytemuck v1.25.2
+   Compiling csv v1.4.0
+   Compiling bitcode v0.6.9
+   Compiling event-listener v5.4.2
+   Compiling statrs v0.19.1
+   Compiling regex v1.13.1
+   Compiling quick-xml v0.41.0
+   Compiling debug_unsafe v0.1.4
+   Compiling atoi_simd v0.18.1
+   Compiling event-listener-strategy v0.5.4
+   Compiling toml_datetime v0.6.3
+   Compiling codepage v0.1.3
+   Compiling pkg-config v0.3.34
+   Compiling hashbrown v0.14.5
+   Compiling winnow v0.5.40
+   Compiling byteorder v1.5.0
+   Compiling fast-float2 v0.2.4
+   Compiling str_indices v0.4.4
+   Compiling ropey v1.6.1
+   Compiling calamine v0.36.1
+   Compiling dashmap v6.2.1
+   Compiling async-lock v3.4.2
+   Compiling arc-swap v1.9.3
+   Compiling smallstr v0.3.1
+   Compiling async-trait v0.1.92
+   Compiling yrs v0.28.0
+   Compiling mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+   Compiling rustix v1.1.5
+   Compiling mdcore v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore)
+   Compiling serde_spanned v0.6.9
+   Compiling linux-raw-sys v0.12.1
+   Compiling toml_edit v0.20.2
+   Compiling target-lexicon v0.12.16
+   Compiling tempfile v3.27.0
+   Compiling mdc-collab v0.1.0 (/home/z/my-project/mdcore-audit/crates/collab)
+   Compiling js-sys v0.3.106
+   Compiling base64 v0.22.1
+   Compiling docx-rs v0.4.22
+   Compiling rust_xlsxwriter v0.99.1
+   Compiling cfg-expr v0.15.8
+   Compiling toml v0.8.2
+   Compiling heck v0.5.0
+   Compiling version-compare v0.2.1
+   Compiling system-deps v6.2.2
+   Compiling mdc-office-io v0.1.0 (/home/z/my-project/mdcore-audit/crates/office-io)
+   Compiling mdc-evidence v0.1.0 (/home/z/my-project/mdcore-audit/crates/evidence)
+   Compiling mdc-canvas v0.1.0 (/home/z/my-project/mdcore-audit/crates/canvas)
+   Compiling glib-sys v0.18.1
+   Compiling gobject-sys v0.18.0
+   Compiling block-padding v0.4.2
+   Compiling inout v0.2.2
+   Compiling cipher v0.5.2
+   Compiling gio-sys v0.18.1
+   Compiling version_check v0.9.5
+   Compiling tinyvec v1.13.3
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling alloc-stdlib v0.2.4
+   Compiling unicode-normalization v0.1.25
+   Compiling mdc-workbench v0.1.0 (/home/z/my-project/mdcore-audit/crates/workbench)
+   Compiling unicode-properties v0.1.4
+   Compiling cpubits v0.1.1
+   Compiling unicode-bidi v0.3.18
+   Compiling aes v0.9.3
+   Compiling stringprep v0.1.5
+   Compiling brotli-decompressor v5.0.3
+   Compiling cbc v0.2.1
+   Compiling ecb v0.2.1
+   Compiling md-5 v0.11.0
+   Compiling nom v8.0.0
+   Compiling rangemap v1.8.0
+   Compiling weezl v0.2.1
+   Compiling proc-macro-error-attr v1.0.4
+   Compiling syn v1.0.109
+   Compiling proc-macro-error v1.0.4
+   Compiling gdk-sys v0.18.2
+   Compiling synstructure v0.14.0
+   Compiling lopdf v0.45.0
+error: failed to run custom build command for `gdk-sys v0.18.2`
+
+Caused by:
+  process didn't exit successfully: `/home/z/my-project/mdcore-audit/target/debug/build/gdk-sys-c7500959f80ba2d3/build-script-build` (exit status: 1)
+  --- stdout
+  cargo:rerun-if-env-changed=GDK_3.0_NO_PKG_CONFIG
+  cargo:rerun-if-env-changed=PKG_CONFIG_x86_64-unknown-linux-gnu
+  cargo:rerun-if-env-changed=PKG_CONFIG_x86_64_unknown_linux_gnu
+  cargo:rerun-if-env-changed=HOST_PKG_CONFIG
+  cargo:rerun-if-env-changed=PKG_CONFIG
+  cargo:rerun-if-env-changed=PKG_CONFIG_PATH_x86_64-unknown-linux-gnu
+  cargo:rerun-if-env-changed=PKG_CONFIG_PATH_x86_64_unknown_linux_gnu
+  cargo:rerun-if-env-changed=HOST_PKG_CONFIG_PATH
+  cargo:rerun-if-env-changed=PKG_CONFIG_PATH
+  cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_x86_64-unknown-linux-gnu
+  cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR_x86_64_unknown_linux_gnu
+  cargo:rerun-if-env-changed=HOST_PKG_CONFIG_LIBDIR
+  cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR
+  cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_x86_64-unknown-linux-gnu
+  cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR_x86_64_unknown_linux_gnu
+  cargo:rerun-if-env-changed=HOST_PKG_CONFIG_SYSROOT_DIR
+  cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR
+
+  --- stderr
+
+  pkg-config exited with status code 1
+  > PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1 pkg-config --libs --cflags gdk-3.0 'gdk-3.0 >= 3.22'
+
+  pkg-config output:
+    Package gdk-3.0 was not found in the pkg-config search path.
+    Perhaps you should add the directory containing `gdk-3.0.pc'
+    to the PKG_CONFIG_PATH environment variable
+    Package 'gdk-3.0', required by 'virtual:world', not found
+    Package 'gdk-3.0', required by 'virtual:world', not found
+
+  The system library `gdk-3.0` required by crate `gdk-sys` was not found.
+  The file `gdk-3.0.pc` needs to be installed and the PKG_CONFIG_PATH environment variable must contain its parent directory.
+  The PKG_CONFIG_PATH environment variable is not set.
+
+  HINT: if you have installed the library, try setting PKG_CONFIG_PATH to the directory containing `gdk-3.0.pc`.
+
+warning: build failed, waiting for other jobs to finish...
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling bitcode_derive v0.6.9
+   Compiling wasm-bindgen-macro-support v0.2.129
+   Compiling serde_derive v1.0.229
+   Compiling serde v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling wasm-bindgen-macro v0.2.129
+   Compiling bitcode v0.6.9
+   Compiling thiserror v2.0.21
+   Compiling statrs v0.19.1
+   Compiling wasm-bindgen v0.2.129
+   Compiling ironcalc_base v0.9.1
+   Compiling calamine v0.36.1
+   Compiling async-trait v0.1.92
+   Compiling yrs v0.28.0
+   Compiling futures-util v0.3.34
+   Compiling mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+   Compiling js-sys v0.3.106
+   Compiling mdc-collab v0.1.0 (/home/z/my-project/mdcore-audit/crates/collab)
+   Compiling docx-rs v0.4.22
+   Compiling rust_xlsxwriter v0.99.1
+   Compiling mdc-office-io v0.1.0 (/home/z/my-project/mdcore-audit/crates/office-io)
+   Compiling mdcore v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore)
+   Compiling mdc-evidence v0.1.0 (/home/z/my-project/mdcore-audit/crates/evidence)
+   Compiling mdc-canvas v0.1.0 (/home/z/my-project/mdcore-audit/crates/canvas)
+   Compiling mdc-workbench v0.1.0 (/home/z/my-project/mdcore-audit/crates/workbench)
+   Compiling lopdf v0.45.0
+   Compiling mdc-mdbridge v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdbridge)
+   Compiling mdcore-wasm v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore-wasm)
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/canvas.rs:377:20
+    |
+377 |     #[wasm_bindgen(static_method_of = WasmCanvas)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/collab.rs:504:20
+    |
+504 |     #[wasm_bindgen(static_method_of = WasmCollabSession)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/workbench.rs:352:20
+    |
+352 |     #[wasm_bindgen(static_method_of = WasmWorkbench)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/lib.rs:229:20
+    |
+229 |     #[wasm_bindgen(static_method_of = WasmCore)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/lib.rs:238:20
+    |
+238 |     #[wasm_bindgen(static_method_of = WasmCore)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: `mdcore-wasm` (lib) generated 5 warnings (run `cargo fix --lib -p mdcore-wasm` to apply 5 suggestions)
+   Compiling mdc-pdf v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf)
+   Compiling winnow v1.0.4
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling toml_edit v0.25.17+spec-1.1.0
+   Compiling mdc-settings v0.1.0 (/home/z/my-project/mdcore-audit/crates/settings)
+   Compiling mdshell v0.1.0 (/home/z/my-project/mdcore-audit/crates/shell)
+   Compiling mdc-relay v0.1.0 (/home/z/my-project/mdcore-audit/crates/relay)
+   Compiling console_error_panic_hook v0.1.7
+   Compiling mdc-office v0.1.0 (/home/z/my-project/mdcore-audit/crates/office)
+   Compiling mdc-pdf-wasm v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf-wasm)
+warning: `mdcore-wasm` (lib test) generated 5 warnings (5 duplicates)
+error: couldn't create a temp dir: No space left on device (os error 28) at path "/home/z/my-project/mdcore-audit/target/debug/deps/rustcUwOW4e"
+
+error: could not compile `mdc-office-io` (test "tr13_heading_styles") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: couldn't create a temp dir: No space left on device (os error 28) at path "/home/z/my-project/mdcore-audit/target/debug/deps/rustcyTnLHE"
+
+error: could not compile `mdc-office-io` (test "tr31_degenerate_field") due to 1 previous error
+   Compiling unicode-ident v1.0.26
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling cfg-if v1.0.5
+   Compiling memchr v2.8.3
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.6
+   Compiling serde v1.0.229
+   Compiling itoa v1.0.18
+   Compiling zmij v1.0.23
+   Compiling serde_json v1.0.151
+   Compiling rustversion v1.0.23
+   Compiling libc v0.2.190
+   Compiling serde_derive v1.0.229
+   Compiling scopeguard v1.2.0
+   Compiling thiserror v2.0.21
+   Compiling thiserror-impl v2.0.21
+   Compiling smallvec v1.16.2
+   Compiling cpufeatures v0.3.1
+   Compiling once_cell v1.21.4
+   Compiling hashbrown v0.17.1
+   Compiling pin-project-lite v0.2.17
+   Compiling equivalent v1.0.2
+   Compiling indexmap v2.14.2
+   Compiling fastrand v2.5.0
+   Compiling crc32fast v1.5.2
+   Compiling rand_core v0.10.1
+   Compiling typenum v1.20.1
+   Compiling simd-adler32 v0.3.10
+   Compiling getrandom v0.4.3
+   Compiling encoding_rs v0.8.42
+   Compiling hybrid-array v0.4.15
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.9.1
+   Compiling multiversion_no_op v1.0.0
+   Compiling zlib-rs v0.6.8
+   Compiling log v0.4.34
+   Compiling core_detect v1.0.0
+   Compiling simdutf8 v0.1.5
+   Compiling chacha20 v0.10.2
+   Compiling rand v0.10.3
+   Compiling crypto-common v0.2.2
+   Compiling flate2 v1.1.10
+   Compiling block-buffer v0.12.1
+   Compiling bitflags v2.13.2
+   Compiling const-oid v0.10.2
+   Compiling bumpalo v3.20.3
+   Compiling digest v0.11.3
+   Compiling libm v0.2.16
+   Compiling sha2 v0.11.0
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling wasm-bindgen-shared v0.2.129
+   Compiling siphasher v1.0.4
+   Compiling phf_shared v0.12.1
+   Compiling wasm-bindgen-macro-support v0.2.129
+   Compiling zopfli v0.8.4
+   Compiling wasm-bindgen v0.2.129
+   Compiling syn v2.0.119
+   Compiling aho-corasick v1.1.5
+   Compiling iana-time-zone v0.1.65
+   Compiling chrono-tz v0.10.4
+   Compiling typed-path v0.12.3
+   Compiling regex-syntax v0.8.11
+   Compiling zip v8.6.0
+   Compiling chrono v0.4.45
+   Compiling regex-automata v0.4.18
+   Compiling wasm-bindgen-macro v0.2.129
+   Compiling bitcode_derive v0.6.9
+   Compiling approx v0.5.1
+   Compiling phf v0.12.1
+   Compiling csv-core v0.1.13
+   Compiling bytemuck v1.25.2
+   Compiling parking_lot_core v0.9.12
+   Compiling ryu v1.0.23
+   Compiling crossbeam-utils v0.8.23
+   Compiling ironcalc_base v0.9.1
+   Compiling parking v2.2.1
+   Compiling event-listener v5.4.2
+   Compiling regex v1.13.1
+   Compiling csv v1.4.0
+   Compiling bitcode v0.6.9
+   Compiling statrs v0.19.1
+   Compiling quick-xml v0.41.0
+   Compiling debug_unsafe v0.1.4
+   Compiling atoi_simd v0.18.1
+   Compiling event-listener-strategy v0.5.4
+   Compiling codepage v0.1.3
+   Compiling lock_api v0.4.14
+   Compiling hashbrown v0.14.5
+   Compiling byteorder v1.5.0
+   Compiling fast-float2 v0.2.4
+   Compiling calamine v0.36.1
+   Compiling dashmap v6.2.1
+   Compiling async-lock v3.4.2
+   Compiling smallstr v0.3.1
+   Compiling async-trait v0.1.92
+   Compiling arc-swap v1.9.3
+   Compiling yrs v0.28.0
+   Compiling rustix v1.1.5
+   Compiling futures-core v0.3.34
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.34
+   Compiling linux-raw-sys v0.12.1
+   Compiling mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+   Compiling futures-util v0.3.34
+   Compiling js-sys v0.3.106
+   Compiling tempfile v3.27.0
+   Compiling mdc-collab v0.1.0 (/home/z/my-project/mdcore-audit/crates/collab)
+   Compiling str_indices v0.4.4
+   Compiling base64 v0.22.1
+   Compiling docx-rs v0.4.22
+   Compiling rust_xlsxwriter v0.99.1
+   Compiling ropey v1.6.1
+   Compiling mdc-office-io v0.1.0 (/home/z/my-project/mdcore-audit/crates/office-io)
+   Compiling mdcore v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore)
+   Compiling mdc-evidence v0.1.0 (/home/z/my-project/mdcore-audit/crates/evidence)
+   Compiling mdc-canvas v0.1.0 (/home/z/my-project/mdcore-audit/crates/canvas)
+   Compiling block-padding v0.4.2
+   Compiling inout v0.2.2
+   Compiling cipher v0.5.2
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling tinyvec v1.13.3
+   Compiling unicode-normalization v0.1.25
+   Compiling alloc-stdlib v0.2.4
+   Compiling mdc-workbench v0.1.0 (/home/z/my-project/mdcore-audit/crates/workbench)
+   Compiling cpubits v0.1.1
+   Compiling unicode-bidi v0.3.18
+   Compiling unicode-properties v0.1.4
+   Compiling aes v0.9.3
+   Compiling stringprep v0.1.5
+   Compiling brotli-decompressor v5.0.3
+   Compiling ecb v0.2.1
+   Compiling cbc v0.2.1
+   Compiling md-5 v0.11.0
+   Compiling nom v8.0.0
+   Compiling rangemap v1.8.0
+   Compiling weezl v0.2.1
+   Compiling mdc-mdbridge v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdbridge)
+   Compiling mdcore-wasm v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore-wasm)
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/canvas.rs:377:20
+    |
+377 |     #[wasm_bindgen(static_method_of = WasmCanvas)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/collab.rs:504:20
+    |
+504 |     #[wasm_bindgen(static_method_of = WasmCollabSession)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/workbench.rs:352:20
+    |
+352 |     #[wasm_bindgen(static_method_of = WasmWorkbench)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/lib.rs:229:20
+    |
+229 |     #[wasm_bindgen(static_method_of = WasmCore)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/lib.rs:238:20
+    |
+238 |     #[wasm_bindgen(static_method_of = WasmCore)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+   Compiling lopdf v0.45.0
+warning: `mdcore-wasm` (lib) generated 5 warnings (run `cargo fix --lib -p mdcore-wasm` to apply 5 suggestions)
+   Compiling winnow v1.0.4
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling toml_edit v0.25.17+spec-1.1.0
+   Compiling mdc-pdf v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf)
+   Compiling mdc-settings v0.1.0 (/home/z/my-project/mdcore-audit/crates/settings)
+   Compiling mdshell v0.1.0 (/home/z/my-project/mdcore-audit/crates/shell)
+   Compiling mdc-relay v0.1.0 (/home/z/my-project/mdcore-audit/crates/relay)
+   Compiling console_error_panic_hook v0.1.7
+   Compiling mdc-office v0.1.0 (/home/z/my-project/mdcore-audit/crates/office)
+   Compiling mdc-pdf-wasm v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf-wasm)
+warning: `mdcore-wasm` (lib test) generated 5 warnings (5 duplicates)
+    Finished `test` profile [unoptimized] target(s) in 1m 38s
+     Running unittests src/lib.rs (target/debug/deps/mdc_canvas-05d0130d7021434f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/concurrency.rs (target/debug/deps/concurrency-2681954bd0965c2e)
+
+running 5 tests
+test concurrent_move_lww_converges ... ok
+test concurrent_human_and_ai_converge ... ok
+test hostile_wire_and_maintenance_gc ... ok
+test next_id_skips_ids_revived_from_remote_state ... ok
+test snapshot_restore_and_continue ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/events.rs (target/debug/deps/events-6fc31c03b3584970)
+
+running 10 tests
+test command_event_touched_root_insert ... ok
+test failed_command_no_event ... ok
+test event_updates_forwardable_roundtrip ... ok
+test group_touched_is_group_object ... ok
+test maintenance_event_pin ... ok
+test move_touches_nested_path ... ok
+test remote_event_touched_from_deep_observer ... ok
+test remove_and_props_touched ... ok
+test subscription_lifecycle_and_multi_subscriber ... ok
+test undo_empty_and_redo_events ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/evidence_assoc.rs (target/debug/deps/evidence_assoc-9c9b4971f8789d9d)
+
+running 1 test
+test evidence_binds_to_canvas_object_and_degrades_on_move ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden.rs (target/debug/deps/golden-b24458fa57ddb5eb)
+
+running 4 tests
+test fixtures_are_present_and_non_trivial ... ok
+test golden_svg_matches_fixture ... ok
+test golden_png_matches_fixture ... ok
+test svg_and_png_agree_via_external_rasterizer ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/matrix.rs (target/debug/deps/matrix-99bd3e27903afebf)
+
+running 4 tests
+test hostile_inputs ... ok
+test edge_and_group_semantics ... ok
+test node_lifecycle_and_read_model ... ok
+test semantic_fingerprints ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/render.rs (target/debug/deps/render-bf850751e69bc7f9)
+
+running 31 tests
+test dangling_edge_is_skipped_not_panicked ... ok
+test bad_props_fall_back_to_defaults ... ok
+test empty_canvas_still_produces_valid_svg ... ok
+test encode_png_checks_buffer_length ... ok
+test ellipse_is_round_not_rectangular ... ok
+test group_object_itself_is_not_drawn ... ok
+test identity_transform_is_exact_noop ... ok
+test line_is_not_dropped_by_thin_width ... ok
+test image_without_data_draws_placeholder_frame ... ok
+test negative_size_is_rejected ... ok
+test non_finite_geometry_is_rejected ... ok
+test parsing_helpers_are_total ... ok
+test line_single_pixel_is_visible_and_symmetric ... ok
+test path_with_curves_draws ... ok
+test png_has_valid_signature_and_chunks ... ok
+test png_ihdr_dimensions_match_request ... ok
+test png_rejects_zero_size ... ok
+test props_protocol_overrides_defaults ... ok
+test rect_fills_and_strokes ... ok
+test rotate_90_maps_axes ... ok
+test png_is_deterministic ... ok
+test rotate_is_clockwise_in_screen_coords ... ok
+test scale_multiplies_size_about_center ... ok
+test svg_escapes_hostile_text ... ok
+test svg_has_all_six_primitives ... ok
+test svg_transform_folds_into_geometry ... ok
+test text_placeholder_box_is_drawn ... ok
+test thick_stroke_is_fully_opaque_mid_edge ... ok
+test translate_shifts_bounds ... ok
+test zero_dash_gap_is_rejected ... ok
+test session_objects_become_shapes_via_props ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/undo_redo.rs (target/debug/deps/undo_redo-54d0bd58cde561b8)
+
+running 4 tests
+test delete_then_undo_restores_same_identity ... ok
+test per_actor_interleaved_undo ... ok
+test undo_stack_soft_limit ... ok
+test undo_redo_all_op_types ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_collab-0f80e3b808281c1d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/audit.rs (target/debug/deps/audit-626c262b66d9f51a)
+
+running 10 tests
+test audit_update_detects_foreign_roots ... ok
+test audit_update_detects_identity_violations ... ok
+test audit_update_clean_peer_roundtrip ... ok
+test audit_update_detects_missing_text_node ... ok
+test audit_update_detects_shape_drift_violations ... ok
+test audit_update_isolation_and_fail_closed ... ok
+test repair_semantics ... ok
+test repair_coupling_protection_end_to_end ... ok
+test self_audit_clean_after_full_op_matrix ... ok
+test set_block_type_carries_invariant_guards ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/concurrency.rs (target/debug/deps/concurrency-04035333ba456fd4)
+
+running 4 tests
+test three_way_chain_convergence ... ok
+test concurrent_edits_converge ... ok
+test undo_semantics_across_sessions ... ok
+test two_session_full_then_incremental_convergence ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/events.rs (target/debug/deps/events-36f2b558668c784e)
+
+running 11 tests
+test command_event_source_and_updates ... ok
+test ai_actor_source_distinction ... ok
+test failed_command_no_event ... ok
+test event_updates_forwardable_to_peer ... ok
+test maintenance_event_pin ... ok
+test remote_event_on_apply ... ok
+test restored_session_events_after_recovery ... ok
+test subscription_lifecycle ... ok
+test undo_empty_stack_no_event ... ok
+test undo_redo_events ... ok
+test load_blocks_multi_txn_single_event ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/hostile.rs (target/debug/deps/hostile-07feac2cb6ab9c6a)
+
+running 4 tests
+test anchor_sidecar_hostile_payloads ... ok
+test input_byte_limits ... ok
+test bad_ranges_and_missing_blocks ... ok
+test invalid_constructor_inputs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/marks_readback.rs (target/debug/deps/marks_readback-afce501a05eb4b3e)
+
+running 4 tests
+test find_block_marks_view ... ok
+test mark_removal_readback ... ok
+test plain_text_no_marks ... ok
+test single_and_nested_marks_readback ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/matrix.rs (target/debug/deps/matrix-78902f28fa8887ec)
+
+running 7 tests
+test container_children_and_own_text ... ok
+test anchor_identity_semantics ... ok
+test nine_kind_load_and_readback ... ok
+test replace_text_char_domain_and_marks ... ok
+test set_attrs_semantics ... ok
+test set_type_and_move_semantics ... ok
+test set_mark_add_remove_and_overlap ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/presence.rs (target/debug/deps/presence-cceb0aa46f31782a)
+
+running 11 tests
+test invalid_json_rejected ... ok
+test byte_limit_and_garbage_isolation ... ok
+test local_state_lifecycle_and_events ... ok
+test multi_client_states_sorted_and_merge ... ok
+test offline_null_state_propagation ... ok
+test session_presence_client_id_aligned ... ok
+test stale_clock_ignored ... ok
+test standalone_construction_domain ... ok
+test subscription_lifecycle ... ok
+test wire_roundtrip_and_peer_event ... ok
+test targeted_encode_for_known_clients ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/recovery.rs (target/debug/deps/recovery-9b71788f4685c574)
+
+running 4 tests
+test hostile_wire_inputs_fail_closed ... ok
+test maintenance_gc_semantics ... ok
+test snapshot_interops_with_diff_sync ... ok
+test snapshot_restore_and_continue ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/undo_redo.rs (target/debug/deps/undo_redo-3902f3c485cc1b65)
+
+running 5 tests
+test remove_then_undo_identity ... ok
+test p20_interleaved_undo_regression_lock ... ok
+test typing_granularity_pinned_per_command ... ok
+test undo_stack_soft_limit ... ok
+test undo_redo_all_op_types ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_evidence-a8d52af8527a321d)
+
+running 53 tests
+test audit::tests::seq_monotonic_and_continues ... ok
+test calc::tests::checked_neg_boundaries ... ok
+test calc::tests::division_rounding_modes ... ok
+test calc::tests::no_binary_float_artifacts ... ok
+test calc::tests::parse_and_display_roundtrip ... ok
+test calc::tests::quantity_times_price ... ok
+test calc::tests::rescale_explicit ... ok
+test command::tests::idempotency_key_domain ... ok
+test evidence::tests::calculated_requires_claimed_value ... ok
+test command::tests::envelope_roundtrip_with_domain_payload ... ok
+test evidence::tests::linkage_only_degrades_never_recovers ... ok
+test evidence::tests::relation_calc_ref_invariants ... ok
+test evidence::tests::claimed_value_serde_default_keeps_v1_data_loadable ... ok
+test expr::tests::arithmetic_errors_explicit ... ok
+test expr::tests::determinism_same_inputs_same_trace ... ok
+test expr::tests::form_quantity_times_price ... ok
+test expr::tests::form_ratio_percent ... ok
+test expr::tests::form_unit_conversion_factor_literal ... ok
+test expr::tests::form_sum_chain ... ok
+test expr::tests::precedence_parens_and_unary_minus ... ok
+test expr::tests::recalc_evaluation_error ... ok
+test expr::tests::limits_enforced ... ok
+test expr::tests::recalc_final_value_none_cannot_pass ... ok
+test expr::tests::recalc_input_mismatch ... ok
+test expr::tests::recalc_input_unavailable ... ok
+test expr::tests::recalc_pass_path ... ok
+test expr::tests::recalc_precision_mismatch_on_tamper ... ok
+test expr::tests::syntax_and_char_errors ... ok
+test expr::tests::unit_mismatch_on_additive_rejected ... ok
+test expr::tests::unknown_and_duplicate_inputs ... ok
+test expr::tests::unit_propagation_reporting ... ok
+test expr::tests::whitespace_tolerant ... ok
+test fingerprint::tests::fnv64_deterministic_and_sensitive ... ok
+test fingerprint::tests::known_vector ... ok
+test locator::tests::cell_coord_domain ... ok
+test locator::tests::locator_engine_dispatch ... ok
+test locator::tests::region_ordering ... ok
+test refs::tests::fingerprint_requires_algorithm_prefix ... ok
+test refs::tests::content_matches_requires_same_algorithm ... ok
+test sidecar::tests::body_refresh_breaks_claim_anchor_only ... ok
+test sidecar::tests::apply_evaluation_lands_and_refuses_overwrite ... ok
+test sidecar::tests::claim_reverify_is_only_claim_side_recovery ... ok
+test sidecar::tests::duplicate_evidence_id_rejected ... ok
+test sidecar::tests::idempotent_command_replay ... ok
+test sidecar::tests::recalculate_cascades_to_referencing_evidence ... ok
+test sidecar::tests::review_transitions_and_reset_denied ... ok
+test sidecar::tests::corrupt_file_rejected_not_guessed ... ok
+test sidecar::tests::save_load_roundtrip_and_atomicity ... ok
+test sidecar::tests::schema_version_gate ... ok
+test sidecar::tests::source_change_degrades_to_stale_and_never_silently_rebinds ... ok
+test sidecar::tests::source_unavailable_marks_missing ... ok
+test status::tests::only_valid_allows_recalc ... ok
+test status::tests::three_states_are_orthogonal_in_serde ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_formula-a5c66464938d91f5)
+
+running 16 tests
+test engine_tests::build_and_first_eval ... ok
+test engine_tests::circular_detected ... ok
+test engine_tests::dependencies_errors ... ok
+test engine_tests::cross_sheet_reference ... ok
+test engine_tests::dependencies_relative_absolute ... ok
+test engine_tests::error_codes_stable ... ok
+test engine_tests::edit_then_recalc_chain ... ok
+test engine_tests::error_propagation ... ok
+test engine_tests::sheet_name_rules_passthrough ... ok
+test engine_tests::limits_enforced ... ok
+test engine_tests::text_number_distinction ... ok
+test engine_tests::value_error_write_rejected ... ok
+test refs::tests::a1_format_roundtrip ... ok
+test engine_tests::unevaluated_formula_reads_typed_error ... ok
+test refs::tests::a1_rejects_invalid ... ok
+test refs::tests::a1_roundtrip_basic ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/functions_vs_excel.rs (target/debug/deps/functions_vs_excel-fecf340792d889ab)
+
+running 7 tests
+test datetime_family ... ok
+test criteria_family ... ok
+test error_semantics_typed ... ok
+test logical_family ... ok
+test lookup_family ... ok
+test math_family ... ok
+test text_family ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/perf.rs (target/debug/deps/perf-a5f86bbc070457af)
+
+running 2 tests
+test edit_one_cell_full_recalc_latency ... ok
+test recalc_10k_x_20_under_1s_release ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests/real_xlsx_lo.rs (target/debug/deps/real_xlsx_lo-05c72d4ea54db262)
+
+running 2 tests
+test financial_model_vs_libreoffice_cached_truth ... ok
+test soffice_live_recalc_pipeline ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_mdbridge-abfc70e8462d98f8)
+
+running 2 tests
+test tests::kind_mapping_total ... ok
+test tests::family_codec_roundtrip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bridge_ops.rs (target/debug/deps/bridge_ops-be36ca54bf1b4aa8)
+
+running 9 tests
+test insert_toplevel_nested_and_id_writeback ... ok
+test container_and_text_face_prechecks ... ok
+test move_block_cross_parent_and_back ... ok
+test origin_split_stacks_dual_actor ... ok
+test remove_then_undo_identity_continuity ... ok
+test replace_text_char_domain_and_bad_range ... ok
+test move_block_same_parent_all_positions ... ok
+test set_type_attrs_mark_dual ... ok
+test shadow_full_rematerialize_equivalence_after_mixed_ops ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bridge_publish.rs (target/debug/deps/bridge_publish-f16f10ce54138b1c)
+
+running 4 tests
+test publish_precheck_failures ... ok
+test publish_marks_visible_and_coverage_equivalent ... ok
+test publish_roundtrip_identity_and_shape ... ok
+test publish_same_tree_twice_distinct_ids ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bridge_sync.rs (target/debug/deps/bridge_sync-784206713ddfb75f)
+
+running 6 tests
+test fake_family_injection_isolated ... ok
+test foreign_mapping_stable_across_rematerialize_rounds ... ok
+test hostile_empty_block_id_orphan ... ok
+test snapshot_restore_same_and_changed_client ... ok
+test two_host_convergence_and_cross_edit ... ok
+test undo_local_only_after_remote ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_office-f2b37bc37ad06bc9)
+
+running 16 tests
+test sanitize::url_policy::tests::u01_javascript_rejected ... ok
+test sanitize::url_policy::tests::custom_whitelist_and_full_reject ... ok
+test sanitize::url_policy::tests::u02_case_evasion_rejected ... ok
+test sanitize::url_policy::tests::u04_data_uri_rejected ... ok
+test sanitize::url_policy::tests::u03_whitespace_normalization_rejected ... ok
+test sanitize::url_policy::tests::u05_vbscript_rejected ... ok
+test sanitize::url_policy::tests::u06_file_rejected ... ok
+test sanitize::url_policy::tests::u07_unc_rejected ... ok
+test sanitize::url_policy::tests::u08_protocol_relative_allowed ... ok
+test sanitize::url_policy::tests::u10_mailto_allowed ... ok
+test sanitize::url_policy::tests::u09_https_allowed ... ok
+test sanitize::url_policy::tests::u11_internal_link_allowed ... ok
+test sanitize::url_policy::tests::u13_nul_truncation_rejected ... ok
+test sanitize::url_policy::tests::u12_attribute_glue_rejected ... ok
+test sanitize::url_policy::tests::u14_whitelist_case_insensitive ... ok
+test sanitize::url_policy::tests::u15_empty_mailto_and_edges ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sanitize_gates.rs (target/debug/deps/sanitize_gates-c7f13315411184e4)
+
+running 18 tests
+test csv_all_four_triggers_all_modes_matrix ... ok
+test csv_prefix_modes_rewrite_and_passthrough ... ok
+test csv_reject_mode_typed_error ... ok
+test csv_trigger_set_exactly_four_chars ... ok
+test field_deny_families_rejected ... ok
+test field_embedded_deny_token_injection_blocked ... ok
+test field_policy_modes_and_unknown_family ... ok
+test html_href_injection_neutralized ... ok
+test field_whitelist_default_allows_audit_set ... ok
+test office_crate_zero_dependencies_self_lock ... ok
+test xml_decode_external_convention_and_edges ... ok
+test xml_corrupt_tier_contrast_output_is_legal ... ok
+test xml_escape_boundary_closer_multibyte_members ... ok
+test xml_entities_text_minimal_and_attr_five ... ok
+test xml_legal_controls_and_del_pass_through ... ok
+test xml_literal_pattern_disambiguation_regressions ... ok
+test xml_escape_set_boundary_sweep ... ok
+test xml_roundtrip_property_lcg ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/sanitize_security.rs (target/debug/deps/sanitize_security-2d9b2348a70bbfd5)
+
+running 44 tests
+test c01_mode_comparisons ... ok
+test c01_dde_injection_prefixed ... ok
+test c02_plus_trigger_prefixed ... ok
+test c03_minus_trigger_prefixed ... ok
+test c04_at_trigger_prefixed ... ok
+test c05_leading_space_untouched ... ok
+test c06_already_disinfected_untouched ... ok
+test c07_legal_apostrophe_text_untouched ... ok
+test c08_fullwidth_equals_untouched ... ok
+test c09_plain_formula_still_prefixed ... ok
+test e01_all_entities_baseline ... ok
+test c10_tab_prefix_untouched ... ok
+test e03_attribute_injection_neutralized ... ok
+test e02_already_escaped_treated_as_literal ... ok
+test e05_control_char_integrated_path ... ok
+test e04_cdata_terminator_escaped ... ok
+test e07_tag_smuggling_neutralized ... ok
+test e06_numeric_entity_smuggling_neutralized ... ok
+test f02_ddeauto_rejected ... ok
+test f01_includetext_rejected ... ok
+test f04_switch_position_injection_rejected ... ok
+test f03_nested_injection_after_switch_rejected ... ok
+test f05_case_evasion_rejected ... ok
+test f06_quoted_deny_keyword_word_semantics_pinned ... ok
+test f07_whitelist_families_allowed ... ok
+test f09_conservative_false_positive_registered ... ok
+test f08_shorter_prefix_not_keyword_allowed ... ok
+test f10_superset_prefix_caught_same_class_as_f09 ... ok
+test h01_tag_injection_neutralized ... ok
+test h02_attribute_breakout_neutralized ... ok
+test h03_url_scheme_attack_ineffective_to_char_escaping ... ok
+test h04_data_uri_ineffective_to_char_escaping ... ok
+test h05_single_quote_breakout_neutralized ... ok
+test h06_already_escaped_literal_roundtrip ... ok
+test x02_literal_form_disambiguated ... ok
+test x01_nul_escaped ... ok
+test x03_reencode_prefix_grows_level_by_level ... ok
+test x04_legal_controls_and_del_untouched ... ok
+test x05_legal_char_spoof_form_disambiguated ... ok
+test x06_uppercase_x_not_a_form ... ok
+test x07_wrong_hex_length_not_a_form ... ok
+test x08_non_hex_digit_not_a_form ... ok
+test x09_ffff_two_paths_symmetric ... ok
+test x10_fffe_real_char_escaped ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_office_io-c6ec17efd3cb29ec)
+
+running 181 tests
+test docx::tests::anchor_t1_roundtrip_attribute_form_zero_rels ... ok
+test docx::tests::anchor_t2_priority_over_external_link ... ok
+test docx::tests::anchor_t4_bookmark_paragraph_xml_face ... ok
+test docx::tests::anchor_t5_validation_matrix_v1_to_v6 ... ok
+test docx::tests::anchor_t7_constructor_identity ... ok
+test docx::tests::anchor_v7_empty_anchor_sticky_reject_at_save ... ok
+test docx::tests::content_types_garbage_strict_rejects_compat_degrades ... ok
+test docx::tests::content_types_missing_and_duplicate_entries ... ok
+test docx::tests::content_types_parse_and_lookup ... ok
+test docx::tests::content_types_unknown_element_strict_compat ... ok
+test docx::tests::document_scale_limit_boundaries ... ok
+test docx::tests::docx_family_declared_limit_end_to_end ... ok
+test docx::tests::anchor_t3_dangling_is_legal_form ... ok
+test docx::tests::docx_input_size_limit_bytes_entry ... ok
+test docx::tests::docx_paragraph_run_counting_wiring ... ok
+test docx::tests::docx_save_funnel_rejects_over_scale_no_artifact ... ok
+test docx::tests::field_machine_volatile_matrix_and_lifecycle ... ok
+test docx::tests::g1_t1_toc_five_part_emission ... ok
+test docx::tests::g1_t2_toc_full_range_no_switch ... ok
+test docx::tests::g1_t3_v8_domain_reject ... ok
+test docx::tests::g1_t4_toc_mixed_with_page_fields ... ok
+test docx::tests::g2_t1_page_geometry_emission ... ok
+test docx::tests::g2_t2_default_typography_emission ... ok
+test docx::tests::g2_t3_v9_domain_reject ... ok
+test docx::tests::g2_t4_baseline_unchanged ... ok
+test docx::tests::g3_t1_new_face_already_anonymous_and_idempotent ... ok
+test docx::tests::docx_input_size_limit_path_entry ... ok
+test docx::tests::g3_t2_darkmark_full_scrub ... ok
+test docx::tests::g3_t3_missing_docprops_tolerated ... ok
+test docx::tests::heading_level_validation ... ok
+test docx::tests::g3_t4_not_docx_rejected ... ok
+test docx::tests::hyperlink_resolution_dispatch ... ok
+test docx::tests::indent_carry_variants ... ok
+test docx::tests::image_write_validation ... ok
+test docx::tests::list_item_lines_model_level ... ok
+test docx::tests::list_item_ilvl_validation ... ok
+test docx::tests::numbering_index_and_carry_paths ... ok
+test docx::tests::part_path_normalization ... ok
+test docx::tests::rels_duplicate_id_strict_rejects_compat_first_wins ... ok
+test docx::tests::rels_garbage_strict_rejects_compat_degrades ... ok
+test docx::tests::rels_missing_attributes_strict_rejects_compat_skips ... ok
+test docx::tests::rels_garbage_weird_names_strict_rejects_compat_tolerates ... ok
+test docx::tests::rels_owner_part_derivation ... ok
+test docx::tests::rels_unknown_element_strict_rejects_compat_skips ... ok
+test docx::tests::rels_wrong_root_strict_rejects_compat_tolerates ... ok
+test docx::tests::rels_parse_basic_with_entity_compensation ... ok
+test docx::tests::run_spec_constructors ... ok
+test docx::tests::specs_expand_footnote_marker ... ok
+test docx::tests::specs_expand_mono_strike_underline ... ok
+test docx::tests::specs_expand_simple_fields ... ok
+test docx::tests::style_index_resolution_matrix ... ok
+test docx::tests::t8b_toc_entries_block_structure_and_jump_closure ... ok
+test docx::tests::t8c_heading_bookmarked_validation ... ok
+test docx::tests::t8a_field_pageref_five_part_xml_face ... ok
+test docx::tests::t8e_sticky_validation_v11_v8 ... ok
+test docx::tests::t8f_bookmark_generation_avoids_user_collisions ... ok
+test docx::tests::t8g_empty_entries_degrades_to_legacy_shape ... ok
+test docx::tests::t9a_heading_visual_face ... ok
+test docx::tests::t8d_write_read_roundtrip_semantics ... ok
+test docx::tests::t9b_char_style_emission ... ok
+test docx::tests::t9c_v12_reference_matrix ... ok
+test docx::tests::t9d_preset_char_styles_injected_and_roundtrip ... ok
+test docx_edit::tests::core_container_gates_hostile_input ... ok
+test docx_edit::tests::core_control_chars_and_break_conventions ... ok
+test docx_edit::tests::core_fallback_copy_refuses ... ok
+test docx_edit::tests::core_index_text_conventions_and_last_write_wins ... ok
+test docx_edit::tests::core_table_textbox_paragraphs_and_nesting_guard ... ok
+test docx_edit::tests::core_textless_paragraph_insert_and_selfclosing_form ... ok
+test docx_edit::tests::core_untouched_bytes_and_regions_identical ... ok
+test docx_edit::tests::core_roundtrip_ten_cycles_no_bloat ... ok
+test docx_edit::tests::field_degenerate_no_separate_refuses_edit ... ok
+test docx_edit::tests::field_and_text_edits_merged_save ... ok
+test docx_edit::tests::field_empty_result_region_refuses ... ok
+test docx_edit::tests::field_kind_parsing_matrix ... ok
+test docx_edit::tests::field_fldsimple_instr_attr_and_editable ... ok
+test docx_edit::tests::field_page_edit_keeps_five_part_structure ... ok
+test docx_edit::tests::field_multi_span_result_first_replaced_rest_removed ... ok
+test docx_edit::tests::field_toc_crosspara_readonly_pageref_nested_editable ... ok
+test docx_edit::tests::field_unknown_coords_rejected ... ok
+test docx_edit::tests::field_value_defense_and_tab_br_emission ... ok
+test docx_edit::tests::notes_edit_first_replace_rest_removed_shells_kept ... ok
+test docx_edit::tests::notes_fields_text_mixed_one_save ... ok
+test docx_edit::tests::notes_list_shapes_anchors_separator_exclusion ... ok
+test docx_edit::tests::notes_transparency_without_edits ... ok
+test docx_edit::tests::notes_rejections_and_tab_br_emission ... ok
+test docx_edit::tests::pit1_multi_run_first_text_run_rpr_kept_rest_merged ... ok
+test docx_edit::tests::pit2_special_nodes_preserved_not_deleted ... ok
+test docx_edit::tests::pit3_field_code_refuses_edit ... ok
+test docx_edit::tests::pit4_revision_policy_refuse_and_edit ... ok
+test docx_edit::tests::pit5_hyperlink_emptied_shell_removed ... ok
+test docx_edit::tests::pit5_hyperlink_text_stays_inside_link ... ok
+test docx_edit::tests::pit6_whitespace_preserved_with_xml_space ... ok
+test docx_edit::tests::pit7_xml_escaping_roundtrip ... ok
+test docx_edit::tests::sdt_wrapped_table_cells_flagged_in_table ... ok
+test docx_edit::tests::sdt_wrapped_toc_paragraphs_flagged_and_counted ... ok
+test docx_edit::tests::table_cells_gridspan_repeats_anchor ... ok
+test docx_edit::tests::table_cells_is_read_only_and_save_stays_identical ... ok
+test docx_edit::tests::table_cells_multiple_tables_in_document_order ... ok
+test docx_edit::tests::table_cells_nested_table_excluded_from_outer_grid ... ok
+test docx_edit::tests::table_cells_plain_grid ... ok
+test docx_edit::tests::table_cells_self_closing_cell_paragraph ... ok
+test docx_edit::tests::table_cells_vmerge_continue_points_to_restart ... ok
+test docx_edit::tests::table_cells_set_cell_text_keeps_tcpr_and_surrounding_bytes ... ok
+test io::tests::bytes_entry_garbage_and_truncated_reject ... ok
+test io::tests::bytes_entry_matches_path_entry ... ok
+test io::tests::control_char_tolerance_pinned ... ok
+test io::tests::declared_huge_rejected ... ok
+test io::tests::cumulative_grid_area_over_limit_rejected ... ok
+test io::tests::eocd_corrupt_is_container_error ... ok
+test io::tests::garbage_part_strict_reject_compat_warns ... ok
+test io::tests::gate3_depth_limit_enforced ... ok
+test io::tests::gate3_empty_xml_part_rejected ... ok
+test io::tests::gate3_multiple_roots_rejected ... ok
+test io::tests::gate3_non_xml_parts_not_validated ... ok
+test io::tests::grid_area_boundary_exact_limit_passes_over_rejected ... ok
+test io::tests::grid_scan_mirror_semantics ... ok
+test io::tests::hyperlink_face_roundtrip_five_forms ... ok
+test io::tests::input_size_limit_bytes_entry ... ok
+test io::tests::input_size_limit_path_entry ... ok
+test io::tests::lie_header_rejected_at_gate2 ... ok
+test io::tests::normal_file_reads ... ok
+test io::tests::path_escape_rejected ... ok
+test io::tests::prescan_docx_family_limits ... ok
+test io::tests::sheet_count_limit_enforced ... ok
+test io::tests::sparse_grid_bomb_rejected_both_modes ... ok
+test io::tests::truncation_boundary_pinned ... ok
+test io::tests::verify_actual_sizes_standalone_still_works ... ok
+test numbering::tests::dangling_and_num_style_link ... ok
+test numbering::tests::numfmt_rendering_set ... ok
+test numbering::tests::parse_numbering_full_face ... ok
+test numbering::tests::tracker_cascade_and_restart ... ok
+test numbering::tests::tracker_lvl_restart_zero_and_two ... ok
+test numbering::tests::write_face_validation_matrix ... ok
+test numbering::tests::write_read_roundtrip_full ... ok
+test style::tests::chain_cycle_and_dangling ... ok
+test style::tests::effective_format_layering ... ok
+test style::tests::parse_styles_chain_and_fields ... ok
+test style::tests::parse_theme_scheme_empty_slots_kept_out ... ok
+test style::tests::parse_theme_scheme_full ... ok
+test style::tests::styled_paragraph_xml_face ... ok
+test style::tests::theme_lookup_mapping_and_fallbacks ... ok
+test style::tests::theme_resolution_end_to_end ... ok
+test style::tests::theme_shade_spec_example ... ok
+test style::tests::theme_shade_wins_over_tint ... ok
+test style::tests::theme_tint_spec_example ... ok
+test style::tests::write_face_validation_matrix ... ok
+test style::tests::write_read_roundtrip_full ... ok
+test write::tests::cache_result_string_forms ... ok
+test write::tests::cell_budget_limit_and_arithmetic ... ok
+test write::tests::coordinate_bounds_enforced ... ok
+test write::tests::formula_prefix_normalization ... ok
+test write::tests::merge_order_and_single_cell ... ok
+test write::tests::numfmt_format_codes ... ok
+test write::tests::save_to_vec_produces_zip_magic ... ok
+test write::tests::sheet_count_write_limit ... ok
+test write::tests::sheet_name_rules_enforced ... ok
+test write::tests::streaming_backward_write_typed_rejected ... ok
+test write::tests::streaming_merge_backward_rejected ... ok
+test io::tests::entry_count_rejected ... ok
+test write::tests::text_and_formula_length_limits ... ok
+test write::tests::streaming_sheet_count_256_fd_face ... ok
+test write::tests::write_row_sequential ... ok
+test xlsx_chart::tests::emu_conversion_bounds ... ok
+test xlsx_chart::tests::kind_validation ... ok
+test xlsx_chart::tests::parse_range_forms ... ok
+test xlsx_edit::tests::broken_container_rejected ... ok
+test xlsx_edit::tests::cell_info_reads_all_storage_forms ... ok
+test xlsx_edit::tests::cell_ref_parsing_boundaries ... ok
+test xlsx_edit::tests::escaped_and_special_text_roundtrip_form ... ok
+test xlsx_edit::tests::formula_cell_rejected ... ok
+test xlsx_edit::tests::insert_cell_into_existing_row_keeps_order ... ok
+test xlsx_edit::tests::insert_missing_row_at_sorted_position ... ok
+test xlsx_edit::tests::invalid_values_rejected ... ok
+test xlsx_edit::tests::multi_sheet_edits_and_xml_declaration_kept ... ok
+test xlsx_edit::tests::non_worksheet_sheet_rejected ... ok
+test xlsx_edit::tests::replace_cell_three_value_forms ... ok
+test xlsx_edit::tests::selfclosed_row_expands_with_attrs ... ok
+test xlsx_edit::tests::selfclosed_sheetdata_expands ... ok
+test xlsx_edit::tests::worksheet_part_resolution ... ok
+test xlsx_edit::tests::zero_edit_save_is_byte_identical ... ok
+test write::tests::write_row_column_width_boundary ... ok
+
+test result: ok. 181 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.33s
+
+     Running tests/cell_types.rs (target/debug/deps/cell_types-e7877f7de1d90e69)
+
+running 9 tests
+test data_face_seven_kinds_pinned ... ok
+test display_face_data_to_string_pinned ... ok
+test date_serial_components_and_1904_epoch ... ok
+test formula_at_safe_join_and_replay_junction ... ok
+test formula_text_channel_distinct_from_cached_value ... ok
+test typed_display_equivalence_with_data_display ... ok
+test typed_explicit_conversions_ruled_by_evidence ... ok
+test typed_face_seven_kinds_pinned ... ok
+test kind_preserving_replay_roundtrip ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/corpus_harness.rs (target/debug/deps/corpus_harness-fb0a8ff01743b15e)
+
+running 3 tests
+test corpus_compat_mode_classification ... ok
+test corpus_tolerance_discoveries_anchored ... ok
+test corpus_seventeen_files_three_way_classification ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/docx_fields.rs (target/debug/deps/docx_fields-3f2ef981f993a8cd)
+
+running 8 tests
+test golden_fields_all_shapes ... ok
+test golden_fixture_present ... ok
+test golden_edit_chain_keeps_structure ... ok
+test real_docx4j_if_nested ... ok
+test real_docx4j_toc_nested_readonly ... ok
+test real_word_complex_page_field_edit ... ok
+test soffice_open_and_field_alive_falsification ... ok
+test soffice_real_word_complex_after_edit ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+
+     Running tests/docx_merged_cells.rs (target/debug/deps/docx_merged_cells-1b60cc72f24bb8a7)
+
+running 9 tests
+test chain_gap_closes_at_last_continued_row ... ok
+test block_merge_single_rectangle ... ok
+test horizontal_grid_span_covers_columns ... ok
+test missing_tbl_grid_falls_back_to_row_sums ... ok
+test orphan_continue_keeps_content ... ok
+test single_row_restart_is_not_a_merge ... ok
+test span_mismatch_continue_is_orphan ... ok
+test vertical_merge_chain_content_once ... ok
+test word_merged_fixture_two_merges_content_once ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/docx_nested_tables.rs (target/debug/deps/docx_nested_tables-accbf82d657fc138)
+
+running 4 tests
+test depth_three_chain_depth_first ... ok
+test nested_table_emitted_as_block_with_marker ... ok
+test hostile_deep_nesting_capped_with_warning ... ok
+test nested_tables_in_document_order ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/docx_notes.rs (target/debug/deps/docx_notes-64f87035dbbad938)
+
+running 6 tests
+test golden_fixture_present ... ok
+test golden_notes_list_and_edit_chain ... ok
+test real_word_complex_comment_edit ... ok
+test real_d2a_absent_part_transparency ... ok
+test soffice_open_edited_golden_notes ... ok
+test soffice_real_word_complex_after_comment_edit ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+     Running tests/docx_roundtrip.rs (target/debug/deps/docx_roundtrip-4044b6524e168672)
+
+running 32 tests
+test byte_entry_runs_same_gates ... ok
+test control_chars_in_docx_engine_rejects ... ok
+test first_even_header_footer_roundtrip ... ok
+test engine_rels_unknown_element_tolerated ... ok
+test footnote_write_xml_level_roundtrip ... ok
+test header_footer_roundtrip ... ok
+test gates_shared_with_xlsx_path ... ok
+test hyperlink_anchor_read ... ok
+test hyperlink_dangling_strict_rejects_compat_unresolved ... ok
+test header_reference_hostile_strict_compat ... ok
+test hyperlink_roundtrip_external ... ok
+test hyperlink_inside_header_resolved_via_header_rels ... ok
+test image_inventory_dangling_embed_strict_compat ... ok
+test image_inventory_dangling_rel_strict_compat ... ok
+test image_inventory_duplicate_zip_entries_last_wins ... ok
+test image_write_read_roundtrip ... ok
+test r4t3_numbering_and_indent_read_carry ... ok
+test image_inventory_undeclared_and_orphan_media ... ok
+test r4t3_roundtrip_read_modify_write ... ok
+test r4t3_numbering_dangling_custom_format_injected_ind ... ok
+test r5t2_engine_anchor_and_bookmark_write_spike ... ok
+test r5t2_bookmark_definitions_dropped_anchor_carried ... ok
+test r5t2_hyperlink_anchor_wins_over_rid ... ok
+test r5t2_hyperlink_internal_target_read ... ok
+test rels_duplicate_id_in_package_strict_compat ... ok
+test save_to_vec_bytes_are_reopenable ... ok
+test rels_unknown_element_in_package_strict_compat ... ok
+test simple_fields_write_xml_level_roundtrip ... ok
+test t20_numbering_lazy_registration_and_reset ... ok
+test t20_write_faces_xml_level ... ok
+test t22_list_item_multiline_xml_level ... ok
+test write_read_full_roundtrip ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/docx_roundtrip_matrix.rs (target/debug/deps/docx_roundtrip_matrix-23a6ed375c1eb95c)
+
+running 4 tests
+test lo_probe_matrix_fixture_edited ... ignored, 矩阵探针：需 LO 环境显式跑
+test matrix_textbox_editable_face ... ok
+test matrix_revision_policy_faces ... ok
+test matrix_thirteen_faces_single_edit_perfect ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/docx_table_advanced.rs (target/debug/deps/docx_table_advanced-d2fbd5bd1634ad9d)
+
+running 9 tests
+test block_merge_roundtrip_single_rectangle ... ok
+test merge_xml_tokens ... ok
+test merges_roundtrip_vertical_and_horizontal ... ok
+test no_grid_falls_back_to_row_sums ... ok
+test plain_spec_equivalent_to_table ... ok
+test shading_borders_widths_xml_tokens ... ok
+test v10_boundary_accepts ... ok
+test v10_matrix_sticky_rejects ... ok
+test libreoffice_opens_full_bid_table ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running tests/external_corpus.rs (target/debug/deps/external_corpus-394f2abb0e2368ce)
+
+running 1 test
+test l3_external_corpus_poi_docx_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/g1_lo_probe.rs (target/debug/deps/g1_lo_probe-0a7ec5ba90f62d39)
+
+running 1 test
+test g1_lo_emit_fixture ... ignored, 探针：需 LO 环境显式跑
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/g2_lo_probe.rs (target/debug/deps/g2_lo_probe-823980a0931a6ab0)
+
+running 1 test
+test g2_lo_emit_fixture ... ignored, 探针：需 LO 环境显式跑
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/g3_probe.rs (target/debug/deps/g3_probe-c9b3356229d4607b)
+
+running 1 test
+test g3_docx_docprops_inventory ... ignored, 探针：显式跑（issue #6 G3 现状登记件）
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/n4_table_header.rs (target/debug/deps/n4_table_header-c5c29fe422636574)
+
+running 6 tests
+test header_repeat_marks_first_row_only ... ok
+test mixed_tables_document_order_indexing ... ok
+test marked_document_roundtrips_through_reader ... ok
+test plain_table_bytes_unchanged ... ok
+test single_row_table_not_marked ... ok
+test non_document_parts_raw_copied ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/numbering_corpus.rs (target/debug/deps/numbering_corpus-878930eed899694c)
+
+running 2 tests
+test real_corpus_numbering_stats_and_pinned ... ok
+test libreoffice_opens_define_numbering_output ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/range_anchor_pinned.rs (target/debug/deps/range_anchor_pinned-bc70f1b80be706ce)
+
+running 1 test
+test range_anchoring_semantics_pinned ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/rebuild.rs (target/debug/deps/rebuild-5a36f4e69944a160)
+
+running 10 tests
+test rebuild_applies_edits ... ok
+test rebuild_duplicate_long_names_terminate ... ok
+test rebuild_edit_on_formula_sheet_keeps_other_formulas ... ok
+test rebuild_merge_flattening_registered ... ok
+test rebuild_rejects_noncharacter_edit ... ok
+test rebuild_rejects_sheet_index_edit ... ok
+test rebuild_roundtrip_five_faces ... ok
+test rebuild_sanitizes_sheet_name ... ok
+test rebuild_sheet_name_quote31_passes ... ok
+test rebuild_skips_hostile_entries ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/rebuild_recalc.rs (target/debug/deps/rebuild_recalc-cb772992ecda8452)
+
+running 14 tests
+test recalc_array_formula_single_cell ... ok
+test recalc_circular_reference_circ_code ... ok
+test recalc_default_is_on ... ok
+test recalc_disabled_keeps_source_cache ... ok
+test recalc_edit_formula_cell ... ok
+test recalc_engine_failure_degrades_to_passthrough ... ok
+test recalc_error_const_cell_excluded_and_registered ... ok
+test recalc_external_ref_keeps_cache_and_registers ... ok
+test recalc_formula_edit_overwrites_formula ... ok
+test recalc_no_cache_formula_cell ... ok
+test recalc_rejects_noncharacter_formula_edit ... ok
+test recalc_shared_formula_expanded_and_recalculated ... ok
+test recalc_updates_dependents ... ok
+test recalc_lo_display_cross_check ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+
+     Running tests/style_corpus.rs (target/debug/deps/style_corpus-00ba8bdb087c29e1)
+
+running 3 tests
+test real_corpus_style_stats_and_pinned ... ok
+test write_read_xml_diff_define_style ... ok
+test libreoffice_opens_define_style_output ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/tr13_heading_styles.rs (target/debug/deps/tr13_heading_styles-7dbe5e7b3f71196c)
+
+running 2 tests
+test real_word_chinese_styleids_map_to_heading_levels ... ok
+test non_heading_styles_stay_paragraphs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/tr14_field_machine.rs (target/debug/deps/tr14_field_machine-434f157588a17a40)
+
+running 3 tests
+test content_field_toc_result_kept_roundtrip ... ok
+test real_word_page_field_result_stripped ... ok
+test unnumbered_headings_verbatim_no_overcorrection ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/tr17_revision_insert.rs (target/debug/deps/tr17_revision_insert-f3e25acc75d77e03)
+
+running 2 tests
+test revision_insert_text_extracted_with_flag ... ok
+test revision_delete_registered_as_warning ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/tr18_text_box.rs (target/debug/deps/tr18_text_box-5da1c0d593f08763)
+
+running 5 tests
+test drawingml_text_box_read_from_handbuilt_package ... ok
+test pretty_printed_vml_textbox_not_rejected ... ok
+test host_paragraphs_intact_no_truncation ... ok
+test text_box_positioned_after_host ... ok
+test vml_text_box_clauses_in_block_flow ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/tr19_comments_notes.rs (target/debug/deps/tr19_comments_notes-7dd9f256cafb74b2)
+
+running 3 tests
+test handbuilt_footnotes_endnotes_read ... ok
+test tr2_word_complex_comment ... ok
+test d2a_comment_anchor_and_text ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/tr31_degenerate_field.rs (target/debug/deps/tr31_degenerate_field-dee0e3c18c8b790c)
+
+running 4 tests
+test literal_quoted_wt_text_preserved_verbatim ... ok
+test real_corpus_songjiang_rendered_truth_probe ... ignored, 真实语料不在仓（/tmp/abr 部署面）——按需显式运行
+test multi_run_instruction_accumulates_not_emitted ... ok
+test wps_degenerate_field_instruction_not_in_body ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/write_roundtrip.rs (target/debug/deps/write_roundtrip-2b30a89b470c9732)
+
+running 6 tests
+test five_face_full_circle ... ok
+test control_chars_escaped_and_roundtrip ... ok
+test save_to_vec_bytes_are_reopenable ... ok
+test read_modify_rebuild_path_evidence ... ok
+test style_xml_nine_assertions_via_product_api ... ok
+test streaming_sheet_full_circle ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/xlsx_chart.rs (target/debug/deps/xlsx_chart-50d314d070ff56b2)
+
+running 5 tests
+test four_kinds_chart_parts_and_refs ... ok
+test series_split_rows_vs_columns ... ok
+test validation_typed_rejections ... ok
+test variant_options_written ... ok
+test lo_render_chart_ink_visible ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s
+
+     Running tests/xlsx_condfmt.rs (target/debug/deps/xlsx_condfmt-ad9f040429836c32)
+
+running 9 tests
+test condfmt_colorscale_2_and_3_written ... ok
+test condfmt_cellrule_written_with_dxf ... ok
+test condfmt_duplicate_written ... ok
+test condfmt_databar_written ... ok
+test condfmt_iconset_written ... ok
+test condfmt_multiple_rules_coexist ... ok
+test condfmt_range_parse_matrix ... ok
+test condfmt_validation_rejects ... ok
+test condfmt_lo_render_pixel_check ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+     Running tests/xlsx_edit_roundtrip.rs (target/debug/deps/xlsx_edit_roundtrip-7e2ebcd77f4ed0c2)
+
+running 6 tests
+test formula_cell_in_engine_fixture_rejected ... ok
+test pending_model_last_write_wins ... ok
+test fin_lo_real_file_edit_and_zero_touch ... ok
+test rich_fixture_edit_keeps_style_merge_formula_cache ... ok
+test rich_fixture_zero_edit_parts_identical ... ok
+test soffice_opens_edited_fin_lo ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_pdf-ea688e3fa5273fa7)
+
+running 24 tests
+test annotate::tests::days_from_civil_epoch_anchors ... ok
+test annotate::tests::date_roundtrip_known_values ... ok
+test forms::tests::ascii_stays_literal ... ok
+test forms::tests::pdf_string_roundtrip_utf16 ... ok
+test forms::tests::dict_text_reads_both_string_and_name ... ok
+test generate::tests::determinism_bytes ... ok
+test generate::tests::a4_single_page_and_font_tree ... ok
+test generate::tests::to_unicode_rank_kangxi_preferential ... ok
+test generate::tests::typed_errors ... ok
+test generate::tests::multi_page_pagination ... ok
+test layers::tests::visibility_semantics ... ok
+test organize::tests::page_size_validation ... ok
+test generate::tests::unmapped_chars_counted_not_silent ... ok
+test organize::tests::permutation_validator_semantics ... ok
+test organize::tests::rotate_math_is_modular ... ok
+test organize::tests::report_defaults_all_zero ... ok
+test signature::tests::integer_hex_strips_leading_zeros ... ok
+test signature::tests::oid_decoding ... ok
+test signature::tests::parses_simple_tlv ... ok
+test signature::tests::rejects_indefinite_length ... ok
+test signature::tests::utc_time_decoding ... ok
+test stamp::tests::rejects_bad_rect_and_opacity ... ok
+test signature::tests::rejects_truncated ... ok
+test stamp::tests::unknown_image_format_is_typed_error ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pdfb_skeleton.rs (target/debug/deps/pdfb_skeleton-a6f71dfc9c29976d)
+
+running 39 tests
+test annot_ids_are_monotonic_from_one ... ok
+test annotate_list_filters_kind_page_origin ... ok
+test attach_engine_validates_page_count_consistency ... ok
+test annotation_serde_roundtrip_with_ai_origin ... ok
+test author_length_limit_hard_rejects_over_200_chars ... ok
+test command_envelope_roundtrip_and_json_tags ... ok
+test dangerous_family_serde_names_frozen ... ok
+test document_engine_trait_is_object_safe ... ok
+test encrypted_assessment_denies_writes_policy_first ... ok
+test ink_serde_defaults_for_legacy_json ... ok
+test extract_text_span_shape_and_v0_empty_payload ... ok
+test ink_width_clamped_on_add ... ok
+test limits_defaults_match_security_policy_table ... ok
+test ink_serde_roundtrip_with_color_width ... ok
+test open_assessment_form_probe_serde_shape ... ok
+test limits_enforce_family_behaviors ... ok
+test open_validates_geometry_outline_and_emptiness ... ok
+test open_entry_limit_checks_reason_codes_and_boundary ... ok
+test outline_empty_tree_and_single_root_boundaries ... ok
+test outline_iterates_depth_first_in_document_order ... ok
+test page_span_out_of_range_rejected_at_command_layer ... ok
+test page_span_rejects_inverted_range_at_construction ... ok
+test patch_applies_three_mutable_faces_and_advances_mtime ... ok
+test patch_inapplicable_faces_are_ignored_as_noop ... ok
+test patch_never_changes_kind ... ok
+test protocol_constants_are_frozen ... ok
+test rect_rejects_inverted_coordinates ... ok
+test rotation_0_180_keep_dimensions_and_degrees_mapping ... ok
+test rotation_90_270_swaps_effective_dimensions ... ok
+test quad_point_serde_roundtrip ... ok
+test search_empty_query_is_hard_rejected ... ok
+test search_case_folding_and_snippet_char_safety ... ok
+test search_overlap_semantics_is_consistent_across_modes ... ok
+test search_max_hits_clamps_with_truncated_flag ... ok
+test serde_inverted_rect_is_rejected ... ok
+test serde_reversed_page_span_is_rejected ... ok
+test source_mirror_bidirectional_exact_count ... ok
+test source_mirrors_mdcore_five_values ... ok
+test version_single_source_with_workspace_package ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfc_cache_worker.rs (target/debug/deps/pdfc_cache_worker-8753c5884b2d9686)
+
+running 23 tests
+test engine_error_constructor_clamps_message ... ok
+test boxed_rasterizer_object_form ... ok
+test lru_byte_budget_is_exact ... ok
+test lru_clear_resets_all_counters ... ok
+test lru_duplicate_put_updates_in_place ... ok
+test lru_entries_iterate_lru_to_mru ... ok
+test lru_eviction_order_is_lru_first ... ok
+test lru_get_promotes_recency ... ok
+test lru_oversized_entry_self_evicts ... ok
+test lru_put_update_with_oversized_value_self_evicts ... ok
+test lru_miss_and_contains_do_not_promote ... ok
+test mock_end_to_end_cache_fill_and_hit ... ok
+test worker_cancel_first_job_id_zero_is_honored ... ok
+test worker_cancel_skips_queued_job ... ok
+test worker_factory_panic_graceful_disconnect ... ok
+test worker_panic_isolated_and_recovers ... ok
+test worker_replacement_factory_panic_disconnects ... ok
+test worker_sequential_roundtrip_in_order ... ok
+test worker_shutdown_joins_promptly ... ok
+test worker_watchdog_replays_queue_and_cancels_in_order ... ok
+test render_types_serde_roundtrip ... ok
+test worker_watchdog_times_out_poisons_and_replaces ... ok
+test worker_without_watchdog_serves_slow_job_to_completion ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+     Running tests/pdfc_engine.rs (target/debug/deps/pdfc_engine-cd3049e6e5109b6a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfc_perf.rs (target/debug/deps/pdfc_perf-9e17046092891172)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfd_session_flush.rs (target/debug/deps/pdfd_session_flush-bb6beb16424d18ea)
+
+running 9 tests
+test flush_s5_encrypted_denied_before_idle_shortcircuit ... ok
+test dirty_set_precision_add_edit_noop ... ok
+test flush_save_failure_retry_safe ... ok
+test flush_without_writer_dirty_errors_zero_dirty_ok ... ok
+test origin_author_codec_roundtrip ... ok
+test flush_writes_dirty_in_id_order_then_idempotent ... ok
+test writer_requires_no_engine ... ok
+test pdf_date_string_known_values ... ok
+test writer_trait_contract_mock_stats ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfd_writer.rs (target/debug/deps/pdfd_writer-16fd48c504c84b73)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfe_security.rs (target/debug/deps/pdfe_security-a2581874d727259a)
+
+running 11 tests
+test open_scan_rejects_oversized_input ... ok
+test open_scan_rejects_over_budget ... ok
+test scan_benign_document_zero_warnings ... ok
+test scan_depth_guard_bounds_recursion ... ok
+test scan_detects_all_eight_families ... ok
+test scan_family_details_and_dedup ... ok
+test scan_encrypted_flag_and_detection_boundary ... ok
+test scan_form_probe_acroform_fields ... ok
+test scan_form_walk_terminates_on_cycles ... ok
+test session_open_with_scanned_assessment_end_to_end ... ok
+test writer_from_bytes_carries_assessment ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pdff2_annotate.rs (target/debug/deps/pdff2_annotate-92c60d6baf8afd24)
+
+running 9 tests
+test annotator_input_validation ... ok
+test acrobat_interop_common_fields ... ok
+test external_reading_independent_fixture ... ok
+test read_report_counters ... ok
+test eleven_kinds_roundtrip_field_exact ... ok
+test remove_added_annotation_incremental ... ok
+test session_command_new_kinds_flush ... ok
+test remove_external_annotation ... ok
+test wire_compat_old_json ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/pdff3_render_ext.rs (target/debug/deps/pdff3_render_ext-ab069c52e2225db3)
+
+running 3 tests
+test links_corpus_real_sweep ... ok
+test links_handcrafted_full_forms ... ok
+test layers_handcrafted_read_and_toggle ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pdff4_ocr.rs (target/debug/deps/pdff4_ocr-d1824bde133d413c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdff_organize.rs (target/debug/deps/pdff_organize-82e829fa11328a2f)
+
+running 16 tests
+test corpus_sweep_all_operations ... ok
+test assessment_carried_from_scan ... ok
+test delete_bookmarks_remap_and_drop ... ok
+test delete_pages_input_validation ... ok
+test delete_pages_count_and_content_streams ... ok
+test extract_independent_pdf ... ok
+test insert_blank_page_geometry ... ok
+test large_manual_delete_extract ... ok
+test merge_form_and_outline_adopt ... ok
+test merge_totals_content_and_bookmarks ... ok
+test encrypted_rejected_s5 ... ok
+test report_loss_registry_accuracy ... ok
+test reorder_permutation_and_page_order ... ok
+test roundtrip_10x_no_bloat ... ok
+test rotate_additive_and_geometry ... ok
+test split_every_totals ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/pdfg_forms.rs (target/debug/deps/pdfg_forms-e2433bdfbd3d24bb)
+
+running 15 tests
+test choice_rejects_value_outside_options ... ok
+test cjk_missing_glyph_is_loud_error ... ok
+test cjk_with_font_builds_cid_appearance ... ok
+test empty_bytes_is_error_not_panic ... ok
+test cjk_without_font_warns_but_succeeds ... ok
+test fill_text_and_checkbox_then_save ... ok
+test flatten_refuses_cjk_without_font ... ok
+test maxlen_overflow_is_rejected_not_truncated ... ok
+test flatten_removes_acroform_and_widgets ... ok
+test reads_all_fields_from_real_bid_letter ... ok
+test save_is_idempotent_when_nothing_changed ... ok
+test roundtrip_does_not_inflate ... ok
+test unchanged_value_counts_as_unchanged ... ok
+test unknown_field_is_typed_error ... ok
+test wrong_field_type_is_typed_error ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/pdfh_stamp.rs (target/debug/deps/pdfh_stamp-55e8cbb60f954dc8)
+
+running 8 tests
+test bad_image_is_typed_error ... ok
+test jpeg_path_is_recognised_for_embedding ... ok
+test opacity_multiplies_into_alpha ... ok
+test page_out_of_range_is_typed_error ... ok
+test decodes_transparent_png_seal ... ok
+test stamping_preserves_existing_content ... ok
+test zero_area_rect_rejected ... ok
+test stamps_seal_into_page_content_stream ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/pdfi_signature.rs (target/debug/deps/pdfi_signature-0e63b4fece7301f1)
+
+running 7 tests
+test extracts_certificate_details ... ok
+test byte_range_is_even_and_ordered ... ok
+test garbage_bytes_is_typed_error ... ok
+test reads_real_signature_from_signed_pdf ... ok
+test signature_algorithm_is_reported ... ok
+test unsigned_pdf_returns_empty_vec ... ok
+test signer_name_falls_back_to_cert_cn ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/pdfi_xref_chain.rs (target/debug/deps/pdfi_xref_chain-c953fdb6bfd1a837)
+
+running 4 tests
+test fixture_canary_small_pdf_pristine ... ok
+test mangled_product_shape_is_exactly_the_incident ... ok
+test read_rejects_unreachable_page_tree ... ok
+test writer_rejects_reconstructed_input ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pdfj_forms_adv.rs (target/debug/deps/pdfj_forms_adv-0bac5f18ee9b7766)
+
+running 14 tests
+test appearance_builds_styled_ap_stream_for_ascii ... ok
+test appearance_cjk_path_still_builds_cid_ap ... ok
+test appearance_rejects_bad_font_size ... ok
+test appearance_rejects_non_text_field ... ok
+test appearance_roundtrip_through_dict ... ok
+test cross_page_field_is_merged_into_one ... ok
+test invalid_choice_is_detected ... ok
+test cross_page_fill_syncs_all_widgets ... ok
+test readonly_fields_skip_validation ... ok
+test max_len_counts_cjk_as_two_bytes ... ok
+test required_error_clears_after_fill ... ok
+test required_fields_are_detected_when_empty ... ok
+test too_long_value_is_reported ... ok
+test validation_result_message_is_human_readable ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_pdf_wasm-32176937d56b9415)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdf_wasm.rs (target/debug/deps/pdf_wasm-993ef47bfc485cac)
+
+running 5 tests
+test assessment_passthrough_roundtrip ... ok
+test open_scan_reports_clean ... ok
+test bad_json_and_open_error_faces ... ok
+test session_flow_text_search_annotate ... ok
+test writer_incremental_flush_prefix_and_idempotence ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_relay-39df9c5ed23b2f4f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/canvas_harness.rs (target/debug/deps/canvas_harness-59246909cfc1b025)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/doc_harness.rs (target/debug/deps/doc_harness-02688540da388b7c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/relay.rs (target/debug/deps/relay-a6f156d8a57c5ac3)
+
+running 9 tests
+test canvas_domain_same_relay ... ok
+test doc_three_client_fanout_convergence ... ok
+test failed_update_zero_fanout ... ok
+test join_idempotent_and_presence_limit_inherited ... ok
+test interval_auto_checkpoint ... ok
+test leave_stops_delivery ... ok
+test late_joiner_diff_sync ... ok
+test presence_fanout_via_relay ... ok
+test snapshot_checkpoint_and_new_relay_recovery ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_settings-5861788b5459c793)
+
+running 1 test
+test tests::default_document_roundtrips_to_defaults ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/closure_lock.rs (target/debug/deps/closure_lock-723198ea63e356ac)
+
+running 1 test
+test dependency_closure_is_domain_agnostic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdc_workbench-cf05b3972b7f6f04)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/anonymous_export.rs (target/debug/deps/anonymous_export-65ace65f20d50ce7)
+
+running 4 tests
+test g3_e2_memory_session_bytes ... ok
+test g3_e3_marker_gate_shared ... ok
+test g3_e1_file_session_full_chain ... ok
+test g3_e4_command_dispatch ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/collab_composition.rs (target/debug/deps/collab_composition-58ae3c5ecee2b787)
+
+running 3 tests
+test collab_body_remote_event_observed_by_raw_peer ... ok
+test collab_body_ai_polish_stale_rebind_and_undo_recovery ... ok
+test collab_body_two_peer_convergence_human_and_ai ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/command_layer.rs (target/debug/deps/command_layer-57a5aaefb8e7fbdc)
+
+running 5 tests
+test idempotent_replay_and_version_conflict_semantics ... ok
+test full_loop_through_command_dispatch ... ok
+test path_policy_blocks_out_of_root_everywhere ... ok
+test path_policy_blocks_symlink_escape ... ok
+test scale_limits_enforced ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/eight_step_loop.rs (target/debug/deps/eight_step_loop-417d146f3a363547)
+
+running 4 tests
+test clean_export_detects_markers ... ok
+test eight_step_closed_loop ... ok
+test proposals_fail_closed_on_stale_views_and_bad_targets ... ok
+test source_correction_full_recovery_path ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/memory_session.rs (target/debug/deps/memory_session-92de49a38bfc7882)
+
+running 3 tests
+test memory_session_fail_closed_faces ... ok
+test memory_session_sidecar_json_roundtrip ... ok
+test memory_session_eight_step_closed_loop ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/persistence_recovery.rs (target/debug/deps/persistence_recovery-f3e319d9da655657)
+
+running 6 tests
+test corrupt_truncated_and_missing_sidecar_fail_closed_on_open ... ok
+test body_changed_between_sessions_fails_closed ... ok
+test cross_session_idempotent_replay ... ok
+test interrupted_publish_leftover_does_not_break_recovery ... ok
+test session_reopen_state_and_continuity ... ok
+test source_version_monotonic_across_reopen ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/review_gate.rs (target/debug/deps/review_gate-c862cdb66c61c35f)
+
+running 6 tests
+test custom_reviewer_prefixes ... ok
+test default_gate_blocks_ai_reviewer ... ok
+test gate_enforced_through_command_dispatch ... ok
+test default_gate_blocks_approval_of_stale_linkage ... ok
+test relaxed_scenario_allows_broken_linkage_approval ... ok
+test value_threshold_requires_passed_calc ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running unittests src/lib.rs (target/debug/deps/mdcore-ff097e90ccf5c331)
+
+running 79 tests
+test chunk::tests::children_inherit_parent_fields_and_concat ... ok
+test chunk::tests::block_range_matches_blocks_json_preorder ... ok
+test chunk::tests::cjk_and_ascii_sentence_boundaries ... ok
+test chunk::tests::code_block_verbatim_no_inline_strip ... ok
+test chunk::tests::content_addressed_id_change_localized ... ok
+test chunk::tests::determinism_custom_policy_and_plain_doc ... ok
+test chunk::tests::empty_document_no_chunks ... ok
+test chunk::tests::exact_parent_limit_closes_chunk ... ok
+test chunk::tests::fingerprint_matches_fingerprint_content_domain ... ok
+test chunk::tests::heading_enters_text_and_updates_path ... ok
+test chunk::tests::heading_path_ancestor_chain_correctness ... ok
+test chunk::tests::heading_path_three_levels_and_deep_truncation ... ok
+test chunk::tests::nested_list_and_quote_traversal ... ok
+test chunk::tests::no_sentence_boundary_hard_split ... ok
+test chunk::tests::determinism_same_document_two_passes_byte_equal ... ok
+test chunk::tests::oversized_single_block_own_parent ... ok
+test chunk::tests::parent_child_id_domain_separation ... ok
+test chunk::tests::plain_text_length_split_multi_parents ... ok
+test chunk::tests::plain_text_no_headings_single_section ... ok
+test chunk::tests::policy_validation_rejects ... ok
+test chunk::tests::section_boundary_flushes_with_old_path ... ok
+test chunk::tests::table_projection_net_cells_delimiter_dropped ... ok
+test chunk::tests::thematic_break_skipped_but_spanned ... ok
+test fingerprint::tests::hasher_is_deterministic_and_domain_tagged ... ok
+test fingerprint::tests::normalize_folds_whitespace_only ... ok
+test fingerprint::tests::similarity_corners ... ok
+test history::tests::note_boundary_updates_merge_window_without_stack_effects ... ok
+test id::tests::monotonic_never_recycles ... ok
+test inline::tests::adjacent_code_and_strong_overlay ... ok
+test inline::tests::backslash_escape ... ok
+test inline::tests::cjk_flanking_full_width_punctuation ... ok
+test inline::tests::closer_after_opener_unmatched_then_opener_role ... ok
+test inline::tests::code_span_verbatim_no_inner_parsing ... ok
+test inline::tests::em_star_and_underscore ... ok
+test inline::tests::empty_content_literal ... ok
+test inline::tests::gfm_del ... ok
+test inline::tests::mixed_length_no_pairing ... ok
+test inline::tests::multiple_spans_same_line ... ok
+test inline::tests::nesting_via_overlay ... ok
+test inline::tests::opener_before_whitespace_not_opener ... ok
+test inline::tests::plain_text_unchanged ... ok
+test inline::tests::run_over_three_literal ... ok
+test document::tests::uuidv7_layout_bits ... ok
+test inline::tests::star_intraword_allowed ... ok
+test inline::tests::strong_basic ... ok
+test inline::tests::tilde_domain_exactly_two ... ok
+test inline::tests::strong_closer_cjk_colon ... ok
+test inline::tests::triple_is_strong_plus_em_overlay ... ok
+test inline::tests::two_strong_pairs_sequential ... ok
+test inline::tests::underline_tag ... ok
+test inline::tests::unclosed_all_literal ... ok
+test inline::tests::underscore_intraword_forbidden_snake_case_safe ... ok
+test tests::empty_core_invariants ... ok
+test tests::op_text_shared_across_log_events_and_clones ... ok
+test word_count::tests::blockquote_child_paragraph_counted ... ok
+test word_count::tests::boundary_cjk_range_ends_exact ... ok
+test tests::system_apply_ops_filtered_from_undo_stack ... ok
+test word_count::tests::boundary_extension_b_not_counted ... ok
+test word_count::tests::code_block_counted_verbatim ... ok
+test word_count::tests::boundary_fullwidth_digits_and_cjk_punctuation ... ok
+test word_count::tests::code_span_content_verbatim ... ok
+test word_count::tests::empty_document_all_zero ... ok
+test word_count::tests::heading_counted_exclusively ... ok
+test word_count::tests::core_word_count_forwards_tree_count ... ok
+test word_count::tests::inline_marks_stripped_net_text ... ok
+test word_count::tests::marks_present_text_counted_verbatim ... ok
+test word_count::tests::mixed_cjk_and_western ... ok
+test word_count::tests::list_items_counted_not_paragraphs ... ok
+test word_count::tests::pure_cjk_paragraph ... ok
+test word_count::tests::pure_western_words ... ok
+test word_count::tests::table_cells_counted_structure_symbols_not ... ok
+test word_count::tests::table_escaped_pipe_unescaped_to_literal ... ok
+test word_count::tests::table_separator_only_after_first_row_dropped ... ok
+test word_count::tests::thematic_break_zero_contribution ... ok
+test word_count::tests::total_words_is_sum_invariant ... ok
+test word_count::tests::unclosed_marks_literal_kept ... ok
+test word_count::tests::whitespace_excluded_everywhere ... ok
+test word_count::tests::word_boundary_not_crossing_blocks_or_cells ... ok
+test word_count::tests::word_separators_underscore_apostrophe_hyphen ... ok
+
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/document_progressive.rs (target/debug/deps/document_progressive-09283d05f001c60f)
+
+running 11 tests
+test document_id_display_parse_validation ... ok
+test extend_appends_never_touches_existing ... ok
+test document_id_survives_save_open_and_replay ... ok
+test extend_pipeline_events_revision_and_log ... ok
+test extend_rejects_incomplete_fence_without_pollution ... ok
+test extend_not_undoable_and_system_boundary_breaks_group ... ok
+test history_json_roundtrip_with_system_boundary_state ... ok
+test genesis_carries_document_id_and_replay_restores ... ok
+test save_open_roundtrip_restores_all_state ... ok
+test set_document_id_idempotent_conflict_rejected ... ok
+test oneshot_vs_chunked_extend_triple_equality ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.20s
+
+     Running tests/external_corpus.rs (target/debug/deps/external_corpus-d22c7d4821979b54)
+
+running 1 test
+test l1_external_corpus_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/n3_word_count.rs (target/debug/deps/n3_word_count-07d7b3c9f43fd593)
+
+running 3 tests
+test n3_generator_deterministic ... ok
+test n3_word_count_tracks_live_edits ... ok
+test n3_acceptance_400k_vs_python_reference ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests/n5_pagination.rs (target/debug/deps/n5_pagination-dd517693193b9680)
+
+running 7 tests
+test code_and_table_lines ... ok
+test block_line_consumption ... ok
+test engine_default_math ... ok
+test line_height_formulas ... ok
+test error_margin_tiers ... ok
+test spacing_per_paragraph ... ok
+test line_multiple_scales_pages ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/r11_stress.rs (target/debug/deps/r11_stress-44b632549e818408)
+
+running 3 tests
+test bulk_transactions_are_atomic_and_undoable_at_scale ... ok
+test move_and_undo_keep_identity_at_scale ... ok
+test one_shot_and_progressive_big_documents_converge ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+
+     Running tests/r12_ai_loop.rs (target/debug/deps/r12_ai_loop-a9f84d5e3b715abf)
+
+running 10 tests
+test ai_batch_is_atomic_on_bad_op ... ok
+test ai_batch_undo_reverts_whole_batch_not_human_edit ... ok
+test ai_entries_survive_save_open_and_undo_whole_batch ... ok
+test ai_fills_empty_paragraph_via_command_boundary ... ok
+test ai_reads_human_edited_state_as_decision_input ... ok
+test ai_inclusive_log_replays_to_identical_state ... ok
+test ai_stale_transaction_rejected_then_retries_with_fresh_base ... ok
+test ai_text_command_bumps_own_revision_never_coalesces ... ok
+test human_and_ai_alternate_on_one_document_state ... ok
+test scripted_ai_plan_is_deterministic_and_primitive_only ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r13_html_roundtrip.rs (target/debug/deps/r13_html_roundtrip-6e21dd50d83c9572)
+
+running 19 tests
+test export_escapes_all_text_nodes ... ok
+test degenerate_table_falls_back_to_raw_paragraph ... ok
+test import_never_produces_executable_semantics ... ok
+test loss_report_fields_are_populated ... ok
+test html_paste_sample_maps_to_markdown ... ok
+test md_to_html_rendering_contract ... ok
+test malformed_input_degrades_without_panic ... ok
+test md_to_html_table_structure ... ok
+test rt_identity_blockquote_nested_with_list ... ok
+test rt_identity_code_fence_with_lang ... ok
+test rt_identity_headings_paragraphs_cjk ... ok
+test rt_identity_marks_strong_em_code_del ... ok
+test rt_identity_nested_lists ... ok
+test rt_identity_ordered_list_start_number ... ok
+test rt_identity_table_and_hr ... ok
+test rt_identity_u_mark_and_br_linebreak ... ok
+test script_style_iframe_dropped_no_execution_semantics ... ok
+test unknown_container_demotes_with_loss ... ok
+test workspace_module_wired_via_lib ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r14_gates.rs (target/debug/deps/r14_gates-803ce486dfc0175c)
+
+running 5 tests
+test gate2_core_op_latency_at_1mb ... ok
+test gate1_core_ingest_and_replay_at_1mb ... ok
+test gate3_restore_then_editing_and_undo_continue ... ok
+test gate3_snapshot_restore_identity_at_1mb ... ok
+test gate3_tree_build_and_snapshot_chain ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.84s
+
+     Running tests/r16_blocks_range.rs (target/debug/deps/r16_blocks_range-6ac9bb6cc1ff821b)
+
+running 4 tests
+test blocks_count_matches_blocks_json_length ... ok
+test range_out_of_bounds_truncates ... ok
+test range_slices_concatenate_to_full ... ok
+test progressive_extend_range_feeds_match_oneshot ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/r17_id_boundaries.rs (target/debug/deps/r17_id_boundaries-e628920f6a9490e3)
+
+running 15 tests
+test deep_nest_sync_child_insert_keeps_existing_ids ... ok
+test cross_block_paste_undo_redo_identity ... ok
+test nested_list_merge_survivor_prev_sibling ... ok
+test nested_list_split_inherits_marker_depth_new_id ... ok
+test ordered_marker_split_inherits ... ok
+test nested_top_split_children_stay_with_head ... ok
+test paste_middle_delete_slot_inheritance ... ok
+test paste_head_mid_tail_rewrite_all_ids_kept ... ok
+test paste_middle_insert_aligned_prefix_keeps_ids ... ok
+test paste_table_aligns_into_slot_keeps_id ... ok
+test paste_table_and_fence_tail_new_ids_undo_identity ... ok
+test paste_tail_grow_shrink_id_stability ... ok
+test table_middle_break_aligned_prefix_keeps_id_tail_new ... ok
+test table_row_append_is_text_growth_not_new_block ... ok
+test table_single_block_row_edit_keeps_identity ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r17_utf16_mapping.rs (target/debug/deps/r17_utf16_mapping-1f74c2aa0f601ec9)
+
+running 11 tests
+test anchor_resolution_non_bmp ... ok
+test fixture_units_sanity ... ok
+test code_block_multiline_non_bmp_text_offsets ... ok
+test heading_and_marker_prefix_offsets_are_code_points ... ok
+test replace_text_offsets_are_code_points ... ok
+test replace_text_via_json_boundary_keeps_cp_offsets ... ok
+test roundtrip_identity_non_bmp ... ok
+test property_mixed_scripts_edits_undo_redo_identity ... ok
+test split_list_item_non_bmp_inherits_marker_and_depth ... ok
+test split_merge_non_bmp_offsets ... ok
+test sync_from_markdown_non_bmp ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/r23_external.rs (target/debug/deps/r23_external-775db8a591fee43a)
+
+running 14 tests
+test adopt_added_fresh_ids_monotonic ... ok
+test adopt_deterministic ... ok
+test adopt_edit_preserves_identity ... ok
+test adopt_empty_and_clear ... ok
+test adopt_manifest_trusted_added_carries_id ... ok
+test adopt_noop_idempotent ... ok
+test adopt_nested_move_inner_carried ... ok
+test adopt_removed_drops_identity ... ok
+test adopt_reorder_preserves_identity ... ok
+test plan_noop_when_unchanged ... ok
+test adopt_take_external_drains_undo ... ok
+test plan_offer_choice_when_dirty ... ok
+test stamp_stale_semantics ... ok
+test plan_silent_adopt_when_clean ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r23_fingerprint.rs (target/debug/deps/r23_fingerprint-64ca07031c1440db)
+
+running 15 tests
+test block_reorder_reports_moved ... ok
+test decorative_edit_keeps_structure_changes_content ... ok
+test empty_document_and_full_delete ... ok
+test heading_level_change_flips_structural_keeps_identity ... ok
+test manifest_fast_path_preserves_identity_through_rewrite ... ok
+test determinism_across_runs ... ok
+test manifest_verification_failure_falls_back ... ok
+test matching_is_readonly ... ok
+test merge_blocks_two_to_one ... ok
+test non_bmp_fingerprint_is_codepoint_semantics ... ok
+test nested_subtree_move_inner_preserved ... ok
+test similarity_threshold_semantics_locked ... ok
+test split_block_one_to_two ... ok
+test table_single_block_fingerprint_and_match ... ok
+test perf_1mb_smoke ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+     Running tests/r24_quality_fixes.rs (target/debug/deps/r24_quality_fixes-59af9417782c52da)
+
+running 4 tests
+test probe_coalesced_adds_undo_reverts_whole_group ... ok
+test probe_redundant_add_mark_undo_must_be_noop ... ok
+test probe_remove_absent_mark_undo_must_be_noop ... ok
+test probe_setmark_range_validation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/spike_semantics.rs (target/debug/deps/spike_semantics-9c52aaa97451948c)
+
+running 14 tests
+test invariants_shared_op_stream ... ok
+test spike_a_markdown_roundtrip_idempotent ... ok
+test spike_a_tree_shape_and_nesting ... ok
+test spike_a_snapshot_roundtrip_preserves_state_and_ids ... ok
+test spike_b_delete_invalidates_copy_reallocates ... ok
+test spike_b_identity_invariants_matrix ... ok
+test spike_d_ai_ops_are_first_class_history ... ok
+test spike_c_all_first_stage_primitives ... ok
+test spike_d_history_json_roundtrip_and_log_replay ... ok
+test spike_d_snapshot_midstream_and_allocator_watermark ... ok
+test spike_d_coalescing_window_and_semantic_break ... ok
+test spike_e_anchor_mapping_and_rejects ... ok
+test spike_e_marks_edit_semantics ... ok
+test spike_e_structural_stale_must_reject ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sync_resync.rs (target/debug/deps/sync_resync-2733171b808def6c)
+
+running 10 tests
+test diff_inplace_type_and_attrs_change ... ok
+test commit_source_rebuild_does_not_collide_ids ... ok
+test diff_minimality_inplace_text_only ... ok
+test diff_nested_children ... ok
+test diff_shrink_and_fence ... ok
+test diff_tail_remove_then_insert ... ok
+test sync_advances_revision ... ok
+test sync_empty_doc_boundaries ... ok
+test sync_goes_through_pipeline ... ok
+test undo_reverts_sync ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/t1_quality_fixes.rs (target/debug/deps/t1_quality_fixes-3f845507d3b22479)
+
+running 5 tests
+test probe_byanchor_inverted_range_rejects_before_slice ... ok
+test probe_redo_failure_keeps_entry_stack_and_tree ... ok
+test probe_corrupt_snapshot_json_rejected_at_from_json ... ok
+test probe_snapshot_validate_typed_rejects ... ok
+test probe_undo_failure_keeps_entry_stack_and_tree ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/t3_reuse_locks.rs (target/debug/deps/t3_reuse_locks-a977af2ab29ea17a)
+
+running 4 tests
+test coalesced_event_shares_revision_with_group_head ... ok
+test push_entry_clears_redo_stack_on_new_entry ... ok
+test save_open_renumbers_ids_after_structural_edit_current_behavior ... ok
+test save_open_undo_rematerialization_id_collision_boundary ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tr1_line_endings.rs (target/debug/deps/tr1_line_endings-307e141a4bd7cf79)
+
+running 6 tests
+test tr1_crlf_paragraph_texts_are_lf_canonical ... ok
+test tr1_crlf_inside_code_fence_heading_and_table ... ok
+test tr1_lf_fast_path_unchanged ... ok
+test tr1_lone_cr_is_a_line_ending ... ok
+test tr1_roundtrip_projection_has_zero_cr ... ok
+test tr1_sync_and_extend_entry_points_mirror_main_entry ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mdcore_wasm-f7f35056f0e51bde)
+
+running 117 tests
+test docx_export::tests::bold_italic_marks_roundtrip ... ok
+test docx_export::tests::code_block_degrades_to_plain_paragraphs ... ok
+test docx_export::tests::code_block_mono_dual_channel_xml ... ok
+test docx_export::tests::empty_tree_yields_valid_minimal_docx ... ok
+test docx_export::tests::estimate_default_options_match_engine_baseline ... ok
+test docx_export::tests::estimate_tolerates_toc_anonymize_and_rejects_bad_options ... ok
+test docx_export::tests::estimate_tender_options_mapping ... ok
+test docx_export::tests::gfm_table_first_row_gets_tblheader ... ok
+test docx_export::tests::headings_map_to_styles_with_levels ... ok
+test docx_export::tests::heading_level_default_and_clamp ... ok
+test docx_export::tests::limit_error_code_mapping ... ok
+test docx_export::tests::inline_mono_del_u_expressed_link_plain ... ok
+test docx_export::tests::list_marker_forms_and_depth_clamp ... ok
+test docx_export::tests::list_mapping_numbering_xml ... ok
+test docx_export::tests::list_multiline_item_nested_depth_and_marks ... ok
+test docx_export::tests::mark_adjacent_merge_and_overlap ... ok
+test docx_export::tests::list_multiline_item_single_paragraph_br_hanging ... ok
+test docx_export::tests::multiline_paragraph_splits_with_marks_and_crlf ... ok
+test docx_export::tests::p1_hf_default_slots_with_page_fields ... ok
+test docx_export::tests::p1_hf_first_and_even_slots ... ok
+test docx_export::tests::p1_hf_empty_default_slot_is_valid ... ok
+test docx_export::tests::p1_hf_shape_errors_docx_options ... ok
+test docx_export::tests::p1_img_dimensions_emu_scaling ... ok
+test docx_export::tests::p1_img_estimate_tolerates_images_key ... ok
+test docx_export::tests::p1_hf_null_keys_byte_equivalence ... ok
+test docx_export::tests::p1_img_markdown_line_embeds_png ... ok
+test docx_export::tests::p1_img_resource_table_rejects ... ok
+test docx_export::tests::quote_and_hr_mapping_xml ... ok
+test docx_export::tests::quote_list_divider_flatten_in_order ... ok
+test docx_export::tests::r5t2_markdown_link_literal_text_not_hyperlink ... ok
+test docx_export::tests::p1_img_miss_degrades_to_literal_text ... ok
+test docx_export::tests::tr15_bold_italic_from_markdown_source ... ok
+test docx_export::tests::table_roundtrip_escaped_pipe_and_separator_drop ... ok
+test docx_export::tests::tr15_docx_md_docx_bold_roundtrip ... ok
+test docx_export::tests::tr15_code_del_underline_xml_emission ... ok
+test docx_export::tests::tr15_nesting_overlay_bold_plus_italic ... ok
+test docx_export::tests::tr15_list_quote_heading_consume_inline ... ok
+test docx_export::tests::tr15_op_layer_marks_precedence_over_derivation ... ok
+test docx_export::tests::tr4_e1_styled_emission_full_options ... ok
+test docx_export::tests::tr15_unclosed_markers_stay_literal ... ok
+test docx_export::tests::tr4_e3_shape_errors_docx_options ... ok
+test docx_export::tests::tr4_e4_v9_domain_reject_docx_invalid_input ... ok
+test docx_export::tests::tr4_e2_empty_options_byte_equivalence ... ok
+test docx_export::tests::tr4_e5_styled_roundtrip_text_preserved ... ok
+test docx_export::tests::tr4_e6_partial_options_independent ... ok
+test docx_export::tests::w10_hf_char_style_key ... ok
+test docx_export::tests::w1_toc_level_domain_and_shape_reject ... ok
+test docx_export::tests::w1_toc_field_five_part_emission_and_position ... ok
+test docx_export::tests::w1_w2_absent_options_byte_equivalence ... ok
+test docx_export::tests::w9_toc_level_filter_excludes_out_of_range_headings ... ok
+test docx_export::tests::w9_toc_static_entries_multilevel_structure ... ok
+test docx_import::tests::adjacent_same_format_runs_merge ... ok
+test docx_export::tests::w2_anonymize_props_scrub ... ok
+test docx_import::tests::fixture_markdown_parses_to_list_tree ... ok
+test docx_import::tests::garbage_bytes_typed_container_error ... ok
+test docx_import::tests::header_footer_blocks_count_into_stats ... ok
+test docx_import::tests::header_footer_list_counters_independent ... ok
+test docx_import::tests::header_footer_markers_parse_as_paragraphs ... ok
+test docx_import::tests::header_footer_variant_markers_and_empty_parts ... ok
+test docx_import::tests::heading_styles_map_with_clamp ... ok
+test docx_import::tests::limit_variant_maps_to_docx_limit_code ... ok
+test docx_import::tests::link_variants_render ... ok
+test docx_import::tests::list_custom_numfmt_normalizes_to_decimal ... ok
+test docx_import::tests::list_degraded_cases_count_and_warn ... ok
+test docx_import::tests::list_empty_item_emits_marker_only ... ok
+test docx_import::tests::list_depth_clamp_at_ilvl8 ... ok
+test docx_import::tests::list_markdown_parses_back_in_mdcore ... ok
+test docx_import::tests::list_heading_precedence_drops_numbering ... ok
+test docx_import::tests::merged_ranges_stat_and_gfm_grid ... ok
+test docx_import::tests::nested_tables_flow_to_markdown_and_stats ... ok
+test docx_import::tests::note_and_comment_counts_surface ... ok
+test docx_import::tests::list_numbering_maps_to_markdown_lines ... ok
+test docx_import::tests::skip_counts_cover_headers_footers_images ... ok
+test docx_import::tests::table_cell_sanitization_and_padding ... ok
+test docx_import::tests::p2_2_word_merged_fixture_two_merges ... ok
+test docx_import::tests::tr13_real_word_fixture_heading_chain ... ok
+test docx_import::tests::truncated_docx_typed_container_error ... ok
+test docx_import::tests::tr14_real_word_page_field_stripped_chain ... ok
+test docx_import::tests::web_e2e_fixture_imports_expected_markdown ... ok
+test docx_import::tests::writer_roundtrip_import_maps_structure ... ok
+test tests::five_legal_sources_map_explicitly ... ok
+test tests::unknown_source_is_rejected_not_silently_view ... ok
+test docx_import::tests::word_complex_fixture_header_footer_acceptance ... ok
+test xlsx_export::tests::backtick_formula_detection_matrix ... ok
+test xlsx_export::tests::all_cells_text_typed_roundtrip ... ok
+test xlsx_export::tests::backtick_formula_maps_to_formula_channel ... ok
+test xlsx_export::tests::dual_load_formula_detection_matrix ... ok
+test xlsx_export::tests::code_block_lines_verbatim_in_document_sheet ... ok
+test xlsx_export::tests::empty_tree_yields_minimal_workbook ... ok
+test xlsx_export::tests::dual_load_formula_roundtrip_via_t17 ... ok
+test xlsx_export::tests::escaped_pipe_cell_roundtrip ... ok
+test xlsx_export::tests::full_circle_via_t17_import_document_sheet ... ok
+test xlsx_export::tests::full_circle_via_t17_import_table_only ... ok
+test xlsx_export::tests::limit_error_code_mapping ... ok
+test xlsx_export::tests::only_tables_no_document_sheet ... ok
+test xlsx_export::tests::ragged_rows_no_padding ... ok
+test xlsx_export::tests::heading_claims_adjacent_table_sheet_name ... ok
+test xlsx_export::tests::sheet_name_policy_branches ... ok
+test xlsx_export::tests::table_block_maps_to_sheet_grid_exact ... ok
+test xlsx_export::tests::text_blocks_map_to_document_sheet_in_order ... ok
+test xlsx_export::tests::roundtrip_converges_with_heading_named_tables ... ok
+test xlsx_import::tests::caps_truncate_with_drop_stats ... ok
+test xlsx_import::tests::cell_value_face_renders ... ok
+test xlsx_import::tests::empty_sheet_renders_note ... ok
+test xlsx_import::tests::error_codes_cover_all_read_error_arms ... ok
+test xlsx_import::tests::excel_complex_fixture_formula_link_acceptance ... ok
+test xlsx_import::tests::formula_policy_keeps_text_and_cached_channels ... ok
+test xlsx_import::tests::garbage_bytes_typed_container_error ... ok
+test xlsx_import::tests::merged_range_renders_top_left_plus_empties ... ok
+test xlsx_import::tests::over_limit_formulas_and_links_count_dropped ... ok
+test xlsx_import::tests::render_xlsx_link_matrix ... ok
+test xlsx_import::tests::truncated_xlsx_typed_container_error ... ok
+test xlsx_import::tests::typed_display_face_kinds_preserve_text_semantics ... ok
+test xlsx_import::tests::web_e2e_fixture_imports_expected_markdown ... ok
+test xlsx_export::tests::wide_row_defensive_col_truncation ... ok
+test xlsx_import::tests::writer_roundtrip_import_maps_structure ... ok
+test xlsx_import::tests::window_raise_covers_real_scale_sheets ... ok
+
+test result: ok. 117 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
+
+     Running tests/canvas_wasm.rs (target/debug/deps/canvas_wasm-3943a388b37d1b5b)
+
+running 7 tests
+test event_json_shape_and_b64 ... ok
+test error_code_mapping ... ok
+test parse_all_eight_commands ... ok
+test fingerprint_semantics ... ok
+test receipt_and_objects_json_shapes ... ok
+test snapshot_restore_roundtrip ... ok
+test two_session_lww_convergence_via_events ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/collab_wasm.rs (target/debug/deps/collab_wasm-20605a39fb74c28e)
+
+running 8 tests
+test clock_injection_deterministic_and_undo_limit ... ok
+test delete_then_undo_restores_identity ... ok
+test parse_all_eight_commands ... ok
+test hostile_and_typed_error_faces ... ok
+test receipt_and_document_json_shapes ... ok
+test receipt_json_shape_lock ... ok
+test snapshot_restore_and_event_json ... ok
+test two_session_concurrent_convergence_and_undo_locality ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/external_corpus.rs (target/debug/deps/external_corpus-d74eea974fa5c705)
+
+running 1 test
+test l2_external_corpus_pandoc_export_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/health_check_docx.rs (target/debug/deps/health_check_docx-9ad38532839e7a5d)
+
+running 2 tests
+test hc_docx4j_six_dimensions_gate ... ok
+test hc_poi_docx_six_dimensions_gate ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.43s
+
+     Running tests/health_check_xlsx.rs (target/debug/deps/health_check_xlsx-ce152a6896c14e2c)
+
+running 1 test
+test hc_xlsx_calamine_six_dimensions_gate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.11s
+
+     Running tests/n3_word_count_wasm.rs (target/debug/deps/n3_word_count_wasm-d98fdc4eefff4814)
+
+running 2 tests
+test word_count_json_shape_and_values ... ok
+test word_count_json_matches_native_core ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/workbench_wasm.rs (target/debug/deps/workbench_wasm-92be9f0390ccc44e)
+
+running 5 tests
+test error_code_mapping_faces ... ok
+test parse_binding_all_faces ... ok
+test parse_calc_cell_and_constant ... ok
+test parse_decision_and_policy ... ok
+test wasm_face_eight_step_json_flow ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/xlsx_grid.rs (target/debug/deps/xlsx_grid-4ef133826bfd648d)
+
+running 5 tests
+test export_with_edits_roundtrip ... ok
+test parse_edits_accepts_all_kinds ... ok
+test sheet_index_and_slice_limit_errors ... ok
+test sheets_and_slice_roundtrip ... ok
+test export_edits_json_error_faces ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running unittests src/lib.rs (target/debug/deps/mdshell-ab411e97e385e546)
+
+running 5 tests
+test session::tests::default_limit_is_sixteen ... ok
+test tests::full_open_save_roundtrip_keeps_identity ... ok
+test tests::progressive_open_rejects_dangling_fence_without_partial_state ... ok
+test tests::save_document_roundtrip_via_session ... ok
+test tests::progressive_open_matches_one_shot_and_reports_progress ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contract_freeze.rs (target/debug/deps/contract_freeze-8b08a617d35c1278)
+
+running 5 tests
+test contract_doc_frozen_v1_present ... ok
+test contract_doc_v1_1_session_face_present ... ok
+test contract_doc_v1_1_settings_face_present ... ok
+test shell_native_blueprint_uses_frozen_event_family ... ok
+test mdshell_surface_shapes_frozen ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r24_packaging.rs (target/debug/deps/r24_packaging-55e7df0aac726da2)
+
+running 4 tests
+test build_scripts_inject_version_from_single_source ... ok
+test naming_gate_documented_before_placeholder_replacement ... ok
+test version_single_source_via_workspace ... ok
+test packaging_artifacts_present_and_naming_scoped ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r24_session.rs (target/debug/deps/r24_session-824843b458e304e3)
+
+running 10 tests
+test core_dirty_via_session_get_mut_feeds_plan_reload ... ok
+test core_dirty_lifecycle_view_system_undo_adopt ... ok
+test duplicate_and_unknown_window_rejected ... ok
+test future_session_record_rejected_and_malformed_rejected ... ok
+test lifecycle_open_focus_close_tracks_mru_order ... ok
+test open_document_feeds_session_restore_pipeline ... ok
+test one_document_one_window_and_reverse_mapping ... ok
+test resource_limit_enforced_and_freed_by_close ... ok
+test session_record_roundtrip_preserves_focus_order_and_skips_pathless ... ok
+test session_record_json_is_deterministic ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r24_settings.rs (target/debug/deps/r24_settings-eb54029bd4204100)
+
+running 20 tests
+test defaults_align_with_core_constants ... ok
+test future_schema_loads_defaults_and_refuses_save ... ok
+test corrupt_file_degrades_to_defaults_and_save_repairs ... ok
+test i18n_language_key_set_reload_and_domain ... ok
+test invalid_theme_enum_degrades_to_system ... ok
+test load_accepts_handwritten_inline_section ... ok
+test out_of_range_value_degrades_that_key_only ... ok
+test partial_file_merges_defaults_clean ... ok
+test set_on_missing_section_writes_standard_table_and_survives_reload ... ok
+test set_promotes_inline_section_preserving_values ... ok
+test missing_file_is_created_status_and_save_persists_full_defaults ... ok
+test set_rejects_unknown_path_and_reserved_keys ... ok
+test set_rejects_wrong_types_and_out_of_range ... ok
+test settings_json_shape_roundtrips ... ok
+test set_updates_doc_snapshot_and_survives_reload ... ok
+test tr16_docx_export_keys_set_reload_and_domain ... ok
+test unknown_keys_and_comments_survive_roundtrip ... ok
+test v0_file_without_version_key_migrates_to_v1 ... ok
+test wrong_typed_key_degrades_that_key_only ... ok
+test w2a_docx_toc_anonymize_keys_set_reload_and_domain ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_canvas
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_collab
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_evidence
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_formula
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_mdbridge
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_office
+
+running 5 tests
+test crates/office/src/sanitize/field_whitelist.rs - sanitize::field_whitelist (line 20) ... ok
+test crates/office/src/sanitize/csv_formula.rs - sanitize::csv_formula (line 19) ... ok
+test crates/office/src/sanitize/html_escape.rs - sanitize::html_escape (line 15) ... ok
+test crates/office/src/sanitize/xml_control.rs - sanitize::xml_control (line 31) ... ok
+test crates/office/src/sanitize/xml_entities.rs - sanitize::xml_entities (line 14) ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+   Doc-tests mdc_office_io
+
+running 3 tests
+test crates/office-io/src/docx_edit.rs - docx_edit::DocxEditor (line 240) ... ignored
+test crates/office-io/src/xlsx_edit.rs - xlsx_edit::XlsxEditor (line 833) - compile ... ok
+test crates/office-io/src/numbering.rs - numbering::NumberingTracker (line 252) ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+   Doc-tests mdc_pdf
+
+running 1 test
+test crates/pdf/src/forms.rs - forms::dict_text (line 767) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_pdf_wasm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_relay
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_settings
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_workbench
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdcore
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdcore_wasm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdshell
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

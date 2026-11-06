@@ -1,0 +1,2532 @@
+    Updating git repository `https://github.com/zed-industries/async-task.git`
+    Updating git repository `https://github.com/zed-industries/calloop`
+    Updating git repository `https://github.com/zed-industries/khronos-egl`
+    Updating crates.io index
+    Updating git repository `https://github.com/zed-industries/scap`
+    Updating git repository `https://github.com/zed-industries/oo7`
+    Updating git repository `https://github.com/zed-industries/xim-rs.git`
+    Updating git repository `https://github.com/zed-industries/wasm_thread`
+    Updating git repository `https://github.com/zed-industries/font-kit`
+    Updating git repository `https://github.com/gfx-rs/wgpu`
+ Downloading crates ...
+  Downloaded pico-args v0.5.0
+  Downloaded profiling v1.0.18
+  Downloaded proc-macro-crate v3.5.0
+  Downloaded piston-float v1.0.1
+  Downloaded concurrent-queue v2.5.0
+  Downloaded serde_bytes v0.11.19
+  Downloaded pin-project v1.1.13
+  Downloaded typeid v1.0.3
+  Downloaded sha2 v0.10.9
+  Downloaded cipher v0.4.4
+  Downloaded color_quant v1.1.0
+  Downloaded sval_fmt v2.22.0
+  Downloaded sval_serde v2.22.0
+  Downloaded const-random v0.1.18
+  Downloaded renderdoc-sys v1.1.0
+  Downloaded rand_xorshift v0.5.0
+  Downloaded profiling-procmacros v1.0.18
+  Downloaded rustc-hash v2.1.3
+  Downloaded strict-num v0.1.1
+  Downloaded sval_dynamic v2.22.0
+  Downloaded sys-locale v0.3.2
+  Downloaded ref-cast v1.0.27
+  Downloaded serde_fmt v1.1.0
+  Downloaded rustc-hash v1.1.0
+  Downloaded reborrow v0.5.5
+  Downloaded serde_urlencoded v0.7.1
+  Downloaded codespan-reporting v0.13.1
+  Downloaded ref-cast-impl v1.0.27
+  Downloaded serde_repr v0.1.21
+  Downloaded pollster v0.2.5
+  Downloaded same-file v1.0.6
+  Downloaded calloop-wayland-source v0.4.1
+  Downloaded quick-error v2.0.1
+  Downloaded pin-project-internal v1.1.13
+  Downloaded accesskit v0.24.1
+  Downloaded phf_shared v0.13.1
+  Downloaded polycool v0.4.0
+  Downloaded presser v0.3.1
+  Downloaded float-ord v0.3.2
+  Downloaded piper v0.2.5
+  Downloaded strum v0.28.0
+  Downloaded fax v0.2.7
+  Downloaded pulp-wasm-simd-flag v0.1.1
+  Downloaded svg_fmt v0.4.5
+  Downloaded erased-serde v0.4.11
+  Downloaded sval_json v2.22.0
+  Downloaded is-docker v0.2.0
+  Downloaded md-5 v0.10.6
+  Downloaded downcast-rs v1.2.1
+  Downloaded maybe-rayon v0.1.1
+  Downloaded float_next_after v1.0.0
+  Downloaded maybe-owned v0.3.4
+  Downloaded sval_ref v2.22.0
+  Downloaded simd_helpers v0.1.0
+  Downloaded dirs-sys v0.5.0
+  Downloaded const-random-macro v0.1.16
+  Downloaded hex v0.4.3
+  Downloaded termcolor v1.4.1
+  Downloaded scoped-tls v1.0.1
+  Downloaded self_cell v1.3.0
+  Downloaded rand_core v0.9.5
+  Downloaded lyon v1.0.19
+  Downloaded simplecss v0.2.2
+  Downloaded is-wsl v0.4.0
+  Downloaded loop9 v0.1.5
+  Downloaded dirs v6.0.0
+  Downloaded crypto-common v0.1.7
+  Downloaded schemars_derive v1.2.3
+  Downloaded documented v0.10.0
+  Downloaded documented-macros v0.10.0
+  Downloaded signal-hook-registry v1.4.8
+  Downloaded pollster v0.4.0
+  Downloaded macro_rules_attribute v0.2.3
+  Downloaded dlib v0.5.3
+  Downloaded sval_nested v2.22.0
+  Downloaded macro_rules_attribute-proc_macro v0.2.3
+  Downloaded dyn-clone v1.0.20
+  Downloaded serde_derive_internals v0.30.0
+  Downloaded tiny-keccak v2.0.2
+  Downloaded document-features v0.2.12
+  Downloaded inventory v0.3.25
+  Downloaded linebender_resource_handle v0.1.1
+  Downloaded ravif v0.13.0
+  Downloaded rgb v0.8.53
+  Downloaded seahash v4.1.0
+  Downloaded futures-sink v0.3.34
+  Downloaded static_assertions v1.1.0
+  Downloaded http-body v1.1.0
+  Downloaded serde_spanned v1.1.2
+  Downloaded cpufeatures v0.2.17
+  Downloaded core_maths v0.1.1
+  Downloaded strum_macros v0.28.0
+  Downloaded inout v0.1.4
+  Downloaded equator v0.4.2
+  Downloaded crunchy v0.2.4
+  Downloaded endi v1.1.1
+  Downloaded equator-macro v0.4.2
+  Downloaded gethostname v1.1.0
+  Downloaded rusty-fork v0.3.1
+  Downloaded filedescriptor v0.8.3
+  Downloaded float-cmp v0.9.0
+  Downloaded generic-array v0.14.7
+  Downloaded proptest-macro v0.6.0
+  Downloaded fnv v1.0.7
+  Downloaded atomic-waker v1.1.2
+  Downloaded gif v0.14.2
+  Downloaded lebe v0.5.3
+  Downloaded hash32 v0.3.1
+  Downloaded smol_str v0.3.7
+  Downloaded async-process v2.5.0
+  Downloaded spin v0.9.9
+  Downloaded async-executor v1.14.0
+  Downloaded byteorder-lite v0.1.0
+  Downloaded num-iter v0.1.46
+  Downloaded svgtypes v0.16.1
+  Downloaded spin v0.10.1
+  Downloaded num-derive v0.4.2
+  Downloaded data-url v0.3.2
+  Downloaded convert_case v0.10.0
+  Downloaded crossbeam-queue v0.3.14
+  Downloaded digest v0.10.7
+  Downloaded embed-resource v3.0.12
+  Downloaded enumn v0.1.14
+  Downloaded polling v3.11.0
+  Downloaded noop_proc_macro v0.3.0
+  Downloaded imgref v1.12.3
+  Downloaded bit-set v0.11.1
+  Downloaded etagere v0.2.15
+  Downloaded pastey v0.1.1
+  Downloaded enumflags2_derive v0.7.12
+  Downloaded pbkdf2 v0.12.2
+  Downloaded unicode-linebreak v0.1.5
+  Downloaded unicode-vo v0.1.0
+  Downloaded libloading v0.8.9
+  Downloaded convert_case v0.11.0
+  Downloaded font-types v0.11.3
+  Downloaded fdeflate v0.3.7
+  Downloaded rand_chacha v0.9.0
+  Downloaded palette_math v0.7.7
+  Downloaded fixedbitset v0.5.7
+  Downloaded tiny-skia-path v0.11.4
+  Downloaded value-bag-sval2 v1.14.1
+  Downloaded bit-vec v0.10.1
+  Downloaded slotmap v1.1.1
+  Downloaded imagesize v0.14.0
+  Downloaded jobserver v0.1.35
+  Downloaded fontconfig-parser v0.5.8
+  Downloaded hmac v0.12.1
+  Downloaded memmap2 v0.9.12
+  Downloaded lyon_algorithms v1.0.22
+  Downloaded lyon_path v1.0.19
+  Downloaded wayland-sys v0.31.11
+  Downloaded optfield v0.4.0
+  Downloaded ordered-stream v0.2.0
+  Downloaded getrandom v0.3.4
+  Downloaded roxmltree v0.20.0
+  Downloaded spirv v0.4.0+sdk-1.4.341.0
+  Downloaded utf16string v0.2.0
+  Downloaded xmlwriter v0.1.0
+  Downloaded palette_derive v0.7.7
+  Downloaded zbus-lockstep v0.5.2
+  Downloaded phf_macros v0.13.1
+  Downloaded v_frame v0.3.9
+  Downloaded as-slice v0.2.1
+  Downloaded crc32fast v1.5.3
+  Downloaded font-types v0.12.7
+  Downloaded litrs v1.0.1
+  Downloaded sval_buffer v2.22.0
+  Downloaded lyon_geom v1.0.20
+  Downloaded as-raw-xcb-connection v1.0.1
+  Downloaded futures-lite v2.6.1
+  Downloaded block-padding v0.3.3
+  Downloaded cfg_aliases v0.2.2
+  Downloaded futures v0.3.34
+  Downloaded tracing-attributes v0.1.31
+  Downloaded walkdir v2.5.0
+  Downloaded enumflags2 v0.7.12
+  Downloaded euclid v0.22.14
+  Downloaded wait-timeout v0.2.1
+  Downloaded gpu-allocator v0.28.0
+  Downloaded borsh-derive v1.8.1
+  Downloaded built v0.8.1
+  Downloaded yeslogic-fontconfig-sys v6.0.1
+  Downloaded arg_enum_proc_macro v0.3.4
+  Downloaded zcheapstr v1.2.0
+  Downloaded resvg v0.46.0
+  Downloaded roxmltree v0.21.2
+  Downloaded tracing-core v0.1.36
+  Downloaded zvariant_utils v4.2.0
+  Downloaded half v2.7.1
+  Downloaded image-webp v0.2.4
+  Downloaded qoi v0.4.1
+  Downloaded num-rational v0.4.2
+  Downloaded arrayref v0.3.9
+  Downloaded async-channel v2.5.0
+  Downloaded async-fs v2.2.0
+  Downloaded option-ext v0.2.0
+  Downloaded unarray v0.1.4
+  Downloaded xcursor v0.3.11
+  Downloaded wayland-cursor v0.31.14
+  Downloaded y4m v0.8.0
+  Downloaded sval v2.22.0
+  Downloaded toml v1.1.8+spec-1.1.0
+  Downloaded miniz_oxide v0.8.9
+  Downloaded unicode-properties v0.1.3
+  Downloaded accesskit_unix v0.22.1
+  Downloaded atspi v0.29.0
+  Downloaded block-buffer v0.10.4
+  Downloaded flume v0.12.0
+  Downloaded unicode-ccc v0.4.0
+  Downloaded zbus_macros v5.19.0
+  Downloaded zeno v0.3.3
+  Downloaded zune-inflate v0.2.54
+  Downloaded atspi-proxies v0.13.0
+  Downloaded derive_more v2.1.1
+  Downloaded wayland-protocols-wlr v0.3.12
+  Downloaded new_debug_unreachable v1.0.6
+  Downloaded unicode-bidi-mirroring v0.4.0
+  Downloaded zbus-lockstep-macros v0.5.2
+  Downloaded schemars v1.2.3
+  Downloaded num v0.4.3
+  Downloaded zbus_names v4.3.5
+  Downloaded aligned v0.4.3
+  Downloaded paste v1.0.15
+  Downloaded pastey v0.2.3
+  Downloaded bit_field v0.10.3
+  Downloaded atomic v0.5.3
+  Downloaded addr2line v0.27.1
+  Downloaded aligned-vec v0.6.4
+  Downloaded async-net v2.0.0
+  Downloaded value-bag-serde1 v1.14.1
+  Downloaded futures-concurrency v7.7.1
+  Downloaded pathfinder_simd v0.5.6
+  Downloaded by_address v1.2.1
+  Downloaded rand v0.9.5
+  Downloaded tiff v0.11.3
+  Downloaded phf_generator v0.13.1
+  Downloaded zvariant_derive v5.15.1
+  Downloaded waker-fn v1.2.0
+  Downloaded open v5.4.5
+  Downloaded avif-serialize v0.8.9
+  Downloaded cbc v0.1.2
+  Downloaded weezl v0.1.12
+  Downloaded async-signal v0.2.14
+  Downloaded derive_more-impl v2.1.1
+  Downloaded web-time v1.1.0
+  Downloaded num-complex v0.4.6
+  Downloaded bytemuck_derive v1.12.1
+  Downloaded zune-core v0.5.3
+  Downloaded pathfinder_geometry v0.5.1
+  Downloaded vecmath v1.0.0
+  Downloaded num-integer v0.1.47
+  Downloaded yazi v0.2.1
+  Downloaded async-recursion v1.2.0
+  Downloaded blocking v1.7.0
+  Downloaded raw-cpuid v11.6.0
+  Downloaded ahash v0.8.12
+  Downloaded accesskit_consumer v0.38.0
+  Downloaded zeroize_derive v1.5.0
+  Downloaded phf v0.13.1
+  Downloaded async-broadcast v0.7.2
+  Downloaded uuid v1.29.0
+  Downloaded async-io v2.6.0
+  Downloaded fontdb v0.23.0
+  Downloaded wayland-scanner v0.31.11
+  Downloaded av1-grain v0.2.5
+  Downloaded ordered-float v5.5.1
+  Downloaded no_std_io2 v0.9.4
+  Downloaded value-bag v1.14.1
+  Downloaded allocator-api2 v0.2.21
+  Downloaded unicode-script v0.5.8
+  Downloaded xkbcommon v0.8.0
+  Downloaded wayland-client v0.31.15
+  Downloaded borsh v1.8.1
+  Downloaded accesskit_atspi_common v0.19.1
+  Downloaded png v0.18.1
+  Downloaded zbus_xml v5.2.1
+  Downloaded notify-rust v4.18.2
+  Downloaded heapless v0.9.3
+  Downloaded backtrace v0.3.77
+  Downloaded png v0.17.16
+  Downloaded atspi-common v0.13.0
+  Downloaded wayland-protocols-plasma v0.3.12
+  Downloaded serde_json_lenient v0.2.4
+  Downloaded bitstream-io v4.10.0
+  Downloaded itertools v0.14.0
+  Downloaded typed-path v0.12.4
+  Downloaded wayland-backend v0.3.17
+  Downloaded zune-jpeg v0.5.15
+  Downloaded pulp v0.22.3
+  Downloaded glow v0.18.0
+  Downloaded itertools v0.15.0
+  Downloaded hkdf v0.12.4
+  Downloaded num-bigint v0.4.8
+  Downloaded zvariant v5.15.1
+  Downloaded kurbo v0.13.1
+  Downloaded lyon_tessellation v1.0.23
+  Downloaded num-bigint-dig v0.9.1
+  Downloaded sysinfo v0.31.4
+  Downloaded xkeysym v0.2.1
+  Downloaded aes v0.8.4
+  Downloaded zerocopy-derive v0.8.63
+  Downloaded moxcms v0.8.1
+  Downloaded zbus v5.19.0
+  Downloaded x11rb v0.13.2
+  Downloaded unicode-segmentation v1.13.3
+  Downloaded tiny-skia v0.11.4
+  Downloaded wayland-protocols v0.32.13
+  Downloaded unicode-width v0.2.3
+  Downloaded ttf-parser v0.25.1
+  Downloaded usvg v0.46.0
+  Downloaded proptest v1.12.0
+  Downloaded ashpd v0.13.13
+  Downloaded cc v1.10.0
+  Downloaded harfrust v0.5.2
+  Downloaded gimli v0.34.0
+  Downloaded image v0.25.10
+  Downloaded palette v0.7.7
+  Downloaded exr v1.74.2
+  Downloaded swash v0.2.10
+  Downloaded taffy v0.15.0
+  Downloaded xcb v1.7.1
+  Downloaded skrifa v0.40.0
+  Downloaded object v0.40.0
+  Downloaded skrifa v0.44.0
+  Downloaded x11rb-protocol v0.13.2
+  Downloaded smol v2.0.2
+  Downloaded rustybuzz v0.20.1
+  Downloaded postage v0.5.0
+  Downloaded read-fonts v0.37.0
+  Downloaded tracing v0.1.44
+  Downloaded ash v0.38.0+1.3.281
+  Downloaded av-scenechange v0.14.1
+  Downloaded read-fonts v0.41.0
+  Downloaded pxfm v0.1.30
+  Downloaded rav1e v0.8.1
+  Downloaded cosmic-text v0.19.0
+  Downloaded freetype-sys v0.20.1
+  Downloaded pdfium-render v0.9.4
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling cfg-if v1.0.5
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling libc v0.2.191
+   Compiling autocfg v1.5.1
+   Compiling once_cell v1.21.4
+   Compiling bitflags v2.13.2
+   Compiling value-bag v1.14.1
+   Compiling libm v0.2.16
+   Compiling log v0.4.34
+   Compiling serde_derive v1.0.229
+   Compiling smallvec v1.16.4
+   Compiling num-traits v0.2.19
+   Compiling pin-project-lite v0.2.17
+   Compiling serde v1.0.229
+   Compiling memchr v2.8.3
+   Compiling bytemuck_derive v1.12.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling version_check v0.9.5
+   Compiling bytemuck v1.25.2
+   Compiling foldhash v0.2.0
+   Compiling rustix v1.1.6
+   Compiling equivalent v1.0.3
+   Compiling linux-raw-sys v0.12.1
+   Compiling futures-core v0.3.34
+   Compiling futures-io v0.3.34
+   Compiling hashbrown v0.17.1
+   Compiling fastrand v2.5.0
+   Compiling scopeguard v1.2.0
+   Compiling indexmap v2.14.2
+   Compiling parking v2.2.1
+   Compiling rand_core v0.10.1
+   Compiling slab v0.4.12
+   Compiling getrandom v0.4.3
+   Compiling simd-adler32 v0.3.10
+   Compiling typenum v1.20.1
+   Compiling thiserror v2.0.21
+   Compiling event-listener v5.4.2
+   Compiling thiserror-impl v2.0.21
+   Compiling adler2 v2.0.1
+   Compiling zerocopy v0.8.63
+   Compiling event-listener-strategy v0.5.4
+   Compiling zerocopy-derive v0.8.63
+   Compiling futures-lite v2.6.1
+   Compiling concurrent-queue v2.5.0
+   Compiling crc32fast v1.5.3
+   Compiling itoa v1.0.18
+   Compiling pkg-config v0.3.34
+   Compiling stable_deref_trait v1.2.1
+   Compiling miniz_oxide v0.9.1
+   Compiling synstructure v0.14.0
+   Compiling arrayvec v0.7.8
+   Compiling winnow v1.0.4
+   Compiling lock_api v0.4.14
+   Compiling tracing-core v0.1.36
+   Compiling tracing-attributes v0.1.31
+   Compiling libloading v0.8.9
+   Compiling async-task v4.7.1 (https://github.com/zed-industries/async-task.git?rev=015845a19fc31752c02367567d3b8900a406f9da#015845a1)
+   Compiling rustversion v1.0.23
+   Compiling tracing v0.1.44
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling zerofrom-derive v0.1.8
+   Compiling parking_lot_core v0.9.12
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling zlib-rs v0.6.8
+   Compiling zerofrom v0.1.8
+   Compiling toml_edit v0.25.17+spec-1.1.0
+   Compiling yoke-derive v0.8.4
+   Compiling flate2 v1.1.10
+   Compiling async-channel v2.5.0
+   Compiling enumflags2_derive v0.7.12
+   Compiling siphasher v1.0.4
+   Compiling yoke v0.8.4
+   Compiling proc-macro-crate v3.5.0
+   Compiling zvariant_utils v4.2.0
+   Compiling static_assertions v1.1.0
+   Compiling futures-sink v0.3.34
+   Compiling zerovec-derive v0.11.7
+   Compiling zvariant_derive v5.15.1
+   Compiling sha1_smol v1.0.1
+   Compiling zmij v1.0.23
+   Compiling zerovec v0.11.9
+   Compiling uuid v1.29.0
+   Compiling futures-channel v0.3.34
+   Compiling futures-macro v0.3.34
+   Compiling displaydoc v0.2.7
+   Compiling byteorder v1.5.0
+   Compiling futures-task v0.3.34
+   Compiling core_detect v1.0.0
+   Compiling serde_json v1.0.154
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.15
+   Compiling futures-util v0.3.34
+   Compiling cc v1.10.0
+   Compiling dlib v0.5.3
+   Compiling cpufeatures v0.3.1
+   Compiling crossbeam-epoch v0.9.21
+   Compiling parking_lot v0.12.5
+   Compiling half v2.7.1
+   Compiling wayland-sys v0.31.11
+   Compiling polling v3.11.0
+   Compiling generic-array v0.14.7
+   Compiling core_maths v0.1.1
+   Compiling iana-time-zone v0.1.65
+   Compiling either v1.19.0
+   Compiling crossbeam-deque v0.8.8
+   Compiling chrono v0.4.45
+   Compiling tinystr v0.8.5
+   Compiling enumflags2 v0.7.12
+   Compiling zcheapstr v1.2.0
+   Compiling async-io v2.6.0
+   Compiling writeable v0.6.4
+   Compiling unicode-segmentation v1.13.3
+   Compiling litemap v0.8.3
+   Compiling endi v1.1.1
+   Compiling cfg_aliases v0.2.2
+   Compiling utf_types v1.0.0
+   Compiling tinyvec v1.13.3
+   Compiling rayon-core v1.13.0
+   Compiling bit-vec v0.10.1
+   Compiling getrandom v0.3.4
+   Compiling anyhow v1.0.104
+   Compiling bit-set v0.11.1
+   Compiling utf8_iter v1.1.0
+   Compiling zvariant v5.15.1
+   Compiling icu_locale_core v2.4.0
+   Compiling chacha20 v0.10.2
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling async-lock v3.4.2
+   Compiling slotmap v1.1.1
+   Compiling heck v0.5.0
+   Compiling icu_properties_data v2.4.0
+   Compiling icu_normalizer_data v2.4.0
+   Compiling atomic-waker v1.1.2
+   Compiling regex-syntax v0.8.11
+   Compiling ryu v1.0.23
+   Compiling piper v0.2.5
+   Compiling icu_collections v2.4.0
+   Compiling icu_provider v2.4.0
+   Compiling rand v0.10.3
+   Compiling zbus_names v4.3.5
+   Compiling miniz_oxide v0.8.9
+   Compiling aho-corasick v1.1.5
+   Compiling euclid v0.22.14
+   Compiling errno v0.3.14
+   Compiling serde_bytes v0.11.19
+   Compiling unicode-properties v0.1.3
+   Compiling unicode-bidi v0.3.18
+   Compiling raw-window-handle v0.6.2
+   Compiling signal-hook-registry v1.4.8
+   Compiling regex-automata v0.4.18
+   Compiling rand_core v0.9.5
+   Compiling blocking v1.7.0
+   Compiling strum_macros v0.28.0
+   Compiling ttf-parser v0.25.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling fdeflate v0.3.7
+   Compiling num-complex v0.4.6
+   Compiling memmap2 v0.9.12
+   Compiling profiling-procmacros v1.0.18
+   Compiling paste v1.0.15
+   Compiling heapless v0.9.3
+   Compiling ztracing v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing)
+   Compiling roxmltree v0.20.0
+   Compiling bytes v1.12.1
+   Compiling float-cmp v0.9.0
+   Compiling thiserror v1.0.69
+   Compiling strict-num v0.1.1
+   Compiling fontconfig-parser v0.5.8
+   Compiling profiling v1.0.18
+   Compiling rand_chacha v0.9.0
+   Compiling icu_normalizer v2.4.0
+   Compiling icu_properties v2.4.0
+   Compiling regex v1.13.1
+   Compiling async-signal v0.2.14
+   Compiling lyon_geom v1.0.20
+   Compiling gpui_util v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_util)
+   Compiling rayon v1.12.0
+   Compiling convert_case v0.11.0
+   Compiling hash32 v0.3.1
+   Compiling encoding_rs v0.8.42
+   Compiling polycool v0.4.0
+   Compiling tempfile v3.27.0
+   Compiling hybrid-array v0.4.15
+   Compiling pulp v0.22.3
+   Compiling enumn v0.1.14
+   Compiling thiserror-impl v1.0.69
+   Compiling pin-project-internal v1.1.13
+   Compiling async-trait v0.1.92
+   Compiling unicode-script v0.5.8
+   Compiling ztracing_macro v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing_macro)
+   Compiling arrayref v0.3.9
+   Compiling rustc-hash v2.1.3
+   Compiling weezl v0.1.12
+   Compiling ref-cast v1.0.27
+   Compiling percent-encoding v2.3.2
+   Compiling quick-error v2.0.1
+   Compiling zune-core v0.5.3
+   Compiling base64 v0.22.1
+   Compiling zune-jpeg v0.5.15
+   Compiling form_urlencoded v1.2.2
+   Compiling tiny-skia-path v0.11.4
+warning: unexpected `cfg` condition name: `ztracing`
+ --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:3:11
+  |
+3 | #[cfg(any(ztracing, all(target_family = "wasm", feature = "web")))]
+  |           ^^^^^^^^
+  |
+  = help: expected names are: `docsrs`, `feature`, and `test` and 34 more
+  = help: consider using a Cargo feature instead
+  = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+           [lints.rust]
+           unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+  = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+  = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition name: `ztracing`
+ --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:8:15
+  |
+8 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+  |               ^^^^^^^^
+  |
+  = help: consider using a Cargo feature instead
+  = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+           [lints.rust]
+           unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+  = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:11:11
+   |
+11 | #[cfg(all(ztracing, not(target_family = "wasm")))]
+   |           ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:14:11
+   |
+14 | #[cfg(all(ztracing, ztracing_with_memory, not(target_family = "wasm")))]
+   |           ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing_with_memory`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:14:21
+   |
+14 | #[cfg(all(ztracing, ztracing_with_memory, not(target_family = "wasm")))]
+   |                     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing_with_memory)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing_with_memory)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:19:15
+   |
+19 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:21:15
+   |
+21 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:23:15
+   |
+23 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:25:15
+   |
+25 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:27:15
+   |
+27 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:29:15
+   |
+29 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:31:15
+   |
+31 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:34:15
+   |
+34 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:42:15
+   |
+42 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:45:15
+   |
+45 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:56:11
+   |
+56 | #[cfg(all(ztracing, not(target_family = "wasm")))]
+   |           ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+   --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:116:15
+    |
+116 | #[cfg(all(not(ztracing), not(all(target_family = "wasm", feature = "web"))))]
+    |               ^^^^^^^^
+    |
+    = help: consider using a Cargo feature instead
+    = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+             [lints.rust]
+             unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+    = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: `ztracing` (lib) generated 17 warnings
+   Compiling pin-project v1.1.13
+   Compiling accesskit v0.24.1
+   Compiling kurbo v0.13.1
+   Compiling lyon_path v1.0.19
+   Compiling async-process v2.5.0
+   Compiling idna_adapter v1.2.2
+   Compiling rand v0.9.5
+   Compiling fontdb v0.23.0
+   Compiling crypto-common v0.1.7
+   Compiling futures-executor v0.3.34
+   Compiling wayland-backend v0.3.17
+   Compiling async-executor v1.14.0
+   Compiling raw-cpuid v11.6.0
+   Compiling ref-cast-impl v1.0.27
+   Compiling serde_derive_internals v0.30.0
+   Compiling color_quant v1.1.0
+   Compiling multiversion_no_op v1.0.0
+   Compiling unicode-bidi-mirroring v0.4.0
+   Compiling gimli v0.34.0
+   Compiling simdutf8 v0.1.5
+   Compiling byteorder-lite v0.1.0
+   Compiling reborrow v0.5.5
+   Compiling pulp-wasm-simd-flag v0.1.1
+   Compiling unicode-ccc v0.4.0
+   Compiling bitflags v1.3.2
+   Compiling allocator-api2 v0.2.21
+   Compiling hashbrown v0.16.1
+   Compiling addr2line v0.27.1
+   Compiling png v0.17.16
+   Compiling rustybuzz v0.20.1
+   Compiling quick-xml v0.41.0
+   Compiling image-webp v0.2.4
+   Compiling gif v0.14.2
+   Compiling schemars_derive v1.2.3
+   Compiling futures v0.3.34
+   Compiling idna v1.1.0
+   Compiling sum_tree v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/sum_tree)
+   Compiling svgtypes v0.16.1
+   Compiling collections v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/collections)
+   Compiling http v1.5.0
+   Compiling zbus_macros v5.19.0
+   Compiling convert_case v0.10.0
+   Compiling spin v0.9.9
+   Compiling async-broadcast v0.7.2
+   Compiling zune-inflate v0.2.54
+   Compiling ordered-stream v0.2.0
+   Compiling crossbeam-queue v0.3.14
+   Compiling roxmltree v0.21.2
+   Compiling object v0.40.0
+   Compiling simplecss v0.2.2
+   Compiling wait-timeout v0.2.1
+   Compiling serde_repr v0.1.21
+   Compiling async-recursion v1.2.0
+   Compiling smol_str v0.3.7
+   Compiling lebe v0.5.3
+   Compiling atomic v0.5.3
+   Compiling imagesize v0.14.0
+   Compiling scoped-tls v1.0.1
+   Compiling xmlwriter v0.1.0
+   Compiling hex v0.4.3
+   Compiling float_next_after v1.0.0
+   Compiling quick-error v1.2.3
+   Compiling dyn-clone v1.0.20
+   Compiling pollster v0.2.5
+   Compiling fax v0.2.7
+   Compiling data-url v0.3.2
+   Compiling unicode-vo v0.1.0
+   Compiling fnv v1.0.7
+   Compiling rustc-demangle v0.1.28
+   Compiling rustc-hash v1.1.0
+   Compiling pico-args v0.5.0
+   Compiling wasm-bindgen-shared v0.2.129
+   Compiling downcast-rs v1.2.1
+   Compiling bit_field v0.10.3
+   Compiling pxfm v0.1.30
+   Compiling wayland-client v0.31.15
+   Compiling backtrace v0.3.77
+   Compiling exr v1.74.2
+   Compiling moxcms v0.8.1
+   Compiling usvg v0.46.0
+   Compiling naga-types v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling rusty-fork v0.3.1
+   Compiling tiff v0.11.3
+   Compiling postage v0.5.0
+   Compiling schemars v1.2.3
+   Compiling lyon_tessellation v1.0.23
+   Compiling zbus v5.19.0
+   Compiling flume v0.12.0
+   Compiling derive_more-impl v2.1.1
+   Compiling http-body v1.1.0
+   Compiling url v2.5.8
+   Compiling wayland-scanner v0.31.11
+   Compiling tiny-skia v0.11.4
+   Compiling lyon_algorithms v1.0.22
+   Compiling serde_urlencoded v0.7.1
+   Compiling proptest-macro v0.6.0
+   Compiling png v0.18.1
+   Compiling strum v0.28.0
+   Compiling naga v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling rand_xorshift v0.5.0
+   Compiling rgb v0.8.53
+   Compiling qoi v0.4.1
+   Compiling derive_refineable v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/derive_refineable)
+   Compiling svg_fmt v0.4.5
+   Compiling unarray v0.1.4
+   Compiling fixedbitset v0.5.7
+   Compiling pastey v0.2.3
+   Compiling unicode-width v0.2.3
+   Compiling web-time v1.1.0
+   Compiling gpui v0.2.2 (/home/z/my-project/mdcore-audit/third_party/zed/crates/gpui)
+   Compiling ash v0.38.0+1.3.281
+   Compiling macro_rules_attribute-proc_macro v0.2.3
+   Compiling scheduler v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/scheduler)
+   Compiling macro_rules_attribute v0.2.3
+   Compiling phf_shared v0.13.1
+   Compiling codespan-reporting v0.13.1
+   Compiling futures-concurrency v7.7.1
+   Compiling refineable v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/refineable)
+   Compiling proptest v1.12.0
+   Compiling etagere v0.2.15
+   Compiling image v0.25.10
+   Compiling resvg v0.46.0
+   Compiling http_client v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/http_client)
+   Compiling lyon v1.0.19
+   Compiling derive_more v2.1.1
+   Compiling gpui_shared_string v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_shared_string)
+   Compiling crypto-common v0.2.2
+   Compiling taffy v0.15.0
+   Compiling zbus_xml v5.2.1
+   Compiling gpui_macros v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_macros)
+   Compiling block-buffer v0.10.4
+   Compiling itertools v0.14.0
+   Compiling spin v0.10.1
+   Compiling spirv v0.4.0+sdk-1.4.341.0
+   Compiling num_cpus v1.17.0
+   Compiling subtle v2.6.1
+   Compiling khronos-egl v6.0.0 (https://github.com/zed-industries/khronos-egl?rev=42214b36347b108fd9630ca6254b96dde59e04fe#42214b36)
+   Compiling waker-fn v1.2.0
+   Compiling seahash v4.1.0
+   Compiling inventory v0.3.25
+   Compiling crunchy v0.2.4
+   Compiling semver v1.0.28
+   Compiling pollster v0.4.0
+   Compiling rustc_version v0.4.1
+   Compiling phf_generator v0.13.1
+   Compiling digest v0.10.7
+   Compiling zbus-lockstep v0.5.2
+   Compiling wgpu-types v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling wgpu-hal v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling num-integer v0.1.47
+   Compiling zeroize_derive v1.5.0
+   Compiling presser v0.3.1
+   Compiling tiny-keccak v2.0.2
+   Compiling gpu-allocator v0.28.0
+   Compiling zeroize v1.9.1
+   Compiling wgpu-naga-bridge v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling zbus-lockstep-macros v0.5.2
+   Compiling phf_macros v0.13.1
+   Compiling pathfinder_simd v0.5.6
+   Compiling block-padding v0.4.2
+   Compiling block-padding v0.3.3
+   Compiling wgpu-sync v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling freetype-sys v0.20.1
+   Compiling yeslogic-fontconfig-sys v6.0.1
+   Compiling font-types v0.11.3
+   Compiling font-types v0.12.7
+   Compiling ordered-float v5.5.1
+   Compiling renderdoc-sys v1.1.0
+   Compiling glow v0.18.0
+   Compiling getrandom v0.2.17
+   Compiling read-fonts v0.41.0
+   Compiling read-fonts v0.37.0
+   Compiling phf v0.13.1
+   Compiling inout v0.1.4
+   Compiling inout v0.2.5
+   Compiling atspi-common v0.13.0
+   Compiling wayland-protocols v0.32.13
+   Compiling wgpu-core v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling bumpalo v3.20.3
+   Compiling litrs v1.0.1
+   Compiling rangemap v1.8.0
+   Compiling hashbrown v0.14.5
+   Compiling option-ext v0.2.0
+   Compiling dirs-sys v0.5.0
+   Compiling zopfli v0.8.4
+   Compiling const-random-macro v0.1.16
+   Compiling document-features v0.2.12
+   Compiling wasm-bindgen-macro-support v0.2.129
+   Compiling cipher v0.5.2
+   Compiling cipher v0.4.4
+   Compiling skrifa v0.44.0
+   Compiling wgpu-core-deps-linux-android-bsd v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling num-bigint v0.4.8
+   Compiling num-iter v0.1.46
+   Compiling hmac v0.12.1
+   Compiling block-buffer v0.12.1
+   Compiling wgpu v30.0.0 (https://github.com/gfx-rs/wgpu?rev=cddb2f5d80dc0009b2ef6767635140cacf90a007#cddb2f5d)
+   Compiling phf_shared v0.12.1
+   Compiling wasm-bindgen v0.2.129
+   Compiling ahash v0.8.12
+   Compiling cpufeatures v0.2.17
+   Compiling chrono-tz v0.10.4
+   Compiling serde_json_lenient v0.2.4
+   Compiling by_address v1.2.1
+   Compiling num-bigint-dig v0.9.1
+   Compiling zeno v0.3.3
+   Compiling same-file v1.0.6
+   Compiling as-raw-xcb-connection v1.0.1
+   Compiling typed-path v0.12.4
+   Compiling const-oid v0.10.2
+   Compiling zed-font-kit v0.14.1-zed (https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f281)
+   Compiling xim-parser v0.2.1 (https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c)
+   Compiling xcursor v0.3.11
+   Compiling yazi v0.2.1
+   Compiling swash v0.2.10
+   Compiling zip v8.6.0
+   Compiling digest v0.11.3
+   Compiling walkdir v2.5.0
+   Compiling palette_derive v0.7.7
+   Compiling phf v0.12.1
+   Compiling wasm-bindgen-macro v0.2.129
+   Compiling num-rational v0.4.2
+   Compiling pathfinder_geometry v0.5.1
+   Compiling const-random v0.1.18
+   Compiling dirs v6.0.0
+   Compiling atspi-proxies v0.13.0
+   Compiling skrifa v0.40.0
+   Compiling harfrust v0.5.2
+   Compiling accesskit_consumer v0.38.0
+   Compiling async-fs v2.2.0
+   Compiling gethostname v1.1.0
+   Compiling csv-core v0.1.13
+   Compiling approx v0.5.1
+   Compiling is-docker v0.2.0
+   Compiling bitcode_derive v0.6.9
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling float-ord v0.3.2
+   Compiling sys-locale v0.3.2
+   Compiling unicode-linebreak v0.1.5
+   Compiling lazy_static v1.5.1
+   Compiling x11rb-protocol v0.13.2
+   Compiling self_cell v1.3.0
+   Compiling palette_math v0.7.7
+   Compiling linebender_resource_handle v0.1.1
+   Compiling ironcalc_base v0.9.1
+   Compiling cosmic-text v0.19.0
+   Compiling palette v0.7.7
+   Compiling bitcode v0.6.9
+   Compiling itertools v0.15.0
+   Compiling x11rb v0.13.2
+   Compiling alloc-stdlib v0.2.4
+   Compiling is-wsl v0.4.0
+   Compiling csv v1.4.0
+   Compiling statrs v0.19.1
+   Compiling accesskit_atspi_common v0.19.1
+   Compiling atspi v0.29.0
+   Compiling num v0.4.3
+   Compiling sha2 v0.10.9
+   Compiling aes v0.8.4
+   Compiling pbkdf2 v0.12.2
+   Compiling hkdf v0.12.4
+   Compiling cbc v0.1.2
+   Compiling ashpd v0.13.13
+   Compiling syntax_theme v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/syntax_theme)
+   Compiling md-5 v0.10.6
+   Compiling xim-ctext v0.3.0 (https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c)
+   Compiling async-net v2.0.0
+   Compiling unicode-normalization v0.1.26
+   Compiling calloop v0.14.3 (https://github.com/zed-industries/calloop?rev=3759371fee14c40066d64777e2a36b6ffcc22590#3759371f)
+   Compiling optfield v0.4.0
+   Compiling debug_unsafe v0.1.4
+   Compiling pdfium-render v0.9.4
+   Compiling cpubits v0.1.1
+   Compiling piston-float v1.0.1
+   Compiling xkeysym v0.2.1
+   Compiling vecmath v1.0.0
+   Compiling documented-macros v0.10.0
+   Compiling xkbcommon v0.8.0
+   Compiling aes v0.9.3
+   Compiling atoi_simd v0.18.1
+   Compiling calloop-wayland-source v0.4.1
+   Compiling stringprep v0.1.5
+   Compiling smol v2.0.2
+   Compiling zed-xim v0.4.0-zed (https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c)
+   Compiling oo7 v0.6.0 (https://github.com/zed-industries/oo7?rev=731c1215edb6905876c6137ab300428c7b8d7c13#731c1215)
+   Compiling theme v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/theme)
+   Compiling gpui_wgpu v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_wgpu)
+   Compiling js-sys v0.3.106
+   Compiling accesskit_unix v0.22.1
+   Compiling open v5.4.5
+   Compiling brotli-decompressor v5.0.3
+   Compiling sha2 v0.11.1
+   Compiling md-5 v0.11.0
+   Compiling wayland-cursor v0.31.14
+   Compiling ecb v0.2.1
+   Compiling cbc v0.2.1
+   Compiling dashmap v6.2.1
+   Compiling wayland-protocols-plasma v0.3.12
+   Compiling wayland-protocols-wlr v0.3.12
+   Compiling notify-rust v4.18.2
+   Compiling codepage v0.1.3
+   Compiling filedescriptor v0.8.3
+   Compiling utf16string v0.2.0
+   Compiling arc-swap v1.9.3
+   Compiling nom v8.0.0
+   Compiling smallstr v0.3.1
+   Compiling fast-float2 v0.2.4
+   Compiling ui v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/ui)
+   Compiling weezl v0.2.1
+   Compiling maybe-owned v0.3.4
+   Compiling lopdf v0.45.0
+   Compiling calamine v0.36.1
+   Compiling yrs v0.28.0
+   Compiling gpui_linux v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_linux)
+warning: unexpected `cfg` condition value: `nightly_coverage`
+   --> /home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_linux/src/linux/dispatcher.rs:221:16
+    |
+221 |     #[cfg_attr(feature = "nightly_coverage", coverage(off))]
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `as-raw-xcb-connection`, `ashpd`, `calloop-wayland-source`, `default`, `filedescriptor`, `gpui_wgpu`, `open`, `scap`, `screen-capture`, `test-support`, `wayland`, `wayland-backend`, `wayland-client`, `wayland-cursor`, `wayland-protocols`, `wayland-protocols-plasma`, `wayland-protocols-wlr`, `x11`, `x11rb`, `xim`, and `xkbcommon`
+    = help: consider adding `nightly_coverage` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+    = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `nightly_coverage`
+   --> /home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_linux/src/linux/dispatcher.rs:228:16
+    |
+228 |     #[cfg_attr(feature = "nightly_coverage", coverage(off))]
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `as-raw-xcb-connection`, `ashpd`, `calloop-wayland-source`, `default`, `filedescriptor`, `gpui_wgpu`, `open`, `scap`, `screen-capture`, `test-support`, `wayland`, `wayland-backend`, `wayland-client`, `wayland-cursor`, `wayland-protocols`, `wayland-protocols-plasma`, `wayland-protocols-wlr`, `x11`, `x11rb`, `xim`, and `xkbcommon`
+    = help: consider adding `nightly_coverage` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+   Compiling mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+   Compiling rust_xlsxwriter v0.99.1
+   Compiling component v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/component)
+   Compiling documented v0.10.0
+   Compiling docx-rs v0.4.22
+warning: `gpui_linux` (lib) generated 2 warnings
+   Compiling rope v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/rope)
+   Compiling menu v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/menu)
+   Compiling icons v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/icons)
+   Compiling mdc-evidence v0.1.0 (/home/z/my-project/mdcore-audit/crates/evidence)
+   Compiling clock v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/clock)
+   Compiling ui_macros v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/ui_macros)
+   Compiling mdc-office-io v0.1.0 (/home/z/my-project/mdcore-audit/crates/office-io)
+   Compiling text v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/text)
+   Compiling mdc-canvas v0.1.0 (/home/z/my-project/mdcore-audit/crates/canvas)
+   Compiling gpui_platform v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_platform)
+   Compiling mdc-pdf v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf)
+   Compiling zlog v0.1.0 (/home/z/my-project/mdcore-audit/third_party/zed/crates/zlog)
+   Compiling mang-shell v0.1.0 (/home/z/my-project/mdcore-audit/mang-shell)
+warning: variable does not need to be mutable
+    --> src/editor/docx_edit_bridge.rs:1392:13
+     |
+1392 |         let mut b = bridge(
+     |             ----^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/editor/find_bar.rs:824:17
+    |
+824 |         let (b, mut f) = open_replace_foo();
+    |                 ----^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/editor/multi_cursor.rs:617:13
+    |
+617 |         let mut c = Cursors::single(p(0, 0)); // foo 内
+    |             ----^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5339:13
+     |
+5339 | /             window.update(cx, |_host, window, cx| {
+5340 | |                 ed.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
+5341 | |             });
+     | |______________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+5339 |             let _ = window.update(cx, |_host, window, cx| {
+     |             +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5345:9
+     |
+5345 | /         window.update(cx, |_host, _window, cx| {
+5346 | |             ed.update(cx, |ed, _| {
+5347 | |                 assert!(ed.buffer.cursor().line < ed.buffer.line_count());
+5348 | |             });
+5349 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5345 |         let _ = window.update(cx, |_host, _window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5358:9
+     |
+5358 | /         window.update(cx, |_host, window, cx| {
+5359 | |             ed.update(cx, |ed, cx| {
+5360 | |                 ed.run_command(Cmd::DocStart, window, cx);
+5361 | |                 assert_eq!(
+...    |
+5390 | |             });
+5391 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5358 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5407:9
+     |
+5407 | /         window.update(cx, |_host, window, cx| {
+5408 | |             ed.update(cx, |ed, cx| {
+5409 | |                 ed.run_command(Cmd::FoldAll, window, cx);
+5410 | |                 assert_eq!(
+...    |
+5417 | |             });
+5418 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5407 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5421:9
+     |
+5421 | /         window.update(cx, |_host, window, cx| {
+5422 | |             ed.update(cx, |ed, cx| {
+5423 | |                 ed.run_command(Cmd::OpenFind, window, cx);
+5424 | |                 assert!(ed.find.is_some(), "OpenFind 应打开查找条");
+...    |
+5429 | |             });
+5430 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5421 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5434:9
+     |
+5434 | /         window.update(cx, |_host, window, cx| {
+5435 | |             ed.update(cx, |ed, cx| {
+5436 | |                 let before = ed.buffer.to_plain_text();
+5437 | |                 ed.insert_text_at(0, 0, "X", cx);
+...    |
+5451 | |             });
+5452 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5434 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: calls to `std::str::from_utf8` with an invalid literal always return an error
+   --> src/status_info.rs:312:17
+    |
+311 |         let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4];
+    |                   -------------------------- the literal was valid UTF-8 up to the 0 bytes
+312 |         assert!(std::str::from_utf8(&gbk).is_err(), "前提：这串不是合法 UTF-8");
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(invalid_from_utf8)]` on by default
+
+warning: `mang-shell` (lib test) generated 10 warnings (run `cargo fix --lib -p mang-shell --tests` to apply 3 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 5m 07s
+     Running unittests src/lib.rs (mang-shell/target/debug/deps/mang_shell-398af0d6c329384e)
+
+running 461 tests
+test canvas_view::tests::corrupt_snapshot_errors ... ok
+test canvas_view::tests::empty_file_is_empty_session ... ok
+test canvas_view::tests::fixture_is_present_and_non_trivial ... ok
+test canvas_view::tests::gen_smoke_canvas ... ignored
+test canvas_view::tests::load_fixture_counts_and_viewport ... ok
+test canvas_view::tests::raster_is_full_color ... ok
+test canvas_view::tests::rgba_to_bgra_swaps_channels ... ok
+test canvas_view::tests::snapshot_roundtrip_via_view ... ok
+test canvas_view::tests::viewport_ops_and_raster_cache ... ok
+test command_groups::tests::empty_query_groups_all_commands ... ok
+test command_groups::tests::every_command_has_a_group ... ok
+test command_groups::tests::flatten_matches_indices ... ok
+test command_groups::tests::indices_are_contiguous_across_sections ... ok
+test command_groups::tests::no_recent_means_no_recent_section ... ok
+test command_groups::tests::recent_commands_do_not_duplicate_in_their_group ... ok
+test command_groups::tests::recent_ring_caps_capacity ... ok
+test command_groups::tests::recent_ring_dedups_and_moves_to_front ... ok
+test command_groups::tests::recent_section_prepended_when_query_empty ... ok
+test command_groups::tests::sections_are_non_empty_and_ordered ... ok
+test context_menu::tests::editor_menu_disables_cut_without_selection ... ok
+test context_menu::tests::editor_menu_disables_edits_when_read_only ... ok
+test context_menu::tests::file_tree_menu_new_folder_only_for_dirs ... ok
+test context_menu::tests::layout_never_leaves_screen ... ok
+test context_menu::tests::menu_ids_are_unique ... ok
+test context_menu::tests::menu_size_grows_with_item_count ... ok
+test context_menu::tests::menu_width_fits_cjk_labels ... ok
+test context_menu::tests::place_menu_clamps_when_larger_than_screen ... ok
+test context_menu::tests::place_menu_default_down_right ... ok
+test context_menu::tests::place_menu_flips_left_at_right_edge ... ok
+test context_menu::tests::place_menu_flips_up_at_bottom_edge ... ok
+test context_menu::tests::readonly_still_allows_copy_and_find ... ok
+test context_menu::tests::submenu_flips_left_when_no_room ... ok
+test context_menu::tests::submenu_flyout_right_by_default ... ok
+test doc_events::tests::bus_init_once_then_publish_reaches_receiver ... ok
+test doc_events::tests::coarse_record_omits_optional_fields ... ok
+test doc_events::tests::doc_event_json_shape_matches_issue_schema ... ok
+test doc_events::tests::rpc_source_guard_marks_and_resets ... ok
+test doc_events::tests::unnamed_doc_path_serializes_null ... ok
+test editor::brackets::tests::brackets_in_rust_comment_ignored ... ok
+test editor::brackets::tests::brackets_in_rust_string_ignored ... ok
+test editor::brackets::tests::brackets_in_unlabeled_fence_are_real ... ok
+test editor::brackets::tests::crlf_and_multiline_document_roundtrip ... ok
+test editor::brackets::tests::cross_kind_nesting ... ok
+test editor::brackets::tests::cross_line_nesting ... ok
+test editor::brackets::tests::cursor_both_sides_of_bracket ... ok
+test editor::brackets::tests::cursor_not_on_bracket_is_none ... ok
+test editor::brackets::tests::fence_inside_whole_lang_file_keeps_fence_priority ... ok
+test editor::brackets::tests::highlight_cols_per_line ... ok
+test editor::brackets::tests::interleaved_brackets_stay_same_kind ... ok
+test editor::brackets::tests::is_bracket_char_grammar ... ok
+test editor::brackets::tests::js_line_comment_ignored ... ok
+test editor::brackets::tests::markdown_inline_code_keeps_brackets ... ok
+test editor::brackets::tests::match_variants_are_distinguishable ... ok
+test editor::brackets::tests::nested_pairs_pick_depth_zero_partner ... ok
+test editor::brackets::tests::python_hash_comment_ignored ... ok
+test editor::brackets::tests::rust_string_pair_does_not_shadow_real_brackets ... ok
+test editor::brackets::tests::three_paren_kinds_match ... ok
+test editor::brackets::tests::unmatched_single_bracket ... ok
+test editor::brackets::tests::unmatched_wrong_kind_counterpart ... ok
+test editor::brackets::tests::whole_lang_crlf_source_file ... ok
+test editor::brackets::tests::whole_lang_string_and_comment_excluded_from_line_one ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_batch_recorded_as_full ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_clone_starts_clean ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_consecutive_edits_upgrade_to_full ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_noop_edit_not_recorded ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_rejected_edit_not_recorded ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_single_recorded_by_replace_range ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_undo_batch_recorded_as_full ... ok
+test editor::buffer::fence_dirty_tests::fence_dirty_undo_redo_single_recorded ... ok
+test editor::buffer::g1_find_replace_tests::batch_replace_undo_restores_exact_text ... ok
+test editor::buffer::g1_find_replace_tests::find_opts_case_sensitive_splits_hits ... ok
+test editor::buffer::g1_find_replace_tests::find_opts_empty_query_and_overlapping_hits ... ok
+test editor::buffer::g1_find_replace_tests::find_opts_whole_word_cjk_boundary ... ok
+test editor::buffer::g1_find_replace_tests::find_opts_whole_word_skips_substrings ... ok
+test editor::buffer::g1_find_replace_tests::replace_batch_applies_and_single_undo_restores_all ... ok
+test editor::buffer::g1_find_replace_tests::replace_batch_empty_is_noop ... ok
+test editor::buffer::g1_find_replace_tests::replace_batch_mixed_with_single_undo_stack ... ok
+test editor::buffer::g1_find_replace_tests::replace_batch_multiline_replacement_cross_lines ... ok
+test editor::buffer::g1_find_replace_tests::replace_batch_thousand_matches_under_100ms ... ok
+test editor::buffer::g3_indent_tests::indent_unit_setting_roundtrip ... ok
+test editor::buffer::g3_indent_tests::indent_unit_texts ... ok
+test editor::buffer::g3_indent_tests::leading_indent_counts_spaces_and_tabs ... ok
+test editor::buffer::perf_rope_edit_find_2m_chars ... ignored, r42 性能实测（#68 阶段 A 验收证据）
+test editor::buffer::rpc_extend_tests::clone_drops_pending_but_keeps_revision ... ok
+test editor::buffer::rpc_extend_tests::clone_drops_rejection_like_pending ... ok
+test editor::buffer::rpc_extend_tests::no_rejection_without_hook_or_on_success ... ok
+test editor::buffer::rpc_extend_tests::noop_replace_is_short_circuited ... ok
+test editor::buffer::rpc_extend_tests::pending_records_base_revision_for_span ... ok
+test editor::buffer::rpc_extend_tests::pending_records_batch_replace_and_coarse_undo ... ok
+test editor::buffer::rpc_extend_tests::pending_records_replace_precisely ... ok
+test editor::buffer::rpc_extend_tests::pending_records_undo_redo_single_precisely ... ok
+test editor::buffer::rpc_extend_tests::rejection_recorded_for_denied_batch ... ok
+test editor::buffer::rpc_extend_tests::rejection_recorded_when_hook_denies ... ok
+test editor::buffer::rpc_extend_tests::revision_increments_per_transaction_and_marks_saved_free ... ok
+test editor::buffer::tests::backspace_cjk_single_column ... ok
+test editor::buffer::tests::backspace_deletes_char ... ok
+test editor::buffer::tests::backspace_merges_lines ... ok
+test editor::buffer::tests::char_count_counts_chars_and_newlines ... ok
+test editor::buffer::tests::cjk_columns_are_char_indexed ... ok
+test editor::buffer::tests::clone_is_independent_deep_copy ... ok
+test editor::buffer::tests::crlf_roundtrip_bit_fidelity ... ok
+test editor::buffer::tests::debug_impl_is_compact_summary ... ok
+test editor::buffer::tests::delete_forward_deletes_char ... ok
+test editor::buffer::tests::delete_forward_merges_lines ... ok
+test editor::buffer::tests::edit_after_undo_clears_redo ... ok
+test editor::buffer::tests::empty_is_single_empty_line ... ok
+test editor::buffer::tests::find_all_matches_case_insensitive ... ok
+test editor::buffer::tests::find_empty_query_no_hits ... ok
+test editor::buffer::tests::find_multiple_hits_in_line_and_cjk ... ok
+test editor::buffer::tests::home_end_doc_bounds ... ok
+test editor::buffer::tests::insert_mid_line ... ok
+test editor::buffer::tests::insert_multiline_splits ... ok
+test editor::buffer::tests::large_document_edit_and_navigate ... ok
+test editor::buffer::tests::mark_saved_resets_modified_flag ... ok
+test editor::buffer::tests::move_left_wraps_to_prev_line_tail ... ok
+test editor::buffer::tests::move_right_wraps_to_next_line_head ... ok
+test editor::buffer::tests::move_up_down_clamps_and_sticks ... ok
+test editor::buffer::tests::newline_splits_line ... ok
+test editor::buffer::tests::out_of_bounds_access_is_safe ... ok
+test editor::buffer::tests::plain_text_roundtrip ... ok
+test editor::buffer::tests::replace_range_cross_line_middle ... ok
+test editor::buffer::tests::replace_range_out_of_bounds_is_clamped ... ok
+test editor::buffer::tests::select_all_and_delete ... ok
+test editor::buffer::tests::selection_replaced_by_insert ... ok
+test editor::buffer::tests::selection_spanning_lines ... ok
+test editor::buffer::tests::shift_move_creates_selection ... ok
+test editor::buffer::tests::tab_inserts_four_spaces ... ok
+test editor::buffer::tests::trailing_newline_keeps_empty_last_line ... ok
+test editor::buffer::tests::undo_backspace_merge ... ok
+test editor::buffer::tests::undo_cross_line_replace ... ok
+test editor::buffer::tests::undo_redo_roundtrip_simple ... ok
+test editor::buffer::tests::undo_replacement_not_just_insert ... ok
+test editor::buffer::tests::undo_restores_cursor_and_multiline ... ok
+test editor::buffer::tests::word_jump_ascii ... ok
+test editor::buffer::tests::word_jump_cjk_treated_as_word ... ok
+test editor::buffer::tests::word_jump_crosses_lines ... ok
+test editor::buffer_find::tests::empty_pattern_yields_no_hits ... ok
+test editor::buffer_find::tests::invalid_regex_returns_actionable_error ... ok
+test editor::buffer_find::tests::regex_case_insensitive_by_default ... ok
+test editor::buffer_find::tests::regex_matches_unicode_and_cjk ... ok
+test editor::buffer_find::tests::regex_ranges_are_real_spans_not_just_starts ... ok
+test editor::buffer_find::tests::regex_whole_word_wraps_word_boundary ... ok
+test editor::buffer_find::tests::zero_width_matches_are_kept ... ok
+test editor::commands::tests::degree_orders_tighter_match_first ... ok
+test editor::commands::tests::empty_query_lists_all ... ok
+test editor::commands::tests::every_wired_cmd_has_title_and_key ... ok
+test editor::commands::tests::from_id_unknown_is_none ... ok
+test editor::commands::tests::fuzzy_subsequence_matches ... ok
+test editor::commands::tests::id_from_id_roundtrip_all_commands ... ok
+test editor::commands::tests::no_match_excluded ... ok
+test editor::display_map::tests::empty_document_single_row ... ok
+test editor::display_map::tests::fold_and_wrap_compose ... ok
+test editor::display_map::tests::fold_collapses_rows_and_maps_interior_to_head ... ok
+test editor::display_map::tests::fold_rejects_malformed_and_overlapping ... ok
+test editor::display_map::tests::greedy_wrap_basic_two_segments ... ok
+test editor::display_map::tests::greedy_wrap_empty_and_short ... ok
+test editor::display_map::tests::greedy_wrap_single_char_overwide_never_zero_break ... ok
+test editor::display_map::tests::greedy_wrap_uneven_widths ... ok
+test editor::display_map::tests::identity_without_wrap_or_fold ... ok
+test editor::display_map::tests::invalidate_is_idempotent_and_rebuilds ... ok
+test editor::display_map::tests::out_of_bounds_maps_to_domain ... ok
+test editor::display_map::tests::set_wrap_points_after_mapping_invalidates ... ok
+test editor::display_map::tests::unfold_at_hit_semantics ... ok
+test editor::display_map::tests::wrap_points_dedup_filter_and_late_fill ... ok
+test editor::display_map::tests::wrap_splits_rows_and_maps_both_ways ... ok
+test editor::docx_doc::tests::display_width_cjk_vs_ascii ... ok
+test editor::docx_doc::tests::editable_aux_appendix_lines_are_readonly ... ok
+test editor::docx_doc::tests::editable_blocks_cover_every_line ... ok
+test editor::docx_doc::tests::editable_locked_paragraphs_marked_readonly ... ok
+test editor::docx_doc::tests::editable_projection_matches_rendered_lines ... ok
+test editor::docx_doc::tests::editable_soft_break_lines_are_editable_and_carry ... ok
+test editor::docx_doc::tests::empty_paragraphs_counted ... ok
+test editor::docx_doc::tests::gen_smoke_docx ... ignored, 烟雾夹具生成器（写 tests/fixtures/smoke.docx）
+test editor::docx_doc::tests::heading_tree_and_props ... ok
+test editor::docx_doc::tests::list_ordered_bullet_and_indent ... ok
+test editor::docx_doc::tests::readonly_gate_browsing_passes_mutations_blocked ... ok
+test editor::docx_doc::tests::run_styles_bold_italic_link ... ok
+test editor::docx_doc::tests::table_props_counted_rows_not_flattened ... ok
+test editor::docx_doc::tests::textbox_blocks_flatten ... ok
+test editor::docx_doc::tests::truncate_cell_caps_width ... ok
+test editor::docx_edit_bridge::tests::body_of_strips_markers_and_indent ... ok
+test editor::docx_edit_bridge::tests::cell_is_boundary_for_user_row_join ... ok
+test editor::docx_edit_bridge::tests::cell_paragraph_is_authoritative_not_inferred ... ok
+test editor::docx_edit_bridge::tests::cell_rows_are_editable_and_write_their_own_paragraph ... ok
+test editor::docx_edit_bridge::tests::cell_rows_count_as_editable_in_stats ... ok
+test editor::docx_edit_bridge::tests::cell_rows_refuse_edits_via_locked_only_not_cell ... ok
+test editor::docx_edit_bridge::tests::cell_without_side_table_is_dropped_not_written ... ok
+test editor::docx_edit_bridge::tests::compute_cont_line_empty_skipped ... ok
+test editor::docx_edit_bridge::tests::compute_reports_only_changed_paragraph ... ok
+test editor::docx_edit_bridge::tests::compute_skips_untouched_paragraphs ... ok
+test editor::docx_edit_bridge::tests::compute_strips_list_marker_on_writeback ... ok
+test editor::docx_edit_bridge::tests::edit_on_locked_line_is_refused ... ok
+test editor::docx_edit_bridge::tests::editing_a_cell_never_touches_neighbouring_body_paragraph ... ok
+test editor::docx_edit_bridge::tests::empty_cell_can_be_filled ... ok
+test editor::docx_edit_bridge::tests::marker_only_edit_is_not_a_change ... ok
+test editor::docx_edit_bridge::tests::merged_lines_remap_preserves_row_count ... ok
+test editor::docx_edit_bridge::tests::soft_break_lines_roundtrip ... ok
+test editor::docx_edit_bridge::tests::split_line_inherits_paragraph ... ok
+test editor::docx_edit_bridge::tests::split_projection_keeps_prefix_and_indent_out_of_body ... ok
+test editor::docx_edit_bridge::tests::stats_counts_locked_rows ... ok
+test editor::docx_edit_bridge::tests::unrepresentable_projection_is_not_written ... ok
+test editor::docx_edit_bridge::tests::user_rows_join_nearest_paragraph ... ok
+test editor::fence::tests::backspace_join_lines ... ok
+test editor::fence::tests::cursor_advance_table ... ok
+test editor::fence::tests::delete_closing_fence_flips_parity_to_eof ... ok
+test editor::fence::tests::delete_lines_delta_negative ... ok
+test editor::fence::tests::delete_opening_fence_flips_parity_to_eof ... ok
+test editor::fence::tests::edit_at_last_line_and_append ... ok
+test editor::fence::tests::full_matches_legacy_highlight_loop ... ok
+test editor::fence::tests::incremental_fallback_preconditions ... ok
+test editor::fence::tests::insert_lines_delta_positive ... ok
+test editor::fence::tests::lang_tag_edit_converges_at_block_end ... ok
+test editor::fence::tests::random_edits_incremental_eq_full ... ok
+test editor::fence::tests::replace_all_text_full_influence_zone ... ok
+test editor::fence::tests::seed_recovery_from_every_line ... ok
+test editor::fence::tests::typing_inside_fence_zero_propagation ... ok
+test editor::fence::tests::typing_outside_fence_zero_propagation ... ok
+test editor::find_bar::find_history_tests::arrow_keys_route_to_history_only_on_query_line ... ok
+test editor::find_bar::find_history_tests::ctrl_alt_r_toggles_regex_and_switches_match_engine ... ok
+test editor::find_bar::find_history_tests::history_cap_keeps_most_recent_20 ... ok
+test editor::find_bar::find_history_tests::history_prev_next_walks_entries_and_restores_draft ... ok
+test editor::find_bar::find_history_tests::invalid_regex_sets_error_and_clears_matches ... ok
+test editor::find_bar::find_history_tests::remember_query_dedupes_and_promotes ... ok
+test editor::find_bar::find_history_tests::set_history_normalizes_input ... ok
+test editor::find_bar::g1_replace_tests::alt_c_alt_w_toggle_options ... ok
+test editor::find_bar::g1_replace_tests::enter_routes_by_input_line ... ok
+test editor::find_bar::g1_replace_tests::open_replace_sets_mode_and_keeps_query_line_focused ... ok
+test editor::find_bar::g1_replace_tests::replace_all_batch_and_single_undo_restores ... ok
+test editor::find_bar::g1_replace_tests::replace_all_empty_query_or_replacement_edge ... ok
+test editor::find_bar::g1_replace_tests::replace_all_overlapping_query_skips_consumed_hits ... ok
+test editor::find_bar::g1_replace_tests::replace_all_respects_options ... ok
+test editor::find_bar::g1_replace_tests::replace_current_single_match_replaces_and_cursor_at_tail ... ok
+test editor::find_bar::g1_replace_tests::replace_current_without_matches_is_noop ... ok
+test editor::find_bar::g1_replace_tests::tab_and_shift_tab_switch_input_lines ... ok
+test editor::find_bar::g1_replace_tests::whole_word_excludes_substring_hits ... ok
+test editor::find_bar::tests::cjk_query_input ... ok
+test editor::find_bar::tests::ctrl_combos_swallowed_not_typed ... ok
+test editor::find_bar::tests::enter_escape_outcomes ... ok
+test editor::find_bar::tests::jump_cycles_and_selects_match ... ok
+test editor::find_bar::tests::open_with_selection_initializes_query ... ok
+test editor::find_bar::tests::open_without_selection_starts_empty ... ok
+test editor::find_bar::tests::refresh_tracks_document_edits ... ok
+test editor::find_bar::tests::typed_chars_and_backspace ... ok
+test editor::find_bar::tests::zero_result_label ... ok
+test editor::highlight::g5_code_hl_tests::cjk_chars_counted_as_char_indices ... ok
+test editor::highlight::g5_code_hl_tests::closing_fence_line_keeps_blockcode_background ... ok
+test editor::highlight::g5_code_hl_tests::comment_wins_over_string_inside_it ... ok
+test editor::highlight::g5_code_hl_tests::double_slash_inside_string_not_comment ... ok
+test editor::highlight::g5_code_hl_tests::fence_lang_parse_aliases_case_insensitive ... ok
+test editor::highlight::g5_code_hl_tests::fence_state_flow_with_lang_across_lines ... ok
+test editor::highlight::g5_code_hl_tests::js_keywords_and_number_with_dot ... ok
+test editor::highlight::g5_code_hl_tests::keyword_inside_string_not_highlighted ... ok
+test editor::highlight::g5_code_hl_tests::python_comment_hash_and_keywords ... ok
+test editor::highlight::g5_code_hl_tests::quote_inside_comment_not_string ... ok
+test editor::highlight::g5_code_hl_tests::rust_keywords_numbers_comments ... ok
+test editor::highlight::g5_code_hl_tests::rust_string_with_escape ... ok
+test editor::highlight::g5_code_hl_tests::rust_word_boundary_not_substring ... ok
+test editor::highlight::g5_code_hl_tests::unclosed_single_quote_no_noise ... ok
+test editor::highlight::g5_code_hl_tests::untagged_fence_keeps_blockcode_semantics ... ok
+test editor::highlight::tests::bold_star_pair ... ok
+test editor::highlight::tests::bold_takes_priority_over_italic ... ok
+test editor::highlight::tests::bold_underscore_and_cjk ... ok
+test editor::highlight::tests::code_inside_bold_still_code ... ok
+test editor::highlight::tests::escaped_marker_not_highlighted ... ok
+test editor::highlight::tests::fence_body_and_close ... ok
+test editor::highlight::tests::fence_open_with_lang ... ok
+test editor::highlight::tests::fence_state_flows_through_lines ... ok
+test editor::highlight::tests::hash_without_space_is_not_heading ... ok
+test editor::highlight::tests::heading_level_atx_forms ... ok
+test editor::highlight::tests::heading_levels_1_to_6 ... ok
+test editor::highlight::tests::inline_code_pair ... ok
+test editor::highlight::tests::italic_single_star ... ok
+test editor::highlight::tests::link_full_form ... ok
+test editor::highlight::tests::link_missing_paren_not_highlighted ... ok
+test editor::highlight::tests::list_markers_all_forms ... ok
+test editor::highlight::tests::minus_without_space_not_list ... ok
+test editor::highlight::tests::plain_and_empty_lines_have_no_tokens ... ok
+test editor::highlight::tests::quote_marker ... ok
+test editor::highlight::tests::seven_hashes_is_not_heading ... ok
+test editor::highlight::tests::unclosed_markers_not_highlighted ... ok
+test editor::mouse::tests::autoscroll_dir_outside_only ... ok
+test editor::mouse::tests::byte_index_to_col_ascii_cjk_emoji ... ok
+test editor::mouse::tests::clamp_point_boundaries ... ok
+test editor::mouse::tests::click_kind_mapping ... ok
+test editor::mouse::tests::drag_head_double_snaps_to_word_edges ... ok
+test editor::mouse::tests::drag_head_single_passthrough ... ok
+test editor::mouse::tests::drag_head_triple_snaps_to_line_edges ... ok
+test editor::mouse::tests::line_for_y_above_and_below ... ok
+test editor::mouse::tests::line_for_y_empty_rows_defensive ... ok
+test editor::mouse::tests::line_for_y_gap_falls_to_next_row ... ok
+test editor::mouse::tests::line_for_y_hits_each_row ... ok
+test editor::mouse::tests::line_range_whole_line ... ok
+test editor::mouse::tests::visible_clamp_point_progressive ... ok
+test editor::mouse::tests::word_range_at_ascii_word ... ok
+test editor::mouse::tests::word_range_at_cjk_run_is_one_word ... ok
+test editor::mouse::tests::word_range_at_line_edges ... ok
+test editor::mouse::tests::word_range_at_snake_case_and_separators ... ok
+test editor::multi_cursor::tests::add_next_word_match_advances ... ok
+test editor::multi_cursor::tests::add_next_word_match_none_when_not_on_word ... ok
+test editor::multi_cursor::tests::add_next_word_match_respects_word_boundary ... ok
+test editor::multi_cursor::tests::add_undo_batch_accumulates ... ok
+test editor::multi_cursor::tests::backspace_all_semantics ... ok
+test editor::multi_cursor::tests::collapse_esc_gathers_to_primary_head ... ok
+test editor::multi_cursor::tests::column_select_down_direction ... ok
+test editor::multi_cursor::tests::column_select_up_direction_heads_at_low_col ... ok
+test editor::multi_cursor::tests::insert_all_applies_tail_first ... ok
+test editor::multi_cursor::tests::insert_all_selections_replaced ... ok
+test editor::multi_cursor::tests::insert_tails_with_newlines_cross_lines ... ok
+test editor::multi_cursor::tests::move_all_independently ... ok
+test editor::multi_cursor::tests::move_all_updown_clamps_short_lines ... ok
+test editor::multi_cursor::tests::push_dedup_and_merge ... ok
+test editor::multi_cursor::tests::set_undo_batch_registers_external_batch ... ok
+test editor::multi_cursor::tests::shift_cols_by_line_clamps_at_zero ... ok
+test editor::multi_cursor::tests::single_state_is_one_cursor ... ok
+test editor::multi_cursor::tests::undo_batch_all_at_once ... ok
+test editor::multi_cursor::word_move_tests::word_move_all_multi_cursor ... ok
+test editor::multi_cursor::word_move_tests::word_move_crosses_line_boundaries ... ok
+test editor::pdf_doc::tests::bookmarks_map_to_separator_lines ... ok
+test editor::pdf_doc::tests::cap_constant_is_100mb ... ok
+test editor::pdf_doc::tests::empty_page_marker_and_partial_scan ... ok
+test editor::pdf_doc::tests::gen_smoke_pdf ... ignored, 烟雾夹具生成器（需 libpdfium；字体夹具已烘焙入库 smoke_font.ttf）
+test editor::pdf_doc::tests::load_rejects_invalid_bytes ... ok
+test editor::pdf_doc::tests::nul_and_crlf_normalization ... ok
+test editor::pdf_doc::tests::page_of_line_boundaries ... ok
+test editor::pdf_doc::tests::scanned_notice_first_line_and_page_labels ... ok
+test editor::pdf_doc::tests::separators_pages_table_and_props ... ok
+test editor::tests::fold_persist_key_is_empty_for_unnamed ... ok
+test editor::tests::goto_hint_three_states ... ok
+test editor::tests::goto_parse_invalid_inputs ... ok
+test editor::tests::goto_parse_out_of_range_clamps_not_crash ... ok
+test editor::tests::goto_parse_valid_one_based ... ok
+test editor::tests::heading_level_parses_atx_forms ... ok
+test editor::tests::heading_span_covers_subtree_until_same_level ... ok
+test editor::tests::heading_span_includes_deeper_subheadings ... ok
+test editor::tests::heading_with_no_body_is_not_foldable ... ok
+test editor::tests::indent_line_edit_inserts_unit_at_line_start ... ok
+test editor::tests::label_format_semantics ... ok
+test editor::tests::outdent_line_edit_partial_and_full_removal ... ok
+test editor::tests::outdent_line_edit_prefers_leading_tab_char ... ok
+test editor::tests::outdent_line_edit_tab_unit_folds_spaces_by_width ... ok
+test editor::tests::runtime_every_cmd_in_all_executes ... ok
+test editor::tests::runtime_fold_panels_undo_save_change_state ... ok
+test editor::tests::runtime_navigation_and_selection_change_state ... ok
+test editor::tests::top_level_spans_handle_fenced_code ... ok
+test editor::tests::top_level_spans_mix_headings_and_fences ... ok
+test editor::tests::top_level_spans_skip_nested_blocks ... ok
+test editor::tests::utf16_clamp_to_document_end ... ok
+test editor::tests::utf16_roundtrip_ascii ... ok
+test editor::tests::utf16_roundtrip_cjk ... ok
+test editor::xlsx_doc::tests::cell_display_formula_fallback_pure ... ok
+test editor::xlsx_doc::tests::cjk_column_alignment_by_ea_width ... ok
+test editor::xlsx_doc::tests::col_letter_sequence_and_wrap ... ok
+test editor::xlsx_doc::tests::ea_width_cjk_two_cells ... ok
+test editor::xlsx_doc::tests::empty_sheet_renders_notice ... ok
+test editor::xlsx_doc::tests::formula_cell_shows_cached_value ... ok
+test editor::xlsx_doc::tests::gen_smoke_xlsx ... ignored, 烟雾夹具生成器（写 tests/fixtures/smoke.xlsx）
+test editor::xlsx_doc::tests::grid_rows_letters_and_absolute_row_numbers ... ok
+test editor::xlsx_doc::tests::multi_sheet_tree_and_blank_separator ... ok
+test editor::xlsx_doc::tests::oversize_rows_truncate_with_explicit_notice ... ok
+test keymap::tests::action_ids_unique_and_roundtrip ... ok
+test keymap::tests::bind_chord_cross_domain_rejected ... ok
+test keymap::tests::bind_conflicting_key_rejected ... ok
+test keymap::tests::bind_cross_domain_conflict_rejected ... ok
+test keymap::tests::bind_more_specific_coexists_with_family ... ok
+test keymap::tests::bind_new_chord_coexists_by_followup ... ok
+test keymap::tests::bind_replaces_old_binding ... ok
+test keymap::tests::bind_same_key_replaces_action ... ok
+test keymap::tests::bind_single_key_stolen_by_chord_head_rejected ... ok
+test keymap::tests::default_labels_match_menu_bar_literals ... ok
+test keymap::tests::default_table_readonly_guard_invariant ... ok
+test keymap::tests::default_tables_conflict_free ... ok
+test keymap::tests::editor_chord_full_lifecycle ... ok
+test keymap::tests::editor_escape_clipboard_select_all ... ok
+test keymap::tests::editor_fold_word_match_and_find ... ok
+test keymap::tests::editor_goto_open_pre_layer ... ok
+test keymap::tests::editor_home_end_family ... ok
+test keymap::tests::editor_move_family_all_modifier_combos ... ok
+test keymap::tests::editor_paging_and_edit_keys ... ok
+test keymap::tests::editor_palette_toggle_pre_layer ... ok
+test keymap::tests::editor_replace_save_pass ... ok
+test keymap::tests::editor_tab_guard_bubbles_ctrl_tab ... ok
+test keymap::tests::editor_undo_redo_disambiguation ... ok
+test keymap::tests::global_store_defaults_without_init ... ok
+test keymap::tests::malformed_overrides_rejected_with_readable_warnings ... ok
+test keymap::tests::parse_binding_forms ... ok
+test keymap::tests::parse_pattern_rejects_phantom_modifiers ... ok
+test keymap::tests::phantom_modifier_bind_rejected_keeps_default_save ... ok
+test keymap::tests::readonly_bypass_blocked_at_action_level ... ok
+test keymap::tests::readonly_safe_classification_pinned ... ok
+test keymap::tests::shell_chord_full_lifecycle ... ok
+test keymap::tests::shell_single_key_branches ... ok
+test keymap::tests::store_after_overrides_still_conflict_checked ... ok
+test keymap::tests::unbind_chord_reverse_sequence_symmetric ... ok
+test keymap::tests::unbind_chord_winner_mirrors_dispatch ... ok
+test keymap::tests::unbind_removes_exact_binding ... ok
+test menu_bar::tests::anchor_estimate_monotonic ... ok
+test menu_bar::tests::editor_cmd_mappings ... ok
+test menu_bar::tests::enter_on_disabled_item_is_noop ... ok
+test menu_bar::tests::enter_opens_submenu_then_activates_child ... ok
+test menu_bar::tests::font_submenu_bounds ... ok
+test menu_bar::tests::four_menus_in_canonical_order ... ok
+test menu_bar::tests::ids_unique_across_menus ... ok
+test menu_bar::tests::left_closes_submenu_then_switches_menu ... ok
+test menu_bar::tests::navigation_on_empty_menus_is_noop ... ok
+test menu_bar::tests::navigation_survives_structure_drift ... ok
+test menu_bar::tests::no_document_disables_editor_actions_only ... ok
+test menu_bar::tests::no_selection_disables_cut_copy ... ok
+test menu_bar::tests::open_menu_selects_first_navigable ... ok
+test menu_bar::tests::placeholder_items_disabled_with_no_action ... ok
+test menu_bar::tests::read_only_disables_writes_allows_browsing ... ok
+test menu_bar::tests::recent_submenu_caps_at_pool_size ... ok
+test menu_bar::tests::recent_submenu_semantics ... ok
+test menu_bar::tests::row_y_offset_accounts_separators ... ok
+test menu_bar::tests::shortcut_labels_pin_real_bindings ... ok
+test menu_bar::tests::sidebar_submenu_checks_panel_state ... ok
+test menu_bar::tests::switch_menu_resets_selection_and_wraps ... ok
+test menu_bar::tests::theme_constants_pin_contract ... ok
+test menu_bar::tests::theme_submenu_checks_exactly_one ... ok
+test menu_bar::tests::to_context_items_feeds_menu_size ... ok
+test menu_bar::tests::vertical_moves_skip_separators_and_wrap ... ok
+test native_dialog::tests::applescript_double_quote_escaping ... ok
+test native_dialog::tests::powershell_single_quote_escaping ... ok
+test native_dialog::tests::show_error_with_controlled_path ... ok
+test native_dialog::tests::unix_candidate_order_and_payload ... ok
+test perf::tests::boot_anchor_is_stable_per_process ... ok
+test perf::tests::doc_open_line_matches_archive_shape ... ok
+test perf::tests::find_line_carries_scale_evidence ... ok
+test perf::tests::gating_is_env_driven ... ok
+test perf::tests::key_line_shape_and_kind_distinction ... ok
+test perf::tests::stage_line_shape_matches_measure_script_contract ... ok
+test settings::tests::find_history_roundtrip_and_coexist ... ok
+test settings::tests::find_regex_roundtrip ... ok
+test settings::tests::folds_empty_clears_file_entry ... ok
+test settings::tests::folds_empty_key_is_not_persisted ... ok
+test settings::tests::folds_roundtrip_per_file ... ok
+test settings::tests::indent_unit_roundtrip ... ok
+test settings::tests::keymap_entries_missing_key_is_silent_empty ... ok
+test settings::tests::keymap_entries_non_array_types_warn_and_empty ... ok
+test settings::tests::keymap_entries_parses_good_and_skips_bad_mixed ... ok
+test settings::tests::missing_settings_returns_none ... ok
+test settings::tests::other_keys_preserved ... ok
+test settings::tests::panel_widths_roundtrip ... ok
+test settings::tests::theme_and_font_size_roundtrip ... ok
+test settings::tests::workspace_memory_roundtrip ... ok
+test status_info::tests::encoding_empty_is_utf8 ... ok
+test status_info::tests::encoding_gbk_detected_when_not_utf8 ... ok
+test status_info::tests::encoding_plain_utf8 ... ok
+test status_info::tests::encoding_unknown_when_neither ... ok
+test status_info::tests::encoding_utf16_boms ... ok
+test status_info::tests::encoding_utf8_bom_detected ... ok
+test status_info::tests::eol_crlf_only ... ok
+test status_info::tests::eol_lf_only ... ok
+test status_info::tests::eol_mixed_is_reported_as_mixed ... ok
+test status_info::tests::eol_none_when_no_newline ... ok
+test status_info::tests::gbk_rejects_ascii_only ... ok
+test status_info::tests::git_absent_returns_none ... ok
+test status_info::tests::git_branch_parsed_from_head ... ok
+test status_info::tests::git_detached_head_reported ... ok
+test status_info::tests::selection_empty_is_none ... ok
+test status_info::tests::selection_multi_line ... ok
+test status_info::tests::selection_single_line ... ok
+
+test result: ok. 456 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.59s
+
+warning: unexpected `cfg` condition name: `ztracing`
+ --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:3:11
+  |
+3 | #[cfg(any(ztracing, all(target_family = "wasm", feature = "web")))]
+  |           ^^^^^^^^
+  |
+  = help: expected names are: `docsrs`, `feature`, and `test` and 34 more
+  = help: consider using a Cargo feature instead
+  = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+           [lints.rust]
+           unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+  = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+  = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition name: `ztracing`
+ --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:8:15
+  |
+8 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+  |               ^^^^^^^^
+  |
+  = help: consider using a Cargo feature instead
+  = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+           [lints.rust]
+           unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+  = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:11:11
+   |
+11 | #[cfg(all(ztracing, not(target_family = "wasm")))]
+   |           ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:14:11
+   |
+14 | #[cfg(all(ztracing, ztracing_with_memory, not(target_family = "wasm")))]
+   |           ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing_with_memory`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:14:21
+   |
+14 | #[cfg(all(ztracing, ztracing_with_memory, not(target_family = "wasm")))]
+   |                     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing_with_memory)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing_with_memory)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:19:15
+   |
+19 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:21:15
+   |
+21 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:23:15
+   |
+23 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:25:15
+   |
+25 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:27:15
+   |
+27 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:29:15
+   |
+29 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:31:15
+   |
+31 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:34:15
+   |
+34 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:42:15
+   |
+42 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:45:15
+   |
+45 | #[cfg(not(any(ztracing, all(target_family = "wasm", feature = "web"))))]
+   |               ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+  --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:56:11
+   |
+56 | #[cfg(all(ztracing, not(target_family = "wasm")))]
+   |           ^^^^^^^^
+   |
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition name: `ztracing`
+   --> /home/z/my-project/mdcore-audit/third_party/zed/crates/ztracing/src/lib.rs:116:15
+    |
+116 | #[cfg(all(not(ztracing), not(all(target_family = "wasm", feature = "web"))))]
+    |               ^^^^^^^^
+    |
+    = help: consider using a Cargo feature instead
+    = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+             [lints.rust]
+             unexpected_cfgs = { level = "warn", check-cfg = ['cfg(ztracing)'] }
+    = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(ztracing)");` to the top of the `build.rs`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: `ztracing` (lib) generated 17 warnings
+warning: unexpected `cfg` condition value: `nightly_coverage`
+   --> /home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_linux/src/linux/dispatcher.rs:221:16
+    |
+221 |     #[cfg_attr(feature = "nightly_coverage", coverage(off))]
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `as-raw-xcb-connection`, `ashpd`, `calloop-wayland-source`, `default`, `filedescriptor`, `gpui_wgpu`, `open`, `scap`, `screen-capture`, `test-support`, `wayland`, `wayland-backend`, `wayland-client`, `wayland-cursor`, `wayland-protocols`, `wayland-protocols-plasma`, `wayland-protocols-wlr`, `x11`, `x11rb`, `xim`, and `xkbcommon`
+    = help: consider adding `nightly_coverage` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+    = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `nightly_coverage`
+   --> /home/z/my-project/mdcore-audit/third_party/zed/crates/gpui_linux/src/linux/dispatcher.rs:228:16
+    |
+228 |     #[cfg_attr(feature = "nightly_coverage", coverage(off))]
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `as-raw-xcb-connection`, `ashpd`, `calloop-wayland-source`, `default`, `filedescriptor`, `gpui_wgpu`, `open`, `scap`, `screen-capture`, `test-support`, `wayland`, `wayland-backend`, `wayland-client`, `wayland-cursor`, `wayland-protocols`, `wayland-protocols-plasma`, `wayland-protocols-wlr`, `x11`, `x11rb`, `xim`, and `xkbcommon`
+    = help: consider adding `nightly_coverage` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: `gpui_linux` (lib) generated 2 warnings
+   Compiling mang-shell v0.1.0 (/home/z/my-project/mdcore-audit/mang-shell)
+warning: variable does not need to be mutable
+    --> src/editor/docx_edit_bridge.rs:1392:13
+     |
+1392 |         let mut b = bridge(
+     |             ----^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/editor/find_bar.rs:824:17
+    |
+824 |         let (b, mut f) = open_replace_foo();
+    |                 ----^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/editor/multi_cursor.rs:617:13
+    |
+617 |         let mut c = Cursors::single(p(0, 0)); // foo 内
+    |             ----^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5339:13
+     |
+5339 | /             window.update(cx, |_host, window, cx| {
+5340 | |                 ed.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
+5341 | |             });
+     | |______________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+5339 |             let _ = window.update(cx, |_host, window, cx| {
+     |             +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5345:9
+     |
+5345 | /         window.update(cx, |_host, _window, cx| {
+5346 | |             ed.update(cx, |ed, _| {
+5347 | |                 assert!(ed.buffer.cursor().line < ed.buffer.line_count());
+5348 | |             });
+5349 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5345 |         let _ = window.update(cx, |_host, _window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5358:9
+     |
+5358 | /         window.update(cx, |_host, window, cx| {
+5359 | |             ed.update(cx, |ed, cx| {
+5360 | |                 ed.run_command(Cmd::DocStart, window, cx);
+5361 | |                 assert_eq!(
+...    |
+5390 | |             });
+5391 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5358 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5407:9
+     |
+5407 | /         window.update(cx, |_host, window, cx| {
+5408 | |             ed.update(cx, |ed, cx| {
+5409 | |                 ed.run_command(Cmd::FoldAll, window, cx);
+5410 | |                 assert_eq!(
+...    |
+5417 | |             });
+5418 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5407 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5421:9
+     |
+5421 | /         window.update(cx, |_host, window, cx| {
+5422 | |             ed.update(cx, |ed, cx| {
+5423 | |                 ed.run_command(Cmd::OpenFind, window, cx);
+5424 | |                 assert!(ed.find.is_some(), "OpenFind 应打开查找条");
+...    |
+5429 | |             });
+5430 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5421 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: unused `Result` that must be used
+    --> src/editor/mod.rs:5434:9
+     |
+5434 | /         window.update(cx, |_host, window, cx| {
+5435 | |             ed.update(cx, |ed, cx| {
+5436 | |                 let before = ed.buffer.to_plain_text();
+5437 | |                 ed.insert_text_at(0, 0, "X", cx);
+...    |
+5451 | |             });
+5452 | |         });
+     | |__________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+     |
+5434 |         let _ = window.update(cx, |_host, window, cx| {
+     |         +++++++
+
+warning: calls to `std::str::from_utf8` with an invalid literal always return an error
+   --> src/status_info.rs:312:17
+    |
+311 |         let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4];
+    |                   -------------------------- the literal was valid UTF-8 up to the 0 bytes
+312 |         assert!(std::str::from_utf8(&gbk).is_err(), "前提：这串不是合法 UTF-8");
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(invalid_from_utf8)]` on by default
+
+warning: `mang-shell` (lib test) generated 10 warnings (run `cargo fix --lib -p mang-shell --tests` to apply 3 suggestions)
+warning: unused import: `mang_shell::editor::docx_edit_bridge::DocxPort`
+  --> tests/docx_edit_e2e.rs:22:5
+   |
+22 | use mang_shell::editor::docx_edit_bridge::DocxPort;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `MenuItem`
+  --> src/shell.rs:37:46
+   |
+37 | use crate::context_menu::{self, ContextMenu, MenuItem, Rect as MenuRect};
+   |                                              ^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mang-shell` (test "docx_edit_e2e") generated 1 warning
+warning: unused import: `AppContext`
+  --> src/git_panel.rs:20:12
+   |
+20 | use gpui::{AppContext, Context, IntoElement, MouseButton, Render, WeakEntity};
+   |            ^^^^^^^^^^
+
+warning: unused variable: `window`
+    --> src/shell.rs:1436:52
+     |
+1436 |                 let _ = this.update_in(cx, |shell, window, cx| {
+     |                                                    ^^^^^^ help: if this is intentional, prefix it with an underscore: `_window`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `ReadOnlyDocx` is never constructed
+  --> src/document.rs:72:5
+   |
+68 | pub enum OpenedDocument {
+   |          -------------- variant in this enum
+...
+72 |     ReadOnlyDocx { path: PathBuf, payload: DocxPayload },
+   |     ^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `docx_editable`, `docx_edit_stats`, `docx_last_plan`, and `restore_folds` are never used
+    --> src/editor/mod.rs:966:12
+     |
+ 498 | impl Editor {
+     | ----------- methods in this implementation
+...
+ 966 |     pub fn docx_editable(&self) -> bool {
+     |            ^^^^^^^^^^^^^
+...
+ 971 |     pub fn docx_edit_stats(&self) -> Option<(usize, usize, usize)> {
+     |            ^^^^^^^^^^^^^^^
+...
+ 976 |     pub fn docx_last_plan(&self) -> Option<(usize, usize, usize)> {
+     |            ^^^^^^^^^^^^^^
+...
+1681 |     pub fn restore_folds(&mut self) -> usize {
+     |            ^^^^^^^^^^^^^
+
+warning: function `find_match` is never used
+   --> src/editor/brackets.rs:297:8
+    |
+297 | pub fn find_match(text: &str, cursor: (usize, usize)) -> BracketMatch {
+    |        ^^^^^^^^^^
+
+warning: function `is_bracket_char` is never used
+   --> src/editor/brackets.rs:351:8
+    |
+351 | pub fn is_bracket_char(c: char) -> bool {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `highlight_cols` is never used
+   --> src/editor/brackets.rs:358:8
+    |
+358 | pub fn highlight_cols(text: &str, cursor: (usize, usize), line: usize) -> Vec<usize> {
+    |        ^^^^^^^^^^^^^^
+
+warning: methods `last_reject_note`, `replace_range_derived`, `tab`, and `find_matches` are never used
+    --> src/editor/buffer.rs:572:19
+     |
+ 421 | impl Buffer {
+     | ----------- methods in this implementation
+...
+ 572 |     pub(crate) fn last_reject_note(&self) -> Option<&RejectNotice> {
+     |                   ^^^^^^^^^^^^^^^^
+...
+ 828 |     pub fn replace_range_derived(&mut self, start: Point, end: Point, text: &str) -> bool {
+     |            ^^^^^^^^^^^^^^^^^^^^^
+...
+ 847 |     pub fn tab(&mut self) {
+     |            ^^^
+...
+1287 |     pub fn find_matches(&self, query: &str) -> Vec<Point> {
+     |            ^^^^^^^^^^^^
+
+warning: function `regex_check` is never used
+  --> src/editor/buffer_find.rs:52:8
+   |
+52 | pub fn regex_check(pattern: &str) -> Result<(), String> {
+   |        ^^^^^^^^^^^
+
+warning: method `fold_ranges` is never used
+   --> src/editor/display_map.rs:165:12
+    |
+ 83 | impl DisplayMap {
+    | --------------- method in this implementation
+...
+165 |     pub fn fold_ranges(&self) -> Vec<(usize, usize)> {
+    |            ^^^^^^^^^^^
+
+warning: function `width_paragraph_total` is never used
+   --> src/editor/docx_doc.rs:328:4
+    |
+328 | fn width_paragraph_total(blocks: &[Block]) -> usize {
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `rows` and `cols` are never used
+   --> src/editor/docx_edit_bridge.rs:504:12
+    |
+502 | impl TableRef {
+    | ------------- methods in this implementation
+503 |     /// 行数。
+504 |     pub fn rows(&self) -> usize {
+    |            ^^^^
+...
+509 |     pub fn cols(&self) -> usize {
+    |            ^^^^
+
+warning: constant `HISTORY_CAP` is never used
+  --> src/editor/find_bar.rs:36:11
+   |
+36 | pub const HISTORY_CAP: usize = 20;
+   |           ^^^^^^^^^^^
+
+warning: multiple methods are never used
+   --> src/editor/find_bar.rs:279:12
+    |
+101 | impl FindState {
+    | -------------- methods in this implementation
+...
+279 |     pub fn history(&self) -> &[String] {
+    |            ^^^^^^^
+...
+284 |     pub fn set_history(&mut self, entries: Vec<String>) {
+    |            ^^^^^^^^^^^
+...
+306 |     pub fn remember_query(&mut self, query: &str) -> bool {
+    |            ^^^^^^^^^^^^^^
+...
+322 |     pub fn history_index(&self) -> Option<usize> {
+    |            ^^^^^^^^^^^^^
+...
+382 |     pub fn is_regex(&self) -> bool {
+    |            ^^^^^^^^
+...
+387 |     pub fn regex_error(&self) -> Option<&str> {
+    |            ^^^^^^^^^^^
+...
+399 |     pub fn match_ranges(&self) -> Vec<(Point, Point)> {
+    |            ^^^^^^^^^^^^
+
+warning: method `listing_loaded` is never used
+   --> src/file_tree.rs:132:12
+    |
+112 | impl TreeState {
+    | -------------- method in this implementation
+...
+132 |     pub fn listing_loaded(&self, dir: &Path) -> bool {
+    |            ^^^^^^^^^^^^^^
+
+warning: method `root` is never used
+   --> src/git_panel.rs:232:12
+    |
+217 | impl GitPanel {
+    | ------------- method in this implementation
+...
+232 |     pub fn root(&self) -> &Path {
+    |            ^^^^
+
+warning: function `load_folds` is never used
+   --> src/settings.rs:225:8
+    |
+225 | pub fn load_folds(key: &str) -> Vec<usize> {
+    |        ^^^^^^^^^^
+
+warning: function `load_folds_in` is never used
+   --> src/settings.rs:270:4
+    |
+270 | fn load_folds_in(dir: &Path, key: &str) -> Vec<usize> {
+    |    ^^^^^^^^^^^^^
+
+warning: function `save_find_history` is never used
+   --> src/settings.rs:306:8
+    |
+306 | pub fn save_find_history(entries: &[String]) {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `load_find_history` is never used
+   --> src/settings.rs:312:8
+    |
+312 | pub fn load_find_history() -> Vec<String> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `save_find_regex` is never used
+   --> src/settings.rs:319:8
+    |
+319 | pub fn save_find_regex(on: bool) {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `load_find_regex` is never used
+   --> src/settings.rs:325:8
+    |
+325 | pub fn load_find_regex() -> bool {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `save_find_history_in` is never used
+   --> src/settings.rs:333:4
+    |
+333 | fn save_find_history_in(dir: &Path, entries: &[String]) {
+    |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `load_find_history_in` is never used
+   --> src/settings.rs:344:4
+    |
+344 | fn load_find_history_in(dir: &Path) -> Vec<String> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `save_find_regex_in` is never used
+   --> src/settings.rs:356:4
+    |
+356 | fn save_find_regex_in(dir: &Path, on: bool) {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `load_find_regex_in` is never used
+   --> src/settings.rs:362:4
+    |
+362 | fn load_find_regex_in(dir: &Path) -> bool {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: method `is_action` is never used
+   --> src/context_menu.rs:121:12
+    |
+ 77 | impl MenuItem {
+    | ------------- method in this implementation
+...
+121 |     pub fn is_action(&self) -> bool {
+    |            ^^^^^^^^^
+
+warning: methods `is_empty` and `action_ids` are never used
+   --> src/context_menu.rs:245:12
+    |
+233 | impl ContextMenu {
+    | ---------------- methods in this implementation
+...
+245 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+...
+250 |     pub fn action_ids(&self) -> Vec<&'static str> {
+    |            ^^^^^^^^^^
+
+warning: method `shortcut` is never used
+   --> src/menu_bar.rs:184:12
+    |
+160 | impl MenuEntry {
+    | -------------- method in this implementation
+...
+184 |     pub fn shortcut(mut self, key: impl Into<String>) -> Self {
+    |            ^^^^^^^^
+
+warning: method `check_conflicts` is never used
+    --> src/keymap.rs:1273:12
+     |
+ 859 | impl KeymapStore {
+     | ---------------- method in this implementation
+...
+1273 |     pub fn check_conflicts(&self) -> Vec<String> {
+     |            ^^^^^^^^^^^^^^^
+
+warning: function `same_domain` is never used
+    --> src/keymap.rs:1321:4
+     |
+1321 | fn same_domain(site: Site, is_editor_action: bool) -> bool {
+     |    ^^^^^^^^^^^
+
+warning: function `section_visible` is never used
+   --> src/palette_view.rs:103:8
+    |
+103 | pub fn section_visible(group: Group, entries: &[Entry]) -> bool {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `bom_len` is never used
+   --> src/status_info.rs:104:8
+    |
+104 | pub fn bom_len(bytes: &[u8]) -> usize {
+    |        ^^^^^^^
+
+warning: unused import: `mang_shell::editor::docx_edit_bridge::DocxPort`
+  --> tests/docx_bid_e2e.rs:52:5
+   |
+52 | use mang_shell::editor::docx_edit_bridge::DocxPort;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mang-shell` (test "docx_bid_e2e") generated 1 warning
+error: linking with `cc` failed: exit status: 1
+  |
+  = note:  "cc" "-m64" "/home/z/my-project/mdcore-audit/mang-shell/target/debug/deps/rustc4iZ0GS/symbols.o" "<17 object files omitted>" "-Wl,--as-needed" "-Wl,-Bstatic" "/home/z/my-project/mdcore-audit/mang-shell/target/debug/deps/{libmang_shell-69b9f3e948c7bf26,libzlog-fd22095938bd322f,libmdc_pdf-783abac7c205ad3d,liblopdf-f352ef3e3dec799d,libstringprep-c3e064a7a8979238,libunicode_normalization-bbf719f11f61f57a,libecb-a07aa7654bbcbc6b,libcbc-e6dfc78056a9948e,libnom-6b56f451bc1826e9,libweezl-0f4641ea648b0c75,libbrotli_decompressor-abb920f479e87357,liballoc_stdlib-a546b1c23da4611b,liballoc_no_stdlib-e34c416c89da92aa,libsha2-33a3fa0ad4f643f8,libmd5-b84704cd3660ba73,libdigest-e4bd61446a6b6756,libconst_oid-384118fc70fd3c2a,libblock_buffer-d4b0a8b880d85d17,libaes-217159cd6c27ebc4,libcpubits-d849fb59d0150e0e,libcipher-2f0a30dbfe254807,libinout-d21d985c1d225841,libblock_padding-5a6919dfb0957bf1,libcrypto_common-24c1ec236660005d,libhybrid_array-518c6ae47b4ca979,libpdfium_render-c3d1b571d858c07a,libutf16string-c679322b792cd655,libitertools-9d516c1700643aaa,libvecmath-389b547afa945d5a,libfloat-1748a3f01d70b1dd,libmdc_office_io-fa130f601a645c6e,librust_xlsxwriter-c3962cb0f8d4d8cc,libmdc_formula-cafe6f972f9d6047,libironcalc_base-018039e55fb7f232,libchrono_tz-505aebe030078a4b,libphf-a82d8500fa817ff6,libphf_shared-24aca4afd04dbc87,libcsv-41143111e7d8b5cd,libcsv_core-a301bfcfd1710b73,libstatrs-22c4014c2723f582,libapprox-1c1376262ffc1cd3,libbitcode-4367209009fe7e1e,libcalamine-f71e1514db5000a6,libfast_float2-b3ba7d5818affa61,libatoi_simd-f1a0354d6128193d,libdebug_unsafe-4f95ec04dc887aa7,libcodepage-0a32091ef32a2867,libdocx_rs-dfa36e5eea9755d5,libzip-4a1108a216e1bea3,libzopfli-8e75161e1eb68ce8,libbumpalo-b90d76140ce4c5dd,libtyped_path-1938da6b080c1e3a,libquick_xml-7c62aabb40015d2d,libtext-ef63c616f647ca00,librope-331c3011fb17b053,libclock-a69605ae9fd024b7,libmdc_canvas-5f7f5cae7cd3ca51,libmdc_evidence-76cdd397e1dec613,libyrs-5f4971b46506cc61,libdashmap-a6f91c9bbc138ae8,libarc_swap-5f6a79805b9aefc6,libsmallstr-6a4fe2aa790eea5b,libui-d1d2ab21416e12aa,libicons-3960c72d91d0d87d,libmenu-9fd97698a8ba42d3,libdocumented-fce7d2480cfc2170,libcomponent-3ddda241ddbbfaa8,libtheme-6ce65a3a3017e468,libserde_json_lenient-087df7bb56448923,libsyntax_theme-773f1e3be651527d,libpalette-f07ba7f2e1f68fe6,libpalette_math-dbda3d9c74bf46f3,libgpui_platform-e6138fec8051d327,libgpui_linux-63a35c365f805ad5,libaccesskit_unix-8f50043296bd0ee3,libatspi-f4120c98fcb23563,libatspi_proxies-2bae8775535928e5,libaccesskit_atspi_common-1b176e9d22908f8d,libphf-3606ac1fdb1f81a0,libphf_shared-f24c8b8c162ed1f2,libatspi_common-8fcea56fd02b9170,libaccesskit_consumer-b9059a686c095b45,libnotify_rust-527c3e41f723f048,libopen-aead11e69b53bab8,libis_wsl-8bcae7f04cc8ee4f,libis_docker-1cf53296f09df23a,liboo7-f7c0e4e2046800f9,libpbkdf2-2a9c458d174ff077,libaes-f054cd563ec314ea,libcbc-2925c6136bd2606b,libsha2-bcc51fce2cdcacc8,libcpufeatures-2e70255b9da427cf,libnum_bigint_dig-7994af8f3f05d3d0,libnum-24dc7503a0098c94,libnum_iter-34d09160ed575a2a,libnum_rational-43ca2c2b42b9d28f,libnum_bigint-2f7d02c86b364d82,libnum_integer-7596f1f4fe42f7e9,libmd5-6054949c03773e4f,libhkdf-b50066e6c10f4748,libhmac-550d7951a5e5b166,libdigest-2dd4f375e7df37e3,libblock_buffer-1cc6ce244e857994,libcipher-11727c5000ce4c06,libinout-4fe09d7e4d720cb0,libblock_padding-9d1b696e66ce6087,libcrypto_common-660609c93e881db4,libgeneric_array-c8493796c6cd7e95,libtypenum-16d18dbf81d3f252,libsubtle-5b81dfe3b0bf0351,libzeroize-c77db9e96c61b57d,libsmol-582087da3e282de4,libasync_net-fb89f01cf4b17b76,libasync_fs-2b4702fe2da8b39d,libzed_xim-0c11a069ec4bbcfe,libahash-362619ee318e4846,libconst_random-c8afe8c49a14a28e,libhashbrown-0bfa37c738d58402,libxim_ctext-47ee0ad77254df74,libencoding_rs-fadb63c6805a4b7a,libsimdutf8-56b0c8ab2e8b8d3d,libcore_detect-559e02e54c2e7bac,libxim_parser-582b669ab2020853,libx11rb-38ed10269064461d,libgethostname-5b64162a879b610b,libx11rb_protocol-a7480ad3de3a99aa,libwayland_cursor-ebec6bc338ac5796,libxcursor-2f20b24ac2ca88bb,libwayland_protocols_wlr-87f7e315d7f4697a,libwayland_protocols_plasma-4c1175b7fed8bdbb,libfiledescriptor-4cb2b145b9496975,libcalloop_wayland_source-4094f4e10cf6c1c8,libgpui_wgpu-dece1d66ca73c7b5,libzed_font_kit-1aad5cea742ea9bc,libfloat_ord-a871b0da3d8e8f69,libfreetype_sys-fc33a7db98559f1f,libpathfinder_geometry-98b6890b5f6a6c52,libpathfinder_simd-115f0eee4e9e95ac,liblazy_static-a05f409698204542,libwgpu-c4375f1b66112d4b,libwgpu_core-c22e4f7eace916e3,libwgpu_hal-cf4e0b4801526b3e,librenderdoc_sys-c60b1d05ebb33c7c,libkhronos_egl-fa1d40d594deeb1c,libwgpu_naga_bridge-a8cfed36200a629c,libordered_float-e6127918af619073,libgpu_allocator-2bd47d6a0f2dcfb7,libpresser-4a4d3add0cbb59e7,libhashbrown-e07148dc7ff1d49c,liballocator_api2-a3845d41002678ed,libash-5b87d4c8faeb3438,libnaga-126606ee53ced891,libcodespan_reporting-cdf3ecb6567d0cb4,libunicode_width-f4d585e7b46012ed,libspirv-3bed336ce0d1e956,libwgpu_sync-b45da5845506ed69,libglow-b5aa4cb3300c392b,libwgpu_types-dfa3ab267fdb7235,libmacro_rules_attribute-1f94854fcb36a1e1,libnaga_types-049249792f2d3543,librustc_hash-95abbc96a46908db,libcosmic_text-1d20a71cd6617ff2,libunicode_linebreak-e08ff50ff3a96cbd,libsys_locale-8742c0aa1c0be212,libswash-9eaa05398d3dd105,libyazi-17d0a4779c4c687d,libskrifa-b988b2913fcf926b,libread_fonts-43e8c5d2af4589d6,libfont_types-aabd79f4fb5dfeb5,libzeno-8161072c9302046c,libself_cell-3a97e17499c78e74,libskrifa-a547c73ab82e7440,liblinebender_resource_handle-d71b5c9af609c32a,libharfrust-cb0f73e8abda6ca4,libread_fonts-8e0f664962fe06d1,libcore_maths-8bb5411c366daf1e,liblibm-1c240d47c00b018f,libfont_types-c6fb2d64529af459,libunicode_segmentation-a6c703877dab65a6,librangemap-7ab0820d8bb0b11f,libxkbcommon-a6d7403421d727e4,libxkeysym-84cd726b1fed6cc4,libas_raw_xcb_connection-82fda6d5d2cbd5d7,libashpd-a8c2a53e8de4d2c4,libwayland_protocols-417c0798184be656,libwayland_client-ec83960f0471c4a8,libwayland_backend-2ed612510f7c56f0,libdowncast_rs-1e5ca28e67d4f4bc,libscoped_tls-74204bca67bf0ec9,libwayland_sys-b8a15ae196e7e594,libdlib-68babf01a0712615,liblibloading-5d04bc796803f56b,libzbus-6ad19b50e61f2c3f,libblocking-0cccb906a76078ab,libpiper-2cf535ba123e30f5,libatomic_waker-7194315de130680c,libhex-4e35fe2938148604,libasync_executor-bc075e599d25d8b2,libasync_process-240f2ff7eea7c0e7,libasync_signal-8d44f2d87efaf0e5,libsignal_hook_registry-88b119c06fcaae0e,liberrno-c04016b28a7e4c62,libasync_lock-664f6e39b3156c69,libordered_stream-fd3daee8f676a238,libasync_broadcast-622109bb592ca8ce,libasync_io-26281de4515e9c15,libzbus_names-522d66b9706d3099,libzvariant-85ce4da67a993c6f,libserde_bytes-71021422d3fc7699,libenumflags2-67162e0ddceec781,libendi-9dc98af4e3283882,libzcheapstr-ae9891a03ea15684,libzvariant_utils-9cef447866bb26f9,libwinnow-1852275442c45ff6,libsyn-54c7a900aa535de6,libquote-9a583b131e4ea303,libproc_macro2-eb28445e8c3ead1c,libunicode_ident-f7bf6cfbf2c67a11}.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libproc_macro-*,librustc_literal_escaper-*}.rlib" "/home/z/my-project/mdcore-audit/mang-shell/target/debug/deps/{libcalloop-dd48cba7233daf18,libpolling-a9e4f695165fa826,libgpui-f9837cc1218601ef,libasync_channel-efafbda637c12bfe,libevent_listener_strategy-bb8ac2ebfb5a7a26,libevent_listener-61aab95537cde7da,libconcurrent_queue-2c4e87be23f5dbd1,libregex-a7f815a1dafd0a79,libregex_automata-bf45f0a365059284,libaho_corasick-8081ed9c4f1fabaf,libnum_cpus-65a50eb12618fb90,libspin-9a92ce2baa4a37fa,libprofiling-70154768bf365638,libpollster-fb6bf8c9f723e0b4,libgpui_shared_string-8ef0bf3a45035780,libsmol_str-2640a0dc0e36af1f,libinventory-0b779c94e4af74c2,libresvg-f239a155b22535e3,librgb-c4af96b3706257ac,libusvg-5e259934099dcb08,libbase64-d8e685c625140861,libunicode_bidi-ba48baaf0a7831f7,libunicode_vo-d579b2de2b93fd63,libimagesize-8fb556b48dea0d52,libdata_url-6730066973eeb8bf,libxmlwriter-5b415985a9e899b9,libsimplecss-14f6c1f9830059a0,libroxmltree-16a1e78f3f97a0a9,libsvgtypes-50ca3d0760054f53,libkurbo-7fedb9778f74237b,libpolycool-23a56653f28a344f,libsiphasher-0260636c76d4d2a1,librustybuzz-9436ecb1582ae1ba,libunicode_bidi_mirroring-81997edf362a224e,libunicode_script-e02583898529fb9e,libunicode_properties-f986343671092f89,libunicode_ccc-16f988bfa65d7f3c,libfontdb-ffd731b96b03fb85,libfontconfig_parser-c10e1e7c657dedc2,libroxmltree-b4f1eeae5c831b86,libmemmap2-b9406f405c158e19,libtinyvec-7968b63977eef7ea,libttf_parser-f667d6edf9d43f13,libtiny_skia-3f95b071c6d8e22b,libpng-d455f61b40f05e45,libbitflags-36faee9c88e32572,libtiny_skia_path-03372f8eedab5168,libstrict_num-63bf1bc473728dde,libfloat_cmp-b92dd9f6e829d97b,libarrayref-149b251b6b946405,libwaker_fn-e357669b169f82d4,libstrum-d1d4b93186cb1be9,libseahash-13448f2bd79d2cf1,libraw_window_handle-fc351983bd5fd6e5,liblyon-69737ff2af75c2f7,liblyon_tessellation-ccc40271f9ac36fa,libfloat_next_after-f0ce219f07363f96,liblyon_algorithms-1ff48e829475cf9c,liblyon_path-1a451c4c264d5faa,liblyon_geom-78b4e46ab5d75cbc,libarrayvec-4235b0af25be6fa2,libetagere-7fece70ac0f70c3d,libsvg_fmt-c118ef1a66096981,libeuclid-7316602c1b69e0d5,libtaffy-4219d288bb16bbf7,libsum_tree-d366ba46470e0043,libztracing-04fa9553bd6ac917,libtracing-fca0e894584f2211,libtracing_core-e9b1f5901c4e7daf,libheapless-f26675465f6ee245,libhash32-2b762c1a30e55dec,libbyteorder-c6a60cb010526a19,libthiserror-02f668e276226a5f,librefineable-f4dd8309924c00f1,libpostage-1d8629653c062015,libpollster-facd6144567bdc50,libthiserror-5ab35b0b64c88459,libcrossbeam_queue-7daf4986d03d621c,libstatic_assertions-c122a18535747ae2,libatomic-ff7184f016f1ce7f,libfutures_concurrency-a47d0d4349768031,libfutures_lite-c05e8cb503ca9803,libparking-37d3866ba6a26008,libpin_project-fa96e3773c7ae2e9,libfixedbitset-8d74a46a69e537a1,libimage-17e888915f030ea7,libqoi-23b8f4db9791c2d6,libmoxcms-304d42fc2a5d4798,libpxfm-4a11cdbbbe515896,librayon-29666f0bda9d4cb0,libimage_webp-f6d207dd90cee96e,libtiff-759ccd1f707918b7,libfax-c30fa505a9abb566,libquick_error-23e07a30d38e11d3,libpng-8f23119c45e1d4b5,libflate2-6868755bcf5629ca,libzlib_rs-2354a94df835014b,libfdeflate-00f9717240916077,libcrc32fast-620235a9dd364859,libexr-30b47759b35cd999,librayon_core-e28d5d169f738476,libcrossbeam_deque-f19e553f147a87a1,libcrossbeam_epoch-eb82a241a8ac7320,libcrossbeam_utils-fff4cf524f0609d6,libminiz_oxide-0b517d40ac819a4b,libzune_inflate-bb65db419923528a,libbit_field-f2dba4c8d86c6240,libpulp-4a216e22aea994b3,libnum_complex-3b824133f875d4b5,libbytemuck-1956dca72057b657,liblebe-cdbd907d35ecd132,libhalf-35e8a934a7d80e79,libzune_jpeg-b14ba87d1d0ef163,libzune_core-296c42bd4bcbe441,libgif-3888a606c521816c,libcolor_quant-7fb54a6da442dd80,libweezl-a4fd8ea477cf029d,libbyteorder_lite-8e964cc35c373b25,libslotmap-c4439a2db278ba48,libderive_more-903aebf5c416d8aa,libschemars-6628bdc567b9ec1c,libdyn_clone-433312d27fac8790,libref_cast-252efe389ddefe56,libcollections-c9a670e6d6ba8209,libgpui_util-b536b98126b5f6ce,librustc_hash-887bf2fa381c3af5,libscheduler-e73a4f073186e36f,libflume-3f3b91b00926e90d,libspin-b3908d1d52ea571d,librand-b31837f92db1ef53,librand_chacha-f02fa6a4247d0b7a,libppv_lite86-f945be250b68f6b7,libzerocopy-1a9dfb3e731f5d4a,librand_core-111edaaf3d6110ea,libgetrandom-d5e9999b4a1850b1,libbacktrace-2bbc254f7c8350d0,libminiz_oxide-7be7352963866614,libsimd_adler32-c20085060b89b579,libobject-a6c9c2a5e2bea72a,libaddr2line-b3214e5854155332,libgimli-cdc851a32b954aa2,librustc_demangle-2887dc2a1cc5e838,libasync_task-7134f018717f8dd3,libweb_time-769321dfd405fae4,libchrono-31127a1d871431f6,libiana_time_zone-08f2e5bb88a2e456,libnum_traits-a5cd8ba88cdc1e2b,libitertools-c9d270727a3bd46b,libeither-8b1ce654ee540d51,libproptest-d7e411d3ac7ca09d,libunarray-2a1c1231bf559779,libregex_syntax-984cb555ed54e72a,librand_xorshift-c615ab64321af3aa,librand-98dbe89be87ac6d2,libchacha20-045649d4837ba9ea,libcpufeatures-7fce370cb3b351d6,librusty_fork-01025ae24670df54,libwait_timeout-61d5fedebc938c4a,libtempfile-2c51f769e2771fd6,libfastrand-a313ea7e69c0ab3d,libonce_cell-eee4ead771c82d2b,librustix-5a9a2c801e0e8ccc,liblinux_raw_sys-0ef26755a955a735,libfnv-af0a01142fa012f8,libquick_error-c5cf1bc5ba9a0031,libbit_set-1365b6e20172e632,libbit_vec-bf546640d1c796e7,libbitflags-2074f8a399ad17f9,libhttp_client-ffbeaa09a3a63518,libserde_urlencoded-baa0b6fa567bdd59,libryu-7c71e9cc03fd65fe,libserde_json-8d7e0463fba29fa7,libzmij-6c530d1d5fdc4c4c,libindexmap-07c41dd63837d229,libequivalent-02b5497d7a76b9a6,libhashbrown-d95de0d35c492b07,libfoldhash-ca630b93dde3ebd7,liblog-76d3d59f5fc38907,libvalue_bag-9781da6be7efc89e,liburl-c4e5aafa77c98d14,libidna-476dca62f0cc0a5d,libidna_adapter-9ca3446809854628,libicu_properties-a3e0bea0b29b5592,libicu_properties_data-23ad900373ceccfa,libicu_normalizer-006a62aed85f0b00,libicu_normalizer_data-ef9cd1ec2f90e753,libicu_collections-7c981a7d9230fe7c,libutf8_iter-4012fa1ceae45faf,libutf_types-c7a9eb75e438a6e9,libpotential_utf-2dd55248e6bd171f,libicu_provider-8225a13ef8d5ff4c,libicu_locale_core-a4c2aabd09da94e2,libtinystr-e318082c86cde6c9,liblitemap-108e77c3fe430a6f,libwriteable-f2374982ff539afc,libzerovec-9bedf0fac45cd8b9,libzerotrie-8b5c527cca1fac7e,libyoke-5ab77e75ea9382c7,libstable_deref_trait-7d0980211f609889,libzerofrom-159f8f33ede1d961,libform_urlencoded-3fe05a88f15f35db,libpercent_encoding-20bf20eef1d3907a,libparking_lot-3a12b79a6df23468,libparking_lot_core-30e1859b82a97c55,libsmallvec-1e387bf4616f6ac9,liblock_api-12243f5e7510ee7d,libscopeguard-ab12ef4e0da787c3,libanyhow-8c9a04013488002c,libserde-2b1e85560bef2627,libhttp_body-f66ec46efb0472b6,libhttp-c6a5d237a07b2338,libitoa-877879a3ad6d4475,libfutures-b5ff0d9088015ac7,libfutures_executor-24a3c3ccdf585072,libfutures_util-4eeec2fa0e682e58,libmemchr-94f61a42842174ff,libfutures_io-1f2282ef6c9197f3,libslab-af6184889701287b,libfutures_channel-15469d2126299855,libpin_project_lite-5d8a97732853ae1c,libfutures_sink-72807b67e8c6b051,libfutures_task-7e4dfd4bd1b35492,libfutures_core-6e7982d16f012253,libbytes-cd9948ea4d0cfdb7,libaccesskit-a6d0396362281324,libuuid-d78bb874866bdad2,libgetrandom-ae7af4cd61c79efe,liblibc-08eae37c6a91c372,librand_core-63b18728fef34df6,libcfg_if-1070e758c46e12c2,libserde_core-f136cf46cbd65ab6,libsha1_smol-ba8852aa8e44fc4b}.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-Wl,-Bdynamic" "-lxcb" "-lfreetype" "-lxkbcommon" "-lxkbcommon-x11" "-ldl" "-lgcc_s" "-lutil" "-lrt" "-lpthread" "-lm" "-ldl" "-lc" "-L" "/home/z/my-project/mdcore-audit/mang-shell/target/debug/deps/rustc4iZ0GS/raw-dylibs" "-B<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld" "-fuse-ld=lld" "-Wl,--eh-frame-hdr" "-Wl,-z,noexecstack" "-L" "/home/z/my-project/mdcore-audit/mang-shell/target/debug/build/wayland-backend-bc9c7401c7cec6bf/out" "-L" "/usr/lib/x86_64-linux-gnu" "-L" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-o" "/home/z/my-project/mdcore-audit/mang-shell/target/debug/deps/mang_shell-8fdb6fc809387bd3" "-Wl,--gc-sections" "-pie" "-Wl,-z,relro,-z,now" "-Wl,--strip-debug" "-nodefaultlibs"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+          
+
+warning: `mang-shell` (bin "mang-shell") generated 34 warnings
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+warning: build failed, waiting for other jobs to finish...
+### --test brackets_corpus
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test command_coverage
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test docx_bid_e2e
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test docx_edit_corpus
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test docx_edit_e2e
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test docx_edit_roundtrip
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test module_wiring
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test perf_wiring
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test render_170_docx
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test render_170_pdf
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test render_170_xlsx
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test render_fidelity
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test ui_wiring_faces
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
+### --test wiring_integrity
+error: linking with `cc` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lxkbcommon
+          rust-lld: error: unable to find library -lxkbcommon-x11
+          collect2: error: ld returned 1 exit status
+error: could not compile `mang-shell` (bin "mang-shell") due to 1 previous error; 34 warnings emitted
