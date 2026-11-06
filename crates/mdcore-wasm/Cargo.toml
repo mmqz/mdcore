@@ -26,3 +26,9 @@ mdc-office-io = { path = "../office-io" }
 mdc-collab = { path = "../collab" }
 serde_json.workspace = true
 wasm-bindgen = "0.2"
+
+[dev-dependencies]
+# #283：xlsx_grid 导出测试的部件级保真断言（源档 vs 导出产物逐部件
+# 字节比较）。与 mdc-office-io 主依赖同版本同 feature——零新增三方
+# 闭包（已在 workspace Cargo.lock）。
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
