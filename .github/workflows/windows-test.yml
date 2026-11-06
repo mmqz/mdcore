@@ -101,6 +101,15 @@ jobs:
         shell: bash
         run: python test-artifacts/pdf-organize-corpus/fetch_corpus.py
 
+      - name: Fetch pdf-corpus (#264 真实语料 78 件, Apache-2.0)
+        # #264 语料门 CI 化：语料二进制不入库（.gitignore），CI 在
+        # Test mdc-pdf 前取件——行为分布锁（ok/denied/engine_err 基线
+        # + 每类下限 + 零 panic）在云端真跑而非 skip。幂等；pdfinfo
+        # 缺席记 pages=null 不阻断；取件 <70 件退出码 1（上游漂移
+        # 快速失败，信息直指 [MISS] 源）。
+        shell: bash
+        run: python test-artifacts/pdf-corpus/fetch_corpus.py
+
       - name: Test mdc-pdf (lopdf + pdfium 双引擎面——#210 真实环境验证)
         # #210/#222：pdfium 测试面 CI 化——此前本步骤只开 engine-lopdf
         # （注释自认「pdfium 面需要动态库，CI 上没有」= engine-pdfium
