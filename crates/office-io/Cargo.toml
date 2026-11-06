@@ -93,3 +93,7 @@ rust_xlsxwriter = { version = "0.99", features = ["wasm"] }
 
 [dev-dependencies]
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# #233（zip-exotica）：负向样本构造（与主依赖同版本同 feature——零新增
+# 编译面；构造器移植自研究仓 guard.rs @ 50e6332^，字节布局经研究仓
+# python 重建件 sha256 交叉验证）。
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
