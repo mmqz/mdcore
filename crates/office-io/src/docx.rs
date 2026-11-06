@@ -1743,6 +1743,9 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     let cursor = std::io::Cursor::new(bytes);
     let mut za = zip::ZipArchive::new(cursor)
         .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
+    // #233：EOCD 守恒门（zip-exotica 防线）——crate 吸收物理同名条目
+    // 使 by_index 视野失明，守恒比对在 prescan 之前。
+    io::eocd_conservation(bytes, &za)?;
     io::prescan_docx(&mut za)?;
     let mut warnings = Vec::new();
     // 门 2+3 融合趟（io 私有实现经公开管道函数复用——见 io::read_book）。

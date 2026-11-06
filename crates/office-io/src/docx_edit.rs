@@ -298,6 +298,8 @@ impl DocxEditor {
         let cursor = std::io::Cursor::new(bytes);
         let mut za = zip::ZipArchive::new(cursor)
             .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
+        // #233：EOCD 守恒门（与读面 read_bytes_gated 同款）。
+        io::eocd_conservation(bytes, &za)?;
         io::prescan_docx(&mut za)?;
         let mut warnings = Vec::new();
         io::verify_gates(&mut za, true, &mut warnings)?;

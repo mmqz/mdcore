@@ -321,6 +321,9 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         mdc_office_io::io::WarningKind::RevisionDelete => "revision_delete",
         // #39：面外元素跳过（嵌套表深度超限——敌意防御降级）。
         mdc_office_io::io::WarningKind::SkippedElement => "skipped_element",
+        // #233（zip-exotica）：压缩比超观察门限（警告口径不拒——
+        // 纵深可见性；见 mdc-office-io LIMIT_COMPRESS_RATIO 文档）。
+        mdc_office_io::io::WarningKind::HighCompressionRatio => "high_compression_ratio",
     }
 }
 
@@ -343,6 +346,9 @@ fn warning_severity(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // #39：嵌套表深度超限跳过（敌意/退化嵌套防御——诚实降级
         // 登记；正常文档不触发）→ warn（内容缺席面）。
         mdc_office_io::io::WarningKind::SkippedElement => "warn",
+        // #233：压缩比观察（合法高压缩比件也触发——s7b 149:1 实证；
+        // 内容无缺席，纯可见性）→ info。
+        mdc_office_io::io::WarningKind::HighCompressionRatio => "info",
     }
 }
 
