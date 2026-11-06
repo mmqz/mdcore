@@ -27,12 +27,19 @@
 //! 是标注），但**也常有只有 Widget 没有登记进 /Fields 的野控件**（某些
 //! 生成器行为）。本模块两处都扫，以对象号去重——只信 /Fields 会漏域。
 //!
-//! # 写回语义（增量修订）
+//! # 写回语义（增量修订——#227 起为真增量）
 //!
-//! 与 [`crate::annotate`] 同一纪律：**不改写原字节**。填值 = 追加一次
-//! 增量修订（spec 7.5.6），只重定义被改动那批域对象的 `^1`（原修订里
-//! 指向它们的引用自动导向新修订）。产物前缀逐位不变 → 已有的数字签名
-//! 仍然有效（改前面的字节会让签名失效，这是 PAdES 的硬约束）。
+//! 与 [`crate::annotate`] 同一纪律：**不改写原字节**。填值保存 =
+//! 追加一个增量修订段（spec 7.5.6）：被改动的域对象按**同对象号在
+//! 新修订里重定义**（后修订覆盖前修订），外观流/字体等新对象随修订
+//! 追加；既有对象一字不重写。产物以原字节为逐位相同前缀 → 已有的
+//! 数字签名仍然有效（改前面的字节会让签名失效，这是 PAdES 的硬
+//! 约束）。
+//!
+//! 守卫（与 [`crate::writer_lopdf`] 三层同款，违约 = typed 错误而非
+//! 产出损坏文件）：xref 链不可信档（扫描重建装载）拒绝写；前缀逐位
+//! 不变断言；产物重载自检。已签名档打开即告警（`report()`），扁平化
+//! 对已签名档拒绝并给可操作指引（见下节）。
 //!
 //! # 中文与外观（最容易踩的坑）
 //!
@@ -52,11 +59,12 @@
 //! 扁平化（[`PdfForm::flatten`]）则相反：**把值真正画进页面内容流**，
 //! 再删掉域与 `/AcroForm`——产物跟打印扫描件一样，任何人再也改不了。
 //! 这一步**必须**有字体才能画中文，否则 `flatten` 明确拒绝（宁可不做，
-//! 不做错）。
+//! 不做错）；含**已签署**签名域的档同样拒绝（扁平化会销毁签名——
+//! 可操作指引见 [`PdfForm::flatten`]）。
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use lopdf::{dictionary, Document, Object, ObjectId};
+use lopdf::{dictionary, Document, IncrementalDocument, Object, ObjectId};
 
 use crate::security::Limits;
 
@@ -357,6 +365,10 @@ pub struct PdfForm {
     report: FillReport,
     /// 打开的限额（沿用 crate 纪律——`PdfForm::limits()` 读取）。
     limits: Limits,
+    /// 打开时既有对象的号集（增量写的基线：会话中 `add_object` 新增的
+    /// 对象不在其中——它们须随追加修订写出，既有对象则一字不动地留在
+    /// 原字节前缀里）。
+    base_ids: BTreeSet<ObjectId>,
 }
 
 /// 待生成外观流的作业。
@@ -438,7 +450,8 @@ impl PdfForm {
             return Err(FormError::Encrypted);
         }
         let fields = collect_fields(&doc);
-        Ok(PdfForm {
+        let base_ids = doc.objects.keys().copied().collect();
+        let mut form = PdfForm {
             doc,
             original: bytes.to_vec(),
             fields,
@@ -448,7 +461,18 @@ impl PdfForm {
             appearance_overrides: BTreeMap::new(),
             report: FillReport::default(),
             limits,
-        })
+            base_ids,
+        };
+        // 已签名档的打开告知（保护可见化：调用方从 report() 即知后续
+        // 保存是增量追加、扁平化会被拒——不静默）。
+        if form.has_signed_signature_fields() {
+            form.report.warn(
+                "文档含已签署数字签名域：表单保存将追加增量修订（原字节前缀逐位不变，
+                 既有签名保持有效）；扁平化会被拒绝（会销毁签名）"
+                    .into(),
+            );
+        }
+        Ok(form)
     }
 
     /// 全部域（按域名字典序——确定性输出）。
@@ -1136,7 +1160,19 @@ impl PdfForm {
 // ---------------------------------------------------------------------------
 
 impl PdfForm {
-    /// 写回（增量修订——原字节前缀逐位保持）。
+    /// 写回：**真增量修订**（spec 7.5.6）——原字节作前缀逐位保持，只把
+    /// 改动的那批对象与新增对象（外观流/字体）追加为一个修订段。
+    ///
+    /// # 语义（与 [`crate::writer_lopdf`] 同一纪律，三层守卫）
+    ///
+    /// 1. **xref 链守卫**：档以扫描重建装载（`xref_start == 0`，常见于
+    ///    行尾污染/真损坏）时拒绝写——追加修订无从回指 `/Prev`，产物
+    ///    页树不可达（2026-10-31 事故防线，详见 `writer_lopdf.rs`）；
+    /// 2. **前缀逐位不变断言**：产物必须以保存前字节为逐位相同前缀，
+    ///    违约 = typed 错误而非产出损坏文件——已签名文档的 `/ByteRange`
+    ///    覆盖段因此不变，既有数字签名保持有效（PAdES 硬约束）；
+    /// 3. **产物自检**：重载后页树可达 + 全部脏对象经新修订可解析，
+    ///    否则拒绝交付。
     ///
     /// 没改任何域时返回原字节（幂等，不产生空修订）。
     pub fn save(mut self) -> Result<Vec<u8>, FormError> {
@@ -1144,13 +1180,58 @@ impl PdfForm {
             return Ok(self.original);
         }
         self.build_appearances()?;
-        let mut doc = std::mem::replace(&mut self.doc, Document::with_version("1.5"));
-        for (id, dict) in std::mem::take(&mut self.dirty) {
-            doc.objects.insert(id, Object::Dictionary(dict));
+        // 守卫 1：xref 链可信（扫描重建档上做增量写 = 静默产毒，入口响亮拒绝）。
+        if self.doc.xref_start == 0 {
+            return Err(FormError::Save(
+                "xref 链不可信：档以扫描重建装载（无已知 xref 起点），增量写产物将丢失 \
+                 /Prev 链导致页树不可达。常见成因：二进制被行尾转换污染（如 Windows \
+                 git autocrlf）或 xref 损坏。请重取未污染原件或修复源文件后重试"
+                    .into(),
+            ));
+        }
+        let original = std::mem::take(&mut self.original);
+        let dirty = std::mem::take(&mut self.dirty);
+        let doc = std::mem::replace(&mut self.doc, Document::with_version("1.5"));
+        // 会话新增对象（外观流/CIDFont/新建 AcroForm）——原字节里没有，
+        // 必须随本轮修订写出；既有对象一字不重写（它们已逐位活在原字节
+        // 前缀里，重写既膨胀又是元数据噪声）。
+        let new_objects: Vec<(ObjectId, Object)> = doc
+            .objects
+            .iter()
+            .filter(|(id, _)| !self.base_ids.contains(*id))
+            .map(|(id, obj)| (*id, obj.clone()))
+            .collect();
+        // 增量文档：prev = 原字节 + 解析态（trailer/xref_start/max_id 均为
+        // 原档形态——save 路径不改它们）；new_document = 待追加修订。
+        let mut inc = IncrementalDocument::create_from(original.clone(), doc);
+        // 脏对象：同对象号在新修订里重定义（后修订覆盖前修订——增量更新
+        // 语义），原修订里的旧定义对新阅读器自然失效。
+        for (id, dict) in dirty {
+            inc.new_document.set_object(id, Object::Dictionary(dict));
+        }
+        for (id, obj) in new_objects {
+            inc.new_document.set_object(id, obj);
         }
         let mut out = Vec::new();
-        doc.save_to(&mut out)
-            .map_err(|e| FormError::Save(format!("lopdf 保存失败：{e}")))?;
+        inc.save_to(&mut out)
+            .map_err(|e| FormError::Save(format!("lopdf 增量保存失败：{e}")))?;
+        // 守卫 2：增量语义核心断言（违约不产出、不污染基线）。
+        if !out.starts_with(&original) {
+            return Err(FormError::Save(
+                "增量前缀违约：lopdf 产物未逐位保持原字节前缀".into(),
+            ));
+        }
+        // 守卫 3：产物自检——重载后页树可达 + 脏对象经新修订可解析（拒绝
+        // 交付「写入成功但阅读器看不到」的静默产毒形态）。
+        let reloaded = Document::load_mem(&out)
+            .map_err(|e| FormError::Save(format!("增量产物重载失败：{e}")))?;
+        if reloaded.get_pages().is_empty() {
+            return Err(FormError::Save(
+                "增量产物自检失败：重载后页树为空（产物 xref 链断裂，页对象经链不可达）\
+                 ——拒绝交付结构损坏产物"
+                    .into(),
+            ));
+        }
         Ok(out)
     }
 
@@ -1378,11 +1459,26 @@ fn cid_appearance(
 impl PdfForm {
     /// 扁平化：把域值画进页面内容流 + 删除 `/AcroForm` 与各页 `/Widget`。
     ///
-    /// 产物与打印扫描件等价——任何人再也改不了（投标常见要求）。
+    /// 产物与打印扫描件等价——任何人再也改不了（投标常见要求）。这是
+    /// **销毁性**操作，与 [`PdfForm::save`] 的增量路径（前缀逐位不变、
+    /// 签名保持）语义相反，故本方法保持全量重写。
     ///
     /// **拒绝条件**（[`FormError::FlattenRefused`]，宁可不错也不做错）：
-    /// 有非 ASCII 值却没有字体（画出来是乱码，比不扁平化更危险）、或字体缺字形。
+    /// - 文档含**已签署**的数字签名域（扁平化会删掉签名域，既有签名被
+    ///   销毁——即使是增量实现，当前修订视图里的签名也不复存在。要保
+    ///   签名的定稿请走 [`PdfForm::save`]；要不可编辑定稿请对**副本**
+    ///   扁平化并接受签名失效，或扁平后重新签署）；
+    /// - 有非 ASCII 值却没有字体（画出来是乱码，比不扁平化更危险）；
+    /// - 字体缺字形。
     pub fn flatten(mut self) -> Result<Vec<u8>, FormError> {
+        if self.has_signed_signature_fields() {
+            return Err(FormError::FlattenRefused(
+                "文档含已签署的数字签名域——扁平化会删除签名域，既有签名将被销毁，已拒绝。\
+                 要保留签名的可交付件：用 save()（增量修订，原字节前缀逐位不变，签名仍有效）；\
+                 要不可编辑的定稿：请先另存副本，对副本 flatten 并接受签名失效，或扁平后重新签署"
+                    .into(),
+            ));
+        }
         let mut needs_font = false;
         for f in self.fields.values() {
             if let FormField::Text { value, .. } = &f.model {
@@ -1652,6 +1748,39 @@ impl PdfForm {
         ValidationResult {
             valid: errors.is_empty(),
             errors,
+        }
+    }
+
+    /// 是否存在**已签署**的数字签名域（`/FT /Sig` 且 `/V` 已挂签名字典
+    /// ——直挂字典或间接引用两形态；未签署的占位签名域不算，删它不毁
+    /// 任何签名）。
+    ///
+    /// 两处用途：[`PdfForm::flatten`] 的拒绝判据（扁平化删掉签名域 =
+    /// 销毁既有签名）；调用方 UI 探针（对已签名档提示「保存走增量追加，
+    /// 签名保持有效」）。
+    pub fn has_signed_signature_fields(&self) -> bool {
+        self.fields.values().any(|raw| {
+            if !matches!(raw.model, FormField::Signature { .. }) {
+                return false;
+            }
+            // /V 可能在域字典（分离态）或 Widget 字典（合并态）上——两处都看。
+            std::iter::once(&raw.field_id)
+                .chain(raw.widget_ids.iter())
+                .any(|id| self.sig_value_present(*id))
+        })
+    }
+
+    /// 单个对象上 `/V` 是否挂了签名字典（直挂 / 间接引用两形态）。
+    fn sig_value_present(&self, id: ObjectId) -> bool {
+        let Ok(d) = self.doc.get_dictionary(id) else {
+            return false;
+        };
+        match d.get(b"V") {
+            Ok(Object::Dictionary(_)) => true,
+            Ok(Object::Reference(vid)) => {
+                matches!(self.doc.get_object(*vid), Ok(Object::Dictionary(_)))
+            }
+            _ => false,
         }
     }
 
