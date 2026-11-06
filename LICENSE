@@ -6,6 +6,14 @@ This program is free software: you can redistribute it and/or modify it under th
 
 This project incorporates code from Zed (https://github.com/zed-industries/zed), licensed GPL-3.0-or-later and Apache-2.0 - see third_party/zed/PROVENANCE.md and NOTICES for attribution details.
 
+## 许可证路线图（2026-11-06 决策）
+
+本研究仓当前采用 GPL-3.0-or-later，原因为 mang-shell 静态链接了 10 件
+GPL-3.0-or-later 依赖（见 third_party/zed/PROVENANCE.md）。
+
+计划：1.0 阶段完成 GPUI 栈替换（二进制内零 GPL）后，
+整体切换为 PolyForm Strict 1.0.0 + 独立第三方许可证清单。
+
 Full license text follows.
 
 GNU GENERAL PUBLIC LICENSE

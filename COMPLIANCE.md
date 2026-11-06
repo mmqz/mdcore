@@ -143,3 +143,33 @@ gates.md「T1 卫生修复轮 · feature 面前置 bootstrap」。默认面常�
    `#[cfg(not(unix))]`/`#[cfg(target_os)]` 分支不再「写到哪算哪」）。
 3. 平台门形态：wry/tao/gtk 挂 `[target.'cfg(target_os =
    "linux")'.dependencies]`（非 Linux = 无依赖空壳，check 可绿）。
+
+## 9. 许可证路线图（2026-11-06 用户裁定）
+
+**决策原文**：「先用 gpl，然后后期都改完依赖后换严格商业协议」
+
+| 阶段 | 触发条件 | 许可证 |
+|---|---|---|
+| **阶段一（当前）** | — | GPL-3.0-or-later |
+| **阶段二** | GPUI 栈替换完成，二进制内零 GPL | PolyForm Strict 1.0.0 + 独立第三方清单 |
+
+**为什么不能现在就改**：
+
+```
+GPL-3.0 要求衍生作品整体以 GPL-3.0 分发，不得附加额外限制。
+PolyForm Strict 的限制 = 额外限制 → 二者不兼容。
+只要二进制内还链着 GPL 代码，任何更严格的协议都是无效声明。
+```
+
+**阶段二的前置检查清单**（替换完成时逐项验证）：
+
+```
+[ ] cargo tree 全量：0 个 GPL/AGPL 依赖
+[ ] 二进制反编译自检：无 GPL 上游符号
+[ ] third_party/zed 目录已完全移除或改为白名单许可
+[ ] THIRD-PARTY-NOTICES.md 与 cargo metadata 逐条对齐
+[ ] 法务复核（如果走正式发行）
+```
+
+> 污染面清单与替换策略详见 `docs/LICENSE-ROADMAP.md`（10 件 GPL crate /
+> 48,562 LOC，gpui 核心为 Apache-2.0 无需替换——关键洞察见该文件）。
