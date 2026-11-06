@@ -100,6 +100,16 @@ fn render(
 
 // ---------- 解析 ----------
 
+/// 嵌套深度门（#278 审计 B-4）：与 [`crate::html`] 侧同常数同语义
+/// （html.rs MAX_DEPTH=256，超深跳过子树）。此前 markdown 建树无
+/// 深度上限，同仓双标；敌意逐行递进（`>` / `>>` / `>>>` …）或缩进
+/// 列表递进可造万层深树，blocks_json/to_markdown/word_count 等递归
+/// 消费者栈溢出（wasm = trap / 原生 = 崩溃）。行深度（quote 的 >
+/// 计数 / list 的缩进层号）即嵌套容器层编号（1 基）：拦
+/// depth ≥ MAX_DEPTH = 容器层封顶 255（quote 内容段落叶子 +1）
+/// ——树深硬顶 256，与 html 侧树深上限同构。
+const MAX_DEPTH: usize = 256;
+
 pub fn markdown_to_tree(md: &str) -> BlockTree {
     // TR-1（issue #9）：行尾规范化前置——CRLF / 孤立 CR 统一为 LF。
     // CommonMark 规范三种行尾等价；模型 = 权威层持有 LF 规范形，使
@@ -176,6 +186,13 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
         }
         if let Some(bq) = blockquote_of(line) {
             let depth = bq.0;
+            // #278 深度门：超深行跳过（不建节点、不出内容——与 html
+            // 侧超深子树跳过同语义；无 Loss 通道故不登记，行为由
+            // spike_semantics.rs 深度门测试钉定）。
+            if depth >= MAX_DEPTH {
+                i += 1;
+                continue;
+            }
             // 同深度同一 quote 容器复用
             if let Some((k, d, id)) = stack.last().copied() {
                 if k == BlockKind::Blockquote && d == depth {
@@ -196,6 +213,11 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
         }
         if let Some(li) = list_item_of(line) {
             let depth = li.0;
+            // #278 深度门：同 blockquote 面（缩进层号即嵌套层编号）。
+            if depth >= MAX_DEPTH {
+                i += 1;
+                continue;
+            }
             pop_ge(&mut stack, depth);
             let id = tree.create_node(
                 BlockKind::ListItem,
