@@ -1,0 +1,77 @@
+{
+ "fetched_at": "2026-11-06T12:52:22",
+ "files": [
+  {
+   "name": "comments.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "tracemonkey 注释版（真实评论导出，14 页 1MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/comments.pdf",
+   "bytes": 1065760,
+   "pages": 14,
+   "sha256": "283b215db9937fcdf148b22e7310892d148e43047bccffa6bf56eb4156592e5d"
+  },
+  {
+   "name": "freeculture.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "《Free Culture》整书 352 页（长文档操作面）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/freeculture.pdf",
+   "bytes": 2598727,
+   "pages": 352,
+   "sha256": "753441c619c529c8d0fc3e7e470f07c9547838fc7229bea8c1dcf854acee03b4"
+  },
+  {
+   "name": "highlights.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "真实高亮集（14 页 946KB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/highlights.pdf",
+   "bytes": 969276,
+   "pages": 14,
+   "sha256": "025a8235824da8fdc2a73503d78ec0a658eb9f6620380108807e27013ae3a07d"
+  },
+  {
+   "name": "issue19971.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "真实用户文档（6 页 letter，1.7MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue19971.pdf",
+   "bytes": 1729186,
+   "pages": 6,
+   "sha256": "178c6207203151cf4036cd377d233e92a3cfb07e7787dd68bc2b2203d5ef3ce1"
+  },
+  {
+   "name": "issue6286.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "真实用户文档（1.9MB 密集单页）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue6286.pdf",
+   "bytes": 1909445,
+   "pages": 1,
+   "sha256": "3499439d8b1b51fcc62c908f8cbd4b08beaf18248b81bf2d73d552ae42fef9aa"
+  },
+  {
+   "name": "issue6961.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "真实用户文档（2 页 2.1MB）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/issue6961.pdf",
+   "bytes": 2156587,
+   "pages": 2,
+   "sha256": "7d3431ea9aa0256ca3cc65a850d7f1389b204f1629cb98bc17e1dd5d30d60110"
+  },
+  {
+   "name": "survey.pdf",
+   "repo": "apache/pdfbox",
+   "note": "学术调查问卷（双栏+表格，9 页）",
+   "url": "https://raw.githubusercontent.com/apache/pdfbox/trunk/pdfbox/src/test/resources/input/rendering/survey.pdf",
+   "bytes": 127295,
+   "pages": 9,
+   "sha256": "2e8b87ea72de7dd54176354706a5d7ff9e64a12624e603ffac64aa55743bf581"
+  },
+  {
+   "name": "tracemonkey_with_editable_annotations.pdf",
+   "repo": "mozilla/pdf.js",
+   "note": "学术论文双栏 14 页（pdf.js 渲染基准件）",
+   "url": "https://raw.githubusercontent.com/mozilla/pdf.js/master/test/pdfs/tracemonkey_with_editable_annotations.pdf",
+   "bytes": 1212647,
+   "pages": 14,
+   "sha256": "1c673d35678a8fde066ed70ada527a07f8674e4f6d8ef817ab97f742b1405d38"
+  }
+ ]
+}

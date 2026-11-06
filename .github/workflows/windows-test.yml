@@ -91,6 +91,16 @@ jobs:
           cp /tmp/pdfium-x/bin/pdfium.dll bin/lib/pdfium.dll
           test -f bin/lib/pdfium.dll && echo "pdfium.dll in place ($(stat -c%s bin/lib/pdfium.dll) bytes)"
 
+      - name: Fetch pdf-organize realworld corpus (多页真实件 8 件, Apache-2.0)
+        # #262/#273（Lead 评审 2026-11-06 方案 A）：语料二进制不入库，
+        # CI 在 Test mdc-pdf 前取件——语料门（pdff_organize.rs）从
+        # 「未取件 skip」转「在场全量」路径，sweep（≥5 件全操作）与
+        # 10× 往返抽样在云端真跑。manual300 压测件不随 CI（31MB），
+        # 大件测试按在场性自跳过。幂等；单源漂移 [MISS] 时取件不足
+        # 5 件退出码 1（sweep 下限对齐）。
+        shell: bash
+        run: python test-artifacts/pdf-organize-corpus/fetch_corpus.py
+
       - name: Test mdc-pdf (lopdf + pdfium 双引擎面——#210 真实环境验证)
         # #210/#222：pdfium 测试面 CI 化——此前本步骤只开 engine-lopdf
         # （注释自认「pdfium 面需要动态库，CI 上没有」= engine-pdfium
