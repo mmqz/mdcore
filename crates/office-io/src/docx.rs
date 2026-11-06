@@ -1535,6 +1535,15 @@ pub struct ParagraphData {
     /// 段落编号（r4-t3 读面承载——None = 非列表段；`w:numId w:val="0"`
     /// 的 OOXML 去编号惯例同样 → None）。
     pub numbering: Option<ParagraphNumbering>,
+    /// #266：解析序号（Word 语义计算——start/lvlRestart/numFmt/lvlText
+    /// 全链渲染，如「一、」/（%2）→（一）/「1.»）。
+    ///
+    /// 读面后置遍历计算（[`resolve_block_numbers`]——文档序喂入
+    /// [`crate::numbering::NumberingTracker`]）：有序列表段且定义链
+    /// 可达时 `Some`；bullet/悬空 numId/numFmt=none = `None`（消费方
+    /// 沿用 ListKind 既有降级面）。`list_level`/`list_id` 即
+    /// [`Self::numbering`] 的 `ilvl`/`num_id`（透传面不重复承载）。
+    pub resolved_number: Option<String>,
     /// 段落缩进（r4-t3 读面承载——None = 无 `w:ind`）。
     pub indent: Option<ParagraphIndent>,
     /// #19：本段引用的脚注 id 序（文档序——`w:footnoteReference`）。
@@ -1901,7 +1910,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     drop(za);
 
     // OPC 关系层 + 内容类型 + 媒体清单（同一门后字节——零门绕过）。
-    let (bundle, images, document_xml, footnotes_xml, endnotes_xml) = {
+    let (bundle, images, document_xml, footnotes_xml, endnotes_xml, numbering_xml) = {
         let cursor = std::io::Cursor::new(bytes);
         let mut za = zip::ZipArchive::new(cursor)
             .map_err(|e| DocxError::Container(io::ReadError::ContainerCorrupt(format!("{e}"))))?;
@@ -1951,7 +1960,21 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         if let Ok(mut zf) = za.by_name("word/endnotes.xml") {
             let _ = zf.read_to_string(&mut endnotes_xml);
         }
-        (bundle, images, document_xml, footnotes_xml, endnotes_xml)
+        // #266：numbering.xml 原始字节（定义面全承载解析——引擎
+        // docx-rs 的 Start/LevelText/LevelRestart 字段私有不可达，
+        // 见 numbering.rs 模块文档；无部件 = 空串快路径）。
+        let mut numbering_xml = String::new();
+        if let Ok(mut zf) = za.by_name("word/numbering.xml") {
+            let _ = zf.read_to_string(&mut numbering_xml);
+        }
+        (
+            bundle,
+            images,
+            document_xml,
+            footnotes_xml,
+            endnotes_xml,
+            numbering_xml,
+        )
     };
 
     // #226 R2：docx-rs 读层 panic 预检防御——真实语料 4 处实锤（裸 run
@@ -1983,7 +2006,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     let mut section_boundaries: Vec<usize> = section_marks.iter().map(|(b, _)| *b).collect();
     // #18：VML 文本框插入（宿主块后——DrawingML 形态已在
     // extract_blocks 模型面发射，mc:Fallback 副本防双取）。
-    let blocks = apply_vml_textboxes(
+    let mut blocks = apply_vml_textboxes(
         blocks,
         &document_xml,
         &bundle,
@@ -1993,7 +2016,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         &mut warnings,
         &mut section_boundaries,
     )?;
-    let (headers, footers) = extract_headers_footers(
+    let (mut headers, mut footers) = extract_headers_footers(
         &docx,
         &bundle,
         &numbering_index,
@@ -2063,6 +2086,27 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     for a in &mut images {
         a.body_uses = uses.get(&a.part_name).copied().unwrap_or(0);
     }
+    // #266：多级列表自动编号——定义面全承载解析（自有 quick-xml 层）
+    // + 文档序序号计算（正文 + 页眉/页脚各自独立计数——Word 每个
+    // story 独立语义）。脚注/尾注的编号段维持 None（v1 边界，登记）。
+    {
+        let mut table = crate::numbering::NumberingTable::default();
+        if !numbering_xml.is_empty() {
+            table = crate::numbering::parse_numbering_part(
+                numbering_xml.as_bytes(),
+                "word/numbering.xml",
+                strict,
+                &mut warnings,
+            )?;
+        }
+        let mut tracker = crate::numbering::NumberingTracker::new(&table);
+        resolve_block_numbers(&mut blocks, &mut tracker);
+        for hf in headers.iter_mut().chain(footers.iter_mut()) {
+            let mut part_tracker = crate::numbering::NumberingTracker::new(&table);
+            resolve_block_numbers(&mut hf.blocks, &mut part_tracker);
+        }
+    }
+
     Ok(DocxDocument {
         blocks,
         headers,
@@ -2074,6 +2118,35 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         sections,
         warnings,
     })
+}
+
+/// #266：块序编号解析（后置遍历——文档序喂入 [`NumberingTracker`]，
+/// 有序段计算 resolved_number）。
+///
+/// - 递归面：正文块序 + 文本框内块序（TextBox 发射在宿主段之后的
+///   文档序位置——顺序正确）；表格单元是纯文本承载（r4-t3 面），
+///   无编号段不入遍历。
+/// - 计算面：仅 `kind == Ordered` 段（bullet 走 ListKind 既有圆点面；
+///   悬空 numId/超域 ilvl → feed 返回 None 维持降级）。
+/// - 空渲染（numFmt=none）不落值——`Some("")` 无消费语义。
+fn resolve_block_numbers(blocks: &mut [Block], tracker: &mut crate::numbering::NumberingTracker) {
+    for block in blocks.iter_mut() {
+        match block {
+            Block::Paragraph(p) => {
+                let Some(num) = &p.numbering else { continue };
+                if num.kind != Some(ListKind::Ordered) {
+                    continue;
+                }
+                if let Some(item) = tracker.feed(num.num_id, num.ilvl) {
+                    if !item.text.is_empty() {
+                        p.resolved_number = Some(item.text);
+                    }
+                }
+            }
+            Block::TextBox(tb) => resolve_block_numbers(&mut tb.blocks, tracker),
+            Block::Table(_) => {}
+        }
+    }
 }
 
 /// r:id → 关系表条目 + 模式分派（External/Internal；无条目 = 严格拒 /
@@ -3401,6 +3474,7 @@ fn extract_paragraph(
         });
     }
     Ok(ParagraphData {
+        resolved_number: None,
         style,
         heading_level,
         fields_dropped: fm.dropped,
@@ -6694,8 +6768,8 @@ const ANON_PEOPLE_XML: &str = concat!(
 /// comments.xml 批注作者面匿名化（w:author/w:initials → 空串、
 /// w:date → epoch——quick-xml 事件流属性级改写，文本内容零触碰）。
 fn anonymize_comments_xml(xml: &str) -> Result<String, DocxError> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut writer = quick_xml::Writer::new(Vec::new());
@@ -7263,12 +7337,14 @@ mod tests {
     #[test]
     fn list_item_ilvl_validation() {
         let mut w = DocxWriter::new();
-        assert!(w
-            .list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
-            .is_ok());
-        assert!(w
-            .list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
-            .is_ok());
+        assert!(
+            w.list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
+                .is_ok()
+        );
+        assert!(
+            w.list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
+                .is_ok()
+        );
         assert!(matches!(
             w.list_item(&[RunSpec::text("a")], ListKind::Bullet, MAX_LIST_LEVEL + 1),
             Err(DocxError::Parse(m)) if m.contains("ilvl")
@@ -7530,9 +7606,11 @@ mod tests {
         let mut w = Vec::new();
         let ct = parse_content_types(xml, false, &mut w).unwrap();
         assert_eq!(ct.content_type_of("a.png").as_deref(), Some("image/png"));
-        assert!(w
-            .iter()
-            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
+        assert!(
+            w.iter().any(
+                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
+            )
+        );
     }
 
     /// [Content_Types].xml 缺属性条目 + 重复条目：严格拒 / 兼容跳过
@@ -7619,9 +7697,11 @@ mod tests {
             .unwrap()
             .expect("兼容容忍");
         assert!(t.get("rId1").is_some(), "合法条目保留");
-        assert!(w
-            .iter()
-            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
+        assert!(
+            w.iter().any(
+                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
+            )
+        );
     }
 
     /// .rels 根元素名错误：严格拒 / 兼容警告 + 条目照常解析
@@ -7912,8 +7992,8 @@ mod tests {
             240,
         )
         .unwrap(); // 1p + 1r
-                   // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
-                   // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
+        // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
+        // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
         assert_eq!(w.paragraphs, 14);
         // 17 run：heading 1 + paragraph 4（3 run + 脚注 1）+ table 3 +
         // header 1 + footer 1 + code 1 + hr 0 + quote 1 + list_item 1 +
