@@ -40,6 +40,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Windows 控制台 Python 默认 cp1252——中文输出即 UnicodeEncodeError
+# （CI 首跑实证：windows-installer run 42148212450 死于第一行 print）。
+# 强制 UTF-8 I/O（Python 3.7+ reconfigure；不可重配环境降级为替换不炸）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # 仓根 = packaging/nsis/ 的上两级。
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "packaging"))

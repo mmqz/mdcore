@@ -19,6 +19,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: 3
+  # Windows Python 控制台默认 cp1252——构建器中文输出会 UnicodeEncodeError
+  # （首跑实证）。UTF-8 模式双保险（脚本内另有 reconfigure 兜底）。
+  PYTHONUTF8: "1"
 
 jobs:
   installer:
