@@ -25,6 +25,7 @@
 //! | `Container(ContainerCorrupt)` | `container_corrupt` | zip 容器损坏（EOCD/中央目录不可读——垃圾字节/截断档案） |
 //! | `Container(ParseError)` | `container_parse` | 过门后解析层错误（zip 读界） |
 //! | `Container(InvalidPart)` | `container_invalid_part` | 门 3 部件良构性拒（畸形 XML——兼容模式下仅特定面仍可到这） |
+//! | `Container(LegacyOfficeFormat)` | `docx_legacy_format` | 旧版 .doc（OLE2 复合文档）改名 .docx——专用码 + 转换指引（#234，不再误报容器损坏） |
 //! | [`DocxError::Parse`] | `docx_parse` | docx-rs 模型解析错误（引擎面） |
 //! | [`DocxError::Io`] | `io` | 文件 IO（字节入口实际不可达，完备性映射） |
 //!
@@ -143,6 +144,9 @@ fn map_error(e: &DocxError) -> ImportError {
                 ReadError::ContainerCorrupt(_) => "container_corrupt",
                 ReadError::ParseError(_) => "container_parse",
                 ReadError::InvalidPart { .. } => "container_invalid_part",
+                // #234：旧版 .doc（OLE2）改名 .docx——专用码（含可操作
+                // 指引：另存为 .docx / soffice 转换），不再误报容器损坏。
+                ReadError::LegacyOfficeFormat { .. } => "docx_legacy_format",
             },
             message: read.to_string(),
         },
