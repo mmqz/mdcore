@@ -841,3 +841,82 @@ fn invariants_shared_op_stream() {
     assert_eq!(events[1].meta.command.as_deref(), Some("ai.prefix"));
     assert_eq!(text_at(&core, &[0]), "AI: base human");
 }
+
+// ---------------------------------------------------------------------------
+// #278 — markdown 嵌套深度门（审计 B-4：与 html.rs MAX_DEPTH=256 对齐）
+// ---------------------------------------------------------------------------
+
+/// 树的最大深度（root 的孩子 = 深度 1；递归 walk——测试专用，敌意深树
+/// 已被门封顶，此处递归安全）。
+fn tree_max_depth(tree: &mdcore::tree::BlockTree) -> usize {
+    fn walk(tree: &mdcore::tree::BlockTree, id: mdcore::tree::NodeId, depth: usize) -> usize {
+        let node = tree.node(id);
+        node.children
+            .iter()
+            .map(|&c| walk(tree, c, depth + 1))
+            .max()
+            .unwrap_or(depth)
+    }
+    tree.top_level()
+        .iter()
+        .map(|&c| walk(tree, c, 1))
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn md_depth_guard_blocks_hostile_nesting() {
+    use mdcore::markdown::{markdown_to_tree, tree_to_markdown};
+
+    // ① 逐行递进 quote（300 层容器）：depth ≥256 的行被跳过，容器层
+    //    封顶 255（+内容段落叶子 = 树深硬顶 256）。无门时 300 层照建
+    //    ——万层级敌意即此形态放大。
+    let hostile: String = (1..=300)
+        .map(|n| format!("{} layer {n}\n", "> ".repeat(n)))
+        .collect();
+    let tree = markdown_to_tree(&hostile);
+    assert!(
+        tree_max_depth(&tree) <= 256,
+        "敌意递进 quote 树深必须封顶 256：实际 {}",
+        tree_max_depth(&tree)
+    );
+
+    // ② 单行超大 depth（一行 1 万个 >）：整行跳过（不建节点、不出内容
+    //    ——与 html 侧超深子树跳过同语义）。
+    let one_line = format!("{} x\n", ">".repeat(10_000));
+    let tree = markdown_to_tree(&one_line);
+    assert_eq!(
+        tree_max_depth(&tree),
+        0,
+        "单行超深跳过：零节点零内容"
+    );
+
+    // ③ 缩进列表逐层递进（300 层）：同门（缩进层号即嵌套层编号）。
+    let list_hostile: String = (1..=300)
+        .map(|n| format!("{}- item {n}\n", "  ".repeat(n)))
+        .collect();
+    let tree = markdown_to_tree(&list_hostile);
+    assert!(
+        tree_max_depth(&tree) <= 256,
+        "敌意递进列表树深必须封顶 256：实际 {}",
+        tree_max_depth(&tree)
+    );
+
+    // ④ 合法浅嵌套（3 层 quote）零回归：3 层容器 + 1 内容叶子 = 深度 4。
+    let legal = "> a\n> > b\n> > > c\n";
+    let tree = markdown_to_tree(legal);
+    assert_eq!(tree_max_depth(&tree), 4, "3 层 quote + 段落叶子");
+
+    // ⑤ 递归消费者全链不爆栈：1 万行递进（无门时万层深树 →
+    //    to_markdown 递归 walk 每层数百字节栈帧，远超测试线程默认
+    //    2MB 栈 → 必爆；wasm = trap）。有门封顶后全链可跑。
+    //    （规模取舍：10 万行构造串本身 ~10GB 会先 OOM——1 万层已
+    //    充分越界默认栈。）
+    let deep: String = (1..=10_000)
+        .map(|n| format!("{} d{n}\n", "> ".repeat(n)))
+        .collect();
+    let tree = markdown_to_tree(&deep);
+    assert!(tree_max_depth(&tree) <= 256);
+    // to_markdown（递归消费者）对封顶树跑通即证不爆栈。
+    let _ = tree_to_markdown(&tree);
+}
