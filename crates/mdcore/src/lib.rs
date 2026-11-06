@@ -48,7 +48,7 @@ use history::{Entry, History, Kind, Source};
 use id::BlockId;
 use op::{apply_op, invert_op, Op, OpError};
 use revision::RevisionLog;
-use tree::{Attrs, BlockKind, BlockTree, NodePath};
+use tree::{Attrs, BlockKind, BlockTree, MarkSpan, NodeId, NodePath};
 
 // ---------------------------------------------------------------------------
 // 公共类型
@@ -128,6 +128,85 @@ fn system_ms() -> u64 {
 #[cfg(target_arch = "wasm32")]
 fn system_ms() -> u64 {
     0
+}
+
+// ---------------------------------------------------------------------------
+// 事务回滚备份（#280 / 审计 P1-19 方案 B：受影响面备份）
+// ---------------------------------------------------------------------------
+
+/// 事务原子性的回滚备份——受影响面分档：
+///
+/// - [`TxBackup::Full`]：整树深拷贝（结构事务 + System/adopt/重放的
+///   结构面默认档——回滚面与既有实现完全一致）；
+/// - [`TxBackup::TextNodes`]：**text-class 事务**（全部 op ∈
+///   {ReplaceText, SetMark}——99% 击键 = 单块 ReplaceText）只备份逐
+///   目标节点的 `(text, attrs, marks)` 三元组，回滚 = 三元组回写。
+///
+/// 窄档的语义安全性（零结构风险，回滚面等价）：
+/// - ReplaceText/SetMark 均**先验证后变更**（BadRange 先于任何变更）；
+/// - 两者只变更 `text`/`marks`（ReplaceText 经 `adjust_marks` 联动
+///   marks）——slots/id_index/parent/children 零触碰，NodeId 在事务
+///   内恒有效，路径解析结果恒定（结构未变）；
+/// - 同节点多次触及只备份**首现现场**（事务前状态——回滚目标）。
+///
+/// 收益：消灭逐键 O(全树) 深拷贝（slots arena + id_index 全量复制）——
+/// 10MB 文档 wasm 425MB 高水位根因（phase1 登记未治理，#280 治理）。
+enum TxBackup {
+    Full(BlockTree),
+    TextNodes(Vec<TextNodeBackup>),
+}
+
+/// 单节点窄备份（text-class 事务的受影响面）。
+struct TextNodeBackup {
+    id: NodeId,
+    text: ropey::Rope,
+    attrs: Attrs,
+    marks: Vec<MarkSpan>,
+}
+
+impl TxBackup {
+    /// 事务备份构造：全部 op 为 text-class → 窄档；任一结构 op →
+    /// 整树档（结构事务的回滚面可能是任意子树手术——窄档不覆盖）。
+    fn for_ops(tree: &BlockTree, ops: &[Op]) -> Self {
+        if !ops.iter().all(|o| o.is_text_class()) {
+            return TxBackup::Full(tree.clone());
+        }
+        let mut nodes: Vec<TextNodeBackup> = Vec::new();
+        for op in ops {
+            // 路径解析失败 = apply_op 对同一棵树同一路径同样 BadPath
+            // （text op 不改结构 → 解析结果恒定）——该 op 无变更面，
+            // 无需备份；此前 op 的备份照常回滚。
+            let Some(id) = tree.resolve(op.path()) else {
+                continue;
+            };
+            if nodes.iter().any(|b| b.id == id) {
+                continue; // 首现现场已备份（幂等去重）
+            }
+            let node = tree.node(id);
+            nodes.push(TextNodeBackup {
+                id,
+                text: node.text.clone(),
+                attrs: node.attrs.clone(),
+                marks: node.marks.clone(),
+            });
+        }
+        TxBackup::TextNodes(nodes)
+    }
+
+    /// 回滚（消费备份——一次事务至多回滚一次）。
+    fn restore(self, tree: &mut BlockTree) {
+        match self {
+            TxBackup::Full(full) => *tree = full,
+            TxBackup::TextNodes(nodes) => {
+                for backup in nodes {
+                    let node = tree.node_mut(backup.id);
+                    node.text = backup.text;
+                    node.attrs = backup.attrs;
+                    node.marks = backup.marks;
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -316,8 +395,12 @@ impl Core {
         };
         let now = self.now_ms();
 
-        // 顺序求逆 + 应用；任一失败 → 整体回滚（事务原子性）
-        let backup = self.tree.clone();
+        // 顺序求逆 + 应用；任一失败 → 整体回滚（事务原子性）。
+        // #280（审计 P1-19 方案 B）：回滚备份分档——text-class 事务
+        // （99% 击键 = 单块 ReplaceText）只备份逐目标节点三元组（受影响
+        // 面备份，见 [`TxBackup`]），消灭逐键 O(全树) 深拷贝；Structural
+        // /System/adopt 路径保留整树备份（回滚面与既有完全一致）。
+        let backup = TxBackup::for_ops(&self.tree, &ops);
         // #220（审计 P1-27）：逆序构造是**组感知**的。`invert_op` 返回的是
         // 逆组（多数长度 1；RemoveBlock 的逆 = 先序重建整棵子树，组内序 =
         // `build_rebuild_ops` 的父先子后发射序，是重建语义的一部分，绝不可
@@ -334,12 +417,12 @@ impl Core {
             let inv = match invert_op(&self.tree, op) {
                 Ok(v) => v,
                 Err(e) => {
-                    self.tree = backup;
+                    backup.restore(&mut self.tree);
                     return Err(e.into());
                 }
             };
             if let Err(e) = apply_op(&mut self.tree, op) {
-                self.tree = backup;
+                backup.restore(&mut self.tree);
                 return Err(e.into());
             }
             inverse_groups.push(inv);
@@ -414,11 +497,15 @@ impl Core {
     }
 
     /// undo/redo 与重放使用的原始应用（不进历史；备份回滚仍然生效）。
+    ///
+    /// #280（审计 P1-19）：备份分档同 [`Self::apply_ops`]——text-class
+    /// 逆 op 组（文本事务的 undo = ReplaceText/SetMark 逆）走窄备份；
+    /// 结构逆组保留整树备份（undo/redo 面与既有完全一致）。
     fn apply_raw_batch(&mut self, mut ops: Vec<Op>) -> Result<(), Reject> {
-        let backup = self.tree.clone();
+        let backup = TxBackup::for_ops(&self.tree, &ops);
         for op in ops.iter_mut() {
             if let Err(e) = apply_op(&mut self.tree, op) {
-                self.tree = backup;
+                backup.restore(&mut self.tree);
                 return Err(Reject::from(e));
             }
         }
@@ -1050,10 +1137,12 @@ impl Core {
         let mut core = Self::new();
         for r in records.records {
             let mut ops = r.ops;
-            let backup = core.tree.clone();
+            // #280（审计 P1-19）：重放备份分档同 apply_ops（文本事务逐
+            // 记录窄备份——大档装载逐记录整树克隆同根因）。
+            let backup = TxBackup::for_ops(&core.tree, &ops);
             for op in ops.iter_mut() {
                 if let Err(e) = apply_op(&mut core.tree, op) {
-                    core.tree = backup;
+                    backup.restore(&mut core.tree);
                     return Err(format!("replay failed at revision {}: {e:?}", r.revision));
                 }
             }
@@ -1250,5 +1339,171 @@ mod tests {
         assert!(json.contains("shared-body"), "序列化形状与 String 时代一致");
         let back: Op = serde_json::from_str(&json).expect("op deserialize");
         assert_eq!(back, ops[0], "JSON 往返等价");
+    }
+
+    // -------------------------------------------------------------------
+    // #280（审计 P1-19 方案 B）：受影响面备份——档位选择与回滚等价性
+    // -------------------------------------------------------------------
+
+    /// 档位选择：全部 text-class → 窄档（逐节点三元组 + 同节点去重）；
+    /// 任一结构 op → 整树档（回滚面与既有完全一致）。
+    #[test]
+    fn tx_backup_narrow_path_selection() {
+        let c = Core::from_markdown("alpha\nbeta");
+        let text_ops = vec![
+            Op::ReplaceText {
+                path: vec![0],
+                start: 0,
+                end: 5,
+                insert: "ALPHA".into(),
+            },
+            Op::SetMark {
+                path: vec![1],
+                start: 0,
+                end: 1,
+                kind: "bold".into(),
+                add: true,
+            },
+        ];
+        match TxBackup::for_ops(&c.tree, &text_ops) {
+            TxBackup::TextNodes(nodes) => assert_eq!(nodes.len(), 2, "两目标节点各一份窄备份"),
+            TxBackup::Full(_) => panic!("text-class 事务必须走窄档（受影响面备份）"),
+        }
+        // 同节点双 op → 首现去重（回滚目标 = 事务前现场）。
+        let same_node = vec![
+            Op::ReplaceText {
+                path: vec![0],
+                start: 0,
+                end: 1,
+                insert: "X".into(),
+            },
+            Op::SetMark {
+                path: vec![0],
+                start: 0,
+                end: 1,
+                kind: "bold".into(),
+                add: true,
+            },
+        ];
+        match TxBackup::for_ops(&c.tree, &same_node) {
+            TxBackup::TextNodes(nodes) => assert_eq!(nodes.len(), 1, "同节点首现去重"),
+            TxBackup::Full(_) => panic!("text-class 事务必须走窄档"),
+        }
+        // 任一结构 op → 整树档。
+        let structural = vec![
+            Op::ReplaceText {
+                path: vec![0],
+                start: 0,
+                end: 1,
+                insert: "X".into(),
+            },
+            Op::InsertBlock {
+                parent: vec![],
+                index: 0,
+                kind: BlockKind::Paragraph,
+                attrs: Attrs::new(),
+                text: "".into(),
+                id: None,
+            },
+        ];
+        assert!(
+            matches!(TxBackup::for_ops(&c.tree, &structural), TxBackup::Full(_)),
+            "结构事务保留整树档（窄档不覆盖子树手术回滚面）"
+        );
+    }
+
+    /// 窄档回滚等价性：多 op 文本事务，前一 op 已应用、后一 op 验证
+    /// 失败（BadRange）→ 整体回滚（text 与 marks 均恢复事务前现场），
+    /// 树结构与 revision 不变——与整树备份的回滚面逐位等价。
+    #[test]
+    fn text_tx_rollback_restores_first_seen_state() {
+        let mut c = Core::from_markdown("alpha\nbeta");
+        // 前置：块 1 已带一条既有 mark（回滚必须保留——marks 是窄备份
+        // 三元组之一）。
+        c.apply_ops(
+            vec![Op::SetMark {
+                path: vec![1],
+                start: 0,
+                end: 4,
+                kind: "em".into(),
+                add: true,
+            }],
+            ApplyMeta {
+                source: Source::View,
+                command: Some("mark".into()),
+            },
+        )
+        .unwrap();
+        let before = c.snapshot().to_json();
+        let rev_before = c.revision();
+
+        // op0 合法（应用块 0 文本）；op1 对块 1 BadRange（end 越界——
+        // 验证先于变更，块 1 无部分变更）；op2 对块 1 合法（若 op1 已
+        // 污染现场，op2 的回滚面将失锚——顺序构造的连环锁）。
+        let err = c
+            .apply_ops(
+                vec![
+                    Op::ReplaceText {
+                        path: vec![0],
+                        start: 0,
+                        end: 5,
+                        insert: "ALPHA".into(),
+                    },
+                    Op::ReplaceText {
+                        path: vec![1],
+                        start: 0,
+                        end: 999,
+                        insert: "BOMB".into(),
+                    },
+                    Op::SetMark {
+                        path: vec![1],
+                        start: 0,
+                        end: 1,
+                        kind: "strong".into(),
+                        add: true,
+                    },
+                ],
+                ApplyMeta {
+                    source: Source::View,
+                    command: Some("boom".into()),
+                },
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, Reject::Invalid(ref m) if m.contains("BadRange")),
+            "op1 BadRange：{err:?}"
+        );
+        // 整体回滚：块 0 文本恢复、块 1 既有 mark 保留、零新增 mark。
+        assert_eq!(c.snapshot().to_json(), before, "回滚后快照逐位等于事务前");
+        assert_eq!(c.revision(), rev_before, "失败事务不推进 revision");
+    }
+
+    /// undo 批（apply_raw_batch 窄档路径）的失败回滚：合法 op 应用后
+    /// 非法 op 失败 → 树恢复批前现场（undo/redo 与击键同享受影响面
+    /// 备份语义——P1-19 的实际代价 = 每键一次 + 每次 undo/redo 一次）。
+    #[test]
+    fn raw_batch_text_rollback_restores_tree() {
+        let mut c = Core::from_markdown("alpha\nbeta");
+        let before = c.snapshot().to_json();
+        let batch = vec![
+            Op::ReplaceText {
+                path: vec![0],
+                start: 0,
+                end: 5,
+                insert: "APPLIED".into(),
+            },
+            Op::ReplaceText {
+                path: vec![9, 9],
+                start: 0,
+                end: 1,
+                insert: "BADPATH".into(),
+            },
+        ];
+        assert!(c.apply_raw_batch(batch).is_err(), "批内 BadPath 必失败");
+        assert_eq!(
+            c.snapshot().to_json(),
+            before,
+            "批回滚后快照逐位等于批前（窄档回滚面等价）"
+        );
     }
 }

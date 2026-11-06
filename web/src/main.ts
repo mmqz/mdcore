@@ -2634,6 +2634,14 @@ function setupStatusBar(): void {
   let dirty = false;
   let lastSeenRev = -1;
   let dirtySince = 0; // TR-UI 批 D：dirty 起始时刻（自动保存提醒事件源）
+  // #280（审计 P1-25）：字数/块数的 revision 守卫——word_count_json 每块
+  // Rope→String 物化（全文档扫描 + 分配 churn），空闲态无条件轮询 = 每秒
+  // 2 次全扫。revision 未变 → 沿用上次文本零重算（首次 tick 必算：
+  // countedRev 初始 -2 与 0 基 revision 隔离；undo/redo/system 同经
+  // revision 变更触发重算——核的单一变更入口保证 revision 恰反映内容）。
+  let countedRev = -2;
+  let lastCountsText = '';
+  let lastBlocksText = '';
 
   const refresh = (): void => {
     const core = window.__core;
@@ -2641,19 +2649,24 @@ function setupStatusBar(): void {
       | { state: { selection: { main: { head: number } }; doc: { lineAt(pos: number): { number: number; from: number }; length: number; toString(): string } } }
       | undefined;
     if (!core || !view) return; // 启动竞态防御
-    // N-3（issue #29）：字符数/词数 = 引擎口径单一真源（word_count_json
-    // 七字段——标书评审口径）——JS 侧不再自行数数（口径漂移源头；
-    // 旧正则把 `_`/`'`/`-` 并入西文词、把 markdown 语法字符计入字符数）。
-    const wc = JSON.parse(core.word_count_json()) as {
-      cjk_chars: number; western_words: number; total_words: number; total_chars: number;
-      paragraphs: number; headings: number; tables: number;
-    };
-    if (countsEl) countsEl.textContent = t('sb.counts', { chars: wc.total_chars, words: wc.total_words });
-    if (blocksEl) blocksEl.textContent = t('sb.blocks', { n: core.blocks_count() });
+    const rev = Number(core.revision());
+    if (rev !== countedRev) {
+      countedRev = rev;
+      // N-3（issue #29）：字符数/词数 = 引擎口径单一真源（word_count_json
+      // 七字段——标书评审口径）——JS 侧不再自行数数（口径漂移源头；
+      // 旧正则把 `_`/`'`/`-` 并入西文词、把 markdown 语法字符计入字符数）。
+      const wc = JSON.parse(core.word_count_json()) as {
+        cjk_chars: number; western_words: number; total_words: number; total_chars: number;
+        paragraphs: number; headings: number; tables: number;
+      };
+      lastCountsText = t('sb.counts', { chars: wc.total_chars, words: wc.total_words });
+      lastBlocksText = t('sb.blocks', { n: core.blocks_count() });
+      if (countsEl) countsEl.textContent = lastCountsText;
+      if (blocksEl) blocksEl.textContent = lastBlocksText;
+    }
     const sel = view.state.selection.main.head;
     const line = view.state.doc.lineAt(sel);
     if (cursorEl) cursorEl.textContent = t('sb.cursor', { line: line.number, col: sel - line.from + 1 });
-    const rev = Number(core.revision());
     if (revEl) revEl.textContent = t('sb.rev', { n: rev });
     const now = Date.now();
     if (lastSeenRev >= 0 && rev !== lastSeenRev) {
