@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/mdcore", "crates/mdcore-wasm", "crates/formula", "crates/pdf-wasm", "crates/shell", "crates/shell-native", "crates/pdf", "crates/settings", "crates/office", "crates/office-io", "crates/evidence", "crates/workbench", "crates/collab", "crates/canvas", "crates/mdbridge", "crates/relay"]
-default-members = ["crates/mdcore", "crates/shell", "crates/shell-native", "crates/pdf", "crates/settings", "crates/office", "crates/office-io", "crates/evidence", "crates/workbench", "crates/collab", "crates/canvas", "crates/mdbridge", "crates/relay"]
+members = ["crates/mdcore", "crates/mdcore-wasm", "crates/formula", "crates/pdf-wasm", "crates/shell", "crates/shell-native", "crates/pdf", "crates/settings", "crates/office", "crates/office-io", "crates/evidence", "crates/workbench", "crates/collab", "crates/canvas", "crates/mdbridge", "crates/relay", "crates/overlay"]
+default-members = ["crates/mdcore", "crates/shell", "crates/shell-native", "crates/pdf", "crates/settings", "crates/office", "crates/office-io", "crates/evidence", "crates/workbench", "crates/collab", "crates/canvas", "crates/mdbridge", "crates/relay", "crates/overlay"]
 
 # R24-c 版本单源：全部 crate 经 version.workspace 继承此值（禁止
 # crate 内独立声明版本——r24_packaging.rs 跨 crate 一致性锁背书）。

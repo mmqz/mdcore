@@ -1,0 +1,16 @@
+[package]
+name = "mdc-overlay"
+version.workspace = true
+edition = "2021"
+publish = false
+description = "跨文档索引/标注/投影层（#239 Phase 1-4）：格式无关的 OverlayMark/SemanticAnchor/GeometricSpan 语义模型 + 双向索引 + Sidecar 单一真源（原子写）+ RenderHint 渲染意图 + NativeAnnotationAdapter 投影契约。三原则：零文档引擎依赖（仅依赖 mdc-evidence 契约层）、默认不写原生文件（投影是显式动作且产物是新文件）、不能表达的标注不静默丢弃（unsupported/degraded 显式报告）。"
+
+# #239 三原则之一：零文档引擎依赖。
+# 依赖白名单 = mdc-evidence（契约层：DocumentRef/Fingerprint/LinkageStatus——
+# issue #239 第七节用户裁定允许）+ serde/serde_json（workspace 单源）。
+# 禁止添加：mdc-pdf / mdc-office-io / mdc-canvas / mang-shell（验收第 1 条，
+# tests/no_engine_deps.rs 以 cargo tree 运行时断言钉死）。
+[dependencies]
+mdc-evidence = { path = "../evidence" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
