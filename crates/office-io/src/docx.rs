@@ -1796,7 +1796,13 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         (bundle, images, document_xml, footnotes_xml, endnotes_xml)
     };
 
-    let docx = docx_rs::read_docx(bytes).map_err(|e| DocxError::Parse(format!("{e}")))?;
+    // #226 R2：docx-rs 读层 panic 预检防御——真实语料 4 处实锤（裸 run
+    // 属性零属性 start tag + w:w 通用度量）在依赖层 panic（wasm = trap /
+    // GUI = 进程崩溃）；引擎侧先修后读（scan-and-repair，修复走 Warning
+    // 通道——详见 docx_panic_guard 模块文档）。
+    let engine_bytes = crate::docx_panic_guard::guard_docx_bytes(bytes, &mut warnings)?;
+    let docx =
+        docx_rs::read_docx(engine_bytes.as_ref()).map_err(|e| DocxError::Parse(format!("{e}")))?;
     // r4-t3：numbering.xml 解析索引（numId → ilvl 级 numFmt——引擎
     // 读面 numberings 模型全链 pub，见 NumberingIndex 文档）。
     let numbering_index = NumberingIndex::build(&docx.numberings);

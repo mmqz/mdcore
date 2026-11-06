@@ -151,6 +151,34 @@ pub struct DocxPayload {
     pub notice: Option<String>,
 }
 
+/// #226 R2：panic 载荷 → 用户可读原因（String/&'static str 两类常见
+/// 载荷；其余不猜——「未知」诚实呈现）。
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else {
+        "未知 panic 载荷".to_string()
+    }
+}
+
+/// #226 R2：docx 打开入口 panic 兜底。依赖层（docx-rs 读面）在真实
+/// 语料有 panic 实锤（`test-artifacts/health-check` REPORT #E1——
+/// office-io 预检防御已修实证位点）；此处兜**未知同类形态**（含
+/// docx-rs 同类未实证 `attributes[0]` 位点，清单见 office-io
+/// docx_panic_guard 模块文档）：panic → typed `Err`（「打开失败+
+/// 原因」用户可见，编辑器不崩、未保存编辑不丢），Ok/Err 原语义
+/// 原样透传。
+fn panic_guard<T>(context: &str, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|payload| {
+        Err(format!(
+            "{context}（引擎内部错误）：{}",
+            panic_message(&*payload)
+        ))
+    })
+}
+
 /// 读盘 + 解析 + 转换（**只读**——pdf/xlsx 同口径）。
 ///
 /// 兼容模式（`compat: true`）：畸形部件降级为结构化警告（数据照常
@@ -168,8 +196,10 @@ pub fn load(path: &Path) -> Result<DocxPayload, String> {
     }
     let bytes = std::fs::read(path).map_err(|e| format!("读取失败：{e}"))?;
     let opts = io::ReadOptions { compat: true };
-    let doc = read_docx_from_bytes_with_options(&bytes, &opts)
-        .map_err(|e| format!("docx 解析失败：{e}"))?;
+    // #226 R2：读引擎 panic 兜底（依赖层未知形态——见 panic_guard 文档）。
+    let doc = panic_guard("文档打开失败", || {
+        read_docx_from_bytes_with_options(&bytes, &opts).map_err(|e| format!("docx 解析失败：{e}"))
+    })?;
     Ok(convert(&doc))
 }
 
@@ -205,11 +235,16 @@ pub fn load_editable(path: &Path) -> Result<EditablePayload, String> {
     }
     let bytes = std::fs::read(path).map_err(|e| format!("读取失败：{e}"))?;
     let opts = io::ReadOptions { compat: true };
-    let doc = read_docx_from_bytes_with_options(&bytes, &opts)
-        .map_err(|e| format!("docx 解析失败：{e}"))?;
+    // #226 R2：读引擎 panic 兜底（依赖层未知形态——见 panic_guard 文档）。
+    let doc = panic_guard("文档打开失败", || {
+        read_docx_from_bytes_with_options(&bytes, &opts).map_err(|e| format!("docx 解析失败：{e}"))
+    })?;
 
-    // 窄面（引擎严格门）：失败 → 降级只读（宽面已证明可看）。
-    let engine = match DocxEditor::open(&bytes) {
+    // 窄面（引擎严格门）：失败 → 降级只读（宽面已证明可看）；panic
+    // 同样降级（#226 R2——宽面已可看，不因窄面扫描崩溃丢掉查看）。
+    let engine = match panic_guard("引擎编辑面装载失败", || {
+        DocxEditor::open(&bytes).map_err(|e| e.to_string())
+    }) {
         Ok(e) => e,
         Err(e) => {
             let mut payload = convert(&doc);
@@ -1635,5 +1670,35 @@ mod tests {
             payload.text.split('\n').count(),
             payload.headings.len()
         );
+    }
+
+    /// #226 R2：panic 兜底——panic 载荷转 typed Err（context 前缀 +
+    /// 载荷文本）；Ok/Err 原样透传；非字符串载荷诚实「未知」。
+    #[test]
+    fn panic_guard_converts_panics_to_typed_error() {
+        let err = panic_guard("文档打开失败", || -> Result<(), String> {
+            panic!("index out of bounds")
+        })
+        .expect_err("panic 应转 Err");
+        assert!(err.contains("文档打开失败"), "{err}");
+        assert!(err.contains("index out of bounds"), "{err}");
+
+        let err2 = panic_guard("文档打开失败", || -> Result<(), String> {
+            panic!("string payload: {}", 42)
+        })
+        .expect_err("panic 应转 Err");
+        assert!(err2.contains("string payload: 42"), "{err2}");
+
+        assert_eq!(panic_guard("x", || Ok(7)).expect("Ok 透传"), 7);
+        assert_eq!(
+            panic_guard("x", || Err::<(), _>("typed".into())).expect_err("Err 透传"),
+            "typed"
+        );
+
+        let unknown = panic_guard("x", || -> Result<(), String> {
+            std::panic::panic_any(3.14f64)
+        })
+        .expect_err("非字符串载荷转 Err");
+        assert!(unknown.contains("未知"), "{unknown}");
     }
 }
