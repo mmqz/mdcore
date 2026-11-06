@@ -324,6 +324,9 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // #233（zip-exotica）：压缩比超观察门限（警告口径不拒——
         // 纵深可见性；见 mdc-office-io LIMIT_COMPRESS_RATIO 文档）。
         mdc_office_io::io::WarningKind::HighCompressionRatio => "high_compression_ratio",
+        // #276（B-1）：超链接目标未过 URL 策略（敌意 scheme 消毒
+        // 降级——目标缺席但内容保留）。
+        mdc_office_io::io::WarningKind::UnsafeLink => "unsafe_link",
     }
 }
 
@@ -349,6 +352,9 @@ fn warning_severity(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // #233：压缩比观察（合法高压缩比件也触发——s7b 149:1 实证；
         // 内容无缺席，纯可见性）→ info。
         mdc_office_io::io::WarningKind::HighCompressionRatio => "info",
+        // #276（B-1）：敌意 scheme 超链接消毒降级——目标缺席但文本
+        // 内容保留，且属安全防御面（用户须知悉）→ warn。
+        mdc_office_io::io::WarningKind::UnsafeLink => "warn",
     }
 }
 
@@ -1551,6 +1557,47 @@ mod tests {
         // Unresolved：目标不可用 → 降级纯文本（强调保留），不计链接数。
         assert_eq!(lines[2], "**unres**");
         assert_eq!(stats["hyperlinks"], 2);
+    }
+
+    /// #276（审计 B-1）：敌意 docx javascript: 超链接全链负向——
+    /// office-io 读面 url_policy 消毒（降级 Unresolved + UnsafeLink
+    /// 警告）之后，本层 markdown 出口不再发射
+    /// `[text](javascript:...)`（旧行为：GFM destination 直转，敌意
+    /// 链接进编辑器）。真实 docx 字节全链（写面构造敌意件 →
+    /// import_docx_core 读面消毒 → markdown 断言）。
+    #[test]
+    fn unsafe_link_scheme_not_exported_to_markdown() {
+        use mdc_office_io::docx::RunSpec;
+        let mut w = mdc_office_io::docx::DocxWriter::new();
+        w.paragraph(&[
+            RunSpec::text("敌意 "),
+            RunSpec::link("点我", "javascript:alert(1)"),
+            RunSpec::text(" 合法 "),
+            RunSpec::link("正常", "https://safe.example/x"),
+            RunSpec::text("。"),
+        ]);
+        let bytes = w.save_to_vec().unwrap();
+
+        // import_docx_core 返回 {markdown, stats} JSON 包装——断言按
+        // 面拆分：markdown 面（输出内容）与 stats.warnings 面（消毒
+        // 登记可见性）分开钉。
+        let out = import_docx_core(&bytes).unwrap();
+        // ① markdown 面：敌意链接降级纯文本（点我无链接形态）、
+        //    合法链接原样保留。
+        assert!(
+            out.contains(r#""markdown":"敌意 点我 合法 [正常](https://safe.example/x)。""#),
+            "敌意降级纯文本 + 合法链接保留：{out}"
+        );
+        assert!(
+            !out.contains("](javascript"),
+            "敌意 scheme 链接形态不得进 markdown：{out}"
+        );
+        // ② 消毒登记面：unsafe_link 警告恒可见（detail 含拒绝原因——
+        //    警告文案里的 javascript: 是登记面，非 markdown 输出面）。
+        assert!(
+            out.contains(r#""kind":"unsafe_link""#),
+            "消毒警告可见性：{out}"
+        );
     }
 
     #[test]

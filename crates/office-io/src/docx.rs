@@ -2020,8 +2020,32 @@ fn resolve_link(
 ) -> Result<HyperlinkTarget, io::ReadError> {
     match table.and_then(|t| t.get(rid)) {
         Some(rel) => Ok(if rel.target_mode.as_deref() == Some("External") {
-            HyperlinkTarget::External {
-                target: rel.target.clone(),
+            // #276（审计 B-1）：外部超链接读面消毒——scheme 白名单
+            // （mdc-office url_policy，#276 首个生产接线）。敌意
+            // `javascript:`/`vbscript:`/`data:` scheme 此前直转
+            // `[text](javascript:...)` GFM 进编辑器（docx_import
+            // link_destination 消费面）；拒绝降级 Unresolved（下游
+            // 链接渲染降级纯文本）+ UnsafeLink 警告，不废整个文档。
+            // 白名单语义 = http/https/mailto + 无 scheme 相对路径
+            // （file:/ftp: 等罕见 scheme 一并降级——警告文案可诊断，
+            // 放行清单调整属 Lead 裁定面）。
+            match mdc_office::sanitize::check_url(&rel.target) {
+                Ok(()) => HyperlinkTarget::External {
+                    target: rel.target.clone(),
+                },
+                Err(e) => {
+                    warnings.push(CompatibilityWarning {
+                        part: part.to_string(),
+                        kind: WarningKind::UnsafeLink,
+                        detail: format!(
+                            "hyperlink target rejected by url policy ({e}): {}",
+                            rel.target
+                        ),
+                    });
+                    HyperlinkTarget::Unresolved {
+                        rid: rid.to_string(),
+                    }
+                }
             }
         } else {
             HyperlinkTarget::Internal {

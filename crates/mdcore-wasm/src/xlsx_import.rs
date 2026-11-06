@@ -289,6 +289,10 @@ fn warning_kind(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // #233（zip-exotica）：压缩比超观察门限（警告口径不拒——
         // 纵深可见性；见 mdc-office-io LIMIT_COMPRESS_RATIO 文档）。
         mdc_office_io::io::WarningKind::HighCompressionRatio => "high_compression_ratio",
+        // #276（B-1）：超链接目标未过 URL 策略（敌意 scheme 消毒
+        // 降级；xlsx 读面保持透传，出口由 rebuild scheme 门承载——
+        // 此映射为完备性所需）。
+        mdc_office_io::io::WarningKind::UnsafeLink => "unsafe_link",
     }
 }
 
@@ -307,6 +311,8 @@ fn warning_severity(kind: &mdc_office_io::io::WarningKind) -> &'static str {
         // #233：压缩比观察（合法高压缩比件也触发——s7b 149:1 实证；
         // 内容无缺席，纯可见性）→ info。
         mdc_office_io::io::WarningKind::HighCompressionRatio => "info",
+        // #276（B-1）：完备性映射（xlsx 面当前无触发点）→ warn。
+        mdc_office_io::io::WarningKind::UnsafeLink => "warn",
     }
 }
 

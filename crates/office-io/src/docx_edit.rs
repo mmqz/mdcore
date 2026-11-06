@@ -2032,10 +2032,12 @@ fn emit_text_payload(text: &str) -> String {
     out
 }
 
+/// #276（审计 B-6）：文本实体转义收敛到 mdc-office 消毒面单源
+/// （xml_entities::escape_xml_text——`&`/`<`/`>` 三字符文本位最小
+/// 合法集，语义与旧本地实现逐字符一致）。此前双源漂移：docx_edit/
+/// xlsx_edit 各自一份同体拷贝，mdc-office 六面零接线。
 fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    mdc_office::sanitize::xml_entities::escape_xml_text(s)
 }
 
 /// 全部待落账编辑 → 新 document.xml（单趟；未编辑区域零接触）。

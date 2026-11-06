@@ -415,6 +415,17 @@ pub fn rebuild_book_with(
                     .push(format!("hyperlink skipped (url contains NUL) at {pos}"));
                 continue;
             }
+            // #276（审计 B-1）：重放出口 scheme 门——mdc-office url_policy
+            // 白名单（http/https/mailto/internal；`internal:` 前缀是本
+            // 函数 location-only 形态的自造 scheme，恰在白名单）。敌意
+            // `javascript:` 超链接经 rebuild 写回 xlsx 时原样透传的缺口
+            // 就此闭合（此前仅长度/NUL 两道防线——scheme 无检查）。
+            if let Err(e) = mdc_office::sanitize::check_url(&url) {
+                stats.skipped.push(format!(
+                    "hyperlink skipped (url policy rejected: {e}) at {pos}"
+                ));
+                continue;
+            }
             if h.tooltip
                 .as_deref()
                 .is_some_and(|t| t.len() > MAX_TOOLTIP_TEXT)

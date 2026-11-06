@@ -59,6 +59,12 @@ docx-rs = { version = "0.4", default-features = false }
 # js-sys（wasm 原生面）+ chrono/csv/regex 族（均 wasm32 兼容）——
 # mdcore-wasm 传递编译由 wasm32 check 门验证。
 mdc-formula = { path = "../formula" }
+# #276（审计 P1-4/B-1/B-6）：消毒六面接线——office-io 读/写/重放三
+# 出口消费 mdc-office 的 url_policy 与 xml_entities（此前全仓零接线：
+# rg mdc_office:: 生产面 = 0，敌意 docx javascript: 超链接经读面直转
+# GFM、rebuild 重放仅长度/NUL 防线、escape_text 双源漂移）。mdc-office
+# 纯 std 零三方依赖（T1 自锁）——本边零闭包增量、零 lock 三方新增。
+mdc-office = { path = "../office" }
 
 # ---------------------------------------------------------------------------
 # t19（2026-10-14）：rust_xlsxwriter 依赖边目标分裂 + "wasm" 特性——

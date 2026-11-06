@@ -389,6 +389,64 @@ fn hyperlink_anchor_read() {
     let _ = std::fs::remove_file(&p2);
 }
 
+/// #276（审计 B-1）：敌意 scheme 超链接读面消毒——javascript: 降级
+/// Unresolved + UnsafeLink 警告（恒登记）；白名单 scheme（https）与
+/// 无 scheme 相对路径不受影响。此前敌意 docx 超链接直转
+/// `[text](javascript:...)` GFM 进编辑器（wasm docx_import 消费面）。
+#[test]
+fn hyperlink_unsafe_scheme_sanitized_on_read() {
+    let p = tmp("unsafe_link");
+    let mut w = DocxWriter::new();
+    w.paragraph(&[
+        RunSpec::text("敌意 "),
+        RunSpec::link("点我", "javascript:alert(1)"),
+        RunSpec::text(" 合法 "),
+        RunSpec::link("正常", "https://safe.example/x"),
+        RunSpec::text("。"),
+    ]);
+    w.save_to_path(&p).unwrap();
+
+    let doc = read_docx(&p).unwrap();
+    // UnsafeLink 恒登记（安全面不随兼容模式放松——区别于
+    // BrokenReference 的模式分叉行为）。
+    let unsafe_links: Vec<_> = doc
+        .warnings
+        .iter()
+        .filter(|w| w.kind == WarningKind::UnsafeLink)
+        .collect();
+    assert_eq!(unsafe_links.len(), 1, "恰一条 UnsafeLink：{:?}", doc.warnings);
+    assert!(
+        unsafe_links[0].detail.contains("javascript"),
+        "警告含拒绝原因：{}",
+        unsafe_links[0].detail
+    );
+
+    match &doc.blocks[0] {
+        Block::Paragraph(pd) => {
+            assert_eq!(pd.runs.len(), 5);
+            // 敌意链接降级 Unresolved（下游 link_destination 返回
+            // None——渲染降级纯文本）。
+            assert!(
+                matches!(&pd.runs[1].hyperlink, Some(HyperlinkTarget::Unresolved { .. })),
+                "javascript: 降级 Unresolved：{:?}",
+                pd.runs[1].hyperlink
+            );
+            // 白名单 scheme 原样透传。
+            assert_eq!(
+                pd.runs[3].hyperlink,
+                Some(HyperlinkTarget::External {
+                    target: "https://safe.example/x".into()
+                }),
+                "https: 不受消毒影响"
+            );
+            // 文本全保留（消毒只动目标，不动内容）。
+            assert_eq!(pd.text(), "敌意 点我 合法 正常。");
+        }
+        other => panic!("应为段落, got {other:?}"),
+    }
+    let _ = std::fs::remove_file(&p);
+}
+
 /// 悬空超链接引用（r:id 无关系条目）：严格 typed 拒 / 兼容
 /// Unresolved + BrokenReference 警告（文本保留）。
 #[test]
