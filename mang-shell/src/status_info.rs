@@ -226,17 +226,7 @@ pub fn find_git_root(start: &std::path::Path) -> Option<std::path::PathBuf> {
 /// worktree/submodule 的 `.git` 是文件（内容 `gitdir: <路径>`），
 /// 顺着它去找真正的 HEAD。
 pub fn git_branch_at(git_root: &std::path::Path) -> Option<String> {
-    let dot_git = git_root.join(".git");
-    let head_path = if dot_git.is_dir() {
-        dot_git.join("HEAD")
-    } else {
-        // .git 是文件：gitdir: /path/to/real/gitdir
-        let content = std::fs::read_to_string(&dot_git).ok()?;
-        let dir = content.trim().strip_prefix("gitdir:")?.trim();
-        let p = std::path::PathBuf::from(dir);
-        let p = if p.is_absolute() { p } else { git_root.join(p) };
-        p.join("HEAD")
-    };
+    let head_path = resolve_head_path(git_root)?;
     let head = std::fs::read_to_string(head_path).ok()?;
     let head = head.trim();
     if let Some(r) = head.strip_prefix("ref:") {
@@ -254,6 +244,121 @@ pub fn git_branch_at(git_root: &std::path::Path) -> Option<String> {
     } else {
         None
     }
+}
+
+/// 解析 git 仓库的真实 HEAD 路径（普通仓库 = `.git/HEAD`；worktree/
+/// submodule 的 `.git` 是文件——内容 `gitdir: <路径>`，顺过去找）。
+fn resolve_head_path(git_root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dot_git = git_root.join(".git");
+    if dot_git.is_dir() {
+        Some(dot_git.join("HEAD"))
+    } else {
+        let content = std::fs::read_to_string(&dot_git).ok()?;
+        let dir = content.trim().strip_prefix("gitdir:")?.trim();
+        let p = std::path::PathBuf::from(dir);
+        let p = if p.is_absolute() { p } else { git_root.join(p) };
+        Some(p.join("HEAD"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #281（审计 P1-17 / R-e）：状态栏每帧 I/O 缓存
+//
+// 状态栏随 ShellApp 每次重渲被调用（gpui 祖先标脏机制：每键/每拖拽
+// move 都整树重渲），此前每帧 = md 态源文件**全文件读盘**（编码/EOL
+// 探测）+ `.git/HEAD` 读。缓存策略 = **mtime + size 失效**（stat 命中
+// 免读盘——stat 只取元数据无数据传输，比读盘约省三个数量级；文件
+// 保存/外部改写后 mtime/size 变更恰失效一次）。同 mtime 同 size 但
+// 内容已变的窗口（同秒内重写同长文件）是本策略的已知边界——状态
+// 标签滞后一帧级探测语义，可接受（在档）。
+// ---------------------------------------------------------------------------
+
+/// 真实读盘计数（测试观测面：断言缓存命中零 `fs::read`）。
+#[cfg(test)]
+static READ_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// 编码/EOL 探测缓存项。
+struct EncodingEolEntry {
+    mtime: std::time::SystemTime,
+    size: u64,
+    enc: Option<Encoding>,
+    eol: Option<Eol>,
+}
+
+/// 编码/EOL 探测缓存（path → 结果；mtime+size 失效）。
+static ENCODING_EOL_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, EncodingEolEntry>>,
+> = std::sync::OnceLock::new();
+
+/// 带缓存的编码/EOL 探测（#281 R-e——状态栏每帧调用的读盘面收敛为
+/// stat：命中直接复用；未命中/失效恰读一次重新探测）。
+pub fn detect_encoding_eol_cached(
+    path: &std::path::Path,
+) -> Option<(Option<Encoding>, Option<Eol>)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let (mtime, size) = (meta.modified().ok()?, meta.len());
+    let mut cache = ENCODING_EOL_CACHE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(hit) = cache.get(path) {
+        if hit.mtime == mtime && hit.size == size {
+            return Some((hit.enc, hit.eol));
+        }
+    }
+    #[cfg(test)]
+    READ_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let bytes = std::fs::read(path).ok()?;
+    let enc = detect_encoding(&bytes);
+    let eol = detect_eol(&bytes);
+    cache.insert(
+        path.to_path_buf(),
+        EncodingEolEntry {
+            mtime,
+            size,
+            enc,
+            eol,
+        },
+    );
+    Some((enc, eol))
+}
+
+/// git 分支缓存项（HEAD mtime 失效——checkout 会更新 HEAD 的 mtime；
+/// None mtime = HEAD 不可 stat，恒重试不缓存）。
+struct GitBranchEntry {
+    head_mtime: Option<std::time::SystemTime>,
+    branch: Option<String>,
+}
+
+/// git 分支缓存（git_root → 结果）。
+static GIT_BRANCH_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, GitBranchEntry>>,
+> = std::sync::OnceLock::new();
+
+/// 带缓存的 git 分支（#281 R-e 同族 I/O——HEAD mtime 失效；`.git`
+/// 目录上溯 walk 仍每帧执行（纯 stat 无数据传输，量级可忽略）。
+pub fn git_branch_at_cached(git_root: &std::path::Path) -> Option<String> {
+    let head_mtime = resolve_head_path(git_root)
+        .and_then(|head| std::fs::metadata(head).ok())
+        .and_then(|meta| meta.modified().ok());
+    let mut cache = GIT_BRANCH_CACHE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(hit) = cache.get(git_root) {
+        if hit.head_mtime.is_some() && hit.head_mtime == head_mtime {
+            return hit.branch.clone();
+        }
+    }
+    let branch = git_branch_at(git_root);
+    cache.insert(
+        git_root.to_path_buf(),
+        GitBranchEntry {
+            head_mtime,
+            branch: branch.clone(),
+        },
+    );
+    branch
 }
 
 #[cfg(test)]
@@ -383,6 +488,75 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(find_git_root(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── #281（审计 R-e）：mtime+size 失效缓存 ─────────────────
+
+    /// 缓存命中零读盘（帧级语义：状态栏随 ShellApp 每次重渲被调，
+    /// 命中路径必须零 `fs::read`——READ_COUNT 观测）+ 文件变更
+    /// （size 变）恰失效重读一次。
+    #[test]
+    fn encoding_eol_cache_hits_and_invalidates() {
+        use std::sync::atomic::Ordering;
+        let dir = std::env::temp_dir().join(format!("mdc-cache-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("probe.txt");
+        std::fs::write(&path, "a\nb\n").unwrap();
+        let reads0 = READ_COUNT.load(Ordering::SeqCst);
+        // 未命中 → 恰读一次 + 探测。
+        let (enc, eol) = detect_encoding_eol_cached(&path).unwrap();
+        assert_eq!(enc, Some(Encoding::Utf8));
+        assert_eq!(eol, Some(Eol::Lf));
+        assert_eq!(
+            READ_COUNT.load(Ordering::SeqCst),
+            reads0 + 1,
+            "未命中恰读一次"
+        );
+        // 命中 → 五次重渲零读盘、结果一致。
+        for _ in 0..5 {
+            let (enc2, eol2) = detect_encoding_eol_cached(&path).unwrap();
+            assert_eq!((enc2, eol2), (enc, eol), "命中结果与首探测一致");
+        }
+        assert_eq!(
+            READ_COUNT.load(Ordering::SeqCst),
+            reads0 + 1,
+            "五次重渲零读盘"
+        );
+        // 文件变更（size 变）→ 失效恰重读一次 + 新内容探测正确。
+        std::fs::write(&path, "a\r\nb\r\n").unwrap();
+        let (_, eol3) = detect_encoding_eol_cached(&path).unwrap();
+        assert_eq!(eol3, Some(Eol::Crlf), "失效后按新内容重新探测");
+        assert_eq!(
+            READ_COUNT.load(Ordering::SeqCst),
+            reads0 + 2,
+            "失效恰重读一次"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// git 分支缓存：HEAD 未变命中；checkout（HEAD 重写）后失效
+    /// 读新分支（mtime 间隔用 sleep 保证跨粒度）。
+    #[test]
+    fn git_branch_cache_invalidates_on_checkout() {
+        let dir = std::env::temp_dir().join(format!("mdc-cache-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let git = dir.join("repo");
+        let dot_git = git.join(".git");
+        std::fs::create_dir_all(&dot_git).unwrap();
+        std::fs::write(dot_git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(git_branch_at_cached(&git).as_deref(), Some("main"));
+        // 命中（同 HEAD）。
+        assert_eq!(git_branch_at_cached(&git).as_deref(), Some("main"));
+        // checkout → HEAD 重写（跨 mtime 粒度）→ 失效读新分支。
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dot_git.join("HEAD"), "ref: refs/heads/feat/x\n").unwrap();
+        assert_eq!(
+            git_branch_at_cached(&git).as_deref(),
+            Some("feat/x"),
+            "checkout 后分支缓存失效（新分支名）"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

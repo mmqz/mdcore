@@ -393,6 +393,12 @@ pub struct Editor {
     /// #132 任务 1：括号匹配缓存（键 = 文档版本 + 主光标；键变即重算）。
     /// 渲染层每行读取——缓存键不变时零扫描，避免逐行重新扫全文。
     bracket_cache: BracketCache,
+    /// #281（审计 R-f）：字数缓存（键 = Buffer revision）——状态栏与
+    /// 属性面板每帧读 `char_label`，此前每帧 2× 全文 Rope→String 物化
+    ///（`to_plain_text().chars().count()`）；revision 守卫：仅变更事务
+    ///（编辑/undo/redo）后首读重算，纯光标移动与纯重渲零物化。
+    /// RefCell：render/read 路径只有 `&self`（与 last_text_width 同款）。
+    char_count_cache: RefCell<(u64, usize)>,
     /// #132 任务 1：文件级代码语言（`.rs`/`.py`/`.ts` 直接打开时按该语言
     /// 识别字符串/注释——这类文件没有 md 围栏可依）。构造时按扩展名
     /// 定，内容推断兜底。
@@ -543,6 +549,8 @@ impl Editor {
             fence_lang_cache: Vec::new(),
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
+            // #281（R-f）：字数缓存初值恒 miss（u64::MAX ≠ 0）——首读填充。
+            char_count_cache: RefCell::new((u64::MAX, 0)),
             bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
@@ -604,6 +612,8 @@ impl Editor {
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
+            // #281（R-f）：字数缓存初值恒 miss（u64::MAX ≠ 0）——首读填充。
+            char_count_cache: RefCell::new((u64::MAX, 0)),
             bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
@@ -679,6 +689,8 @@ impl Editor {
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
+            // #281（R-f）：字数缓存初值恒 miss（u64::MAX ≠ 0）——首读填充。
+            char_count_cache: RefCell::new((u64::MAX, 0)),
             bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
@@ -743,6 +755,8 @@ impl Editor {
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
+            // #281（R-f）：字数缓存初值恒 miss（u64::MAX ≠ 0）——首读填充。
+            char_count_cache: RefCell::new((u64::MAX, 0)),
             bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
@@ -806,6 +820,8 @@ impl Editor {
             fence_lang_cache: vec![None; line_count],
             fence_cache_valid: false,
             bracket_cache: BracketCache::default(),
+            // #281（R-f）：字数缓存初值恒 miss（u64::MAX ≠ 0）——首读填充。
+            char_count_cache: RefCell::new((u64::MAX, 0)),
             bracket_lang,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
@@ -866,6 +882,8 @@ impl Editor {
             chord_pending: None,
             // #132 任务1：括号匹配缓存（canvas 无语言语义——恒 None）。
             bracket_cache: BracketCache::default(),
+            // #281（R-f）：字数缓存初值恒 miss（u64::MAX ≠ 0）——首读填充。
+            char_count_cache: RefCell::new((u64::MAX, 0)),
             bracket_lang: None,
             display_map: DisplayMap::default(),
             last_text_width: RefCell::new(None),
@@ -1030,7 +1048,7 @@ impl Editor {
         } else {
             String::new()
         };
-        format!("{} 字符{}", self.buffer.char_count(), cursors)
+        format!("{} 字符{}", self.char_count(), cursors)
     }
 
     // ------------------------------------------------------------------
@@ -1058,9 +1076,21 @@ impl Editor {
         self.buffer.line_count()
     }
 
-    /// 全文字符数。
+    /// 字数（缓存面——状态栏/属性面板/RPC get_state 共用消费）。
+    ///
+    /// #281（审计 R-f）：revision 守卫缓存——`Buffer::char_count` 是
+    /// 全文 Rope→String 物化（O(doc) 分配），而状态栏随 ShellApp 每次重渲
+    /// （每键/每拖拽）调 `char_label`；缓存键 = Buffer revision（每次变更
+    /// 事务 +1：replace_range/replace_batch/undo/redo——`mark_saved` 不算），
+    /// 纯光标移动与纯重渲零物化。多读并发（同帧状态栏 + 面板）首读填充、
+    /// 后读命中。
     pub fn char_count(&self) -> usize {
-        self.buffer.char_count()
+        let rev = self.buffer.revision();
+        let mut cache = self.char_count_cache.borrow_mut();
+        if cache.0 != rev {
+            *cache = (rev, self.buffer.char_count());
+        }
+        cache.1
     }
 
     /// 文档版本号（#111 订阅模式——RPC get_selection/undo/redo 的结果
@@ -5317,6 +5347,46 @@ mod tests {
         let ed_for_host = ed.clone();
         let window = cx.add_window(move |_window, _cx| EditorHost(ed_for_host.clone()));
         (ed, window)
+    }
+
+    /// #281（审计 R-f）：字数缓存 revision 守卫——`char_count` 是全文
+    /// Rope→String 物化（O(doc) 分配），状态栏/属性面板每帧读；缓存键
+    /// = Buffer revision：未变更读命中（键值对不动）、变更事务后首读
+    /// 重算（值与键同步跟进）、纯光标移动零重算（revision 不变——
+    /// 结构性保证：缓存键等于当前 revision 即必命中）。
+    #[gpui::test]
+    fn char_count_cache_follows_revision(cx: &mut gpui::TestAppContext) {
+        let (ed, _window) = editor_window(cx, None);
+        // 初读：构造期 (u64::MAX, 0) 恒 miss → 填充。
+        let n0 = cx.update(|cx| ed.read(cx).char_count());
+        assert!(n0 > 0, "前置：测试文档非空");
+        let (rev0, cached0) = cx.update(|cx| *ed.read(cx).char_count_cache.borrow());
+        assert_eq!(cached0, n0, "缓存值 = 物化值");
+        assert_eq!(
+            rev0,
+            cx.update(|cx| ed.read(cx).buffer.revision()),
+            "缓存键对齐当前 revision"
+        );
+        // 未变更复读：命中（键值对不动——纯重渲/纯光标移动的帧级语义）。
+        let _ = cx.update(|cx| ed.read(cx).char_label());
+        let (rev1, cached1) = cx.update(|cx| *ed.read(cx).char_count_cache.borrow());
+        assert_eq!((rev1, cached1), (rev0, cached0), "revision 未变零重算");
+        // 变更事务（buffer 单点入口）：revision +1 → 首读重算跟进。
+        let inserted = "追加的五个字";
+        cx.update(|cx| {
+            ed.update(cx, |ed, _| {
+                let last = Point::new(ed.buffer.line_count() - 1, 0);
+                assert!(ed.buffer.replace_range(last, last, inserted));
+            })
+        });
+        let n2 = cx.update(|cx| ed.read(cx).char_count());
+        assert_eq!(n2, n0 + inserted.chars().count(), "编辑后计数 = 原 + 插入");
+        let (rev2, cached2) = cx.update(|cx| *ed.read(cx).char_count_cache.borrow());
+        assert_eq!(cached2, n2, "缓存值跟进编辑后计数");
+        assert_eq!(rev2, rev0 + 1, "缓存键跟进新 revision（恰 +1）");
+        // char_label 行为面（状态栏消费口径）。
+        let label = cx.update(|cx| ed.read(cx).char_label());
+        assert!(label.contains(&format!("{n2} 字符")), "标签含最新计数：{label}");
     }
 
     /// #169 2.1 全量执行：遍历 `Cmd::ALL`，每条在真实编辑器上执行一遍

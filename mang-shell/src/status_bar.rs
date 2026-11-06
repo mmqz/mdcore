@@ -65,23 +65,30 @@ pub fn status_bar(
                     .and_then(|ed| ed.read(cx).file_path())
                     .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
             });
+        // #281（审计 R-e）：git 分支走 HEAD mtime 缓存——状态栏随
+        // ShellApp 每次重渲（每键/每拖拽）被调，此前每帧重读 .git/HEAD。
         start
             .and_then(|start| status_info::find_git_root(&start))
-            .and_then(|root| status_info::git_branch_at(&root))
+            .and_then(|root| status_info::git_branch_at_cached(&root))
             .map(|branch| format!(" {branch}"))
     };
     // #188：编码 + 换行符（md 态源文件——docx/pdf/xlsx/canvas 是容器
     // 格式，字节级编码/换行语义不适用，不显示；未落盘草稿无字节面）。
+    // #281（审计 R-e）：探测走 mtime+size 缓存——此前每帧全文件读盘
+    //（大文件持续磁盘 churn），现命中仅一次 stat。
     let (encoding_label, eol_label) = match editor {
         Some(ed) => {
             let e = ed.read(cx);
             if e.doc_kind() == "md" {
-                match e.file_path().map(std::fs::read) {
-                    Some(Ok(bytes)) => (
-                        status_info::detect_encoding(&bytes).map(|enc| enc.label().to_string()),
-                        status_info::detect_eol(&bytes).map(|eol| eol.label().to_string()),
+                match e
+                    .file_path()
+                    .and_then(status_info::detect_encoding_eol_cached)
+                {
+                    Some((enc, eol)) => (
+                        enc.map(|enc| enc.label().to_string()),
+                        eol.map(|eol| eol.label().to_string()),
                     ),
-                    _ => (None, None),
+                    None => (None, None),
                 }
             } else {
                 (None, None)
