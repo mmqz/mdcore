@@ -1738,8 +1738,22 @@ export class PdfViewUI {
       'viewBox',
       `0 0 ${st.viewport.width} ${st.viewport.height}`,
     );
-    this.inkPreview.innerHTML =
-      `<polyline points="${pts.join(' ')}" fill="none" stroke="${this.inkColor}" stroke-width="${this.inkWidth}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    // #282（P2-25 伴修）：与 renderAnnotOverlay 同模式——预览侧同样改
+    // createElementNS + setAttribute（this.inkColor/inkWidth 现为 UI 选择器
+    // 定值，同修消除文件内残留的 innerHTML 属性插值面）。innerHTML 赋值
+    // 隐含的清空改 replaceChildren 显式化。
+    this.inkPreview.replaceChildren();
+    const polyline = document.createElementNS(
+      'http://www.w3.org/2000/svg',
+      'polyline',
+    );
+    polyline.setAttribute('points', pts.join(' '));
+    polyline.setAttribute('fill', 'none');
+    polyline.setAttribute('stroke', this.inkColor);
+    polyline.setAttribute('stroke-width', String(this.inkWidth));
+    polyline.setAttribute('stroke-linecap', 'round');
+    polyline.setAttribute('stroke-linejoin', 'round');
+    this.inkPreview.appendChild(polyline);
   }
 
   private finishInkStroke(): void {
@@ -1823,10 +1837,23 @@ export class PdfViewUI {
           });
           // #45：视觉态从存储标注读（颜色 rgb() 面 + 载荷宽——会话往返
           // 后与落盘 /C /BS 一致；旧会话缺字段 = 引擎 serde 缺省蓝/2pt）。
+          // #282（P2-25）：属性插值改 createElementNS + setAttribute——
+          // 敌意/损坏标注字段经 innerHTML 可断 `stroke="` 注任意属性/
+          // 子元素（v0 标注全本地构造不可达；PDF 既有标注解析落地即活化）。
+          // setAttribute 把载荷存为惰性属性值，不再过 markup 解析器。
           const ink = annot.kind.Ink;
           const strokeCss = `rgb(${ink.color.r}, ${ink.color.g}, ${ink.color.b})`;
-          svg.innerHTML =
-            `<polyline points="${pts.join(' ')}" fill="none" stroke="${strokeCss}" stroke-width="${ink.width}" stroke-linecap="round" stroke-linejoin="round"/>`;
+          const polyline = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'polyline',
+          );
+          polyline.setAttribute('points', pts.join(' '));
+          polyline.setAttribute('fill', 'none');
+          polyline.setAttribute('stroke', strokeCss);
+          polyline.setAttribute('stroke-width', String(ink.width));
+          polyline.setAttribute('stroke-linecap', 'round');
+          polyline.setAttribute('stroke-linejoin', 'round');
+          svg.appendChild(polyline);
           st.annotLayer.appendChild(svg);
         }
       }
