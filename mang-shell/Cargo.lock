@@ -3305,12 +3305,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdc-office"
+version = "0.1.0"
+
+[[package]]
 name = "mdc-office-io"
 version = "0.1.0"
 dependencies = [
  "calamine",
  "docx-rs",
  "mdc-formula",
+ "mdc-office",
  "quick-xml",
  "rust_xlsxwriter",
  "serde_json",

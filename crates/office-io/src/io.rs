@@ -435,6 +435,12 @@ pub enum WarningKind {
     /// s7b 149:1 合法件；膨胀上界已由门 0/1/2 钉死，见常量文档）。
     /// 两模式恒登记——炸弹面可见性，不静默。
     HighCompressionRatio,
+    /// #276（B-1）：超链接目标未过 URL 策略（scheme 白名单
+    /// [`mdc_office::sanitize::url_policy`]——`javascript:`/`vbscript:`
+    /// /`data:` 等敌意 scheme、UNC、NUL、RFC 3986 非法原生字符）。
+    /// 读面消毒降级（目标转 [`crate::docx::HyperlinkTarget::Unresolved`]
+    /// ——下游链接渲染降级纯文本，不废整个文档）；两模式恒登记。
+    UnsafeLink,
 }
 
 /// 兼容模式结构化警告（随 [`Book::warnings`] 返回）。

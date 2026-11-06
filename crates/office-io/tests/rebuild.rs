@@ -295,6 +295,15 @@ fn rebuild_skips_hostile_entries() {
         displayed_text: None,
         tooltip: None,
     });
+    // 敵意 scheme（#276 B-1：url_policy 白名单门——此前 rebuild 重放
+    // 仅长度/NUL 两道防线，javascript: 原样写回 xlsx）。
+    sh.hyperlinks.push(Hyperlink {
+        range: Dimensions::new((13, 0), (13, 0)),
+        target: Some("javascript:alert(1)".into()),
+        location: None,
+        displayed_text: None,
+        tooltip: None,
+    });
     // 单格合并（Excel 不允许）。
     sh.merges.push(Dimensions::new((12, 0), (12, 0)));
 
@@ -309,6 +318,11 @@ fn rebuild_skips_hostile_entries() {
         "NUL URL 登记"
     );
     assert!(
+        stats.skipped.iter().any(|s| s.contains("url policy")),
+        "敵意 scheme 登记（#276）：{:?}",
+        stats.skipped
+    );
+    assert!(
         stats.skipped.iter().any(|s| s.contains("single cell")),
         "单格合并登记"
     );
@@ -317,7 +331,9 @@ fn rebuild_skips_hostile_entries() {
     let hostile = rebuilt.sheets[0]
         .hyperlinks
         .iter()
-        .filter(|h| h.range.start == (10, 0) || h.range.start == (11, 0))
+        .filter(|h| {
+            h.range.start == (10, 0) || h.range.start == (11, 0) || h.range.start == (13, 0)
+        })
         .count();
     assert_eq!(hostile, 0, "敌意链接零落盘");
 }

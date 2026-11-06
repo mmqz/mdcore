@@ -234,11 +234,11 @@ fn validate_text(s: &str) -> Result<(), XlsxEditError> {
     Ok(())
 }
 
-/// 文本实体转义（docx_edit escape_text 同款：`&`/`<`/`>`）。
+/// 文本实体转义（#276 审计 B-6：收敛到 mdc-office 消毒面单源
+/// xml_entities::escape_xml_text——与 docx_edit 同批，消除三源漂移；
+/// 旧本地实现 `&`/`<`/`>` 语义逐字符一致）。
 fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    mdc_office::sanitize::xml_entities::escape_xml_text(s)
 }
 
 /// 数字 → v 文本（Rust f64 Display = 最短往返表示；整数值无小数尾

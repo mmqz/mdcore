@@ -1825,6 +1825,7 @@ dependencies = [
  "docx-rs",
  "flate2",
  "mdc-formula",
+ "mdc-office",
  "quick-xml",
  "rust_xlsxwriter",
  "serde_json",
