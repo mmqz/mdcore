@@ -23,8 +23,16 @@
 //!   （看门狗随之退出、其回执克隆 drop → 通道断连）**再**传播：宿主
 //!   收报得 `None`，死亡可观测、不悬挂、不泄漏看门狗——T2-fix）；
 //!   在飞作业/未决取消令牌按提交序重放给新代，旧线程**断连弃置**
-//!   （C 调用返回后见断连即退、排队作业不再执行、join 句柄弃置不
-//!   等待——敌意永挂 C 调用不得悬挂停机；线程退出即自然回收）。
+//!   （C 调用返回后见断连即退、排队作业不再执行；句柄转入 `retired`
+//!   **跟踪式弃置**——退出即收割回收、永挂计数可观测
+//!   （[`RenderWorker::retired_alive`]），敌意永挂 C 调用不得悬挂
+//!   停机）；
+//!   **换代上限**（#279 / 审计 P1-12）：一生至多 [`MAX_GENERATIONS`]
+//!   代（含首代）——敌意反复超时的线程/引擎实例硬上界。达上限
+//!   工人进入**退役态**：不替代（在飞作业合成 `Timeout`——等待面
+//!   不悬挂）、后续 `submit` 即刻合成 `Timeout`（协议面零变化）、
+//!   通道换哑元断连（recv 可观测死亡）。永挂线程的进程级回收
+//!   （杀线程需进程隔离）属架构级裁定，登记 Lead（#279）。
 //!   [`RenderWorker::new`] 保持无看门狗裸工人（无重建能力即无换代——
 //!   能力面拆分在档）；单工人常态 + 看门狗触发的工人重建 = v0 形态
 //!   （非常驻工人池）；
@@ -60,6 +68,17 @@ use crate::render::{Rasterizer, RenderRequest, RenderedPage};
 /// CPU 可忽略；检测延迟上界 = 本值）。
 const WATCHDOG_POLL: Duration = Duration::from_millis(10);
 
+/// 换代上限（#279 / 审计 P1-12）：一个工人一生至多派生这么多代
+/// （**含首代**）——敌意反复超时的资源硬上界（每代 = 1 渲染线程 +
+/// 1 引擎实例；看门狗线程一枪即退不计入）。达上限不再换代，工人
+/// 进入**退役态**（详见 [`RenderWorker::submit`] 与模块文档）。
+///
+/// 取值权衡：合法场景看门狗（默认预算 20s）极少触发——一生 16 次
+/// 超预算换代已属病态环境；敌意场景上界 = 16 个永挂线程 + 16 个
+/// 引擎实例（有界可存活）。进程级回收（杀挂线程需进程隔离）属
+/// 架构级裁定，登记 Lead（#279），v0 以计数上界兜底。
+pub const MAX_GENERATIONS: u64 = 16;
+
 /// 工人命令（宿主 → 渲染线程；内部通道协议面，不进 serde 协议）。
 enum WorkerCommand {
     /// 渲染作业（id 由工人分配）。
@@ -86,7 +105,9 @@ pub enum WorkerReply {
     Cancelled { id: u64 },
     /// 作业看门狗超时（S3-L2 ❸弃置，PDF-e）：渲染超预算——结果弃置
     /// 永不采用，工人已毒化换代（替代工人服务后续作业；本作业的
-    /// 迟到 `Done` 若存在由包装器丢弃）。
+    /// 迟到 `Done` 若存在由包装器丢弃）。**换代上限耗尽后**（#279）
+    /// 同变体合成：退役态工人的在飞/后续作业均以本回执收尾（等待面
+    /// 不悬挂；协议面零变化——复用既有变体，宿主无需新增分支）。
     Timeout { id: u64 },
 }
 
@@ -152,6 +173,14 @@ where
     pending_cancels: HashSet<u64>,
     /// 工人代次（0 起，每次换代 +1——观测面：宿主可感知换代事实）。
     generation: u64,
+    /// 退役代渲染线程句柄（跟踪式弃置：finished 即收割回收、
+    /// 永挂计数在案——[`RenderWorker::retired_alive`] 观测面；
+    /// 长度上界 = [`MAX_GENERATIONS`]（每代至多入账一次：替换路径
+    /// 旧代 + 退役收尾的末代，#279）。
+    retired: Vec<JoinHandle<()>>,
+    /// 换代上限耗尽标志（true = 退役态：不再派生新代，submit 即刻
+    /// 合成 `Timeout`，通道已换哑元断连——死亡可观测不悬挂）。
+    exhausted: bool,
     /// `R` 在构造时移入渲染线程——类型参数只约束构造面（工人本身
     /// 不持有引擎；fn 指针标记 = 零所有权，不影响 Send/Sync）。
     _rasterizer: PhantomData<fn() -> R>,
@@ -182,6 +211,8 @@ where
             in_flight: VecDeque::new(),
             pending_cancels: HashSet::new(),
             generation: 0,
+            retired: Vec::new(),
+            exhausted: false,
             _rasterizer: PhantomData,
         }
     }
@@ -215,22 +246,71 @@ where
             in_flight: VecDeque::new(),
             pending_cancels: HashSet::new(),
             generation: 0,
+            retired: Vec::new(),
+            exhausted: false,
             _rasterizer: PhantomData,
         }
     }
 
     /// 工人代次（0 起，每次看门狗换代 +1——观测面；公共调用入口先
-    /// 处理待决换代事件，故返回值反映最新代）。
+    /// 处理待决换代事件，故返回值反映最新代；上限耗尽后停在
+    /// [`MAX_GENERATIONS`] - 1——退役态事实由 [`Self::retired_alive`]
+    /// / submit 合成回执可观测）。
     pub fn generation(&mut self) -> u64 {
         self.process_retirements();
         self.generation
     }
 
+    /// 仍存活的退役代渲染线程数（#279 / 审计 P1-12 观测面）。
+    ///
+    /// 先处理待决换代事件，再收割已退出的退役线程（join 即回收），
+    /// 返回**永挂未退**的计数——敌意反复超时场景下这是泄漏资源
+    /// 的直接量度：上界恒 ≤ [`MAX_GENERATIONS`]（换代上限的机械
+    /// 保证）。健康路径（旧代 C 调用返回后自然退出）恒归零。
+    pub fn retired_alive(&mut self) -> usize {
+        self.process_retirements();
+        self.sweep_retired();
+        self.retired.len()
+    }
+
+    /// 换代上限是否已耗尽（#279 观测面：true = 退役态——不再派生
+    /// 新代，submit 即刻合成 [`WorkerReply::Timeout`]；宿主可据此
+    /// 提示「渲染工人退役，重启会话可复位」）。
+    pub fn is_exhausted(&mut self) -> bool {
+        self.process_retirements();
+        self.exhausted
+    }
+
+    /// 收割已退出的退役线程（finished → join 回收；永挂保留在案）。
+    /// join 一个已结束线程立即返回——全程零阻塞，不影响停机不悬挂
+    /// 语义。
+    fn sweep_retired(&mut self) {
+        let mut i = 0;
+        while i < self.retired.len() {
+            if self.retired[i].is_finished() {
+                let handle = self.retired.remove(i);
+                let _ = handle.join();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     /// 提交渲染作业（异步；返回作业 id 供回执关联与取消）。
+    ///
+    /// 退役态（换代上限耗尽，#279）：不送通道（旧代已死/永挂），
+    /// 在飞登记后**即刻合成 [`WorkerReply::Timeout`]**——宿主下一次
+    /// 收报立即拿到回执（等待面不悬挂），语义与看门狗超时一致
+    /// （❸弃置：结果永不采用；协议面零变化）。
     pub fn submit(&mut self, request: RenderRequest) -> u64 {
         self.process_retirements();
         let id = self.next_job_id;
         self.next_job_id += 1;
+        if self.exhausted {
+            self.in_flight.push_back((id, request));
+            self.stashed.push_back(WorkerReply::Timeout { id });
+            return id;
+        }
         if self.supervise.is_some() {
             // 在飞跟踪（换代重放源——裸工人零跟踪零开销）。
             self.in_flight.push_back((id, request));
@@ -331,10 +411,11 @@ where
     ///
     /// 步骤：① drain 旧代通道全部已到回执入 `stashed`（含看门狗
     /// `Timeout`——看门狗程序序先送回执再送事件，事件可见时回执必在
-    /// 通道；已回执 id 的重复回执丢弃）→ ② 旧代断连弃置（通道 drop
-    /// 与 join 句柄弃置——旧线程 C 调用返回后见断连即退，不 join）→
-    /// ③ 工厂起替代工人（字节快照重开）→ ④ 在飞作业与未决取消令牌
-    /// 按提交序重放（作业先于令牌——新代 FIFO 吸收路径同首播）。
+    /// 通道；已回执 id 的重复回执丢弃）→ ② **换代上限判定**（#279：
+    /// 已达 [`MAX_GENERATIONS`] 代则退役收尾，不替代）→ ③ 旧代断连
+    /// 弃置（句柄转入 `retired` 跟踪——永挂计数可观测、退出即收割）
+    /// → ④ 工厂起替代工人（字节快照重开）→ ⑤ 在飞作业与未决取消
+    /// 令牌按提交序重放（作业先于令牌——新代 FIFO 吸收路径同首播）。
     fn process_retirements(&mut self) {
         let (factory, watchdog, timed_out) = match self.supervise.as_ref() {
             // 无监督面：无换代。
@@ -360,11 +441,40 @@ where
             self.stashed
                 .push_back(WorkerReply::Timeout { id: timed_out });
         }
-        // ② 旧代弃置：join 句柄先弃（线程 detach——退出即自然回收，
-        // 敌意永挂 C 调用不得悬挂停机）；通道在 ③ 赋值时 drop（断连
-        // 信号：旧代在跑作业完成后见断连即退，排队作业不再执行）。
-        self.join = None;
-        // ③ 替代工人（字节快照重开——S4.4）。
+        // ② 换代上限（#279 / 审计 P1-12）：一生至多 MAX_GENERATIONS
+        // 代——敌意反复超时的线程/引擎实例硬上界。达上限不再派生
+        // 新代，退役收尾：在飞作业全部合成 Timeout（❸弃置语义，等待
+        // 面不悬挂）；当前代句柄转入 retired 跟踪（永挂不 join——
+        // 敌意 C 调用不得悬挂 drop）；通道换哑元断连（recv 面可观测
+        // 死亡，send 静默失败——与工厂 panic 死亡同款观测语义）。
+        if self.exhausted || self.generation + 1 >= MAX_GENERATIONS {
+            // 在飞作业合成 Timeout（❸弃置语义——等待面不悬挂）。
+            // **先 stash 后落账**：in_flight 保留至回执送达（accept 逐个
+            // validate + prune——先清则合成回执被验收面当无效丢弃，
+            // 「至多一条」退化为零条）。
+            let ids: Vec<u64> = self.in_flight.iter().map(|(i, _)| *i).collect();
+            for id in ids {
+                self.stashed.push_back(WorkerReply::Timeout { id });
+            }
+            self.pending_cancels.clear();
+            if let Some(join) = self.join.take() {
+                self.retired.push(join);
+            }
+            let (_dead_tx, rx) = channel::<WorkerReply>();
+            self.rx = rx;
+            self.tx = channel::<WorkerCommand>().0;
+            self.exhausted = true;
+            return;
+        }
+        // ③ 旧代弃置：join 句柄转入 retired 跟踪（ detach 升级——退出
+        // 即收割回收，永挂计数在案；敌意永挂 C 调用不得悬挂停机不变）；
+        // 通道在 ④ 赋值时 drop（断连信号：旧代在跑作业完成后见断连
+        // 即退，排队作业不再执行）。
+        if let Some(join) = self.join.take() {
+            self.retired.push(join);
+        }
+        self.sweep_retired();
+        // ④ 替代工人（字节快照重开——S4.4）。
         let (tx, rx, join, retire_rx) = spawn_generation(&factory, watchdog);
         self.tx = tx;
         self.rx = rx;
@@ -373,7 +483,7 @@ where
             sup.retire_rx = retire_rx;
         }
         self.generation += 1;
-        // ④ 在飞作业 + 未决取消令牌重放（提交序；令牌在作业后——
+        // ⑤ 在飞作业 + 未决取消令牌重放（提交序；令牌在作业后——
         // 新代 watermark 先覆盖再吸收）。
         let replay: Vec<(u64, RenderRequest)> = self.in_flight.drain(..).collect();
         let recancels: Vec<u64> = self.pending_cancels.iter().copied().collect();
@@ -395,13 +505,17 @@ where
     /// 停机：先处理待决换代（若有——停的是健康新代；旧代已断连弃置
     /// 不等待），再发信号 + join **当前代**（在跑作业完成后线程退出；
     /// join 保证线程资源回收完成后 drop 才返回——停机不悬挂语义锁
-    /// 背书）。
+    /// 背书）。退役态（换代上限耗尽，#279）：当前代句柄已在
+    /// `retired`（永挂不 join——敌意 C 调用不得悬挂 drop，与旧代
+    /// 弃置同纪律）；收割已退出的退役线程（零阻塞）。永挂线程留由
+    /// OS 回收（进程级回收 = 架构级裁定，登记 Lead #279）。
     fn drop(&mut self) {
         self.process_retirements();
         let _ = self.tx.send(WorkerCommand::Shutdown);
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
+        self.sweep_retired();
     }
 }
 
