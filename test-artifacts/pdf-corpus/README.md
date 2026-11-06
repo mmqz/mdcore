@@ -10,11 +10,15 @@
 - **取件脚本 + PROVENANCE + README 入库；PDF 二进制不入库**
   （`*.pdf` 见根 .gitignore）。
 - 取件：`python3 test-artifacts/pdf-corpus/fetch_corpus.py`
-  （幂等：已存在跳过；依赖 curl + pdfinfo[poppler-utils]）。
+  （幂等：已存在跳过；依赖 curl；pdfinfo 缺席时 pages 记 null
+  不阻断；取件 <70 件退出码 1）。**CI 同款**：windows-test.yml
+  在 Test mdc-pdf 前跑本脚本——行为分布锁在云端真跑。
 - 单件 ≤5MB；来源全部 Apache-2.0（与 GPL-3.0 主仓分发兼容）。
 - 语料门 = `crates/pdf/tests/pdf_corpus.rs`（feature
-  `engine-lopdf`）：#262 三态防御（缺席 skip / 在场空红 / 缩水红）
-  + 每类数量下限 + 全件 catch_unwind 不 panic + 行为分布锁。
+  `engine-lopdf`）：#262 三态防御（Lead 评审 2026-11-06 修正：
+  **清单件全缺 = 未取件 skip** / PROVENANCE 登记件在盘但收集
+  0 件 = 收集逻辑坏红 / 缩水红）+ 每类数量下限 + 全件
+  catch_unwind 不 panic + 行为分布锁。
 
 ## 分类目录
 

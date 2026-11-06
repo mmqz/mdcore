@@ -126,7 +126,14 @@ def sha256(p: Path) -> str:
 
 
 def pdfinfo_pages(p: Path):
-    r = subprocess.run(["pdfinfo", str(p)], capture_output=True, text=True, timeout=60)
+    """页数探针——pdfinfo 缺席（CI Windows runner 无 poppler）记
+    None 不阻断（FileNotFoundError 会直接炸取件步骤）。"""
+    try:
+        r = subprocess.run(
+            ["pdfinfo", str(p)], capture_output=True, text=True, timeout=60
+        )
+    except FileNotFoundError:
+        return None
     if r.returncode != 0:
         return None
     for line in r.stdout.splitlines():
@@ -172,6 +179,11 @@ def main():
                     "files": prov}, ensure_ascii=False, indent=1))
     total = sum(f["bytes"] for f in prov)
     print(f"[done] {len(prov)} 件 / {total/1048576:.1f} MB / {time.time()-t0:.0f}s")
+    # 语料门断言 files.len() >= 70——取件不足在此显式退出（CI 快速失败
+    # 且信息直指上游漂移，而不是让测试断言兜底报「shrank」）。
+    if len(prov) < 70:
+        print(f"[WARN] 取件 {len(prov)} 件 < 70 下限——上游源漂移（[MISS] 见上）")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
