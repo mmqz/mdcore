@@ -58,8 +58,13 @@
 //! 23. `worker_replacement_factory_panic_disconnects`——替代代工厂
 //!     panic 面：换代处理（宿主公共调用帧）不 panic 逃逸 + 新代
 //!     死亡经断连可观测（收报 None）+ 替代代零服务。
+//! 24. `worker_generation_cap_bounds_stuck_threads`——换代上限
+//!     （#279 / 审计 P1-12）：敌意反复超时（每代永挂）→ 代数封顶
+//!     [`MAX_GENERATIONS`]（线程/引擎实例硬上界）+ 退役态 submit
+//!     即刻合成 `Timeout`（等待面不悬挂）+ 断连可观测 + 永挂计数
+//!     有界（= 上限）+ 释放后全部收割 + drop 不悬挂。
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1049,4 +1054,123 @@ fn worker_replacement_factory_panic_disconnects() {
         "工厂恰调两次（首代 + 替代代 panic 面）"
     );
     drop(worker); // 收尾不悬挂（渲染线程已死，join 即回）。
+}
+
+// ---------------------------------------------------------------------------
+// 24：换代上限——敌意反复超时的资源硬上界（#279 / 审计 P1-12）
+// ---------------------------------------------------------------------------
+
+/// 永挂 mock（#279 压力面）：模拟「不可中断的敌意 C 调用」——渲染
+/// 进入后自旋等待释放旗标（永不返回直到测试收尾置位 → 线程退出 →
+/// 可收割验证）。每一代都挂（最坏敌意形态：换代后的新代同样病态）。
+struct HangMock {
+    /// 释放旗标（全部代共享——测试收尾统一置位让线程退出）。
+    release: Arc<AtomicBool>,
+}
+
+impl Rasterizer for HangMock {
+    fn rasterize(&mut self, _request: RenderRequest) -> Result<RenderedPage, CommandError> {
+        while !self.release.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(RenderedPage {
+            width_px: 8,
+            height_px: 10,
+            bgra: vec![0; 8 * 10 * 4],
+        })
+    }
+}
+
+/// 敌意反复超时压力锁：超上限次数触发看门狗 → 代数封顶
+/// [`MAX_GENERATIONS`]（含首代）、退役线程计数有界（≤ 上限）、
+/// 退役态 submit 即刻合成 `Timeout`（等待面不悬挂——修复前此路径
+/// 送死通道永无回执）、断连可观测、释放后全部收割回收、drop 不悬挂。
+#[test]
+fn worker_generation_cap_bounds_stuck_threads() {
+    use mdc_pdf::worker::MAX_GENERATIONS;
+
+    let release = Arc::new(AtomicBool::new(false));
+    let factory = {
+        let release = Arc::clone(&release);
+        move || HangMock {
+            release: Arc::clone(&release),
+        }
+    };
+    // 看门狗预算 40ms（永挂渲染 ≫ 预算——每代必触发）。
+    let mut worker = RenderWorker::watchdog(factory, Duration::from_millis(40));
+
+    // 敌意循环：超上限次数（上限 16 代 → 提交 20 个作业）。
+    // 前半：每作业真超时（看门狗 40ms 后 Timeout）+ 换代；
+    // 后半（退役态）：即刻合成 Timeout（无真渲染）。
+    let mut ids = Vec::new();
+    for _ in 0..20 {
+        let id = worker.submit(RenderRequest {
+            page: PageIndex(0),
+            width_px: 8,
+        });
+        ids.push(id);
+        match await_reply(&mut worker, id) {
+            WorkerReply::Timeout { id: got } => assert_eq!(got, id, "敌意作业 Timeout（❸弃置）"),
+            other => panic!("永挂渲染应 Timeout，得 {other:?}"),
+        }
+    }
+    // 每代恰执行一个作业（一枪一代：超时即毒化，不重放）——
+    // 前 16 代真挂（16 作业），后 4 个合成（零执行）。
+    assert!(
+        worker.is_exhausted(),
+        "20 次敌意超时后必达换代上限（上限 {}）",
+        MAX_GENERATIONS
+    );
+    // 代数封顶：generation 停在上限 - 1（0 基末代；不再递增）。
+    assert_eq!(
+        worker.generation(),
+        MAX_GENERATIONS - 1,
+        "代数封顶（含首代至多 {MAX_GENERATIONS} 代——线程/引擎实例硬上界）"
+    );
+
+    // 退役态 submit：即刻合成 Timeout（等待面不悬挂的核心锁——
+    // 修复前：送死通道永无回执，await_reply 10s 死限必 panic）。
+    let started = std::time::Instant::now();
+    let post = worker.submit(RenderRequest {
+        page: PageIndex(0),
+        width_px: 8,
+    });
+    match await_reply(&mut worker, post) {
+        WorkerReply::Timeout { id } => assert_eq!(id, post, "退役态 submit 合成 Timeout"),
+        other => panic!("退役态应合成 Timeout，得 {other:?}"),
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "合成回执应即刻送达（实测 {:?}——疑似走了真超时路径）",
+        started.elapsed()
+    );
+    // 死亡可观测：全部合成回执送达后，收报 None（哑元通道断连）。
+    assert!(
+        worker.recv_timeout(Duration::from_millis(50)).is_none(),
+        "退役态收报应断连 None（死亡可观测）"
+    );
+
+    // 资源上界（悬挂态）：退役线程计数恰 = 上限（每代一个、全部
+    // 永挂未退——最坏敌意形态的精确上界）。
+    assert_eq!(
+        worker.retired_alive(),
+        MAX_GENERATIONS as usize,
+        "永挂线程计数 = 换代上限（有界泄漏的直接量度）"
+    );
+
+    // 收尾：释放旗标 → 永挂线程全部退出 → 收割归零（跟踪式弃置
+    // 的回收证明——修复前 detach 弃置无此观测面）。
+    release.store(true, Ordering::SeqCst);
+    poll_until(
+        "释放后永挂线程全部退出并收割（retired_alive → 0）",
+        || worker.retired_alive() == 0,
+    );
+    // drop 不悬挂（退役态当前代句柄已入 retired，不 join 永挂线程）。
+    let started = std::time::Instant::now();
+    drop(worker);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "退役态 drop 不悬挂（实测 {:?}）",
+        started.elapsed()
+    );
 }
