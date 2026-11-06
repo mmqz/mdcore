@@ -175,16 +175,14 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
                 j += 1;
             }
             let inner = lines[i + 1..j.min(lines.len())].join("\n");
-            let id =
-                tree.create_node(BlockKind::Math, &inner, Attrs::new(), Vec::new());
+            let id = tree.create_node(BlockKind::Math, &inner, Attrs::new(), Vec::new());
             attach(&mut tree, root, id);
             i = j + 1;
             continue;
         }
         if trimmed.starts_with("$$") && trimmed.ends_with("$$") && trimmed.len() > 4 {
             let inner = &trimmed[2..trimmed.len() - 2];
-            let id =
-                tree.create_node(BlockKind::Math, inner, Attrs::new(), Vec::new());
+            let id = tree.create_node(BlockKind::Math, inner, Attrs::new(), Vec::new());
             attach(&mut tree, root, id);
             i += 1;
             continue;

@@ -470,6 +470,7 @@ const HANDLED: &[&str] = &[
     "li",
     "blockquote",
     "pre",
+    "math-block",
     "table",
     "hr",
     "thead",

@@ -3430,4 +3430,82 @@ mod tests {
         let e = estimate_pages_core(&tree, r#"{"images": 5}"#).expect_err("must reject");
         assert_eq!(e.code, "docx_options");
     }
+
+    // ---- #261：Math 块 / math mark 降级（CodeBlock 同构）----
+
+    /// #261：Math 块等宽逐行降级——LaTeX 源零丢失（读面文本全等），
+    /// 渲染语义降级（docx-rs 无 OMML 发射面，模块文档登记）。
+    #[test]
+    fn math_block_degrades_to_mono_lines_verbatim() {
+        let tree = markdown_to_tree("$$\n\\int_0^1 x\\,dx = \\frac{1}{2}\n$$");
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps.len(), 1, "单行数学 = 单行等宽段");
+        assert_eq!(
+            ps[0].text(),
+            "\\int_0^1 x\\,dx = \\frac{1}{2}",
+            "LaTeX 源逐字零丢失"
+        );
+        assert_eq!(ps[0].style, None, "无样式通道（code_line 同构）");
+    }
+
+    /// #261：Math 块双通道等宽——XML 面直断言（段落级 + run 级
+    /// Courier New；CodeBlock `code_block_mono_dual_channel_xml` 同构）。
+    #[test]
+    fn math_block_mono_dual_channel_xml() {
+        let tree = markdown_to_tree("$$\na + b\n$$");
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(
+                r#"<w:pPr><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />"#
+            )
+            .count(),
+            1,
+            "段落级通道 ×1 行"
+        );
+        assert_eq!(
+            xml.matches(
+                r#"<w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:cs="Courier New" />"#
+            )
+            .count(),
+            1,
+            "run 级通道 ×1 行"
+        );
+    }
+
+    /// #261：行内 math mark → 等宽 run（mark_style mono 位——code 同构；
+    /// markdown 源文本经 effective_inline 派生，定界符剥除文本零丢失）。
+    #[test]
+    fn math_mark_derives_mono_run() {
+        let tree = markdown_to_tree("能量 $E=mc^2$ 守恒");
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(r#"<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas" />"#)
+                .count(),
+            1,
+            "math mark → Consolas run（mono 位）"
+        );
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps[0].text(), "能量 E=mc^2 守恒", "文本零损（定界符剥除）");
+    }
+
+    /// #261：math mark 与 code mark 同走 mono 位（五位映射同值——
+    /// 非新通道；本例两段不邻接，各自独立等宽 run）。
+    #[test]
+    fn math_and_code_marks_share_mono_channel() {
+        let tree = single(
+            BlockKind::Paragraph,
+            "a b c",
+            Attrs::new(),
+            vec![span(0, 1, "math"), span(2, 3, "code")],
+        );
+        let xml = doc_xml(&tree);
+        assert_eq!(
+            xml.matches(r#"<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas" />"#)
+                .count(),
+            2,
+            "math/code 各一段等宽 run（同 mono 通道）"
+        );
+        let ps = paras(&roundtrip(&tree));
+        assert_eq!(ps[0].text(), "a b c");
+    }
 }
