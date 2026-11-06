@@ -200,8 +200,15 @@ impl mdc_overlay::NativeAnnotationAdapter for PdfNativeAdapter {
             }
             let engine = mdc_pdf::engine_pdfium::PdfiumEngine::open(source_bytes.to_vec())
                 .map_err(|e| AdapterError::Engine(format!("pdfium 打开失败：{e:?}")))?;
+            // 页界预检：锚点指向不存在的页 = 该标注不能表达（plan_with_
+            // geometry 按「布局不在注入源」走 unsupported——一坏不拖
+            // 全批），不是 plan 整体失败。
+            let page_count = engine.page_count();
             let mut pages = Vec::new();
             for page_no in wanted {
+                if page_no == 0 || page_no > page_count {
+                    continue;
+                }
                 let idx = mdc_pdf::page::PageIndex(page_no - 1);
                 let chars = engine.positioned_chars(idx).map_err(|e| {
                     AdapterError::Engine(format!("第 {page_no} 页字符布局失败：{e:?}"))
