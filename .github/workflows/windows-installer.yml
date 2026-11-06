@@ -1,0 +1,95 @@
+name: windows-installer
+
+# #228 R4·P0（打包链修复）：Windows CI 产 NSIS installer artifact。
+# 覆盖面：版本注入链（build-installer.py 内置断言：占位符零残留 +
+#   APPVERSION==版本单源 + 产物名含版本）/ NSIS 编译 / pdfium 载荷 /
+#   artifact 上传。**不装包**——安装行为面（注册表/快捷方式/.md 关联/
+#   自检弹窗）= BUILD-VERIFY §3 的 Lead Windows 实机复核清单。
+# 内测口径：debug 构建（restore 复用 test-shell 的 mang-shell 缓存面，
+# 分钟数可控——windows-test.yml 的「云端也扛不住」教训不重蹈）；
+# 正式出包 = BUILD-VERIFY §3 的 --release 命令（Lead 实机）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 3
+
+jobs:
+  installer:
+    name: windows / nsis installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo + mang-shell target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            mang-shell/target/
+          key: ${{ runner.os }}-installer-${{ hashFiles('mang-shell/Cargo.lock', 'third_party/zed/**/Cargo.toml') }}
+          # restore 链：installer 自身缓存 → test-shell 的缓存（debug
+          # 构建增量复用——首跑之外的分钟数主要花在链接 + NSIS）。
+          restore-keys: |
+            ${{ runner.os }}-installer-
+            ${{ runner.os }}-shell-
+
+      - name: Build mang-shell (debug——CI 内测口径)
+        working-directory: mang-shell
+        run: cargo build --locked
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Fetch pdfium (win-x64, pinned chromium/8086)
+        # 与 windows-test.yml 的 Fetch pdfium 步骤同源同 pin（版本/SHA
+        # 升级 = 两处同步改）；win 包顶层布局 = bin/pdfium.dll。
+        shell: bash
+        run: |
+          mkdir -p bin/lib
+          curl -fL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8086/pdfium-win-x64.tgz" -o /tmp/pdfium-win-x64.tgz
+          echo "1fd8af952832dbb0eb16d9249f68fe09e5f5ebf7c3dd9f6066ea2720cc28487d  /tmp/pdfium-win-x64.tgz" | sha256sum -c -
+          rm -rf /tmp/pdfium-x && mkdir -p /tmp/pdfium-x
+          tar -xzf /tmp/pdfium-win-x64.tgz -C /tmp/pdfium-x
+          cp /tmp/pdfium-x/bin/pdfium.dll bin/lib/pdfium.dll
+          test -f bin/lib/pdfium.dll && echo "pdfium.dll in place ($(stat -c%s bin/lib/pdfium.dll) bytes)"
+
+      - name: Build installer (render + stage + assert + makensis)
+        shell: bash
+        run: |
+          python packaging/nsis/build-installer.py \
+            --exe mang-shell/target/debug/mang-shell.exe \
+            --pdfium bin/lib/pdfium.dll
+
+      - name: Report
+        if: always()
+        shell: bash
+        run: |
+          echo '### Windows installer（#228 打包链）' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '| 项 | 状态 |' >> $GITHUB_STEP_SUMMARY
+          echo '|---|---|' >> $GITHUB_STEP_SUMMARY
+          echo '| 版本注入（单源 mdcore::VERSION） | build-installer.py 断言内置 |' >> $GITHUB_STEP_SUMMARY
+          echo "| 产物名 | $(ls build/nsis/mdcore-setup-*.exe 2>/dev/null || echo 未产出) |" >> $GITHUB_STEP_SUMMARY
+          echo '| 构建口径 | debug（CI 内测；正式出包 = BUILD-VERIFY §3 release 命令） |' >> $GITHUB_STEP_SUMMARY
+          echo '| 安装行为面 | 不在 CI（Lead Windows 实机复核清单） |' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-debug
+          path: build/nsis/mdcore-setup-*.exe
+          if-no-files-found: error
