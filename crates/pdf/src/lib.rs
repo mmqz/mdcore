@@ -89,6 +89,10 @@ pub mod engine_pdfium;
 pub mod deploy_check;
 pub mod outline;
 pub mod page;
+// #240 / Acrobat parity P1：打印渲染原语（DPI 驱动 + 页区间 +
+// 注释打印开关——[`crate::render::Rasterizer::rasterize_with_options`]
+// 的编排面；零引擎依赖，mock 可测）。
+pub mod print;
 pub mod protocol;
 pub mod render;
 pub mod security;
@@ -146,7 +150,8 @@ pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, Pd
 pub use ocr::{ocr_available, ocr_page, OcrEnv};
 #[cfg(feature = "engine-lopdf")]
 pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
-pub use render::{Rasterizer, RenderRequest, RenderedPage};
+pub use print::{expand_selection, render_for_print, PageSelection, PrintSpec};
+pub use render::{Rasterizer, RenderOptions, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};
 pub use writer::{AnnotationWriter, IncrementalSave, MockWriter};

@@ -99,6 +99,9 @@ mod status_info;
 // #185：系统原生错误对话框——GPU/图形栈初始化失败（GPUI 起不来）
 // 时的「用户看得见」兑底（zenity/kdialog/xmessage/notify-send 候选链）。
 mod native_dialog;
+// #240：壳面打印流（PDF → 系统打印——方案 C；参数构造纯函数面，
+// 同 native_dialog/perf 模式进 lib 树供单测）。
+mod print;
 mod shell;
 mod status_bar;
 mod tab_bar;

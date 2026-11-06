@@ -322,7 +322,33 @@ fn engine_outline_node(bookmark: &PdfBookmark<'_>, page_count: u32) -> Option<Ou
 impl Rasterizer for PdfiumEngine {
     /// 渲染单页：目标宽驱动等比缩放；S3-L2 ❷钳制（单边/总像素）——
     /// 生效尺寸在 [`RenderedPage`] 报告。
+    ///
+    /// 阅读面入口：注释恒可见（S2-3 行为契约——语义锁
+    /// pdff3_render_ext::annotations_visible_in_render）。打印面（注释
+    /// 位可调）走 [`Self::rasterize_with_options`]（#240）。
     fn rasterize(&mut self, request: RenderRequest) -> Result<RenderedPage, CommandError> {
+        self.rasterize_impl(request, true)
+    }
+
+    /// #240 打印面：注释可见位真接线（pdfium `FPDF_ANNOT`——非
+    /// trait 缺省的忽略路径）。行为验证：pdfm_acrobat_parity
+    /// `parity_print_render_dpi_range_annotations`（红墨迹开关翻转）。
+    fn rasterize_with_options(
+        &mut self,
+        request: RenderRequest,
+        options: crate::render::RenderOptions,
+    ) -> Result<RenderedPage, CommandError> {
+        self.rasterize_impl(request, options.render_annotations)
+    }
+}
+
+impl PdfiumEngine {
+    /// 渲染管线共体（阅读/打印两入口共用——钳制序与位图合同单点维护）。
+    fn rasterize_impl(
+        &mut self,
+        request: RenderRequest,
+        render_annotations: bool,
+    ) -> Result<RenderedPage, CommandError> {
         let page = self.page(request.page)?;
         let limits = Limits::default();
 
@@ -379,7 +405,9 @@ impl Rasterizer for PdfiumEngine {
             // 行为契约进代码面（升级 pdfium-render 时缺省漂移即编译期
             // 不可见的行为红——显式调用使意图持久）。语义锁
             // pdff3_render_ext::annotations_visible_in_render。
-            .render_annotations(true);
+            // #240：打印面（rasterize_with_options）按 [`RenderOptions`]
+            // 传入 false（「仅文档」档）；阅读面（rasterize）恒 true。
+            .render_annotations(render_annotations);
         page.render_into_bitmap_with_config(&mut bitmap, &config)
             .map_err(CommandError::engine)?;
         let bgra = bitmap.as_raw_bytes();

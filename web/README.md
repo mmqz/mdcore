@@ -189,7 +189,12 @@ Ctrl+S = `mdc-save` 事件（宿主 CONTRACT 桥路径 = `__md()` +
 TOC（fixed 右侧零布局侵入 + 层级缩进 + 文本定位跳转）；查找替换
 （零新增依赖面——手写 indexOf 收集 + 单事务倒序替换 = undo 一次
 撤全）；帮助面板（F1，12 行速查表）；字号 Ctrl+=/-/0（clamp
-11-28 + localStorage）；`@media print`（chrome 全隐只留正文）。
+11-28 + localStorage）；打印双态（#240）：编辑器态 `@media print`
+chrome 全隐只留正文（既有轻量纸面输出）；PDF 态 = **打印专用视图**
+——工具栏「打印」/ Ctrl+P（PDF 面板激活时接管）→ 逐页 150dpi
+渲染（pdf.js 同一管线，与屏幕渲染同源）→ PNG blob 装入隐藏打印
+容器（canvas 内存即用即释，远页不受屏幕虚拟化影响）→ 系统打印
+对话框（页码/份数/缩放由对话框承载）。
 
 ### 8.5 测试面
 

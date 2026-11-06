@@ -63,6 +63,12 @@ pub mod palette_view;
 #[path = "native_dialog.rs"]
 pub mod native_dialog;
 
+/// #240：壳面打印流（PDF → 系统打印，方案 C——GPUI 无打印 API，
+/// 交系统默认处理程序/CUPS）。纯函数面（参数构造 + 规整），进 lib
+/// 树供单测逐字锁；接线面（菜单/分发）在 shell 树。
+#[path = "print.rs"]
+pub mod print;
+
 /// #68 批 5 / #164：性能测量桩（`MANG_PERF=1` 门控——未开时零开销：
 /// 桩点一次分支预测，无计时无分配）。纯 std（OnceLock + Instant），
 /// 进 lib 树供单测钉门控/输出契约；接线面（main 启动分段 / dispatch_key

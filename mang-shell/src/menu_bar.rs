@@ -73,6 +73,9 @@ pub struct MenuContext {
     pub has_document: bool,
     /// 活动标签只读态（docx/pdf 渲染面——变更类命令灰显）。
     pub read_only: bool,
+    /// 活动标签是 PDF 文档（#240——「打印」菜单项的门槛；按路径
+    /// 扩展名判定，与 `document::open` 的分派同源口径）。
+    pub is_pdf: bool,
     /// 活动标签有选区（剪切/复制门槛——与编辑器右键菜单同判定源）。
     pub has_selection: bool,
     /// 当前编辑器字号（px——字号子菜单的域界灰显，8-32）。
@@ -106,6 +109,9 @@ pub enum MenuAction {
     OpenRecent(usize),
     /// 另存为（shell 既有 `prompt_save_as`——Ctrl+Shift+S 同链）。
     SaveAs,
+    /// 打印当前 PDF 文档（#240 壳面系统打印流——仅 PDF 档可用，
+    /// `is_pdf` 门槛灰显；非 Linux 平台交系统对话框承载设置面）。
+    Print,
     /// 退出（与标题栏 × 钮同一条 `cx.quit` 既有路径）。
     Quit,
     /// 关于（既有提示横幅 `show_notice` 承载——层 3 可发现性验收项）。
@@ -266,6 +272,9 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
                     .shortcut_for("prompt_save_as")
                     .act(MenuAction::SaveAs)
                     .with_enabled(doc),
+                MenuEntry::item("file-print", "打印…")
+                    .act(MenuAction::Print)
+                    .with_enabled(ctx.is_pdf),
                 MenuEntry::Separator,
                 MenuEntry::submenu("最近打开", recent_entries(ctx)),
                 MenuEntry::Separator,
@@ -731,6 +740,7 @@ mod tests {
         MenuContext {
             has_document: true,
             read_only: false,
+            is_pdf: true,
             has_selection: true,
             font_size: 15.,
             theme_mode: THEME_LIGHT,
@@ -748,6 +758,7 @@ mod tests {
         MenuContext {
             has_document: false,
             read_only: false,
+            is_pdf: false,
             has_selection: false,
             font_size: 15.,
             theme_mode: THEME_SYSTEM,
@@ -1125,22 +1136,24 @@ mod tests {
         let menus = build_menus(&full_ctx());
         let mut state = MenuBarState::default();
         state.open_menu(0, 0., &menus);
-        // 文件菜单条目：新建0 打开1 打开文件夹2 保存3 另存为4 |sep5| 最近打开6 |sep7| 退出8
+        // 文件菜单条目：新建0 打开1 打开文件夹2 保存3 另存为4 打印5
+        // |sep6| 最近打开7 |sep8| 退出9（#240 增「打印」）。
         assert_eq!(state.selected, 0);
         state.move_vertical(&menus, true);
         assert_eq!(state.selected, 1);
-        // 步进到子菜单标题（6）再下一步是 8（跳过 7 分隔线）。
+        // 步进到子菜单标题（7）——中途跳过分隔线 6。
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
-        assert_eq!(state.selected, 6, "停在「最近打开」");
         state.move_vertical(&menus, true);
-        assert_eq!(state.selected, 8, "跳过分隔线 7 到「退出」");
+        assert_eq!(state.selected, 7, "停在「最近打开」");
+        state.move_vertical(&menus, true);
+        assert_eq!(state.selected, 9, "跳过分隔线 8 到「退出」");
         state.move_vertical(&menus, true);
         assert_eq!(state.selected, 0, "wrap 回首项");
         state.move_vertical(&menus, false);
-        assert_eq!(state.selected, 8, "反向 wrap 回末项");
+        assert_eq!(state.selected, 9, "反向 wrap 回末项");
     }
 
     /// Enter 在子菜单标题上：展开子菜单；↓ 移动后再次 Enter 激活子菜单
@@ -1220,13 +1233,16 @@ mod tests {
         state.move_vertical(&menus, true);
         assert!(state.selected < menus[0].entries.len());
         assert_eq!(state.open_submenu, None, "越界子菜单序自愈清空");
-        // Enter：与 focused_item 的投射一致（选中项有效即激活并全关）。
+        // Enter：与 focused_item 的投射一致（选中项有效即激活并全关；
+        // 选中项置灰 = noop 菜单保持打开——一致性双向断言，不预设关闭。
+        // #240：菜单加「打印」后取模落点从「打开」变为「新建」（置灰），
+        // 断言改为双向一致性而非硬编码关闭——漂移自愈意图不变）。
         let expect = state
             .focused_item(&menus)
             .filter(|s| s.enabled)
             .map(|s| s.action);
         assert_eq!(navigate(&mut state, &menus, "enter", "mang"), expect);
-        assert!(!state.is_open());
+        assert_eq!(state.is_open(), expect.is_none());
     }
 
     /// 空菜单集防御（理论上不可达——build_menus 恒四菜单）。
@@ -1270,11 +1286,12 @@ mod tests {
         let menus = build_menus(&full_ctx());
         let entries = &menus[0].entries;
         assert_eq!(row_y_offset(entries, 0), context_menu::MENU_PADDING_Y);
-        // idx 6（最近打开）之前有两条分隔线（5、7 中前者在 0..6 内）。
+        // idx 7（最近打开）之前：六行条目（0-5，含 #240「打印」）+
+        // 一条分隔线（6，在 0..7 内）。
         let expect = context_menu::MENU_PADDING_Y
-            + context_menu::ITEM_HEIGHT * 5.
+            + context_menu::ITEM_HEIGHT * 6.
             + context_menu::ITEM_HEIGHT * context_menu::SEPARATOR_UNITS;
-        assert_eq!(row_y_offset(entries, 6), expect);
+        assert_eq!(row_y_offset(entries, 7), expect);
     }
 
     /// 锚点估算随菜单序单调递增（下拉往右跟着标题走）。

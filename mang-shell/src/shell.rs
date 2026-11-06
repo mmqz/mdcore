@@ -790,6 +790,34 @@ impl ShellApp {
 
     // ── #209：顶部菜单栏 ─────────────────────────────────────────
 
+    /// #240：打印活动标签的 PDF 文档（菜单「打印…」的分发目标）。
+    ///
+    /// 最小闭环（方案 C）：交系统打印——Linux 走 CUPS `lp`（缺省
+    /// 设置 = 全部页/1 份/实际大小；设置面扩展位见 `print::PrintSettings`），
+    /// Windows/macOS 走系统打印对话框。非 PDF 文档给可操作提示
+    /// （不静默也不崩溃）。无打印机环境（CI/沙箱）后端缺席 =
+    /// typed 错误横幅——诚实报告，不伪造成功。
+    fn print_active_document(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            self.show_notice("无打开文档——先打开一个 PDF 再打印".into(), cx);
+            return;
+        };
+        let path = tab.path.clone();
+        let doc_name = path
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let job = crate::print::PrintJob {
+            doc_name: &doc_name,
+            file: &path,
+            settings: crate::print::PrintSettings::default(),
+        };
+        match crate::print::print_pdf(&job) {
+            Ok(outcome) => self.show_notice(format!("已送打印（{}）", outcome.describe()), cx),
+            Err(err) => self.show_notice(format!("打印失败：{err}"), cx),
+        }
+    }
+
     /// #209：菜单构建上下文快照（`menu_bar::build_menus` 入参——灰显/
     /// 勾选的全部依据；每次打开/渲染/导航现场采集，菜单模型零状态）。
     fn menu_context(&self, cx: &App) -> menu_bar::MenuContext {
@@ -799,6 +827,13 @@ impl ShellApp {
             // 只读/选区判定与编辑器右键菜单同判定源（is_read_only /
             // selection_points 的 start < end——dispatch_context_menu 口径）。
             read_only: tab.is_some_and(|t| t.editor.read(cx).is_read_only()),
+            // #240：打印门槛——活动标签是 PDF（扩展名判定；与
+            // `document::open` 的 pdf 分派同源口径，大小写不敏感）。
+            is_pdf: tab.is_some_and(|t| {
+                t.path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+            }),
             has_selection: tab.is_some_and(|t| {
                 t.editor
                     .read(cx)
@@ -905,6 +940,9 @@ impl ShellApp {
                 None => {}
             },
             Act::SaveAs => self.prompt_save_as(window, cx),
+            // #240：壳面系统打印流（方案 C——Windows 打印动词/
+            // macOS open -p/CUPS lp；设置面由系统对话框或 lp 参数承载）。
+            Act::Print => self.print_active_document(cx),
             // 与标题栏 × 钮同一条 cx.quit 既有路径（该路径不经
             // on_should_close 脏确认——× 钮现状同此，行为对齐不超范围
             // 修补；统一走脏确认建议另开 issue）。

@@ -3,8 +3,8 @@
 > issue #229（R5·P1 验收产物）。口径：**Acrobat Reader（免费阅读器）常用
 > 功能面 × mdcore 现状**，每项附证据锚点（代码 `文件:行` / 测试函数名——
 > 不凭印象）。高频面（打开/渲染/表单/签名/标注/打印）另有自动化验收：
-> `crates/pdf/tests/pdfm_acrobat_parity.rs`（6 测试——打印面除外，见
-> §缺口清单）。
+> `crates/pdf/tests/pdfm_acrobat_parity.rs`（7 测试——打印面 #240 起入册，
+> 引擎原语面自动化）。
 >
 > 基线：2026-11-06 @ `main` 4ac0788。范围声明：mdcore = mdc-pdf 引擎 +
 > mang-shell 壳 + web 面（pdf.js 数据面）；Acrobat 侧基线 = Reader 常用
@@ -22,7 +22,7 @@
 | 6 | 签名 | 验签/签署/修订完整性 | **部分**（读 + 结构验证 + 已签名保护；不验签不签署） | `signature.rs:589` `read_signatures`、`forms.rs:1761` `has_signed_signature_fields`；测试 `parity_signature_read_and_signed_probe`、`pdfi_signature`(7) | 长尾⑥ |
 | 7 | 盖章 | 图章注释/公章 | **对齐**（注释 Stamp + 内容流图片盖章双路径） | `annotation.rs:198`、`stamp.rs:723` `stamp_image`（PNG/JPEG/透明度）；测试 `pdfh_stamp`(8)、`pdff2_annotate` Stamp 往返 | 长尾⑧ |
 | 8 | 标注 | 高亮/批注/注释管理 | **对齐**（11 kind 读/写/删 + 渲染可见 + Acrobat 互通公共面） | `annotate.rs:514` `PdfAnnotator`、`annotation.rs:153`；测试 `parity_annotation_add_persist_remove`、`pdfd_writer`(16)、`pdff2_annotate`(11) | 长尾⑨ |
-| 9 | 打印 | 页面设置/缩放/注释打印开关 | **缺失**（全仓零打印管线） | 全仓检索：Rust 侧无 print API/命令/菜单；web 仅 `@media print` CSS 且 PDF 面板在打印态隐藏（`web/index.html:30-40`） | **P1（已开 issue）** |
+| 9 | 打印 | 页面设置/缩放/注释打印开关 | **部分**（#240：引擎原语 + 壳系统打印流 + web 打印专用视图；真机打印验收待登记） | 引擎 `print.rs`（DPI/页区间/注释开关）+ `render.rs:55` `rasterize_with_options`；壳 `mang-shell/src/print.rs`（Windows 打印动词/macOS open -p/CUPS lp）+ 菜单「打印…」；web `pdf_view.ts` `printDocument`（150dpi 同源渲染→系统对话框）；测试 `parity_print_render_dpi_range_annotations` | 长尾①（真机验收/设置面板） |
 | 10 | 搜索 | 全文搜索/高亮定位 | **对齐**（无 rect 几何命中） | `command.rs:98` `Command::Search`、`document.rs:396`（限额/折叠/摘录）；web `pdf_view.ts`（计数+几何高亮）；测试 `pdfb_skeleton::search_*`(4) | 长尾② |
 | 11 | OCR | Reader 无此功能 | **对齐（超 Reader）**（tesseract 外进程，中英混合） | `ocr.rs:107` `ocr_page`（200DPI→PGM→tesseract）；测试 `pdff4_ocr`(5，环境门控) | 长尾⑩ |
 | 12 | 文档安全 | 权限位/口令/证书 | **部分**（打开扫描八族 + 限额 + 加密写拒；无解密/权限位模型） | `security.rs`、`security_scan.rs:41` `open_scan`；测试 `pdfe_security`(12)、`pdfb_skeleton::encrypted_assessment_denies_writes…` | 长尾⑤⑦ |
@@ -41,7 +41,7 @@
 | 表单 | `parity_form_fill_save_reopen` | 填中文值 → 增量保存（前缀逐位）→ 重开可见 |
 | 签名 | `parity_signature_read_and_signed_probe` | 读签名（结构/签名人）+ 已签名探针阴阳双态 |
 | 标注 | `parity_annotation_add_persist_remove` | 增→存（增量）→重开可见→删→重开零残留 |
-| 打印 | —（能力缺失，P1 issue 跟进） | — |
+| 打印 | `parity_print_render_dpi_range_annotations` | 150dpi 换算锚 + 页区间闭区间 + 注释开关红墨迹翻转（引擎原语面） |
 
 ## 缺口清单（分级入册——不静默）
 
@@ -49,7 +49,7 @@
 
 | 缺口 | issue | 说明 |
 |---|---|---|
-| ① 打印管线 0% | #240 | 高频验收面完全缺失。最小闭环建议：复用 `Rasterizer` 渲染输出 → 宿主打印流（页面设置/缩放模式/注释打印开关分层落地）；web 面 `@media print` 当前把 PDF 面板藏掉 |
+| ① 打印管线 0% → 已交付最小闭环（#240，2026-11-06） | #240 | 引擎：`print.rs` 打印渲染原语（DPI 驱动 + 页区间 + 注释开关）；壳：方案 C 系统打印流（GPUI 无打印 API——Windows 打印动词 / macOS open -p / CUPS lp 参数映射）；web：打印专用视图（150dpi 同源渲染 → 系统对话框）。遗留：真机打印人工验收、壳面设置面板（页区间/份数 UI）、打印预览（当前 = 屏显即预览） |
 
 ### 长尾登记（按性价比排序，暂不开单——排期总纲滚动评估）
 

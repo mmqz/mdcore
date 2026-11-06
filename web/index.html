@@ -38,6 +38,18 @@
     .cm-editor { background: #fff !important; }
     .cm-line.cm-heading { color: #000 !important; }
   }
+  /* #240 打印专用视图（PDF 打印）：屏幕不可见；body.printing-pdf 态下
+     打印输出 = PDF 渲染页（150dpi 位图 → PNG），与屏幕渲染同源
+     （pdf.js 同一管线）——编辑器/网格/PDF 屏幕视图全部退场 */
+  #pdf-print-container { display: none; }
+  @media print {
+    body.printing-pdf #pdf-print-container { display: block !important; }
+    body.printing-pdf #editor, body.printing-pdf #grid-panel,
+    body.printing-pdf #pdf-panel { display: none !important; }
+    #pdf-print-container .pdf-print-page { break-after: page; }
+    #pdf-print-container .pdf-print-page:last-child { break-after: auto; }
+    #pdf-print-container img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  }
   /* 帮助面板（TR-UI 批 C-3）：快捷键速查 */
   #help-overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.38);
                   display: flex; align-items: center; justify-content: center; }

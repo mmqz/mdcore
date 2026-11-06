@@ -343,6 +343,7 @@ class PageBitmapCache {
 const SCALE_MIN = 0.25;
 const SCALE_MAX = 4;
 const SCALE_STEP = 1.25; // 倍率步进（×1.25 / ÷1.25）
+const PRINT_SCALE = 150 / 72; // #240 打印渲染倍率（150dpi ÷ 72pt 基准 ≈ 2.08×——与引擎 PrintSpec 同口径）
 const PAGE_MARGIN = 24; // fit 宽度基准留白 px
 const CLEAR_MARGIN_FACTOR = 1.5; // 远页 canvas 释放距离（× 视口高）
 const MAX_SEARCH_HITS = 500; // 请求值（会话侧 S3 限额 1000 钳制）
@@ -553,6 +554,8 @@ export class PdfViewUI {
     const zoomOut = mkBtn('pdf-zoom-out', '−', t('pdf.zoomOutTitle'));
     const zoomIn = mkBtn('pdf-zoom-in', '+', t('pdf.zoomInTitle'));
     const zoomFit = mkBtn('pdf-zoom-fit', t('pdf.fitWidth'));
+    // #240：打印按钮（打印专用视图——逐页 150dpi 渲染后交系统打印对话框）。
+    const printBtn = mkBtn('pdf-print', t('pdf.print'), t('pdf.printTitle'));
     const searchPrev = mkBtn('pdf-search-prev', '↑', t('pdf.prevHitTitle'));
     const searchNext = mkBtn('pdf-search-next', '↓', t('pdf.nextHitTitle'));
 
@@ -634,7 +637,7 @@ export class PdfViewUI {
 
     toolbar.append(
       openBtn, fileInput, pageLabel,
-      zoomOut, zoomLabel, zoomIn, zoomFit,
+      zoomOut, zoomLabel, zoomIn, zoomFit, printBtn,
       searchInput, searchPrev, searchNext, searchCount,
       modeSelect, inkColor, inkWidth, saveBtn,
     );
@@ -700,6 +703,21 @@ export class PdfViewUI {
       this.setScale(this.scale * SCALE_STEP));
     document.getElementById('pdf-zoom-fit')?.addEventListener('click', () =>
       this.setScale(this.fitScale()));
+
+    // #240：打印（按钮 + Ctrl/Cmd+P——仅 PDF 视图激活时接管系统快捷键）。
+    document.getElementById('pdf-print')?.addEventListener('click', () => {
+      void this.printDocument();
+    });
+    document.addEventListener('keydown', (ev: KeyboardEvent): void => {
+      if (
+        (ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey &&
+        (ev.key === 'p' || ev.key === 'P') &&
+        this.panel && this.panel.style.display !== 'none' && this.pages.length > 0
+      ) {
+        ev.preventDefault();
+        void this.printDocument();
+      }
+    });
 
     this.searchInput.addEventListener('input', () => {
       void this.searchOnce(this.searchInput.value);
@@ -1980,6 +1998,72 @@ export class PdfViewUI {
       span.textContent = `session init failed (${this.sessionInitFail.code}): ${this.sessionInitFail.message} — display-only`;
       this.statusEl.appendChild(span);
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // #240 打印（打印专用视图）
+  // -----------------------------------------------------------------------
+
+  /** #240 打印：逐页渲染 150dpi 位图（PNG blob——canvas 内存即用即释）
+   * 到隐藏打印容器，交系统打印对话框（页区间/份数/缩放由对话框承载）。
+   *
+   * 同源保证：渲染走 pdf.js 同一管线（屏幕渲染同源）——打印输出 =
+   * 屏幕渲染（#240 验收：输出内容与屏幕渲染一致）。远页/未渲染页
+   * 也完整打印（打印容器独立于屏幕虚拟化——clearFarCanvases 不波及）。
+   */
+  private async printDocument(): Promise<void> {
+    if (!this.pages.length) return;
+    // 上一轮残留清理（嵌入 WebView 可能不触发 afterprint 的兜底）。
+    document.getElementById('pdf-print-container')?.remove();
+    document.body.classList.remove('printing-pdf');
+    this.showStatus(t('pdf.printRendering'), 'info');
+
+    const container = document.createElement('div');
+    container.id = 'pdf-print-container';
+    const urls: string[] = [];
+    try {
+      for (const st of this.pages) {
+        const vp = st.proxy.getViewport({ scale: PRINT_SCALE });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(vp.width));
+        canvas.height = Math.max(1, Math.floor(vp.height));
+        // 本版 pdf.js RenderParameters 走 canvas 字段（与屏幕渲染路径
+        // 同款——canvasContext 直传是旧 API）。
+        await st.proxy.render({ canvas, viewport: vp }).promise;
+        const blob = await new Promise<Blob | null>((resolve) => {
+          canvas.toBlob(resolve, 'image/png');
+        });
+        if (!blob) throw new Error('canvas toBlob failed');
+        // 位图内存即用即释（150dpi 全文档直挂 canvas 的峰值内存不可控——
+        // PNG blob 后 canvas 引用断开可回收）。
+        canvas.width = 0;
+        canvas.height = 0;
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        const img = document.createElement('img');
+        img.src = url;
+        const page = document.createElement('div');
+        page.className = 'pdf-print-page';
+        page.appendChild(img);
+        container.appendChild(page);
+      }
+    } catch (e) {
+      for (const u of urls) URL.revokeObjectURL(u);
+      this.showStatus(t('pdf.printFailed', { message: String(e) }), 'error');
+      return;
+    }
+
+    document.body.appendChild(container);
+    document.body.classList.add('printing-pdf');
+    const cleanup = (): void => {
+      container.remove();
+      document.body.classList.remove('printing-pdf');
+      for (const u of urls) URL.revokeObjectURL(u);
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    this.showStatus(t('pdf.printDialog'), 'info');
+    window.print();
   }
 
   private showStatus(text: string, kind: 'info' | 'error' | 'warn' = 'info'): void {

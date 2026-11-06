@@ -16,8 +16,7 @@
 //! 3. 表单 → `parity_form_fill_save_reopen`（填值→增量保存→重开可见）
 //! 4. 签名 → `parity_signature_read_and_signed_probe`（读签名 + 已签名探针）
 //! 5. 标注 → `parity_annotation_add_persist_remove`（增→存→重开→删→零残留）
-//! 6. 打印 → **无测试**（能力缺失：全仓零打印管线——Rust 侧无 print API/
-//!    命令/菜单；P1 缺口已开 issue 跟进，不静默）。
+//! 6. 打印 → `parity_print_render_dpi_range_annotations`（#240：DPI/页区间/注释开关三合一——引擎原语面；壳面系统打印流与 web 打印态在 mang-shell/web，真机打印验收待登记）。
 //!
 //! 环境合同与 pdfc_engine.rs 同源（不静默 skip）：pdfium 库走引擎定位序
 //! （env `MDC_PDFIUM_LIB` → 候选清单 → 系统），fixtures 走 crate 本地
@@ -225,4 +224,131 @@ fn parity_annotation_add_persist_remove() {
     reopened.save().unwrap();
     let after = PdfAnnotator::open(reopened.product_bytes()).unwrap();
     assert_eq!(after.list(None).len(), 0, "删除保存后重开应零标注");
+}
+
+// ---------------------------------------------------------------- 6. 打印
+
+/// #240 打印面（引擎原语）：DPI 换算 + 页区间 + 注释打印开关——
+/// 三合一行为闭环（#240 验收：输出与屏幕渲染一致 + 注释开关行为
+/// 符合预期 + 页区间可选）。
+///
+/// - DPI：Letter 612pt @ 150dpi → 1275px（72pt 基准 × DPI/72）；
+/// - 页区间：闭区间 [1,2] → 2 页（small.pdf = 3 页）；
+/// - 注释开关：Ink 红墨迹经 [`RenderOptions::render_annotations`]
+///   翻转——false = 「仅文档」档（红占比回落基线），true = 「文档和
+///   标注」档（红占比显著上升——与 pdff3 锁 4 同一像素口径）。
+#[cfg(feature = "engine-pdfium")]
+#[test]
+fn parity_print_render_dpi_range_annotations() {
+    use mdc_pdf::engine_pdfium::PdfiumEngine;
+    use mdc_pdf::page::PageIndex;
+    use mdc_pdf::print::{render_for_print, PageSelection, PrintSpec};
+    use mdc_pdf::writer::AnnotationWriter;
+    use mdc_pdf::writer_lopdf::LopdfWriter;
+
+    // --- ① DPI 换算 + 页区间（small.pdf：3 页 Letter 612×792pt） ---
+    let mut engine = PdfiumEngine::open(fixture_bytes("small.pdf")).unwrap();
+    let spec = PrintSpec::new(150, true);
+    let pages = render_for_print(
+        &mut engine,
+        &spec,
+        &PageSelection::Range {
+            from: PageIndex(1),
+            to: PageIndex(2),
+        },
+    )
+    .unwrap();
+    assert_eq!(pages.len(), 2, "闭区间 [1,2] → 2 页");
+    assert_eq!(pages[0].width_px, 1275, "Letter 612pt @ 150dpi → 1275px");
+    assert_eq!(pages[0].height_px, 1650, "等比高 792pt → 1650px");
+    assert_eq!(pages[0].bgra.len(), 1275 * 1650 * 4, "位图合同 w*h*4");
+    // 72dpi = 1:1 屏显基准（与屏幕渲染同口径的最小锚）。
+    let base =
+        render_for_print(&mut engine, &PrintSpec::new(72, true), &PageSelection::All).unwrap();
+    assert_eq!(base.len(), 3, "All → 3 页");
+    assert_eq!(base[0].width_px, 612, "72dpi = 1:1 pt→px");
+
+    // --- ② 注释打印开关（红墨迹可见性翻转——像素口径） ---
+    fn red_ratio(bgra: &[u8]) -> f64 {
+        let px = bgra.len() / 4;
+        if px == 0 {
+            return 0.0;
+        }
+        let mut red = 0usize;
+        let (chunks, _) = bgra.as_chunks::<4>();
+        for p in chunks {
+            // BGRA：R = p[2]。
+            if p[2] > 150 && p[1] < 100 && p[0] < 100 {
+                red += 1;
+            }
+        }
+        red as f64 / px as f64
+    }
+
+    // 基线（无标注）与「仅文档」档应同口径（红占比 ≈ 基线）。
+    let plain_red = red_ratio(&base[0].bgra);
+
+    // 加大块红色 Ink（同 pdff3 锁 4 的构造——页 0 下半幅三条粗红杠）。
+    let mut writer = LopdfWriter::from_bytes(fixture_bytes("small.pdf")).unwrap();
+    writer
+        .write_annotation(
+            PageIndex(0),
+            &mdc_pdf::annotation::Annotation {
+                id: mdc_pdf::annotation::AnnotId(1),
+                page: PageIndex(0),
+                kind: mdc_pdf::annotation::AnnotationKind::Ink {
+                    strokes: vec![
+                        vec![
+                            mdc_pdf::annotation::Point { x: 50.0, y: 280.0 },
+                            mdc_pdf::annotation::Point { x: 550.0, y: 280.0 },
+                        ],
+                        vec![
+                            mdc_pdf::annotation::Point { x: 50.0, y: 220.0 },
+                            mdc_pdf::annotation::Point { x: 550.0, y: 220.0 },
+                        ],
+                        vec![
+                            mdc_pdf::annotation::Point { x: 50.0, y: 160.0 },
+                            mdc_pdf::annotation::Point { x: 550.0, y: 160.0 },
+                        ],
+                    ],
+                    color: mdc_pdf::annotation::Rgb { r: 255, g: 0, b: 0 },
+                    width: 12.0,
+                },
+                author: "打印验证".into(),
+                origin: mdc_pdf::annotation::Origin::Human,
+                created_ms: 0,
+                modified_ms: 0,
+            },
+        )
+        .unwrap();
+    writer.save_incremental().unwrap();
+    let annotated = writer.product_bytes();
+
+    // 「文档和标注」档（render_annotations: true）。
+    let mut ann_engine = PdfiumEngine::open(annotated.clone()).unwrap();
+    let with_ann = render_for_print(
+        &mut ann_engine,
+        &PrintSpec::new(72, true),
+        &PageSelection::All,
+    )
+    .unwrap();
+    let ann_red = red_ratio(&with_ann[0].bgra);
+    assert!(
+        ann_red - plain_red > 0.02,
+        "注释打印开：红墨迹显著可见（{plain_red:.3} → {ann_red:.3}）"
+    );
+
+    // 「仅文档」档（render_annotations: false）——开关行为符合预期。
+    let mut ann_engine2 = PdfiumEngine::open(annotated).unwrap();
+    let without_ann = render_for_print(
+        &mut ann_engine2,
+        &PrintSpec::new(72, false),
+        &PageSelection::All,
+    )
+    .unwrap();
+    let off_red = red_ratio(&without_ann[0].bgra);
+    assert!(
+        (off_red - plain_red).abs() < 0.005,
+        "注释打印关：红墨迹不可见（基线 {plain_red:.3} vs 关档 {off_red:.3}）"
+    );
 }
