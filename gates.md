@@ -18,6 +18,7 @@
 | #233 | office-io zip-exotica 防线 | [gates/233.md](gates/233.md) | ✅ |
 | #234 | .doc 旧格式识别 | [gates/234.md](gates/234.md) | ✅ |
 | #257 | office-io 多节分节符读写面 | [gates/257.md](gates/257.md) | ✅ |
+| #267 | DOCX 样式继承树 typed 解析面 | [gates/267.md](gates/267.md) | 🔄 PR 中 |
 
 
 > 主档 §15.3 四条硬 Gate 的量化判定 + §28 P0-3 拆分实测。

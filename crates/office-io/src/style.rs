@@ -323,6 +323,72 @@ impl StyleTree {
         Some(eff)
     }
 
+    /// 有效格式（typed 严格面，#267）：沿 basedOn 链累积，环与未知
+    /// id 以 typed 错误上抛；与 [`StyleTree::effective_format`]（宽松
+    /// 面）互补共存：
+    ///
+    /// | 情形 | `effective_format`（宽松面，s1-t1 行为不变） | `effective_props`（本面） |
+    /// |---|---|---|
+    /// | 未知 id | `None` | `Err(StyleChainError::UnknownStyle)` |
+    /// | basedOn 环（A→B→A） | visited 截断合并（+读入时警告） | `Err(StyleChainError::CycleDetected)` |
+    /// | 悬空 basedOn（父无定义） | 截断合并 | **优雅降级**：以可见链合并（`Ok`——#267 验收 4） |
+    ///
+    /// 环语义按 #267 验收 3「A→B→A 报 typed 错误不 panic」：严格面把
+    /// 环显式交给消费方处置（宽松面保留 s1-t1 的截断合并，零回归）。
+    /// 合并序与宽松面同构：`docDefaults` 铺底 → basedOn 链基底→派生
+    /// 逐层 `Some` 覆盖 → 查询 id 自身（字段级覆盖，`Option<bool>`
+    /// 三态承载显式关闭）。
+    pub fn effective_props(&self, style_id: &str) -> Result<EffectiveFormat, StyleChainError> {
+        if !self.by_id.contains_key(style_id) {
+            return Err(StyleChainError::UnknownStyle {
+                id: style_id.to_string(),
+            });
+        }
+        // 有序路径上溯（派生→基底）：重复节点 = 环。
+        // 与 chain() 的 HashSet 截断不同：这里需要环的完整路径来
+        // 构造 typed 错误，故用 Vec 保序 + HashSet 判重。
+        let mut path: Vec<String> = vec![style_id.to_string()];
+        let mut on_path: HashSet<String> = HashSet::from([style_id.to_string()]);
+        let mut cur = style_id.to_string();
+        loop {
+            let s = &self.by_id[&cur];
+            match &s.based_on {
+                None => break,
+                // 悬空：优雅降级——可见链止于此（#267 验收 4；
+                // 读入时 audit_chains 已登记 BrokenReference 警告）。
+                Some(parent) if !self.by_id.contains_key(parent) => break,
+                Some(parent) => {
+                    if !on_path.insert(parent.clone()) {
+                        // 环：cycle = 从重复节点起的完整一圈
+                        //（A→B→C→B 从 B 查询 → [B, C]；自环 A→A → [A]）。
+                        let pos = path
+                            .iter()
+                            .position(|x| x == parent)
+                            .expect("on_path 成员必在 path");
+                        let cycle: Vec<String> = path[pos..].to_vec();
+                        return Err(StyleChainError::CycleDetected {
+                            entry: style_id.to_string(),
+                            cycle,
+                        });
+                    }
+                    path.push(parent.clone());
+                    cur = parent.clone();
+                }
+            }
+        }
+        // 基底→派生合并（path 是派生→基底，倒序即基底→派生）。
+        let mut eff = EffectiveFormat {
+            run: self.doc_defaults.run.clone(),
+            para: self.doc_defaults.para.clone(),
+        };
+        for id in path.iter().rev() {
+            let s = &self.by_id[id];
+            merge_run(&mut eff.run, &s.run);
+            merge_para(&mut eff.para, &s.para);
+        }
+        Ok(eff)
+    }
+
     fn from_parts(order: Vec<String>, styles: Vec<StyleRef>, defaults: StyleDefaults) -> Self {
         let by_id = styles
             .into_iter()
@@ -1179,6 +1245,48 @@ impl From<crate::docx::DocxError> for DocxStyleError {
 }
 
 // ---------------------------------------------------------------------------
+// 错误面二：继承链解析 typed 错误（#267——环/未知 id 显式上报）
+// ---------------------------------------------------------------------------
+
+/// 样式继承链解析错误（[`StyleTree::effective_props`] 严格面的
+/// typed 错误——#267 验收 3「环检测报 typed 错误不 panic」）。
+///
+/// 注意边界：**悬空 basedOn 不在此列**（验收 4 优雅降级 = `Ok` +
+/// [`crate::io::CompatibilityWarning`] 读入时登记）；本枚举只承载
+/// 「无法给出可信合并结果」的两种情形。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StyleChainError {
+    /// 查询的 styleId 不在样式表（容器/解析正常，id 无定义）。
+    UnknownStyle { id: String },
+    /// basedOn 链成环：`entry` = 查询入口 id；`cycle` = 环路径
+    /// （从重复节点起的完整一圈，如 A→B→C→B 查 B → `["B", "C"]`；
+    /// 自环 A→A → `["A"]`）。
+    CycleDetected { entry: String, cycle: Vec<String> },
+}
+
+impl std::fmt::Display for StyleChainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StyleChainError::UnknownStyle { id } => {
+                write!(f, "style chain: unknown style id '{id}'")
+            }
+            StyleChainError::CycleDetected { entry, cycle } => {
+                // 环路径闭合回重复节点（A→B→A——不是闭合回查询口：
+                // entry=D 查询的环是 A→B→A，D 只是入口不在环内）。
+                let first = cycle.first().map(String::as_str).unwrap_or("");
+                write!(
+                    f,
+                    "style chain: basedOn cycle from '{entry}': {} -> {first}",
+                    cycle.join(" -> ")
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for StyleChainError {}
+
+// ---------------------------------------------------------------------------
 // 写面：StyleDef + DocxWriter 分文件 impl
 // ---------------------------------------------------------------------------
 
@@ -1801,6 +1909,131 @@ mod tests {
         assert_eq!(ids, ["B", "A"]);
         // C 链 = [C]（X 不可见截断）。
         assert_eq!(b.tree.chain("C").unwrap().len(), 1);
+    }
+
+    /// #267：typed 严格面三态——环 → Err(CycleDetected)、悬空 →
+    /// 优雅降级 Ok、未知 id → Err(UnknownStyle)；与宽松面共存。
+    #[test]
+    fn effective_props_typed_errors_and_degradation() {
+        // 环 A→B→A + 悬空 C→X + 各层属性（验证 Err 优先于合并——
+        // 环成员的属性不参与任何合并结果）。
+        let xml = br#"<?xml version="1.0"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:style w:type="paragraph" w:styleId="A"><w:name w:val="A"/><w:basedOn w:val="B"/>
+  <w:rPr><w:sz w:val="40"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="B"><w:name w:val="B"/><w:basedOn w:val="A"/>
+  <w:rPr><w:sz w:val="30"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="C"><w:name w:val="C"/><w:basedOn w:val="X"/>
+  <w:rPr><w:b/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Root"><w:name w:val="Root"/>
+  <w:rPr><w:sz w:val="22"/></w:rPr>
+  <w:pPr><w:ind w:left="720"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Leaf"><w:name w:val="Leaf"/><w:basedOn w:val="Root"/></w:style>
+</w:styles>"#;
+        let bytes = build_test_docx(std::str::from_utf8(xml).unwrap(), "");
+        let b = read_docx_styles_from_bytes(&bytes).unwrap();
+
+        // ① 环：A→B→A，查询 A → typed 错误（cycle = 完整一圈
+        //    [A, B]，entry = 查询口）。两视角各自报错（B 同理）。
+        assert_eq!(
+            b.tree.effective_props("A"),
+            Err(StyleChainError::CycleDetected {
+                entry: "A".into(),
+                cycle: vec!["A".into(), "B".into()],
+            })
+        );
+        assert_eq!(
+            b.tree.effective_props("B"),
+            Err(StyleChainError::CycleDetected {
+                entry: "B".into(),
+                cycle: vec!["B".into(), "A".into()],
+            })
+        );
+
+        // ② 悬空：C→X（X 无定义）→ 优雅降级 Ok——以可见链 [C]
+        //    合并（C 自身 b=Some(true)，父属性不参与）。
+        let c = b.tree.effective_props("C").unwrap();
+        assert_eq!(c.run.bold, Some(true));
+        assert_eq!(c.run.size, None, "悬空父层不贡献任何属性");
+
+        // ③ 未知 id → Err(UnknownStyle)（宽松面 None 的 typed 对偶）。
+        assert_eq!(
+            b.tree.effective_props("Nope"),
+            Err(StyleChainError::UnknownStyle { id: "Nope".into() })
+        );
+
+        // ④ 正常链：Leaf→Root → 沿链累积（Root 的 sz=22 +
+        //    ind left=720 对 Leaf 可见——子未设即继承）。
+        let leaf = b.tree.effective_props("Leaf").unwrap();
+        assert_eq!(leaf.run.size, Some(22));
+        assert_eq!(leaf.para.indent.map(|i| i.left), Some(Some(720)));
+
+        // ⑤ 宽松面不变（零回归）：环仍 Some（截断合并），未知仍 None。
+        assert!(b.tree.effective_format("A").is_some());
+        assert!(b.tree.effective_format("Nope").is_none());
+    }
+
+    /// #267：环路径形状——自环 + 长环 + 环外入口（entry 不在环内的
+    /// 边界情形：D→A→B→A，entry=D、cycle=[A,B]）。
+    #[test]
+    fn effective_props_cycle_path_shapes() {
+        let xml = br#"<?xml version="1.0"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:style w:type="paragraph" w:styleId="Self"><w:name w:val="S"/><w:basedOn w:val="Self"/></w:style>
+<w:style w:type="paragraph" w:styleId="D"><w:name w:val="D"/><w:basedOn w:val="A"/></w:style>
+<w:style w:type="paragraph" w:styleId="A"><w:name w:val="A"/><w:basedOn w:val="B"/></w:style>
+<w:style w:type="paragraph" w:styleId="B"><w:name w:val="B"/><w:basedOn w:val="A"/></w:style>
+</w:styles>"#;
+        let bytes = build_test_docx(std::str::from_utf8(xml).unwrap(), "");
+        let b = read_docx_styles_from_bytes(&bytes).unwrap();
+
+        // 自环 Self→Self：cycle = [Self]。
+        assert_eq!(
+            b.tree.effective_props("Self"),
+            Err(StyleChainError::CycleDetected {
+                entry: "Self".into(),
+                cycle: vec!["Self".into()],
+            })
+        );
+        // 环外入口 D→A→B→A：entry=D 不在环内，cycle 从重复节点
+        // A 起 = [A, B]（诊断信息能区分「谁查询」与「环在哪」）。
+        assert_eq!(
+            b.tree.effective_props("D"),
+            Err(StyleChainError::CycleDetected {
+                entry: "D".into(),
+                cycle: vec!["A".into(), "B".into()],
+            })
+        );
+        // 环上任意成员查询同样报错（A 视角：cycle=[A,B]）。
+        assert_eq!(
+            b.tree.effective_props("A"),
+            Err(StyleChainError::CycleDetected {
+                entry: "A".into(),
+                cycle: vec!["A".into(), "B".into()],
+            })
+        );
+        // Display 面：人读诊断可操作（含入口与完整环路径）。
+        let msg = b.tree.effective_props("D").unwrap_err().to_string();
+        assert!(msg.contains("D"), "{msg}");
+        assert!(msg.contains("A -> B -> A"), "{msg}");
+    }
+
+    /// #267：两面一致性——干净链上 effective_props ≡ effective_format
+    ///（严格面 Ok 值 == 宽松面 Some 值；分歧行为只在异常面）。
+    #[test]
+    fn effective_props_matches_lenient_face() {
+        let b = chain_bundle();
+        for id in ["Top", "Mid", "Base", "MidChar"] {
+            let strict = b
+                .tree
+                .effective_props(id)
+                .expect("clean chain must resolve");
+            let lenient = b
+                .tree
+                .effective_format(id)
+                .expect("clean chain must resolve");
+            assert_eq!(strict, lenient, "faces diverge on clean chain for {id}");
+        }
     }
 
     #[test]
