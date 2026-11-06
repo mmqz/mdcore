@@ -311,12 +311,15 @@ fn write_read_xml_diff_define_style() {
             cs: Some("Aptos".into()),
         })
     );
-    // 有效格式合并（CDerived→CBase）+ 主题空表回退。
+    // 有效格式合并（CDerived→CBase）+ 默认调色板降级（#269：引擎
+    // 写面无 theme 部件 → office_default；val=auto 不可用 →
+    // 调色板解析 accent1=4472C4 + shade 99 → 254378）。
     let eff = b.tree.effective_format("CDerived").unwrap();
     assert_eq!(eff.run.size, Some(28)); // CBase 层继承
     assert_eq!(eff.run.bold, Some(true));
     assert_eq!(eff.para.outline_lvl, Some(3));
-    assert_eq!(b.effective_color("CBase"), None); // 无 theme 部件
+    assert!(b.theme.is_default_fallback()); // #269 降级态标记
+    assert_eq!(b.effective_color("CBase"), Some("254378".to_string()));
     assert_eq!(
         b.tree.get("CBase").unwrap().run.color.as_ref().unwrap().val,
         "auto"
@@ -351,6 +354,118 @@ fn write_read_xml_diff_define_style() {
         .read_to_string(&mut doc_xml)
         .unwrap();
     assert!(doc_xml.contains("<w:pStyle w:val=\"CDerived\" />"));
+}
+
+#[test]
+fn real_corpus_theme_color_word_cache_parity() {
+    // #269 验收 3/4：tint/shade 数学对 Word 实际渲染（w:val 缓存）
+    // 的对照——**直接读真实语料文件**（非内联钉定表）：
+    //
+    // 对每件 Word 产、含 themeColor+修饰引用的语料，解析其真实
+    // theme1.xml 槽位 → resolve → 与 Word 自己写入的 w:val 缓存比对。
+    // 断言分级：
+    //   · 每通道差 ≤1（Word 跨版本缓存分裂——同输入 4F81BD+BF 有
+    //     365F91/376092/366091 三种 Word 缓存值，位级一致不存在）；
+    //   · 精确命中样本数下限（防全漂移回归）。
+    //
+    // 选体语料：docx4j（Word16 产 2010_DrawingML/OpenDoPE_RptPosCon）
+    // + corpusR/D2a-nonbody（MacWord 全 accent 面覆盖）+ poi-docx
+    // （SampleDoc/Bug64561）。语料缺席（CI）时 skip——但目录在场而
+    // 选件缺席 = 钉定失效，须红（防静默空转，#262 教训）。
+
+    let dir = corpus_dir();
+    if !dir.is_dir() {
+        eprintln!("[style-corpus] corpus dir missing — skipping theme parity gate");
+        return;
+    }
+    // (文件相对路径, 期望存在的最低 themeColor+修饰样式数)
+    let targets: &[(&str, usize)] = &[
+        ("docx4j/2010_DrawingML_GraphicData_wps.docx", 4),
+        ("docx4j/OpenDoPE_RptPosCon-issue690.docx", 3),
+        ("docx4j/hyperlink_dupe.docx", 1),
+        ("../../corpusR/D2a-nonbody.docx", 8),
+        ("poi-docx/Bug64561.docx", 3),
+        ("poi-docx/FieldCodes.docx", 1),
+        ("poi-docx/58067.docx", 1),
+    ];
+    let mut total = 0usize;
+    let mut exact = 0usize;
+    let mut missing = Vec::new();
+    for (rel, min_modded) in targets {
+        let path = dir.join(rel);
+        if !path.exists() {
+            missing.push(rel.to_string());
+            continue;
+        }
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                panic!("read {rel}: {e}");
+            }
+        };
+        let bundle = match read_docx_styles_from_bytes(&bytes) {
+            Ok(b) => b,
+            Err(e) => {
+                panic!("read_docx_styles {rel}: {e}");
+            }
+        };
+        assert!(
+            !bundle.theme.is_default_fallback(),
+            "{rel}: 真实语料必须有 theme 部件（Word 产文档带 theme1.xml）"
+        );
+        let mut modded = 0usize;
+        for id in bundle.tree.style_ids() {
+            let color = match bundle.tree.get(id).and_then(|s| s.run.color.as_ref()) {
+                Some(c) => c,
+                None => continue,
+            };
+            if color.theme.is_none() || (color.tint.is_none() && color.shade.is_none()) {
+                continue;
+            }
+            let val = color.val.trim();
+            if val.len() != 6 || !val.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue; // 无缓存可比（auto 等）
+            }
+            modded += 1;
+            total += 1;
+            let got = bundle
+                .theme
+                .resolve_color(color)
+                .unwrap_or_else(|| panic!("{rel}/{id}: theme 槽未命中但 Word 缓存 {val}"));
+            let ch = |s: &str, i: usize| i32::from(u8::from_str_radix(&s[i..i + 2], 16).unwrap());
+            let d = [
+                (ch(&got, 0) - ch(val, 0)).abs(),
+                (ch(&got, 2) - ch(val, 2)).abs(),
+                (ch(&got, 4) - ch(val, 4)).abs(),
+            ];
+            assert!(
+                d[0] <= 1 && d[1] <= 1 && d[2] <= 1,
+                "{rel} 样式 {id}: theme={:?} tint={:?} shade={:?} → {got} vs Word 缓存 {val} (d={:?})",
+                color.theme, color.tint, color.shade, d
+            );
+            if d == [0, 0, 0] {
+                exact += 1;
+            }
+        }
+        assert!(
+            modded >= *min_modded,
+            "{rel}: 带修饰 themeColor 样式数 {modded} < 期望 {min_modded}（语料换血？须重钉）"
+        );
+    }
+    // 防跑空：语料在场时必须有足量样本（目录在场而选件全缺席 = 红）。
+    assert!(
+        missing.is_empty() || total > 0,
+        "钉定语料全缺席且零样本：missing={missing:?}（目录结构变化，须重钉）"
+    );
+    if total > 0 {
+        assert!(
+            exact >= 6,
+            "精确命中样本 {exact}/{total} 低于下限（算法回归？）"
+        );
+    }
+    eprintln!(
+        "[style-corpus] theme parity: {exact}/{total} exact, rest ≤1 drift (missing={missing:?})"
+    );
 }
 
 #[test]
