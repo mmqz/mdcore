@@ -94,6 +94,10 @@ pub mod render;
 pub mod security;
 #[cfg(feature = "engine-lopdf")]
 pub mod security_scan;
+// #232 / R9·P1：表格结构化提取（读面）——位置字符 → 单元格文本 +
+// 列序 + 包围盒（行列可重建）。算法层纯函数零引擎依赖（位置层 =
+// engine_pdfium::positioned_chars，feature 门内）。
+pub mod table;
 pub mod worker;
 pub mod writer;
 #[cfg(feature = "engine-lopdf")]
