@@ -29,7 +29,7 @@
 | `{{APP_NAME}}` | 对外显示名（窗口标题/安装器/桌面入口） | `mang`（**已替换，2026-10-27**） |
 | `{{APP_EXEC}}` | 可执行文件名（自研命名域，无需等待定名） | `mdcore` |
 | `{{APP_ID}}` | 反向域名标识（macOS bundle / GNOME app id） | `dev.mdcore.editor`（待定名后复核） |
-| `{{VERSION}}` | 版本号（构建脚本从 `mdcore::VERSION` 注入，**禁止手抄**） | `mdcore::VERSION` |
+| `{{VERSION}}` | 版本号（构建脚本从 `mdcore::VERSION` 注入，**禁止手抄**） | `mdcore::VERSION`；注入机制 = `nsis/build-installer.py` / `macos/build-app.sh`（#228 起，经 `packaging/version.py` 单源读取，残留占位符即构建失败） |
 | `{{BUNDLE_ICON}}` | 图标集根名（ASSET_CHECK 登记后填充） | 待资产轮 |
 
 ## 定名记录
@@ -41,7 +41,7 @@
 | 决议日期 | 2026-10-27 |
 | 检索记录 | [`compliance_release/trademark_search_2026-10-27.md`](../compliance_release/trademark_search_2026-10-27.md) |
 | A2 五步检索 | ⚠️ **降级为风险登记**（所有者决议：不注册域名、不承诺商用 → 不阻塞 A4；**商用/公开发行前必须重跑**） |
-| A3 denylist | ✅ 通过（`mang` 与 typora/muya/delta/zed/gpui/obsidian 均不近似） |
+| A3 denylist | ✅ 通过（`mang` 与 denylist 全部参考对象词均不近似；判定依据 = compliance/denylist/sources.txt 四源字集） |
 | `{{APP_NAME}}` 替换 | ✅ **已执行**（2026-10-27，见下 §A4 执行记录） |
 
 ### 三件套一致性（A1）
@@ -106,6 +106,9 @@ packaging/deb/build-deb.sh            deb 包元数据
 packaging/
 ├── README.md            # 本文件（手册 + 定名纪律 + 变量表）
 ├── checklist.md         # 分发合规核对单（发布前逐项打勾，含商标门）
+├── BUILD-VERIFY.md      # 构建可行性验证报告（Q3-3 + #228 更新）
+├── version.py           # 版本单源读取器（根 [workspace.package].version →
+│                        #   NSIS/Info.plist 注入链共用，#228）
 ├── shared/
 │   └── app.desktop.tpl  # Linux 桌面入口（deb/AppImage 共用）
 ├── appimage/
@@ -116,19 +119,26 @@ packaging/
 │   ├── postinst.tpl     # 安装后钩子（mime/scheme 注册缓存刷新）
 │   └── build-deb.sh     # deb 打包（cargo deb 或 dpkg-deb 手工布局）
 ├── nsis/
-│   └── installer.nsi.tpl# Windows NSIS 安装器（含卸载器 + 快捷方式）
+│   ├── installer.nsi.tpl# Windows NSIS 安装器模板（#228 重构：mang-shell
+│   │                    #   主线化 + pdfium 载荷 + 安装后自检）
+│   └── build-installer.py # NSIS 构建器（staging→渲染→断言→makensis，#228）
 └── macos/
     └── Info.plist.tpl   # .app bundle 元数据（文档类型 + URL scheme）
 ```
 
-## 运行时依赖（tao+wry+GTK3 架构，ADR-H1）
+## 运行时依赖（#228 后：Windows/macOS = mang-shell 主线壳，GPU 自绘渲染；Linux = mdshell-native tao+wry+GTK3，ADR-H1）
 
-- **Linux**：`libgtk-3-0`（>= 3.24）、`libwebkit2gtk-4.1-0`、`libc6`；
-  AppImage 由 linuxdeploy 携带运行时（AppRun 设置 `WEBKIT_DISABLE_COMPOSITING_MODE=1`
-  兼容部分发行版——R24-d 实测后按需裁剪）。
-- **Windows**：WebView2 Runtime（Evergreen，NSIS 模板含检测 + 引导下载）。
-- **macOS**：系统 WKWebView（无额外运行时；Info.plist 声明沙箱豁免面
-  由 R24-d 实测定稿）。
+- **Linux**（mdshell-native 壳）：`libgtk-3-0`（>= 3.24）、
+  `libwebkit2gtk-4.1-0`、`libc6`；AppImage 由 linuxdeploy 携带运行时
+  （AppRun 设置 `WEBKIT_DISABLE_COMPOSITING_MODE=1` 兼容部分发行版
+  ——R24-d 实测后按需裁剪）。
+- **Windows**（mang-shell 壳，#228 起）：GPU 自绘渲染（DirectX 后端）——**无 WebView2
+  运行时依赖**（旧 tao+wry 壳的 WebView2 面已随主线壳切换移除，处置
+  记录见 BUILD-VERIFY §3）；PDF 面 = `pdfium.dll`，NSIS 安装包捆载
+  （exe 同目录 = 定位序候选，安装后 `--check-pdfium` 自检，#223/#224）。
+- **macOS**（mang-shell 壳，#228 起构建路径落地）：GPU 自绘渲染（Metal 后端）+
+  `libpdfium.dylib` 同束（bundle 内 exe 同目录 = 定位序候选）。
+- 详径（定位序/env 覆盖/排障）见 `docs/INSTALL.md`。
 
 ## 与门禁的挂接
 

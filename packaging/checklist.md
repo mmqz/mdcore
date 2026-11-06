@@ -17,8 +17,9 @@
       `compliance_release/trademark_search_2026-10-27.md`；
       机器化项已完成：crates.io/npm/GitHub/域名初筛；
       ⚠️ **CNIPA 9/42、WIPO、common-law 未查**——商用前必须补）
-- [x] A3 定名后 denylist 近似判定零命中（`mang` 与 typora/muya/delta/zed/gpui/obsidian
-      均不近似；CI 上 `scan.sh --all` 仍需复跑）
+- [x] A3 定名后 denylist 近似判定零命中（`mang` 与 denylist 全部参考对象词
+      均不近似；判定依据 = compliance/denylist/sources.txt 四源字集；
+      CI 上 `scan.sh --all` 仍需复跑）
 - [x] A4 `{{APP_NAME}}` 占位符已全量替换为 `mang`（5 个模板/脚本 + 门禁断言同步改写），
       packaging/README.md 变量表已登记决议
 - [ ] A5 法律声明区归属句 —— **待 TRADEMARK_RULES §2.5 到位后执行**
@@ -49,7 +50,9 @@
       `x-scheme-handler/mdcore` scheme 注册（update-desktop-database /
       update-mime-database 刷新验证）
 - [ ] D2 Windows：NSIS 安装/卸载注册表面（开始菜单快捷方式 + 默认程序
-      注册 + WebView2 Runtime 检测引导）
+      注册 + 安装后 pdfium 部署自检 `--check-pdfium` 冒烟——#228 起
+      安装包捆载 pdfium.dll 并复用 #224 自检；WebView2 面已随主线壳
+      mang-shell 的 GPU 自绘（DirectX 后端）架构移除）
 - [ ] D3 macOS：Info.plist 文档类型（.md）+ URL scheme（mdcore://）声明，
       Gatekeeper 冒烟（未签名时的用户引导文案）
 
