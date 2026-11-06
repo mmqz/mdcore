@@ -508,7 +508,6 @@ mod tests {
             "**加粗文本**",
             Attrs::new(),
             marks,
-            None,
         );
         let root = tree.root();
         let len = tree.node(root).children.len();

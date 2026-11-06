@@ -18,8 +18,22 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::id::BlockId;
 use crate::markdown;
 use crate::Reject;
+
+/// #244 路线 A：meta 顶层格式版本。
+///
+/// - **v2**（当前）：携带 `blocks` = 文档先序持久化 ID 表（父先子后，
+///   跳过虚根）——save→open 身份稳定（I2），跨会话 undo 物化 ID 不与
+///   重解析存活块撞号（I3）。
+/// - **v1（缺省 = 旧档）**：无 blocks 表。open 按先序重发 ID（旧语义）
+///   ——旧档携带的历史栈若与重发 ID 撞号，由 register 守卫（I4）在
+///   undo 时响亮拦截（typed error + 状态完整保留），不再静默毒化。
+///   旧档再保存即升 v2（单向收敛，与 history 版本闸门同哲学）。
+/// - **未来版本（> 2）**：blocks 表语义未知不解读，先序回退；其余字段
+///   （正文/身份/revision/history 各自闸门）照常（前向保护）。
+pub const META_FORMAT_VERSION: u32 = 2;
 
 /// 进程内熵混合计数器（每次生成都翻搅一次哈希输入）。
 static ENTROPY_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -216,22 +230,33 @@ impl Core {
     }
 
     /// 存档：返回 (markdown, meta json)。meta 自含 document_id / revision /
-    /// 历史栈（整栈 JSON 嵌入，携带 `HISTORY_FORMAT_VERSION` 版本字段），
-    /// 重开 = `open_document` 一行复原。
+    /// 历史栈（整栈 JSON 嵌入，携带 `HISTORY_FORMAT_VERSION` 版本字段）/
+    /// **blocks 先序 ID 表**（#244 路线 A，携带 `META_FORMAT_VERSION`），
+    /// 重开 = `open_document` 一行复原（含块身份）。
     pub fn save_document(&self) -> (String, String) {
         let md = markdown::tree_to_markdown(&self.tree);
         let history: serde_json::Value =
             serde_json::from_str(&self.history.to_json()).unwrap_or(serde_json::Value::Null);
+        let blocks: Vec<u64> = self.tree.preorder_block_ids().iter().map(|b| b.0).collect();
         let meta = serde_json::json!({
+            "meta_format": META_FORMAT_VERSION,
             "document_id": self.document_id.map(|id| id.to_string()),
             "revision": self.revision,
+            "blocks": blocks,
             "history": history,
         });
         (md, meta.to_string())
     }
 
-    /// 开档：from_markdown + meta 复原（document_id / revision / 历史栈）。
-    /// meta 畸形 = 显式 Reject（宁可开不了档，不静默错配身份）。
+    /// 开档：from_markdown + meta 复原（document_id / revision / 历史栈 /
+    /// 块身份表）。meta 畸形 = 显式 Reject（宁可开不了档，不静默错配身份）。
+    ///
+    /// 块身份（#244 路线 A）：meta v2 携 blocks 先序表 → 按表恢复原 ID
+    /// （save→open 身份稳定）；表内重复/非 u64 = 畸形 meta 显式 Reject；
+    /// **数量失配**（正文被外部改动/部分写入）= 降级：先序重发 + 丢弃
+    /// 历史栈（history 路径引用旧结构，照常恢复会静默写错位置——宁可
+    /// 丢撤销不赌树）。旧档（无表）按先序重发，撞号面由 register 守卫
+    /// 响亮拦截。
     ///
     /// 历史栈过 `History::from_json` 版本闸门（#221 补充修复）：缺版本/
     /// 旧版本/未知未来版本的栈不可信（#220 修复前的 inverses 为整体
@@ -257,14 +282,62 @@ impl Core {
             Some(h) => Some(serde_json::to_string(h).map_err(|e| bad(format!("history: {e}")))?),
         };
 
-        let mut core = Core::from_markdown(markdown_src);
+        // #244：blocks 表仅当前 meta 版本解读（v1 缺省/未来版本 → 忽略；
+        // 字段在但非数字 = 畸形 meta 显式 Reject）。表畸形（非数组/非 u64/
+        // 重复）同样 Reject；数量失配在 from_markdown_with_ids 里报出，
+        // 由降级分支接管。
+        let meta_format: Option<u64> = match meta.get("meta_format") {
+            None => None, // v1 旧档（本字段 v2 起写入）
+            Some(v) => Some(
+                v.as_u64()
+                    .ok_or_else(|| bad(format!("meta_format must be a number, got {v}")))?,
+            ),
+        };
+        let blocks: Option<Vec<BlockId>> = match meta_format {
+            Some(v) if v == META_FORMAT_VERSION as u64 => match meta.get("blocks") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::Array(arr)) => {
+                    let mut ids = Vec::with_capacity(arr.len());
+                    let mut seen = std::collections::BTreeSet::new();
+                    for entry in arr {
+                        let raw = entry
+                            .as_u64()
+                            .ok_or_else(|| bad(format!("blocks entry must be u64, got {entry}")))?;
+                        if !seen.insert(raw) {
+                            return Err(bad(format!("duplicate block id {raw} in blocks table")));
+                        }
+                        ids.push(BlockId(raw));
+                    }
+                    Some(ids)
+                }
+                Some(other) => return Err(bad(format!("blocks must be an array, got {other}"))),
+            },
+            _ => None,
+        };
+
+        // 降级标记：数量失配（meta 与正文失同步）时丢弃历史栈——
+        // 旧结构的路径/物化 ID 对不上重发后的树，照常恢复会静默写错位置。
+        let mut history_dropped = false;
+        let mut core = match blocks {
+            Some(ids) => match Self::from_markdown_with_ids(markdown_src, &ids) {
+                Ok(c) => c,
+                Err(_) => {
+                    history_dropped = true;
+                    Self::from_markdown(markdown_src)
+                }
+            },
+            None => Self::from_markdown(markdown_src),
+        };
         if let Some(id) = doc_id {
             core.set_document_id(Some(id))?; // 会回写 genesis
         }
         core.revision = revision;
         if let Some(h) = history_json {
-            core.set_history_json(&h)
-                .map_err(|e| bad(format!("bad history json: {e}")))?;
+            if !history_dropped {
+                core.set_history_json(&h)
+                    .map_err(|e| bad(format!("bad history json: {e}")))?;
+            }
+            // 降级分支：留 default History（新会话，无合并窗残留）
         }
         Ok(core)
     }

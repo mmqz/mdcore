@@ -135,7 +135,6 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
                 &inner,
                 attr("lang", &lang),
                 Vec::new(),
-                None,
             );
             attach(&mut tree, root, id);
             i = j + 1;
@@ -151,14 +150,13 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
                 &h.1,
                 attr("level", &h.0.to_string()),
                 Vec::new(),
-                None,
             );
             attach(&mut tree, root, id);
             i += 1;
             continue;
         }
         if is_thematic(line) {
-            let id = tree.create_node(BlockKind::ThematicBreak, "", Attrs::new(), Vec::new(), None);
+            let id = tree.create_node(BlockKind::ThematicBreak, "", Attrs::new(), Vec::new());
             attach(&mut tree, root, id);
             i += 1;
             continue;
@@ -171,13 +169,7 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
                 rows.push(lines[j]);
                 j += 1;
             }
-            let id = tree.create_node(
-                BlockKind::Table,
-                &rows.join("\n"),
-                Attrs::new(),
-                Vec::new(),
-                None,
-            );
+            let id = tree.create_node(BlockKind::Table, &rows.join("\n"), Attrs::new(), Vec::new());
             attach(&mut tree, root, id);
             i = j;
             continue;
@@ -187,22 +179,16 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
             // 同深度同一 quote 容器复用
             if let Some((k, d, id)) = stack.last().copied() {
                 if k == BlockKind::Blockquote && d == depth {
-                    let p = tree.create_node(
-                        BlockKind::Paragraph,
-                        &bq.1,
-                        Attrs::new(),
-                        Vec::new(),
-                        None,
-                    );
+                    let p = tree.create_node(BlockKind::Paragraph, &bq.1, Attrs::new(), Vec::new());
                     attach(&mut tree, id, p);
                     i += 1;
                     continue;
                 }
             }
             pop_ge(&mut stack, depth);
-            let q = tree.create_node(BlockKind::Blockquote, "", Attrs::new(), Vec::new(), None);
+            let q = tree.create_node(BlockKind::Blockquote, "", Attrs::new(), Vec::new());
             attach_under_stack(&mut tree, root, &stack, q);
-            let p = tree.create_node(BlockKind::Paragraph, &bq.1, Attrs::new(), Vec::new(), None);
+            let p = tree.create_node(BlockKind::Paragraph, &bq.1, Attrs::new(), Vec::new());
             attach(&mut tree, q, p);
             stack.push((BlockKind::Blockquote, depth, q));
             i += 1;
@@ -221,7 +207,6 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
                     a
                 },
                 Vec::new(),
-                None,
             );
             attach_under_stack(&mut tree, root, &stack, id);
             stack.push((BlockKind::ListItem, depth, id));
@@ -229,7 +214,7 @@ pub fn markdown_to_tree(md: &str) -> BlockTree {
             continue;
         }
         // paragraph（一行一块，v0 规则）
-        let id = tree.create_node(BlockKind::Paragraph, line, Attrs::new(), Vec::new(), None);
+        let id = tree.create_node(BlockKind::Paragraph, line, Attrs::new(), Vec::new());
         attach(&mut tree, root, id);
         i += 1;
     }

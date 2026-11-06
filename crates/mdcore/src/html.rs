@@ -1475,7 +1475,7 @@ fn parse_table_text(text: &str) -> Option<(Vec<String>, Vec<Vec<String>>)> {
 
 fn materialize(nodes: Vec<BNode>, tree: &mut BlockTree, parent: NodeId) {
     for b in nodes {
-        let id = tree.create_node(b.kind, &b.text, b.attrs, b.marks, None);
+        let id = tree.create_node(b.kind, &b.text, b.attrs, b.marks);
         let len = tree.node(parent).children.len();
         let _ = tree.insert_child(parent, len, id);
         materialize(b.children, tree, id);

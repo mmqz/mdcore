@@ -2,9 +2,12 @@
 //!
 //! - 单调分配器，**永不回收**（delete 失效即弃，§8.2）。
 //! - 明确否决 Merkle/内容哈希 ID（§8.4）：内容变化不传播身份。
-//! - 不写入 Markdown（§8.3）；持久身份走 workspace metadata 映射（R9+）。
+//! - 不写入 Markdown（§8.3）；持久身份走 workspace metadata 映射——
+//!   #244（审计 P0-1）已落地：`save_document` 把先序 ID 表写进 meta
+//!   （`meta_format` v2），`open_document` 按表恢复（见 document.rs）。
 //! - undo/redo/replay 中 ID 复原：history entry 与 inverse op 携带已物化的
-//!   具体 ID（见 lib.rs `materialize`），allocator 只前进不回退。
+//!   具体 ID（见 lib.rs `materialize`），allocator 只前进不回退；物化 ID
+//!   落树必经 `BlockTree::create_node_with_id` 撞号守卫（I4，#244）。
 
 use serde::{Deserialize, Serialize};
 

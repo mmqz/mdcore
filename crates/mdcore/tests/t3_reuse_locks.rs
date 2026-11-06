@@ -2,24 +2,24 @@
 //!
 //! 来源：boundary-audit P3（编辑事务/撤销审计）登记的测试锁缺口 G1/G4/G6
 //! （G2 = 设计事实非缺陷——undo 不恢复选区属 View 域；G5 = undo 栈无上限
-//! 属资源策略，留产品裁决，不在本文件伪造"行为"）。四条锁全部为
-//! **现状锁（characterization）**：锁定的是当前实际行为，供复用方作为
-//! 消费契约依据；其中 G4 两条固化的是 save→open 的 **ID 漂移边界**
-//! （审计 P2 §3 路 A 的【推断】在此转为【测试验证】）——它们不是
-//! "应当如此"的语义承诺，未来若刻意改变该行为（如 ID 持久化进 meta），
-//! 请同步更新本文件与契约文档，而非视红灯为回归。
+//! 属资源策略，留产品裁决，不在本文件伪造"行为"）。
 //!
 //! 锁清单：
 //! 1. G1：新条目入栈清空 redo（history.rs push_entry）——此前仅有代码级
 //!    保证，无专属用例（r12 的 !can_redo() 断言上下文是栈耗尽非清空）；
-//! 2. G4a：结构性插入后 save→open，块 ID 按文档先序重解析重编号（漂移
-//!    实证：物化 ID 不跨 save→open 存活，跨档引用须知）；
-//! 3. G4b：save→open 后 undo 重插物化 ID 与重解析存活块**撞号**的边界
-//!    （BTreeMap 注册覆盖无守卫 → 树内重复 BlockId，旧块从 id_index
-//!    失联——审计 P2 §3 连带边界的可复现构型）；
+//! 2. G4a：结构性插入后 save→open 块 ID **稳定**（#244 路线 A：blocks 表
+//!    按位恢复原 ID，物化 ID 跨档存活）——原「先序重编号漂移」现状锁
+//!    已随 #244 改写为语义锁（该漂移正是审计 P0-1 的第一失效点）；
+//! 3. G4b：跨会话 undo 重插物化 ID 不再撞号（#244 I1/I3）；旧档（无
+//!    blocks 表）撞号面由 register 守卫响亮拦截（I4/I5：typed error +
+//!    状态完整保留，不静默毒化）；
 //! 4. G6：合并窗内 coalesced 事务与组首**共享同一 revision**（事件面
 //!    消费契约：revision 不是事件流的全局唯一序号，按 revision 去重/
 //!    排序的消费者必错）。
+//!
+//! 历史：G4 两条原为现状锁（固化「ID 按位置漂移 + 撞号静默覆盖」），
+//! #244（审计 P0-1）落地后按本文件头部旧约（「若 ID 持久化进 meta，
+//! 同步更新本文件与契约文档」）改写为语义锁。
 
 use std::sync::Arc;
 
@@ -82,14 +82,14 @@ fn push_entry_clears_redo_stack_on_new_entry() {
     assert!(c.redo().is_none(), "redo() 对清空栈返回 None");
 }
 
-/// G4a：结构性插入后 save→open 的块 ID 漂移——现状锁。
+/// G4a：结构性插入后 save→open 块 ID 稳定——语义锁（#244 路线 A）。
 ///
-/// 机制（审计 P2 §3 路 A）：md 不含 ID；open = 重解析按文档先序重新
-/// 分配 1..n。结构性插入产生的物化 ID（如 4）不跨 save→open 存活——
-/// 重开后 ID 序列回到位置编号。内容与历史栈完整复原（save_document
-/// meta 嵌整栈），**只有块级身份漂移**。
+/// 机制：`save_document` 把活树先序 ID 表写进 meta（blocks 字段，
+/// `meta_format` v2）；`open_document` 按表恢复原 ID。结构性插入产生
+/// 的物化 ID（如 4）跨 save→open 存活——跨档持有物化 BlockId 的消费
+/// 者（AI 锚点 / 协作端 / 证据定位）不再失联。内容与历史栈照常复原。
 #[test]
-fn save_open_renumbers_ids_after_structural_edit_current_behavior() {
+fn save_open_preserves_ids_after_structural_edit() {
     let mut c = Core::from_markdown_with_clock("p1\n\np2\n\np3", Arc::new(|| 0));
     assert_eq!(preorder_ids(&c), vec![1, 2, 3], "解析按先序分配 1..n");
 
@@ -104,22 +104,20 @@ fn save_open_renumbers_ids_after_structural_edit_current_behavior() {
         "MID".to_string(),
     )
     .unwrap();
-    let live = preorder_ids(&c);
-    assert_eq!(live, vec![1, 4, 2, 3], "活树先序含物化 ID 4");
+    assert_eq!(preorder_ids(&c), vec![1, 4, 2, 3], "活树先序含物化 ID 4");
 
     let (md, meta) = c.save_document();
     let reopened = Core::open_document(&md, &meta).unwrap();
 
-    // 现状锁：重开 4 块按文档先序重编号 [1,2,3,4]——活树中 MID 的物化
-    // ID 4（位置 1）漂移为 2，ID 4 的语义从 MID 转移给 p3。物化 ID 不跨
-    // save→open 存活。
+    // 语义锁（#244）：blocks 表按位恢复原 ID——物化 ID 4 跨档存活
+    // （修复前为先序重编号：[1,4,2,3] 漂移为 [1,2,3,4]，ID 4 的语义
+    // 从 MID 转移给 p3——审计 P0-1 第一失效点，已消除）。
     assert_eq!(
         preorder_ids(&reopened),
-        vec![1, 2, 3, 4],
-        "现状锁（非语义承诺）：save→open 重解析按先序重编号——活树 \
-         [1,4,2,3] 漂移为 [1,2,3,4]，跨档持有物化 BlockId 的消费者失联"
+        vec![1, 4, 2, 3],
+        "#244 语义锁：save→open 块身份稳定（物化 ID 跨档存活）"
     );
-    // 内容与历史完整复原（漂移仅限块级身份）。
+    // 内容与历史完整复原（save_document meta 嵌整栈）。
     assert_eq!(
         mdcore::markdown::tree_to_markdown(&reopened.tree),
         mdcore::markdown::tree_to_markdown(&c.tree),
@@ -132,17 +130,16 @@ fn save_open_renumbers_ids_after_structural_edit_current_behavior() {
     );
 }
 
-/// G4b：save→open 后 undo 重插物化 ID 与重解析存活块撞号——现状锁。
+/// G4b：跨会话 undo 重插物化 ID 不再撞号——语义锁（#244 路线 A + I1/I3）。
 ///
-/// 构型（审计 P2 §3 连带边界，撞点经实测校准）：活树 [1,2,3,4] → 插入
+/// 构型（沿审计 P2 §3 连带边界，撞点经实测校准）：活树 [1,2,3,4] → 插入
 /// MID（物化 5）→ [1,5,2,3,4] → 删除 p3（路径 [3]，逆 = 重建 p3 物化
-/// id 3）→ 活树 [1,5,2,4] → save。重开重解析 4 块（p1,MID,p2,p4）按
-/// 先序 [1,2,3,4]——p2 顶占了被删 p3 的旧 ID 3。此时 undo 删除：逆序
-/// 物化 InsertBlock(id=3) 落树 → 与重解析 p2 的 ID 3 **撞号**（注册表
-/// BTreeMap::insert 覆盖无守卫）→ 树内重复 BlockId，先注册的 p2 从
-/// id_index 失联（仍可按路径访问）。
+/// id 3）→ 活树 [1,5,2,4] → save。重开按 blocks 表恢复原 ID
+/// [1,5,2,4]（修复前为先序重发 [1,2,3,4]——p2 顶占被删 p3 的旧 ID 3，
+/// 正是撞号根源）。undo 删除：物化 InsertBlock(id=3) 落树——3 不在
+/// 活树在册集 → 无撞号，树恢复 [1,5,2,3,4] 唯一。
 #[test]
-fn save_open_undo_rematerialization_id_collision_boundary() {
+fn cross_session_undo_rematerialization_no_collision() {
     let mut c = Core::from_markdown_with_clock("p1\n\np2\n\np3\n\np4", Arc::new(|| 0));
     assert_eq!(preorder_ids(&c), vec![1, 2, 3, 4]);
 
@@ -164,25 +161,113 @@ fn save_open_undo_rematerialization_id_collision_boundary() {
 
     let (md, meta) = c.save_document();
     let mut reopened = Core::open_document(&md, &meta).unwrap();
-    // 重解析 4 块（p1,MID,p2,p4）按先序 [1,2,3,4]——p2 顶占 ID 3（原
-    // p3 身份）。
-    assert_eq!(preorder_ids(&reopened), vec![1, 2, 3, 4]);
+    // blocks 表按位恢复：p1=1, MID=5, p2=2, p4=4（修复前先序重发
+    // [1,2,3,4]，p2 顶占 ID 3）。
+    assert_eq!(preorder_ids(&reopened), vec![1, 5, 2, 4]);
 
-    // undo 删除：重插 p3（物化 id=Some(3)）→ 与存活 p2 的 ID 3 撞号。
-    reopened.undo().expect("undo 删除成功");
+    // undo 删除：重插 p3（物化 id=3）→ 3 空闲 → 无撞号（I3）。
+    reopened
+        .undo()
+        .expect("跨会话 undo 必须成功（#244 I3：物化 ID 与持久化活树不再撞号）");
     let ids = preorder_ids(&reopened);
     assert_eq!(
         ids,
-        vec![1, 2, 3, 3, 4],
-        "现状锁（非语义承诺）：树内出现重复 BlockId 3——重解析存活块与\
-         历史物化 ID 撞号，注册表覆盖无守卫"
+        vec![1, 5, 2, 3, 4],
+        "undo 后树恢复删除前构型 [1,5,2,3,4]"
     );
-    let id3_count = ids.iter().filter(|&&i| i == 3).count();
-    assert_eq!(id3_count, 2);
-    // 覆盖语义：lookup_id(3) 指向最后注册者（重插的 p3），先注册的 p2
-    // 从 id_index 失联（但仍可按路径访问——树本体无损）。
-    let lookup = reopened.tree.lookup_id(mdcore::id::BlockId(3));
-    assert!(lookup.is_some(), "注册表仍可查 ID 3（指向最后注册者）");
+    assert_eq!(
+        ids.iter().filter(|&&i| i == 3).count(),
+        1,
+        "I1：ID 3 在活树唯一（修复前为重复 2 次）"
+    );
+    // 先注册者不再失联（修复前：BTreeMap::insert 覆盖 → p2 从 id_index
+    // 失联）。注册表对每个在册 ID 恰好可解。
+    assert!(
+        reopened.tree.lookup_id(mdcore::id::BlockId(2)).is_some(),
+        "p2 仍在册（修复前被静默覆盖失联）"
+    );
+    assert!(
+        reopened.tree.lookup_id(mdcore::id::BlockId(3)).is_some(),
+        "重插的 p3 可按 ID 寻址"
+    );
+}
+
+/// G4b-legacy：旧档（无 blocks 表）跨会话 undo 撞号 → register 守卫响亮
+/// 拦截——语义锁（#244 I4/I5）。
+///
+/// 旧档 = #244 修复前形态（meta 无 meta_format / blocks 字段）：open 按
+/// 先序重发 ID，历史栈照常恢复——undo 重插物化 ID 3 与存活 p2（重发
+/// 顶占 3）撞号。守卫语义：typed error（IdCollision）拒绝落树，条目压
+/// 回栈 + 边界拨回（T1-fix F10），调用后状态与调用前完全一致——
+/// **绝不静默覆盖毒化活树**（修复前：树内重复 BlockId + p2 失联）。
+#[test]
+fn legacy_meta_cross_session_undo_collision_fails_loud() {
+    let mut c = Core::from_markdown_with_clock("p1\n\np2\n\np3\n\np4", Arc::new(|| 0));
+    c.insert_block(
+        c.revision(),
+        vec![],
+        1,
+        BlockKind::Paragraph,
+        Default::default(),
+        "MID".to_string(),
+    )
+    .unwrap();
+    c.delete_block(c.revision(), vec![3]).unwrap();
+    let (md, meta) = c.save_document();
+
+    // 降格为旧档形态：剥掉 meta_format + blocks（#244 前的 meta 形状）。
+    let mut v: serde_json::Value = serde_json::from_str(&meta).unwrap();
+    let obj = v.as_object_mut().unwrap();
+    obj.remove("meta_format");
+    obj.remove("blocks");
+    let legacy_meta = v.to_string();
+
+    let mut reopened = Core::open_document(&md, &legacy_meta).unwrap();
+    assert_eq!(
+        preorder_ids(&reopened),
+        vec![1, 2, 3, 4],
+        "旧档：先序重发（p2 顶占 ID 3——#244 前旧语义，撞号面打开）"
+    );
+
+    // 撞号 undo：物化 id=3 vs 存活 p2(3) → IdCollision 拒绝 → undo 返回
+    // None，条目压回，树/revision/栈深与调用前一致。
+    let depth_before = reopened.history.undo_depth();
+    let rev_before = reopened.revision();
+    assert!(
+        reopened.undo().is_none(),
+        "I5：撞号 undo 响亮失败（typed IdCollision），不得静默毒化"
+    );
+    assert_eq!(
+        preorder_ids(&reopened),
+        vec![1, 2, 3, 4],
+        "状态与调用前一致（守卫拒绝 + 条目压回，树零变更）"
+    );
+    assert_eq!(reopened.history.undo_depth(), depth_before, "条目压回栈");
+    assert_eq!(reopened.revision(), rev_before, "revision 不动（未 bump）");
+    // 注册表未被静默覆盖：ID 3 仍指向先注册的 p2（而非重插条目）。
+    assert!(
+        reopened.tree.lookup_id(mdcore::id::BlockId(3)).is_some(),
+        "id_index 未被覆盖（守卫先于插入拒绝）"
+    );
+    // 旧档升级路径：继续编辑并再保存 → 升 v2（blocks 表写入，单向收敛）。
+    reopened
+        .apply_ops(
+            vec![Op::ReplaceText {
+                path: vec![0],
+                start: 0,
+                end: 0,
+                insert: "x".into(),
+            }],
+            ApplyMeta::view("edit"),
+        )
+        .unwrap();
+    let (_, meta2) = reopened.save_document();
+    let v2: serde_json::Value = serde_json::from_str(&meta2).unwrap();
+    assert_eq!(
+        v2["meta_format"],
+        serde_json::json!(mdcore::document::META_FORMAT_VERSION),
+        "旧档再存即升 v2（blocks 表随档写入）"
+    );
 }
 
 /// G6：coalesced 事务的事件与组首共享同一 revision——消费契约锁。
