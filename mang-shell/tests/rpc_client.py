@@ -23,6 +23,9 @@
 
        ./rpc_client.py SOCK --smoke FILE1 FILE2
 
+     #275 起 FILE1/FILE2 必须在 --smoke-workspace 工作区内（open_file/
+     save_as 沙箱收口——rpc_smoke.sh 已将 fixtures 复制进 $WS）。
+
   3. #111 扩展序列（rpc_smoke.sh 消费——15 命令面 + 订阅推送 +
      双向回显 + 多客户端订阅互不干扰；应用需以 --smoke-user-type
      启动——本序列断言 source=user 的用户键入事件。FILE2 为干净
@@ -434,8 +437,9 @@ def run_smoke2(sock, file1, file2):
     r = cmd({"id": 11, "cmd": "save"})
     assert r["saved"] is True and r["modified"] is False, r
 
-    # ---- 8. save_as：另存新名 → tab 身份迁移 ----
-    saved_as = "/tmp/mang-rpc-smoke-saveas.md"
+    # ---- 8. save_as：另存新名 → tab 身份迁移（#275：目标须在工作区内
+    #      ——沙箱收口后 /tmp 根外路径会被拒，改用 file2 同目录）----
+    saved_as = os.path.join(os.path.dirname(file2), "smoke-saveas.md")
     r = cmd({"id": 12, "cmd": "save_as", "path": saved_as})
     assert r["saved"] is True and r["tab_index"] is not None, r
     # 身份迁移实测：按新路径能找到（close 不再报「标签未找到」）
@@ -565,6 +569,22 @@ def run_smoke_fs(sock, ws):
     )
     cmd_err({"id": 7, "cmd": "delete", "path": "../../etc"}, "工作区")
     assert not os.path.exists("/tmp/mang-escape.md"), "逃逸写入绝不能落盘"
+    # ---- 4b. #275 沙箱收口：open_file / save_as 同门（此前是
+    #      ControlCommand 族旁路——S-1 读链 / S-2 写链源头）。
+    #      open_file 根外拒：读链断（open→select_all→get_state 泄不出去）。
+    cmd_err({"id": 41, "cmd": "open_file", "path": "/etc/passwd"}, "工作区")
+    #      save_as 根外拒：写链断（活动文档是启动参数 FILE——可编辑
+    #      md；若放行将把内容写到根外目标）。落盘不得发生。
+    cmd_err(
+        {"id": 42, "cmd": "save_as", "path": "/tmp/mang-escape-saveas.md"},
+        "工作区",
+    )
+    assert not os.path.exists("/tmp/mang-escape-saveas.md"), "逃逸另存绝不能落盘"
+    #      open_file 相对路径仍在根内放行（AI 主用法不变）。
+    r = cmd({"id": 43, "cmd": "open_file", "path": "readme.md"})
+    assert r["already_open"] is False, r
+    r = cmd({"id": 44, "cmd": "close_file", "path": os.path.join(ws, "readme.md")})
+    assert r["tabs_remaining"] >= 1, r
 
     # ---- 5. create_dir + create_file（含内容）+ 已存在/父目录拒绝 ----
     cmd({"id": 8, "cmd": "create_dir", "path": "gen"})

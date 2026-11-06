@@ -91,8 +91,16 @@ uv run mang-mcp --help    # 源码方式（无需 pip 安装即可本地跑）
 - **错误原样透出**：服务端拒绝文案（中文）经 isError 直达宿主；SDK 不做
   字符串匹配分支（协议文档禁止）。
 - **工作区沙箱**：`read_file` / `write_file` / `batch_replace` /
-  `replace_text` 只在工作区根目录内生效（无工作区全拒）——协议级边界，
-  详见 [`mang-shell/docs/rpc-protocol.md`](../../mang-shell/docs/rpc-protocol.md)。
+  `replace_text` / `open_file` / `save_as`（#275 起后两者同门）只在工作区
+  根目录内生效（无工作区全拒）——协议级边界，详见
+  [`mang-shell/docs/rpc-protocol.md`](../../mang-shell/docs/rpc-protocol.md)。
+- **组合逃逸已闭合（#275）**：历史上 `open_file` 不受沙箱约束，敌意 LLM
+  可组链越权——读链 `open_file(任意路径) → run_command("select_all") →
+  get_state()` 泄工作区外内容；写链 `open_file(工作区外) → insert_text →
+  run_command("save")` 越权改写。**把不可信 LLM 接入本 MCP 仍应保持
+  警惕**：socket 无认证（同 UID 进程即全权），沙箱只界定了路径边界，
+  不审查内容意图；workspace 内的破坏性操作（`delete` 无回收站、
+  `batch_replace` disk 通道不可 undo）依然直达。
 - **单实例**：编辑器一次只有一个实例持有 RPC 端点（端点被占时新实例
   静默禁用 RPC——「连不上」先看是否已有实例在跑）。
 
