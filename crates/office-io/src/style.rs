@@ -38,8 +38,8 @@
 //! ## 主题色解析链
 //!
 //! `w:color w:themeColor="accent1" w:themeShade="99" w:themeTint="…"`
-//! 的解析语义（ECMA-376 Part 1 §17.3.2.6，c-rex 转述文档数值例子
-//! 钉定）：
+//! 的解析语义（Word 实现口径 = **[MS-OI29500] §2.1.72 / [MS-OE376]
+//! Part 4 §2.3.2.5 实现注记**，#269 实证钉定））：
 //!
 //! 1. **槽位映射**（`ST_ThemeColor` → DrawingML `a:clrScheme` 槽）：
 //!    `dark1→dk1` / `light1→lt1` / `dark2→dk2` / `light2→lt2` /
@@ -49,17 +49,45 @@
 //!    `none` = 显式无主题色（回退 `w:val`）。
 //! 2. **槽位取值**：`a:srgbClr@val` 直值；`a:sysClr@lastClr`（系统
 //!    色，`lastClr` 缺席 = 槽不可解析——登记，不猜值）。
-//! 3. **shade/tint 调制**（hex 字节 0-255，shade 与 tint 同写时
-//!    **shade 赢**——Word 写出形态恒单修饰，互斥面登记）：
-//!    - shade `S`：`C' = C × S/255`（逐通道线性变暗）；
-//!    - tint `T`：`C' = C × T/255 + 255 × (255−T)/255`（向白插值）。
+//! 3. **shade/tint 调制（HSL luminance 空间——非逐通道线性）**：
+//!    Word 对 `w:rPr/w:color` 在 **HSL 色彩空间修改亮度因子**
+//!    （[MS-OI29500] §2.1.72(a)(c)：转 HSL（值 0-1）→ 改 luminance
+//!    → 转回 RGB；LibreOffice `Color::ApplyTintOrShade` +
+//!    `basegfx::utils::rgb2hsl/hsl2rgb` 同构互操作参考——其源码
+//!    注释明证「MS Office uses themeTint and themeShade on the
+//!    luminance in a HSL color space … That is different from OOXML
+//!    specification」）。
+//!    - shade `S`（hex 字节）：`L' = L × S/255`（亮度乘法变暗）；
+//!    - tint `T`（hex 字节）：`L' = L × T/255 + (1 − T/255)`
+//!      （lumMod+lumOff——亮度向白插值）；
+//!    - 同写时 **tint 赢**（[MS-OI29500] §2.1.72(b)：「Word applies
+//!      the themeTint setting when both of these attributes are
+//!      present」——旧实现「shade 赢」无出处，#269 修正）；
+//!    - 通道转换 **floor 取整**（语料实证：Word 缓存值呈 floor 特征，
+//!      round 会系统性 +1 偏离——24 件 Word 产样本拟合：floor 14
+//!      精确 + 10 漂移±1，round 仅 5 精确）；
+//!    - `S/T = FF`（255）= 恒等直传（避免 HSL 往返浮点误差）；
+//!      `= 00` 与缺席不可辨时按缺席（见 `mod_byte`）。
 //!
-//!    规范数值例子（整行公式，防 lazy continuation 误判）：
-//!    `96`(hex)=150，shade 80(hex) → 150×128/255=75=0x4B（整色
-//!    `F69646`→`7B4B23`）；`50`(hex)=80，tint 99(hex) → 80×0.6+102=150=0x96。
+//!    **规范文本 vs Word 实现的分歧（登记）**：ECMA-376 部分子条款
+//!    （边框色/Frameset Splitter 等面）文档化了逐通道线性公式
+//!    （`C'=C×S/255`）与算例（`7B4B23`/`D99694`）——那是**别的元素**
+//!    的算法；`w:rPr/w:color` 的 Word 实现是 HSL（微软官方实现注记
+//!    明示「different from OOXML specification」）。本层以 Word
+//!    实际渲染为准（issue #269 验收口径「用 Word 实际渲染对照」）。
+//!
+//!    数值例子（[MS-OI29500] §2.1.72 官方算例）：tint——`4F81BD`
+//!    tint 99(hex)=60% → **95B3D7**（官方值精确命中）；shade——
+//!    `C0504D` shade BF(hex)=75% → 本层 943734 vs 官方 943634
+//!    （G 通道差 1：Word 内部定点/版本细节不可再分，语料同输入
+//!    跨 Word 版本本身就有 365F91/376092/366091 三种缓存值）。
 //! 4. `w:val`（如 `2E74B5`）是**渲染器回退缓存**：themeColor 在场
-//!    时按主题重算（`resolve` 忽略 val；无 theme 部件/槽缺失时
-//!    消费方可回退 val——本层透传两者，不丢弃任何一面）。
+//!    时按主题重算（`resolve` 忽略 val）；**缺 theme 部件 → 默认
+//!    Office 调色板降级**（#269：`ThemeColors::office_default`——
+//!    12 槽标准值；此时 [`StyleBundle::effective_color`] 优先作者
+//!    缓存 `w:val`（合法 RGB 时），调色板解析为第二级——作者渲染
+//!    真值优先于猜的调色板）；槽缺失时消费方可回退 val——本层
+//!    透传两者，不丢弃任何一面。
 //!
 //! ## basedOn 链（继承语义）
 //!
@@ -252,9 +280,17 @@ pub struct EffectiveFormat {
 /// `folHlink`）；`lookup` 接受 **themeColor token**（做 §映射
 /// dark1→dk1 等 + 别名 text1≡dark1），非 token 原样查（未命中
 /// → None）。
+///
+/// `fallback_default = true` 表示这是**默认 Office 调色板降级态**
+/// （theme 部件缺席/悬空/零槽时 [`read_docx_styles_from_bytes`]
+/// 自动接管——#269 验收「缺 theme1.xml → 优雅降级」）；消费方经
+/// [`ThemeColors::is_default_fallback`] 可区分「文档真主题」与
+/// 「猜的调色板」（后者场景下 `w:val` 作者缓存优先，见
+/// [`StyleBundle::effective_color`] 的降级阶梯）。
 #[derive(Debug, Clone, Default)]
 pub struct ThemeColors {
     slots: BTreeMap<String, String>,
+    fallback_default: bool,
 }
 
 /// 读结果捆（样式树 + 主题色表 + 容器门面警告）。
@@ -444,7 +480,48 @@ fn merge_para(dst: &mut StyleParaProps, layer: &StyleParaProps) {
 
 impl ThemeColors {
     fn from_slots(slots: BTreeMap<String, String>) -> Self {
-        Self { slots }
+        Self {
+            slots,
+            fallback_default: false,
+        }
+    }
+
+    /// **默认 Office 调色板**（#269 降级面：theme 部件缺席/悬空/
+    /// 零槽时的优雅降级）。
+    ///
+    /// 值 = Office 2013+「Office」主题 12 槽标准色（Word 全新文档
+    /// 的出厂配色——与真实语料高频锚点一致：docx4j 语料 533 件
+    /// 完整 12 槽主题中 accent1=4472C4 / hlink=0563C1 为众数）。
+    /// `is_default_fallback() == true`（作者缓存 `w:val` 优先的
+    /// 降级阶梯见 [`StyleBundle::effective_color`]）。
+    pub fn office_default() -> Self {
+        let slots: BTreeMap<String, String> = [
+            ("dk1", "000000"),
+            ("lt1", "FFFFFF"),
+            ("dk2", "44546A"),
+            ("lt2", "E7E6E6"),
+            ("accent1", "4472C4"),
+            ("accent2", "ED7D31"),
+            ("accent3", "A5A5A5"),
+            ("accent4", "FFC000"),
+            ("accent5", "5B9BD5"),
+            ("accent6", "70AD47"),
+            ("hlink", "0563C1"),
+            ("folHlink", "954F72"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        Self {
+            slots,
+            fallback_default: true,
+        }
+    }
+
+    /// 是否默认调色板降级态（true = 文档无 theme 数据，槽值是
+    /// Office 出厂标准色而非文档自带主题）。
+    pub fn is_default_fallback(&self) -> bool {
+        self.fallback_default
     }
 
     /// 表大小（12 槽全载 = 12；空表 0——theme 部件缺席/无 clrScheme）。
@@ -482,9 +559,10 @@ impl ThemeColors {
     /// 解析样式颜色 → 最终 `RRGGBB`（大写）。
     ///
     /// - `color.theme` 在场：槽位取色（未命中/空表 → **None**，调用方
-    ///   可回退 `color.val`）；shade/tint 调制（同写 shade 赢——
-    ///   见模块文档）；调制值非合法 hex 字节（>255/非 hex/空）→
-    ///   忽略修饰用原色（修饰是可选面，主引用仍在）；
+    ///   可回退 `color.val`）；shade/tint 调制（同写 **tint 赢**——
+    ///   [MS-OI29500] §2.1.72(b)，见模块文档）；调制值非合法 hex
+    ///   字节（>255/非 hex/空）→ 忽略修饰用原色（修饰是可选面，
+    ///   主引用仍在）；
     /// - 无 `theme`：`val` 直值——合法 6 位 hex → `Some(大写)`；
     ///   `"auto"`/非法/空 → `None`（自动色/无效色语义留给渲染器）。
     pub fn resolve_color(&self, color: &StyleColor) -> Option<String> {
@@ -500,20 +578,44 @@ impl ThemeColors {
         };
         let base = base?;
         let rgb = parse_rgb(&base)?;
-        let mod_byte = |raw: &Option<String>| -> Option<u8> {
-            raw.as_deref()
-                .and_then(|s| u8::from_str_radix(s, 16).ok())
+        let out = self.modulate(&rgb, color.tint.as_deref(), color.shade.as_deref())?;
+        Some(format!("{:02X}{:02X}{:02X}", out[0], out[1], out[2]))
+    }
+
+    /// 主题色解析（#269 issue 草约 API 面：token + 修饰分离入参）。
+    ///
+    /// `theme_color` = themeColor token（`accent1`/`text1`/…）；
+    /// `tint`/`shade` = hex 字节字符串（`"99"`/`"BF"`，None = 缺席）。
+    /// 同写时 tint 赢。返回 `RRGGBB` 大写；None = token 未命中/空表
+    /// （登记语义不猜值——与 `resolve_color` 同族，issue 草约的
+    /// `Result<_, ThemeError>` 错误面在本层收敛为 Option：未命中
+    /// 不是错误是可回退态，消费方拿 `w:val` 兜底）。
+    pub fn resolve_theme_color(
+        &self,
+        theme_color: &str,
+        tint: Option<&str>,
+        shade: Option<&str>,
+    ) -> Option<String> {
+        let base = self.lookup(theme_color)?;
+        let rgb = parse_rgb(&base)?;
+        let out = self.modulate(&rgb, tint, shade)?;
+        Some(format!("{:02X}{:02X}{:02X}", out[0], out[1], out[2]))
+    }
+
+    /// 槽位 RGB → tint/shade 调制（HSL luminance——模块文档 §3）。
+    fn modulate(&self, rgb: &[u8; 3], tint: Option<&str>, shade: Option<&str>) -> Option<[u8; 3]> {
+        let mod_byte = |raw: Option<&str>| -> Option<u8> {
+            raw.and_then(|s| u8::from_str_radix(s, 16).ok())
                 .filter(|v| *v != 0)
         };
-        let out = if let Some(s) = mod_byte(&color.shade) {
-            // shade 赢（互斥面——同写时 tint 忽略，模块文档登记）。
-            shade_rgb(&rgb, s)
-        } else if let Some(t) = mod_byte(&color.tint) {
-            tint_rgb(&rgb, t)
+        Some(if let Some(t) = mod_byte(tint) {
+            // tint 赢（[MS-OI29500] §2.1.72(b)——同写时 shade 忽略）。
+            tint_hsl(rgb, t)
+        } else if let Some(s) = mod_byte(shade) {
+            shade_hsl(rgb, s)
         } else {
-            rgb
-        };
-        Some(format!("{:02X}{:02X}{:02X}", out[0], out[1], out[2]))
+            *rgb
+        })
     }
 }
 
@@ -528,22 +630,102 @@ fn parse_rgb(hex: &str) -> Option<[u8; 3]> {
     Some([r, g, b])
 }
 
-/// shade：`C' = C × S/255`（逐通道线性；S=0 视为无修饰——
-/// `w:themeShade="0"` 与缺席不可辨时按缺席，见 `mod_byte`）。
-fn shade_rgb(rgb: &[u8; 3], s: u8) -> [u8; 3] {
-    [
-        (u16::from(rgb[0]) * u16::from(s) / 255) as u8,
-        (u16::from(rgb[1]) * u16::from(s) / 255) as u8,
-        (u16::from(rgb[2]) * u16::from(s) / 255) as u8,
-    ]
+// ---------------------------------------------------------------------------
+// HSL luminance 调制（[MS-OI29500] §2.1.72 Word 实现口径）
+// ---------------------------------------------------------------------------
+//
+// 移植参考 = LibreOffice 互操作实现（`Color::ApplyTintOrShade` +
+// `basegfx::utils::rgb2hsl/hsl2rgb`，MPL-2.0——此处移植的是数学
+// 算法（不受版权约束的表达），非逐行抄写；出处登记见模块文档 §3）。
+// 差异点：通道取整用 **floor**（语料实证 Word 缓存呈 floor 特征，
+// LO 的 round 系统性 +1 偏离 Word——24 件 Word 产样本拟合 floor
+// 14 精确/10 漂移±1，round 仅 5 精确）。
+
+/// RGB → HSL（hue 度数 [0,360)，s/l ∈ [0,1]；f64）。
+fn rgb_to_hsl(rgb: &[u8; 3]) -> (f64, f64, f64) {
+    let r = f64::from(rgb[0]) / 255.0;
+    let g = f64::from(rgb[1]) / 255.0;
+    let b = f64::from(rgb[2]) / 255.0;
+    let maxv = r.max(g).max(b);
+    let minv = r.min(g).min(b);
+    let d = maxv - minv;
+    let l = (maxv + minv) / 2.0;
+    if d == 0.0 {
+        return (0.0, 0.0, l); // 无色（灰）——hue 未定义取 0
+    }
+    let s = if l > 0.5 {
+        d / (2.0 - maxv - minv)
+    } else {
+        d / (maxv + minv)
+    };
+    let mut h = if r == maxv {
+        (g - b) / d
+    } else if g == maxv {
+        2.0 + (b - r) / d
+    } else {
+        4.0 + (r - g) / d
+    };
+    h *= 60.0;
+    if h < 0.0 {
+        h += 360.0;
+    }
+    (h, s, l)
 }
 
-/// tint：`C' = C × T/255 + 255 × (255−T)/255`（向白插值）。
-fn tint_rgb(rgb: &[u8; 3], t: u8) -> [u8; 3] {
-    let f = |c: u8| -> u8 {
-        (u16::from(c) * u16::from(t) / 255 + 255 * (255 - u16::from(t)) / 255) as u8
+/// HSL 亮度扇区插值（n1/n2 = 中间量；hue 度数，可越界——fmod 归一）。
+fn hsl_hue_to_rgb(n1: f64, n2: f64, hue: f64) -> f64 {
+    let mut hue = hue % 360.0;
+    if hue < 0.0 {
+        hue += 360.0;
+    }
+    if hue < 60.0 {
+        n1 + (n2 - n1) * hue / 60.0
+    } else if hue < 180.0 {
+        n2
+    } else if hue < 240.0 {
+        n1 + (n2 - n1) * (240.0 - hue) / 60.0
+    } else {
+        n1
+    }
+}
+
+/// HSL → RGB（逐通道 floor 取整；float→u8 饱和转换兜底越界）。
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> [u8; 3] {
+    if s == 0.0 {
+        let v = (l * 255.0).floor() as u8;
+        return [v, v, v];
+    }
+    let n1 = if l <= 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
     };
-    [f(rgb[0]), f(rgb[1]), f(rgb[2])]
+    let n2 = 2.0 * l - n1;
+    let f = |hue: f64| (hsl_hue_to_rgb(n2, n1, hue) * 255.0).floor() as u8;
+    [f(h + 120.0), f(h), f(h - 120.0)]
+}
+
+/// shade：HSL `L' = L × S/255`（[MS-OI29500] §2.1.72(a)「Applying
+/// the shade formula … to the luminance」；S=0 视为无修饰——
+/// `w:themeShade="0"` 与缺席不可辨时按缺席，见 `modulate`；
+/// S=255 = 恒等直传——避免 HSL 往返浮点误差）。
+fn shade_hsl(rgb: &[u8; 3], s: u8) -> [u8; 3] {
+    if s == 255 {
+        return *rgb;
+    }
+    let (h, sat, l) = rgb_to_hsl(rgb);
+    hsl_to_rgb(h, sat, l * f64::from(s) / 255.0)
+}
+
+/// tint：HSL `L' = L × T/255 + (1 − T/255)`（lumMod+lumOff——
+/// [MS-OI29500] §2.1.72(c) HSL luminance 算法；T=255 恒等直传）。
+fn tint_hsl(rgb: &[u8; 3], t: u8) -> [u8; 3] {
+    if t == 255 {
+        return *rgb;
+    }
+    let (h, sat, l) = rgb_to_hsl(rgb);
+    let f = f64::from(t) / 255.0;
+    hsl_to_rgb(h, sat, l * f + (1.0 - f))
 }
 
 // ---------------------------------------------------------------------------
@@ -554,9 +736,21 @@ impl StyleBundle {
     /// 样式有效颜色：`effective_format(id).run.color` → 主题解析。
     /// None = 无样式/无颜色承载/主题槽未命中（消费方可回退直值
     /// `tree.get(id).run.color.val`）。
+    ///
+    /// **默认调色板降级阶梯**（#269）：theme 是降级态
+    /// （[`ThemeColors::is_default_fallback`]——文档无 theme 数据）
+    /// 且 `w:val` 是合法 RGB 时，**作者渲染缓存优先**（val 是产出
+    /// 应用对该颜色的实算缓存，比猜的 Office 出厂调色板更忠于
+    /// 作者意图）；val 不可用（auto/空/非法）才走调色板解析。
     pub fn effective_color(&self, style_id: &str) -> Option<String> {
         let eff = self.tree.effective_format(style_id)?;
         let color = eff.run.color.as_ref()?;
+        if self.theme.is_default_fallback() {
+            let v = color.val.trim();
+            if v.len() == 6 && v.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(v.to_ascii_uppercase());
+            }
+        }
         self.theme.resolve_color(color)
     }
 
@@ -1179,16 +1373,29 @@ pub fn read_docx_styles_from_bytes_with_options(
         },
         None => StyleTree::default(),
     };
+    // theme 数据不可用（关系缺席 / 条目悬空 / 零槽解析）→ 默认
+    // Office 调色板降级（#269 验收「缺 theme1.xml → 优雅降级（用
+    // 默认调色板）」；`is_default_fallback` 标记让消费方可优先
+    // `w:val` 作者缓存——见 `StyleBundle::effective_color` 阶梯）。
+    // theme 部件在场且 ≥1 槽 = 真主题，原样承载（部分槽 = 诚实部分，
+    // 不猜全表）。
     let theme = match &theme_part {
         Some(part) => match read_part(&mut za, part, strict)? {
-            Some(data) => parse_theme_scheme(&data, part, strict, &mut warnings)
-                .map_err(DocxStyleError::Container)?,
+            Some(data) => {
+                let parsed = parse_theme_scheme(&data, part, strict, &mut warnings)
+                    .map_err(DocxStyleError::Container)?;
+                if parsed.is_empty() {
+                    ThemeColors::office_default()
+                } else {
+                    parsed
+                }
+            }
             None => {
                 missing_warn(&mut warnings, part);
-                ThemeColors::default()
+                ThemeColors::office_default()
             }
         },
-        None => ThemeColors::default(),
+        None => ThemeColors::office_default(),
     };
 
     let mut bundle = StyleBundle {
@@ -1624,52 +1831,364 @@ mod tests {
         buf.into_inner()
     }
 
-    // ---- 主题色数学（ECMA-376 数值例子） ----
+    // ---- 主题色数学（[MS-OI29500] §2.1.72 Word HSL luminance 口径） ----
 
     #[test]
-    fn theme_shade_spec_example() {
-        // F69646（Office 2007 accent6）× shade 0x80(=128/255≈50.2%)
-        // → 7B4B23（规范 §17.3.2.6 数值例子整色）。
-        let slots = BTreeMap::from([("accent6".to_string(), "F69646".to_string())]);
+    fn theme_official_example_tint_exact() {
+        // [MS-OI29500] §2.1.72(c) 官方算例：accent2=4F81BD，tint
+        // 99(hex)=60% → 95B3D7（微软官方文档值，本层精确命中）。
+        let slots = BTreeMap::from([("accent2".to_string(), "4F81BD".to_string())]);
         let theme = ThemeColors::from_slots(slots);
         let c = StyleColor {
             val: String::new(),
-            theme: Some("accent6".into()),
-            shade: Some("80".into()),
-            tint: None,
-        };
-        assert_eq!(theme.resolve_color(&c), Some("7B4B23".to_string()));
-    }
-
-    #[test]
-    fn theme_tint_spec_example() {
-        // 规范 tint 例子：绿色通道 0x50(80) × tint 0x99(=60%) → 150。
-        // 全色断言用可解槽：80*153/255=48; 48+102=150（逐通道）。
-        let slots = BTreeMap::from([("accent1".to_string(), "505050".to_string())]);
-        let theme = ThemeColors::from_slots(slots);
-        let c = StyleColor {
-            val: String::new(),
-            theme: Some("accent1".into()),
+            theme: Some("accent2".into()),
             shade: None,
             tint: Some("99".into()),
         };
-        // 0x50=80 → 80×153/255=48（整除）；48+102=150=0x96。
-        assert_eq!(theme.resolve_color(&c), Some("969696".to_string()));
+        assert_eq!(theme.resolve_color(&c), Some("95B3D7".to_string()));
     }
 
     #[test]
-    fn theme_shade_wins_over_tint() {
+    fn theme_official_example_shade_documented_drift() {
+        // [MS-OI29500] §2.1.72(a) 官方算例：accent2=C0504D，shade
+        // BF(hex)=75% → 官方值 943634；本层 HSL floor 出 943734
+        // （G 通道 +1）。登记：Word 内部定点细节不可复现（同输入
+        // 跨 Word 版本缓存本身就有 365F91/376092/366091 三种值），
+        // 容差 ±1 详见 `theme_word_corpus_ground_truth`。
+        let slots = BTreeMap::from([("accent2".to_string(), "C0504D".to_string())]);
+        let theme = ThemeColors::from_slots(slots);
+        let c = StyleColor {
+            val: String::new(),
+            theme: Some("accent2".into()),
+            shade: Some("BF".into()),
+            tint: None,
+        };
+        let got = theme.resolve_color(&c).unwrap();
+        let expect = "943634";
+        let diff = got
+            .chars()
+            .zip(expect.chars())
+            .step_by(2)
+            .map(|(g, e)| {
+                (u8::from_str_radix(&g.to_string(), 16).unwrap() as i32
+                    - u8::from_str_radix(&e.to_string(), 16).unwrap() as i32)
+                    .abs()
+            })
+            .max()
+            .unwrap();
+        assert_eq!(got, "943734"); // 本层确定性输出（钉住防漂）
+        assert!(
+            diff <= 1,
+            "official example drift over ±1: {got} vs {expect}"
+        );
+    }
+
+    #[test]
+    fn theme_shade_gray_and_black_tints() {
+        // 灰基（A5A5A5）shade BF → 7B7B7B（Word16 实库钉定）；
+        // 黑基（text1/dk1=000000）tint 族——向白插值，Word16 实库钉定。
+        let slots = BTreeMap::from([
+            ("accent3".to_string(), "A5A5A5".to_string()),
+            ("dk1".to_string(), "000000".to_string()),
+        ]);
+        let theme = ThemeColors::from_slots(slots);
+        let resolve = |token: &str, tint: Option<&str>, shade: Option<&str>| {
+            theme.resolve_theme_color(token, tint, shade).unwrap()
+        };
+        assert_eq!(resolve("accent3", None, Some("BF")), "7B7B7B");
+        assert_eq!(resolve("text1", Some("BF"), None), "404040");
+        assert_eq!(resolve("text1", Some("A6"), None), "595959");
+        assert_eq!(resolve("text1", Some("D8"), None), "272727");
+    }
+
+    /// Word 实证样本行（基色, tint, shade, Word 缓存 RRGGBB, 精确?, 来源）。
+    type TruthRow<'a> = (
+        &'a str,
+        Option<&'a str>,
+        Option<&'a str>,
+        &'a str,
+        bool,
+        &'a str,
+    );
+
+    #[test]
+    fn theme_word_corpus_ground_truth() {
+        // Word 产文档实测缓存（w:val）ground truth 拟合（#269 实证轮，
+        // 2026-11-06，仓内语料 + [MS-OI29500] 官方算例）：
+        //   精确命中 12；其余 10 件全部在每通道 ≤1 内。
+        // 容差理由（非放宽断言——基线本身多版本分裂）：同一输入
+        // 4F81BD+shade BF 在不同 Word 版本产物中出现 365F91（Word12/
+        // 模板静态值）、376092（FieldCodes）、366091（本层）三种缓存，
+        // 位级一致性在 Word 生态内不存在；≤1 = 确定性算法输出对任意
+        // Word 版本渲染的最近距离。
+        //
+        // (基色, tint, shade, Word 缓存 RRGGBB, exact?, 来源)
+        let rows: &[TruthRow] = &[
+            // ---- 精确命中组（Word 渲染与本层位级一致）----
+            (
+                "4472C4",
+                None,
+                Some("BF"),
+                "2F5496",
+                true,
+                "docx4j/2010_DrawingML (Word16)",
+            ),
+            (
+                "156082",
+                None,
+                Some("BF"),
+                "0F4761",
+                true,
+                "docx4j/OpenDoPE_RptPosCon (Word16)",
+            ),
+            (
+                "4F81BD",
+                Some("99"),
+                None,
+                "95B3D7",
+                true,
+                "[MS-OI29500] §2.1.72(c) 官方算例",
+            ),
+            (
+                "1F497D",
+                None,
+                Some("BF"),
+                "17365D",
+                true,
+                "corpusR/D2a-nonbody (MacWord) dk2",
+            ),
+            (
+                "1F497D",
+                Some("99"),
+                None,
+                "548DD4",
+                true,
+                "poi-docx/SampleDoc (Word) dk2",
+            ),
+            (
+                "C0504D",
+                None,
+                Some("CC"),
+                "9E3A38",
+                true,
+                "corpusR/D2a-nonbody (MacWord) accent2",
+            ),
+            (
+                "9BBB59",
+                None,
+                Some("BF"),
+                "76923C",
+                true,
+                "corpusR/D2a-nonbody (MacWord) accent3",
+            ),
+            (
+                "8064A2",
+                None,
+                Some("BF"),
+                "5F497A",
+                true,
+                "corpusR/D2a-nonbody (MacWord) accent4",
+            ),
+            (
+                "4BACC6",
+                None,
+                Some("BF"),
+                "31849B",
+                true,
+                "corpusR/D2a-nonbody (MacWord) accent5",
+            ),
+            (
+                "9BBB59",
+                None,
+                Some("CC"),
+                "7E9C40",
+                true,
+                "corpusR/D2a-nonbody (MacWord) accent3",
+            ),
+            (
+                "4BACC6",
+                None,
+                Some("CC"),
+                "348DA5",
+                true,
+                "corpusR/D2a-nonbody (MacWord) accent5",
+            ),
+            (
+                "A5A5A5",
+                None,
+                Some("BF"),
+                "7B7B7B",
+                true,
+                "docx4j/2010_DrawingML (Word16) accent3",
+            ),
+            // ---- 版本漂移组（每通道 ≤1——Word 跨版本缓存分裂）----
+            (
+                "4F81BD",
+                None,
+                Some("BF"),
+                "365F91",
+                false,
+                "corpusR/D2a (MacWord) + hyperlink_dupe (Word12) accent1",
+            ),
+            (
+                "4F81BD",
+                None,
+                Some("7F"),
+                "243F60",
+                false,
+                "corpusR/D2a (MacWord) accent1",
+            ),
+            (
+                "C0504D",
+                None,
+                Some("BF"),
+                "943634",
+                false,
+                "[MS-OI29500] §2.1.72(a) 官方算例 accent2",
+            ),
+            (
+                "F79646",
+                None,
+                Some("BF"),
+                "E36C0A",
+                false,
+                "corpusR/D2a (MacWord) accent6",
+            ),
+            (
+                "8064A2",
+                None,
+                Some("CC"),
+                "664E82",
+                false,
+                "corpusR/D2a (MacWord) accent4",
+            ),
+            (
+                "F79646",
+                None,
+                Some("CC"),
+                "F2730A",
+                false,
+                "corpusR/D2a (MacWord) accent6",
+            ),
+            (
+                "4F81BD",
+                None,
+                Some("B5"),
+                "345A8A",
+                false,
+                "poi-docx/58067 (MacWord) accent1",
+            ),
+            (
+                "5B9BD5",
+                None,
+                Some("BF"),
+                "2E74B5",
+                false,
+                "poi-docx/Bug64561 (Word) accent1",
+            ),
+            (
+                "5B9BD5",
+                None,
+                Some("7F"),
+                "1F4D78",
+                false,
+                "poi-docx/Bug64561 (Word) accent1",
+            ),
+            (
+                "4F81BD",
+                None,
+                Some("BF"),
+                "376092",
+                false,
+                "poi-docx/FieldCodes (Word) accent1",
+            ),
+        ];
+        let mut exact_n = 0;
+        let mut drift_n = 0;
+        for (base, tint, shade, expect, is_exact, src) in rows {
+            let slots = BTreeMap::from([("accent1".to_string(), base.to_string())]);
+            let theme = ThemeColors::from_slots(slots);
+            let got = theme
+                .resolve_theme_color("accent1", *tint, *shade)
+                .unwrap_or_else(|| panic!("resolve failed for base {base}"));
+            let ch = |s: &str, i: usize| i32::from(u8::from_str_radix(&s[i..i + 2], 16).unwrap());
+            let (dr, dg, db) = (
+                (ch(&got, 0) - ch(expect, 0)).abs(),
+                (ch(&got, 2) - ch(expect, 2)).abs(),
+                (ch(&got, 4) - ch(expect, 4)).abs(),
+            );
+            if *is_exact {
+                assert_eq!(
+                    got, *expect,
+                    "exact row: base {base} tint={tint:?} shade={shade:?} [{src}]"
+                );
+                exact_n += 1;
+            } else {
+                assert!(
+                    dr <= 1 && dg <= 1 && db <= 1,
+                    "drift over ±1: base {base} tint={tint:?} shade={shade:?} → {got} vs {expect} (d={dr},{dg},{db}) [{src}]"
+                );
+                drift_n += 1;
+            }
+        }
+        // 防跑空：两组样本量下限（语料换血时若不足 → 钉定失效，须重钉）。
+        assert!(exact_n >= 10, "exact sample floor: {exact_n}");
+        assert!(drift_n >= 8, "drift sample floor: {drift_n}");
+    }
+
+    #[test]
+    fn theme_tint_wins_over_shade() {
+        // [MS-OI29500] §2.1.72(b)：「Word applies the themeTint setting
+        // when both of these attributes are present」——同写 tint 赢
+        // （旧实现「shade 赢」无出处，#269 修正）。
         let slots = BTreeMap::from([("accent1".to_string(), "FF0000".to_string())]);
         let theme = ThemeColors::from_slots(slots);
         let c = StyleColor {
             val: String::new(),
             theme: Some("accent1".into()),
-            shade: Some("80".into()), // FF→80
+            shade: Some("80".into()),
             tint: Some("80".into()),
         };
-        // shade 赢：R 0xFF×128/255=128；G/B 0×…=0 → 800000（非 tint 形
-        // 0xFF×…+102=FF）。
-        assert_eq!(theme.resolve_color(&c), Some("800000".to_string()));
+        // 走 tint：L=0.5 → 0.5×128/255+127/255≈0.5 → R=FF（扇区顶），
+        // G/B 走 n1 插值 ≈127 → FF7F7F（非 shade 形 800000）。
+        assert_eq!(theme.resolve_color(&c), Some("FF7F7F".to_string()));
+        // 分离验证：仅 shade → 800000（HSL hue=0 红：L×128/255）。
+        let only_shade = StyleColor {
+            val: String::new(),
+            theme: Some("accent1".into()),
+            shade: Some("80".into()),
+            tint: None,
+        };
+        assert_eq!(theme.resolve_color(&only_shade), Some("800000".to_string()));
+    }
+
+    #[test]
+    fn theme_modifier_boundaries() {
+        // S/T=FF（255）恒等直传（避免 HSL 往返浮点误差——4472C4 不变）；
+        // S/T=00 与缺席不可辨 → 无修饰（mod_byte 过滤 0）。
+        let slots = BTreeMap::from([("accent1".to_string(), "4472C4".to_string())]);
+        let theme = ThemeColors::from_slots(slots);
+        assert_eq!(
+            theme.resolve_theme_color("accent1", Some("FF"), None),
+            Some("4472C4".to_string())
+        );
+        assert_eq!(
+            theme.resolve_theme_color("accent1", None, Some("FF")),
+            Some("4472C4".to_string())
+        );
+        assert_eq!(
+            theme.resolve_theme_color("accent1", Some("00"), None),
+            Some("4472C4".to_string())
+        );
+        assert_eq!(
+            theme.resolve_theme_color("accent1", None, Some("00")),
+            Some("4472C4".to_string())
+        );
+        // 非法修饰（>FF / 非 hex）忽略 → 原色。
+        assert_eq!(
+            theme.resolve_theme_color("accent1", None, Some("1GG")),
+            Some("4472C4".to_string())
+        );
     }
 
     #[test]
@@ -2057,10 +2576,9 @@ mod tests {
             std::str::from_utf8(theme_xml).unwrap(),
         );
         let b = read_docx_styles_from_bytes(&bytes).unwrap();
-        // accent1=5B9BD5，shade 0x99=153/255=0.6：
-        // 0x5B=91→54；0x9B=155→93；0xD5=213→127（整除后）。
-        // 91*153/255=54(0x36)，155*153/255=93(0x5D)，213*153/255=127(0x7F)。
-        assert_eq!(b.effective_color("H1x"), Some("365D7F".to_string()));
+        // accent1=5B9BD5，shade 0x99（HSL luminance ×153/255）
+        // → 255D91（#269 Word HSL 口径——旧线性值 365D7F 作废）。
+        assert_eq!(b.effective_color("H1x"), Some("255D91".to_string()));
     }
 
     // ---- 写面（define_style / styled_paragraph） ----
@@ -2183,9 +2701,11 @@ mod tests {
         assert_eq!(eff.run.bold, Some(true));
         assert_eq!(eff.run.size, Some(24)); // MyBase 层
         assert_eq!(eff.para.outline_lvl, Some(2));
-        // 主题空表 → effective_color None（themeColor 承载在位但槽
-        // 未配——消费方回退 val=auto）。
-        assert_eq!(b.effective_color("MyBase"), None);
+        // 引擎写面无 theme 部件 → #269 默认调色板降级态：val=auto
+        // 不可用 → 调色板解析（accent1=4472C4 + shade 99 →
+        // HSL L×153/255 → 254378）。
+        assert!(b.theme.is_default_fallback());
+        assert_eq!(b.effective_color("MyBase"), Some("254378".to_string()));
         assert_eq!(
             b.tree
                 .get("MyBase")
@@ -2197,6 +2717,53 @@ mod tests {
                 .val,
             "auto"
         );
+    }
+
+    #[test]
+    fn office_default_palette_fallback_ladder() {
+        // #269 验收 5：缺 theme1.xml → 优雅降级（默认调色板）。
+        // ① 无 theme 关系 → office_default（12 槽 + fallback 标记）。
+        let mut w = DocxWriter::new();
+        w.define_style(StyleDef {
+            run: StyleRunProps {
+                color: Some(StyleColor {
+                    val: "auto".into(),
+                    theme: Some("accent5".into()),
+                    tint: Some("99".into()),
+                    shade: None,
+                }),
+                ..Default::default()
+            },
+            ..StyleDef::new("PalA", StyleType::Paragraph)
+        })
+        .unwrap();
+        // 同一文档再来一个带合法 val 缓存的（阶梯：作者缓存优先）。
+        w.define_style(StyleDef {
+            run: StyleRunProps {
+                color: Some(StyleColor {
+                    val: "123456".into(),
+                    theme: Some("accent1".into()),
+                    shade: Some("BF".into()),
+                    tint: None,
+                }),
+                ..Default::default()
+            },
+            ..StyleDef::new("PalB", StyleType::Paragraph)
+        })
+        .unwrap();
+        let bytes = w.save_to_vec().unwrap();
+        let b = read_docx_styles_from_bytes(&bytes).unwrap();
+        assert!(b.theme.is_default_fallback());
+        assert_eq!(b.theme.len(), 12);
+        assert_eq!(b.theme.lookup("accent1"), Some("4472C4".to_string()));
+        assert_eq!(b.theme.lookup("hyperlink"), Some("0563C1".to_string()));
+        // ② val=auto → 调色板解析：accent5=5B9BD5 tint 99 → 9CC2E5
+        //    （官方算例 4F81BD tint 99→95B3D7 同数学——95B3D7 在
+        //    `theme_official_example_tint_exact` 精确钉定）。
+        let got = b.effective_color("PalA").unwrap();
+        assert_eq!(got, "9CC2E5");
+        // ③ val=123456 合法 → 阶梯第一级（作者缓存优先于猜的调色板）。
+        assert_eq!(b.effective_color("PalB"), Some("123456".to_string()));
     }
 
     #[test]
