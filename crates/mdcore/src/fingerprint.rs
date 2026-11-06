@@ -171,6 +171,9 @@ fn kind_tag(kind: BlockKind) -> u8 {
         BlockKind::ListItem => 3,
         BlockKind::Blockquote => 4,
         BlockKind::CodeBlock => 5,
+        // #261：新变体取新值 8（0-7 稳定——旧指纹零漂移；显式表
+        // 不依赖派生序，中途插入变体不影响既有判别值）。
+        BlockKind::Math => 8,
         BlockKind::Table => 6,
         BlockKind::ThematicBreak => 7,
     }

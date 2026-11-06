@@ -131,12 +131,13 @@ pub fn kind_to_collab(k: mdcore::tree::BlockKind) -> Option<mdc_collab::BlockKin
         M::ListItem => C::ListItem,
         M::Blockquote => C::Blockquote,
         M::CodeBlock => C::CodeBlock,
+        M::Math => C::Math,
         M::Table => C::Table,
         M::ThematicBreak => C::ThematicBreak,
     })
 }
 
-/// 协作域 kind → mdcore kind（全函数——七 kind 一一对应）。
+/// 协作域 kind → mdcore kind（全函数——八 kind 一一对应）。
 pub fn kind_to_md(k: mdc_collab::BlockKind) -> mdcore::tree::BlockKind {
     use mdc_collab::BlockKind as C;
     use mdcore::tree::BlockKind as M;
@@ -146,6 +147,7 @@ pub fn kind_to_md(k: mdc_collab::BlockKind) -> mdcore::tree::BlockKind {
         C::ListItem => M::ListItem,
         C::Blockquote => M::Blockquote,
         C::CodeBlock => M::CodeBlock,
+        C::Math => M::Math,
         C::Table => M::Table,
         C::ThematicBreak => M::ThematicBreak,
     }
@@ -206,6 +208,7 @@ mod tests {
             (M::ListItem, C::ListItem),
             (M::Blockquote, C::Blockquote),
             (M::CodeBlock, C::CodeBlock),
+            (M::Math, C::Math),
             (M::Table, C::Table),
             (M::ThematicBreak, C::ThematicBreak),
         ];

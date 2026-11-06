@@ -259,6 +259,8 @@ fn project_block(kind: BlockKind, text: &str) -> String {
     match kind {
         // 代码逐字：定界符是字面内容（净文本投影的显式例外）。
         BlockKind::CodeBlock => text.to_string(),
+        // 数学块同构：LaTeX 源逐字（#261——$$ 定界是字面内容）。
+        BlockKind::Math => text.to_string(),
         BlockKind::Table => project_table(text),
         _ => crate::inline::parse_inline_marks(text).0,
     }

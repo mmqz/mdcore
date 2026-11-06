@@ -18,6 +18,7 @@
 //! | `_斜体_` | `em` | 下划线；**词内禁用**（`snake_case_name` 防误伤——CommonMark `_` 语义） |
 //! | `***粗斜***` | `strong` + `em` | 三星 = 双 mark 叠加（同区间） |
 //! | `` `代码` `` | `code` | 单反引号对；内容逐字（内部不再解析任何定界符） |
+//! | `$数学$` | `math` | #261：单 dollar 对；内容逐字（code 同构）；opener 后随非空白 / closer 前邻非空白（`$5` 价格缘拒配）；`$$` 连跑整跑字面量（显示数学是块级域——markdown.rs）；`\$` 转义 |
 //! | `~~删除~~` | `del` | GFM 双波浪线（恰 2——1/3+ 按字面量） |
 //! | `<u>下划线</u>` | `u` | 小写精确标签对 |
 //!
@@ -55,6 +56,9 @@
 //!
 //! - 多字符 code span（``` ``a`b`` ```）——单反引号对足够覆盖编辑器
 //!   工具条（Mod-e 单星包裹）与常规文档；
+//! - 词内 `$` 数字缘（`$5$` / `总价 $5，另一处 $6$`）——flanking 仅挡空白缘
+//!   不挡数字缘（`$5^2$` 是合法数学，数字缘挡则误伤）；价格语境建议转义
+//!   `\$` 或依赖无闭合落字面量（`$5 and $10` 第二 `$` 前邻空白天然拒配）；
 //! - 链接/图片 `[t](u)`——模型无链接载荷（html.rs 同口径登记）；
 //! - HTML 行内标签（除 `<u>`）——透明字面量；
 //! - 嵌套**部分消费**（CommonMark 混合长度拆跑）——等长配对子集化；
@@ -114,6 +118,41 @@ pub fn parse_inline_marks(text: &str) -> (String, Vec<MarkSpan>) {
                 }
             }
             i += 1; // 未闭合 / 空内容 → 字面量
+        } else if c == '$' && !escaped[i] {
+            // $...$ 行内数学（#261）：单 dollar 对，内容逐字（code span
+            // 同构语义——内部零解析，定界符外整体消费）。
+            // 连跑规则：极大 $ 连跑长度 1 参与配对，≥2 整跑字面量
+            // （`$$` 是块级显示数学定界——markdown.rs 域，行内不消费；
+            // pass B `*`/`_` 4+ 同构裁决）。
+            let mut run_end = i + 1;
+            while run_end < len && chars[run_end] == '$' && !escaped[run_end] {
+                run_end += 1;
+            }
+            if run_end - i == 1 {
+                // 找下一个「孤 $」closer：自身未转义，且两侧都不是 $
+                // （连跑成员不可作 closer——`$x$$y` 不许拿连跑尾配对）。
+                if let Some(j) = (i + 1..len).find(|&j| {
+                    chars[j] == '$'
+                        && !escaped[j]
+                        && (j + 1 >= len || chars[j + 1] != '$')
+                        && chars[j - 1] != '$'
+                }) {
+                    // 内容非空 + flanking（opener 后随非空白 / closer 前邻
+                    // 非空白——`$5 and $10` 第二 `$` 前邻空白拒配；
+                    // 边界位视同满足，同 flanking() 口径）。
+                    let after_open = i + 1 < len && !chars[i + 1].is_whitespace();
+                    let before_close = !chars[j - 1].is_whitespace();
+                    if j > i + 1 && after_open && before_close {
+                        spans.push((i + 1, j, "math"));
+                        consumed[i] = true;
+                        consumed[j] = true;
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            // 连跑 ≥2 / 未闭合 / 空内容 / flanking 拒绝 → 整跑字面量。
+            i = run_end;
         } else {
             i += 1;
         }
@@ -213,9 +252,9 @@ pub fn parse_inline_marks(text: &str) -> (String, Vec<MarkSpan>) {
 }
 
 /// 转义域（CommonMark ASCII 标点子集——本模块涉及的定界符 + 反斜杠
-/// 自身）。域外 `\x` 原样保留（反斜杠字面量，非转义）。
+/// 自身；#261 起 `$` 入域）。域外 `\x` 原样保留（反斜杠字面量，非转义）。
 fn is_escapable(c: char) -> bool {
-    matches!(c, '*' | '_' | '~' | '`' | '<' | '\\')
+    matches!(c, '*' | '_' | '~' | '`' | '<' | '\\' | '$')
 }
 
 /// chars 是否以标签字面量开头（精确、大小写敏感）。

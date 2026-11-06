@@ -12,13 +12,16 @@
 //! | `ul`/`ol`/`li`（含嵌套） | ListItem(attrs.marker/depth) | 无 List 容器块型——与 markdown.rs 同构：li 直接嵌套；ol marker 由 `start` 属性推得（默认 `1.`，逐项递增），ul 统一 `-` |
 //! | `blockquote`（含嵌套） | Blockquote | 子内容按块递归 |
 //! | `pre`>``code`` | CodeBlock(attrs.lang) | 内容**逐字保留**（仅实体解码 + 按 HTML5 规则剥一个前导换行）；lang 取 `class="language-x"` / `lang-x` |
+//! | `math-block` | Math | #261：LaTeX 显示公式源码**逐字保留**（仅实体解码，不剥换行——机器格式无 HTML5 前导换行惯例）；内部行内标签丢弃留痕（pre 同构） |
 //! | `table`（thead/tbody/tr/th/td） | Table | 内容 = 规范管道行文本（表头行 + `---` 分隔行 + 体行），与 markdown.rs 的 Table 文本同构；单元格内 `\|` 转义 |
 //! | `hr` | ThematicBreak | |
 //!
 //! # 支持子集（行内）
 //!
 //! `strong`/`b`→mark `strong`，`em`/`i`→`em`，`code`→`code`，`del`/`s`/`strike`→`del`，
-//! `u`→`u`（op.rs `SetMark` 的自由 kind 字符串，无新模型）。`br`→文本内换行 `\n`
+//! `u`→`u`，`math`→`math`（#261：LaTeX 行内公式，内容逐字；野生 MathML
+//! `<math>` 元素同词汇导入——文本内容扁平化入 mark，结构丢弃）。以上均为
+//! op.rs `SetMark` 的自由 kind 字符串，无新模型。`br`→文本内换行 `\n`
 //! （导出时还原为 `<br>`）。其余行内标签（span/a/font/未知标签）**透明**：文字保留、
 //! 样式/链接丢弃；带属性时记一条 Dropped Loss（裸标签静默，避免刷屏）。
 //!
@@ -43,8 +46,9 @@
 //! 3. li 内多段落折叠进条目文本（空格连接）；blockquote/table/pre 等 li 子块保留。
 //! 4. 同层混排 ul/ol 相邻条目共享一个列表标签（按首项 marker 决定）；`*/+` marker
 //!    差异 HTML 不可表达。
-//! 5. 导出仅认识 strong/em/code/del/u 五种 mark；其余 kind 不导出（DM→MD 同样
-//!    不写 mark，方向一致）。
+//! 5. 导出仅认识 strong/em/code/math/del/u 六种 mark；其余 kind 不导出（DM→MD 同样
+//!    不写 mark，方向一致）。math 导出为专用 `<math>` 标签（标签即锚点，
+//!    textContent 即 LaTeX 源——消费方 `katex.render(el.textContent, el)` 直接可得）。
 //! 6. 同 kind 重叠/交叉的 mark 导出时按活跃集归一化（可能合并相邻 span）。
 //!
 //! # API
@@ -529,6 +533,9 @@ fn mark_kind_of(tag: &str) -> Option<&'static str> {
         "code" => Some("code"),
         "del" | "s" | "strike" => Some("del"),
         "u" => Some("u"),
+        // #261：LaTeX 行内公式（专用标签词汇——与导出 `<math>` 同构；
+        // 野生 MathML 同名元素经此扁平化为 math mark，文本保留结构丢弃）。
+        "math" => Some("math"),
         _ => None,
     }
 }
@@ -786,6 +793,7 @@ impl<'a> Parser<'a> {
                 }]
             }
             "pre" => vec![self.parse_pre()],
+            "math-block" => vec![self.parse_math_block()],
             "table" => self.parse_table(),
             // 游离的 li/tr/td 等：透明解包，内容并入当前层
             _ => {
@@ -983,6 +991,45 @@ impl<'a> Parser<'a> {
             attrs.insert("lang".into(), lang);
         }
         BNode::leaf(BlockKind::CodeBlock, buf, Vec::new(), attrs)
+    }
+
+    /// `<math-block>` → Math（#261）。内容逐字（仅实体解码）；与 pre 的
+    /// 差异：不剥前导换行（机器格式无 HTML5 手写换行惯例，剥则往返丢字）。
+    /// 内部行内标签丢弃留痕（pre 同构）；无 attrs / 无 marks（源码即内容）。
+    fn parse_math_block(&mut self) -> BNode {
+        self.pos += 1; // consume <math-block>
+        let mut buf = String::new();
+        let mut logged_markup = false;
+        loop {
+            match self.toks.get(self.pos) {
+                None => break,
+                Some(Tok::Close { .. }) => {
+                    let is_end = matches!(self.toks.get(self.pos), Some(Tok::Close { name, .. }) if name == "math-block");
+                    self.pos += 1;
+                    if is_end {
+                        break;
+                    }
+                }
+                Some(Tok::Open { .. }) => {
+                    if !logged_markup {
+                        logged_markup = true;
+                        let off = self.tok_start();
+                        self.loss(
+                            off,
+                            "<math-block> 内行内标签".into(),
+                            LossDisposition::Dropped,
+                            "<math-block> 内的行内标签：丢弃，文本保留（pre 同构）",
+                        );
+                    }
+                    self.pos += 1;
+                }
+                Some(Tok::Text { raw, .. }) => {
+                    buf.push_str(&decode_entities(raw));
+                    self.pos += 1;
+                }
+            }
+        }
+        BNode::leaf(BlockKind::Math, buf, Vec::new(), Attrs::new())
     }
 
     fn parse_table(&mut self) -> Vec<BNode> {
@@ -1487,7 +1534,7 @@ fn materialize(nodes: Vec<BNode>, tree: &mut BlockTree, parent: NodeId) {
 // ---------------------------------------------------------------------------
 
 /// 导出认识的行内 mark kind（序即嵌套序；其余 kind 不导出——DM→MD 同样不写 mark）。
-const INLINE_KINDS: [&str; 5] = ["strong", "em", "code", "del", "u"];
+const INLINE_KINDS: [&str; 6] = ["strong", "em", "code", "math", "del", "u"];
 
 fn kind_rank(k: &str) -> usize {
     INLINE_KINDS
@@ -1606,6 +1653,13 @@ fn render_block(tree: &BlockTree, id: NodeId, out: &mut String) {
             }
             out.push_str(&escape_html(&node.text.to_string()));
             out.push_str("</code></pre>\n");
+        }
+        // #261：LaTeX 显示公式——专用标签（标签即锚点，textContent 即源码，
+        // 消费方 katex.render(el.textContent, el) 直接可得；行内面对应 <math>）。
+        BlockKind::Math => {
+            out.push_str("<math-block>");
+            out.push_str(&escape_html(&node.text.to_string()));
+            out.push_str("</math-block>\n");
         }
         BlockKind::ThematicBreak => out.push_str("<hr>\n"),
         BlockKind::Table => {

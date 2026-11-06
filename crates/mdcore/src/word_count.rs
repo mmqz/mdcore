@@ -256,6 +256,11 @@ fn walk(tree: &BlockTree, id: NodeId, t: &mut TextCount, s: &mut StructureCount)
             // 字面计入（无行内投影——代码逐字）；不计结构三计数。
             t.add_str(&node.text.to_string());
         }
+        // 数学块同构 CodeBlock：LaTeX 源逐字计入（#261——定界符是
+        // 字面内容，非行内投影面）；不计结构三计数。
+        BlockKind::Math => {
+            t.add_str(&node.text.to_string());
+        }
         BlockKind::Table => {
             s.tables += 1;
             count_table(&node.text.to_string(), t);
