@@ -1,0 +1,476 @@
+{
+  "meta": {
+    "browser": "chromium-headless",
+    "runner": "playwright",
+    "page": "web/dist/index.html (CM6 <-> mdcore-wasm bridge)",
+    "note_w3": "synthetic only, real IME = R11"
+  },
+  "tests": {
+    "W1": [
+      {
+        "check": "h1 rendered + '# ' hidden",
+        "pass": true,
+        "detail": "Bridge Demo"
+      },
+      {
+        "check": "bold styled, '**' hidden on its line",
+        "pass": true,
+        "detail": "Plain paragraph with bold and inline code inside."
+      },
+      {
+        "check": "inline code styled, backticks hidden",
+        "pass": true,
+        "detail": "Plain paragraph with bold and inline code inside."
+      },
+      {
+        "check": "hr widget replaces '---'",
+        "pass": true,
+        "detail": "widget=True"
+      },
+      {
+        "check": "list/quote markers decorated",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "check": "cursor inside marker reveals, moving away hides again",
+        "pass": true,
+        "detail": "{'revealedNow': True, 'hiddenAgain': True}"
+      }
+    ],
+    "W2": [
+      {
+        "check": "heading marker atomic jump (2 ->ArrowLeft-> 0 ->ArrowRight-> 2)",
+        "pass": true,
+        "detail": "left=0 right=2"
+      },
+      {
+        "check": "bold marker atomic jump",
+        "pass": true,
+        "detail": "idx=35 left=35 right=37"
+      },
+      {
+        "check": "selection survives fast-path edit + core-undo re-render",
+        "pass": true,
+        "detail": "alive=True post=True"
+      }
+    ],
+    "W3": [
+      {
+        "check": "composition text landed in view doc, doc not corrupted",
+        "pass": true,
+        "detail": "{'inDoc': True, 'inCore': True, 'docStillIntact': True, 'revAdvanced': True}"
+      },
+      {
+        "check": "core absorbed composition via fallback sync",
+        "pass": true,
+        "detail": "{'inDoc': True, 'inCore': True, 'docStillIntact': True, 'revAdvanced': True}"
+      }
+    ],
+    "W9": [
+      {
+        "check": "3 rapid composition rounds all absorbed",
+        "pass": true,
+        "detail": "[True, True, True]"
+      },
+      {
+        "check": "cancelled composition leaves no residue (view+core)",
+        "pass": true,
+        "detail": "{'rounds': [True, True, True], 'cancelInserted': True, 'cancelNoResidue': True, 'docIntact': True, 'coreConverged': True, 'revAdvanced': True, 'eventsGrew': True, 'coreHas3': True, 'docHas3': True}"
+      },
+      {
+        "check": "doc intact + core/view converged + events recorded",
+        "pass": true,
+        "detail": "{'rounds': [True, True, True], 'cancelInserted': True, 'cancelNoResidue': True, 'docIntact': True, 'coreConverged': True, 'revAdvanced': True, 'eventsGrew': True, 'coreHas3': True, 'docHas3': True}"
+      }
+    ],
+    "W5": [
+      {
+        "check": "Enter splits paragraph into a new block",
+        "pass": true,
+        "detail": "before=9 after=10 rev=4"
+      },
+      {
+        "check": "Backspace at line start merges blocks",
+        "pass": true,
+        "detail": "n=9 merged=True"
+      },
+      {
+        "check": "Enter continues list (core split, marker inherited) + typing lands in new item",
+        "pass": true,
+        "detail": "items=2->3 marker=- typed=True"
+      }
+    ],
+    "W6": [
+      {
+        "check": "typing (coalesced) reverted by one core undo",
+        "pass": true,
+        "detail": "{'doc': True, 'block': True, 'undoEvent': True}"
+      },
+      {
+        "check": "structural split undone (block count + IDs restored)",
+        "pass": true,
+        "detail": "10->11->10 ids_ok=True"
+      },
+      {
+        "check": "redo re-applies the split",
+        "pass": true,
+        "detail": "n=11"
+      }
+    ],
+    "W4": {
+      "checks": [
+        {
+          "check": "1MB doc loaded (doc length > 900k)",
+          "pass": true,
+          "detail": "len=1033305"
+        },
+        {
+          "check": "1MB parsed into block tree (>1000 blocks)",
+          "pass": true,
+          "detail": "blocks=20448"
+        },
+        {
+          "check": "10 fast-path typings recorded",
+          "pass": true,
+          "detail": "[10.5, 12.4, 12.4, 13.1, 13.1, 13.4, 13.7, 20.2, 20.3, 20.8]"
+        },
+        {
+          "check": "fallback sync + undo timings recorded",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "load_ms": 383.6,
+      "typing_ms": [
+        10.5,
+        12.4,
+        12.4,
+        13.1,
+        13.1,
+        13.4,
+        13.7,
+        20.2,
+        20.3,
+        20.8
+      ],
+      "typing_p95_ms": 20.3,
+      "fallback_sync_ms": 332,
+      "undo_rerender_ms": 154.1,
+      "doc_len": 1033305,
+      "blocks": 20448
+    },
+    "W7": {
+      "checks": [
+        {
+          "check": "progressive mode ran (>=2 chunks)",
+          "pass": true,
+          "detail": "{'ttiMs': 180.3000000002794, 'ingestMs': 244.79999999981374, 'finalRenderMs': 31.700000000186265, 'chunks': 8}"
+        },
+        {
+          "check": "TTI < full-load baseline (same machine/doc)",
+          "pass": true,
+          "detail": "tti=180.3000000002794ms vs full=383.6ms"
+        },
+        {
+          "check": "final state = full document",
+          "pass": true,
+          "detail": "blocks=20448 len=1033295"
+        },
+        {
+          "check": "editable after ingest (fast path lands in core)",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "tti_ms": 180.3,
+      "ingest_ms": 244.8,
+      "final_render_ms": 31.7,
+      "chunks": 8,
+      "baseline_full_load_ms": 383.6,
+      "doc_len": 1033295,
+      "blocks": 20448
+    },
+    "W8": {
+      "checks": [
+        {
+          "check": "200-op batch = single transaction, absorbed",
+          "pass": true,
+          "detail": "{'batchMs': 19.200000000186265, 'blocksSame': True}"
+        },
+        {
+          "check": "idempotent resync is a no-op (rev unchanged)",
+          "pass": true,
+          "detail": "idem=59.8000000002794ms"
+        },
+        {
+          "check": "batch undo reverts all, event recorded",
+          "pass": true,
+          "detail": "undo=106.29999999981374ms"
+        },
+        {
+          "check": "multi-change CM6 tx → fallback absorbs all",
+          "pass": true,
+          "detail": "multi=130.5ms len=1033319"
+        }
+      ],
+      "batch_ms": 19.2,
+      "rerender_ms": 102.9,
+      "idempotent_sync_ms": 59.8,
+      "batch_undo_ms": 106.3,
+      "multi_change_fallback_ms": 130.5
+    },
+    "W10": {
+      "checks": [
+        {
+          "check": "big-doc core-driven split (blocks +1, list item +1)",
+          "pass": true,
+          "detail": "20448->20449 items=10224->10225"
+        },
+        {
+          "check": "big-doc fallback merge (blocks back)",
+          "pass": true,
+          "detail": "n=20448"
+        },
+        {
+          "check": "structural undo x2 restores block count + IDs",
+          "pass": true,
+          "detail": "n=20448 ids_ok=True"
+        }
+      ],
+      "blocks": 20448,
+      "split_ms": 122.9,
+      "merge_ms": 289.3,
+      "structural_undo_ms": 315.0
+    },
+    "W11": [
+      {
+        "check": "AI ops accepted at JSON boundary (source=ai)",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "check": "CM6 renders the AI change (Human edit preserved)",
+        "pass": true,
+        "detail": "AI note: Bridge Demo\n# Bridge Demo\nPlain paragraph with **bo"
+      },
+      {
+        "check": "Human/AI share one event stream (view→ai→view)",
+        "pass": true,
+        "detail": "[('view', 'replace_text'), ('ai', 'ai.note'), ('view', 'replace_text')]"
+      },
+      {
+        "check": "AI op id materialized in event stream (§8.2)",
+        "pass": true,
+        "detail": "{'t': 'insert_block', 'parent': [], 'index': 0, 'kind': 'paragraph', 'attrs': {}, 'text': 'AI note: Bridge Demo', 'id': 10}"
+      },
+      {
+        "check": "revisions strictly increasing (AI never coalesces; R12 view-after-ai rule)",
+        "pass": true,
+        "detail": "[1, 2, 3]"
+      },
+      {
+        "check": "undo #1 reverts trailing Human keystroke only",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "check": "undo #2 reverts the AI batch (single entry)",
+        "pass": true,
+        "detail": ""
+      }
+    ],
+    "W12": [
+      {
+        "check": "incremental == full rebuild at [[36, 36]]",
+        "pass": true,
+        "detail": "step#0 deco n=17/17"
+      },
+      {
+        "check": "incremental == full rebuild at [[0, 0]]",
+        "pass": true,
+        "detail": "step#1 deco n=17/17"
+      },
+      {
+        "check": "incremental == full rebuild at [[35, 35], [48, 48]]",
+        "pass": true,
+        "detail": "step#2 deco n=17/17"
+      },
+      {
+        "check": "incremental == full rebuild at [[101, 104]]",
+        "pass": true,
+        "detail": "step#3 deco n=17/17"
+      },
+      {
+        "check": "incremental == full rebuild at [[162, 162]]",
+        "pass": true,
+        "detail": "step#4 deco n=17/17"
+      },
+      {
+        "check": "incremental == full rebuild at [[0, 0]]",
+        "pass": true,
+        "detail": "step#5 deco n=17/17"
+      }
+    ],
+    "W13": [
+      {
+        "check": "unit constitution facts (ZWJ family 7cp/11utf16)",
+        "pass": true,
+        "detail": "cp=7 utf16=11"
+      },
+      {
+        "check": "blocks_json text == doc line (code-point identity)",
+        "pass": true,
+        "detail": "blockMatch=True cpEquals=True"
+      },
+      {
+        "check": "fast-path op offsets are code points (2utf16 span -> 1cp op)",
+        "pass": true,
+        "detail": "{'t': 'replace_text', 'span': 1, 'insert': '吉', 'ops': 1, 'bail': 'ok'}"
+      },
+      {
+        "check": "edit landed on the exact code point (core==doc)",
+        "pass": true,
+        "detail": "landed=True core=True"
+      },
+      {
+        "check": "undo restores core identity (content-level doc compare)",
+        "pass": true,
+        "detail": "undoIdentity=True"
+      }
+    ],
+    "G1": {
+      "checks": [
+        {
+          "check": "1MB doc loaded for gate2",
+          "pass": true,
+          "detail": "len=1033305"
+        },
+        {
+          "check": "cursor-path dispatch works and timed (selection-only)",
+          "pass": true,
+          "detail": "p95=0.9ms max=1.5ms"
+        },
+        {
+          "check": "typing full path p95 recorded (attribution, non-gate)",
+          "pass": true,
+          "detail": "p95=15.5ms"
+        },
+        {
+          "check": "core-only op p95 recorded (attribution, non-gate)",
+          "pass": true,
+          "detail": "p95=8.5ms p50=8.1ms"
+        }
+      ],
+      "cursor_p95_ms": 0.9,
+      "cursor_max_ms": 1.5,
+      "typing_p95_ms": 15.5,
+      "core_only_p95_ms": 8.5,
+      "core_only_p50_ms": 8.1,
+      "heap_used_mb": 164.7,
+      "doc_len": 1033305,
+      "blocks": 20448,
+      "gate_verdict": "PASS — cursor p95 0.9ms < 16ms（R15 装饰增量窗口化后）"
+    },
+    "G2": {
+      "checks": [
+        {
+          "check": "10MB doc ingested progressively (len > 9MB)",
+          "pass": true,
+          "detail": "len=10335367"
+        },
+        {
+          "check": "10MB block count sane (> 100k)",
+          "pass": true,
+          "detail": "blocks=200576"
+        },
+        {
+          "check": "progressive TTI recorded",
+          "pass": true,
+          "detail": "tti=283.89999999990687"
+        },
+        {
+          "check": "ADR-B4: undo_entries == 0 after progressive open (System ingest off undo stack)",
+          "pass": true,
+          "detail": "undo_entries=0"
+        },
+        {
+          "check": "ADR-B4: undo is no-op after pure ingest (revision unchanged, no undo event; ok_undo=true is keymap contract)",
+          "pass": true,
+          "detail": "rev 15 -> 15, undo_event=False, ok_undo=True (0.4ms)"
+        },
+        {
+          "check": "10MB heap split recorded (R19: JS heap vs wasm linear memory)",
+          "pass": true,
+          "detail": "used=488.4MB = JS 63.2MB + wasm 425.2MB"
+        }
+      ],
+      "tti_ms": 283.9,
+      "undo_entries": 0,
+      "rev_before_undo": 15,
+      "rev_after_undo": 15,
+      "undo_event_fired": false,
+      "heap_after_undo_mb": 488.4,
+      "wasm_after_undo_mb": 425.2,
+      "ingest_ms": 4260.9,
+      "final_render_ms": 233.4,
+      "chunks": 16,
+      "blocks": 200576,
+      "doc_len": 10335367,
+      "undo_ms": 0.4,
+      "rerender_ms": 0.1,
+      "heap_used_mb": 488.4,
+      "js_heap_mb": 63.2,
+      "wasm_memory_mb": 425.2,
+      "heap_trace": [
+        {
+          "label": "chunks-built",
+          "usedMb": 16,
+          "totalMb": 22
+        },
+        {
+          "label": "core-created",
+          "usedMb": 44,
+          "totalMb": 50
+        },
+        {
+          "label": "first-chunk-rendered",
+          "usedMb": 62,
+          "totalMb": 72
+        },
+        {
+          "label": "ingest-4/15",
+          "usedMb": 190,
+          "totalMb": 206
+        },
+        {
+          "label": "ingest-8/15",
+          "usedMb": 302,
+          "totalMb": 317
+        },
+        {
+          "label": "ingest-12/15",
+          "usedMb": 418,
+          "totalMb": 433
+        },
+        {
+          "label": "ingest-15/15",
+          "usedMb": 497,
+          "totalMb": 513
+        },
+        {
+          "label": "final-render",
+          "usedMb": 504,
+          "totalMb": 541
+        }
+      ],
+      "gate_verdict": "PASS（Gate1 口径：1MB TTI < 600ms 在 W4/W7 复验；10MB 出文本/TTI 实测入档；R21/ADR-B4：undo no-op + undo_entries==0 锁定）；R19 口径修正：10MB 开档稳态 JS 堆 63MB 达标（非门 600MB）；wasm 线性内存 425MB（核侧 ropey+arena+revision，透明记录，优化登记 R20）；undo（no-op）后 used 残留 488MB / wasm 425MB（透明记录）"
+    }
+  },
+  "summary": {
+    "total": 15,
+    "failed": 0,
+    "pass": true,
+    "failures": []
+  }
+}

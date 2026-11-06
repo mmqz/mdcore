@@ -1,0 +1,166 @@
+{
+  "meta": {
+    "gate": "t18 docx export e2e",
+    "dist": "/home/z/my-project/mdcore-audit/web/dist"
+  },
+  "tests": [
+    {
+      "name": "export_ui_present",
+      "ok": true,
+      "detail": "{\"btn\": true, \"btnLabel\": \"export .docx\", \"status\": true, \"exportFn\": \"function\", \"last\": null, \"contract\": 1.4}"
+    },
+    {
+      "name": "happy_export_valid_zip",
+      "ok": true,
+      "detail": "{\"r\": {\"ok\": true, \"sizeBytes\": 20192}, \"parts\": [\"word/\", \"word/_rels/\", \"_rels/\", \"docProps/\", \"[Content_Types].xml\", \"_rels/.rels\", \"docProps/app.xml\", \"docProps/core.xml\", \"docProps/custom.xml\", \"word/_rels/document.xml.rels\", \"word/document.xml\", \"word/styles.xml\", \"word/settings.xml\", \"word/fontTable.xml\", \"word/comments.xml\", \"word/numbering.xml\", \"word/commentsExtended.xml\", \"word/footnote"
+    },
+    {
+      "name": "document_xml_mapping_strings",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "table_export_xml",
+      "ok": true,
+      "detail": "tbl marker + cells"
+    },
+    {
+      "name": "degraded_blocks_survive_export",
+      "ok": true,
+      "detail": "{\"status\": \"exported: 25.2 KB \\u00b7 6 blocks \\u00b7 1 simplified\", \"md_same\": true}"
+    },
+    {
+      "name": "t20_list_numbering_xml",
+      "ok": true,
+      "detail": "bullet numPr ilvl 0/1 + 抽象 + rels"
+    },
+    {
+      "name": "t20_quote_indent_border_xml",
+      "ok": true,
+      "detail": "quote ind 720 + left border"
+    },
+    {
+      "name": "t20_hr_bottom_border_xml",
+      "ok": true,
+      "detail": "hr pBdr bottom"
+    },
+    {
+      "name": "t20_code_block_mono_rfonts_xml",
+      "ok": true,
+      "detail": "code dual-channel rFonts"
+    },
+    {
+      "name": "t22_multiline_item_br_hanging_xml",
+      "ok": true,
+      "detail": "multiline item: single-paragraph numPr + br + hanging ind"
+    },
+    {
+      "name": "tr15_inline_marks_five_bit_emission",
+      "ok": true,
+      "detail": "bold/italic/strike/underline/mono 五位 XML 发射"
+    },
+    {
+      "name": "tr15_zero_delimiter_residue",
+      "ok": true,
+      "detail": "净文本零定界符残留（星号/波浪线/标签全剥；列表项 bold/普通两 run 切分——尾段子串断言）"
+    },
+    {
+      "name": "tr15_full_circle_marks_roundtrip",
+      "ok": true,
+      "detail": "{\"reimport_ok\": true, \"md\": \"# \\u62a5\\u4ef7\\u8bf4\\u660e\\n\\u603b\\u8ba1\\u4eba\\u6c11\\u5e01 **\\u58f9\\u4f70\\u8d30\\u62fe\\u4e07\\u5143\\u6574**\\uff0c*\\u975e\\u6700\\u7ec8\\u62a5\\u4ef7*\\u3002\\n\\u7b49\\u5bbd f(x)\\u3001\\u5220\\u9664 \\u65e7\\u6761\\u6b3e\\u3001\\u4e0b\\u5212\\u7ebf \\u65b0\\u6761\\u6b3e\\u3002\\n- **\\u91cd\\u70b9**\\uff1a\\u52a0\\u7c97\\u5217\\u8868\\u9879\"}"
+    },
+    {
+      "name": "tr15_unclosed_marker_literal",
+      "ok": true,
+      "detail": "未闭合星号原样保留、零格式派生"
+    },
+    {
+      "name": "empty_document_minimal_docx",
+      "ok": true,
+      "detail": "exported: 20.2 KB · 0 blocks"
+    },
+    {
+      "name": "full_circle_reimport_content",
+      "ok": true,
+      "detail": "{\"reimport\": {\"ok\": true, \"code\": null}, \"md\": \"# Round Trip\\nplain text\\n| a | b |\\n| --- | --- |\\n| 1 | 2 |\", \"status\": \"imported: 1 heading \\u00b7 1 paragraph \\u00b7 1 table \\u00b7 0 links\"}"
+    },
+    {
+      "name": "tr4_options_ui_and_bridge_present",
+      "ok": true,
+      "detail": "{\"optBtn\": true, \"panel\": true, \"presetSel\": true, \"getFn\": \"function\", \"setFn\": \"function\", \"styledFace\": \"function\", \"cur\": {\"preset\": \"default\", \"json\": \"{}\"}}"
+    },
+    {
+      "name": "tr4_official_a4_preset_emission",
+      "ok": true,
+      "detail": "{\"setOk\": true, \"sz28\": true, \"songti\": true, \"line360\": true, \"m1800\": true}"
+    },
+    {
+      "name": "tr4_custom_values_emission",
+      "ok": true,
+      "detail": "{\"sz21\": true, \"line240\": true, \"m1134\": true}"
+    },
+    {
+      "name": "tr4_default_restores_plain_parts",
+      "ok": true,
+      "detail": "{\"partsEqualPlain\": true, \"differsPreset\": true, \"defaultBytes\": 20192, \"presetBytes\": 20349}"
+    },
+    {
+      "name": "tr4_invalid_preset_rejected",
+      "ok": true,
+      "detail": "{\"badSet\": false, \"cur\": {\"preset\": \"default\", \"json\": \"{}\"}}"
+    },
+    {
+      "name": "tr16_settings_keys_consume_to_xml",
+      "ok": true,
+      "detail": "{\"sz24\": true, \"line480\": true, \"song\": true, \"m1440\": true}"
+    },
+    {
+      "name": "tr16_export_docx_styled_bridge",
+      "ok": true,
+      "detail": "{\"fn\": \"function\", \"ok\": true, \"invalid\": {\"ok\": false, \"code\": \"docx_invalid_input\"}}"
+    },
+    {
+      "name": "tr16_persistence_across_reload",
+      "ok": true,
+      "detail": "{\"settings\": {\"preset\": \"custom\", \"size_half_points\": 24, \"line_spacing\": 480, \"margin_twips\": 1440, \"toc\": false, \"anonymize\": false}, \"panel\": {\"preset\": \"custom\", \"json\": \"{\\\"typography\\\":{\\\"ascii_font\\\":\\\"Times New Roman\\\",\\\"east_asia_font\\\":\\\"\\u5b8b\\u4f53\\\",\\\"complex_script_font\\\":\\\"Times New Roman\\\",\\\"size_half_points\\\":24,\\\"line_spacing\\\":{\\\"line\\\":480,\\\"line_rule\\\":\\\"auto\\\"}},\\\"page_geomet"
+    },
+    {
+      "name": "w2_toc_anonymize_panel_toggles_present",
+      "ok": true,
+      "detail": "{\"tocChk\": true, \"anonChk\": true, \"tocOn\": false, \"anonOn\": false, \"cur\": {\"preset\": \"default\", \"json\": \"{}\"}}"
+    },
+    {
+      "name": "w2_toc_field_emission_and_position",
+      "ok": false,
+      "detail": "TOC 五连 + 居首内容块（Export Test）之前"
+    },
+    {
+      "name": "w2_anonymize_props_scrub",
+      "ok": true,
+      "detail": "{\"coreEq\": true, \"appEq\": true, \"docEq\": true, \"core\": \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\" standalone=\\\"yes\\\"?><cp:coreProperties xmlns:cp=\\\"http://schemas.openxmlformats.org/pa\"}"
+    },
+    {
+      "name": "w2_styled_bridge_toc_anonymize_and_rejects",
+      "ok": true,
+      "detail": "{\"styled\": {\"ok\": true, \"code\": null}, \"badLevel\": {\"ok\": false, \"code\": \"docx_options\", \"message\": \"export options `toc`: `level_from` = 0 outside 1..=9 (TOC heading levels)\"}, \"badRange\": {\"ok\": false, \"code\": \"docx_options\", \"message\": \"export options `toc`: `level_from` (5) > `level_to` (2) (TOC heading levels must satisfy from \\u2264 to)\"}, \"badHi\": {\"ok\": false, \"code\": \"docx_options\", \"mess"
+    },
+    {
+      "name": "w2_toggles_reset_zero_pollution",
+      "ok": true,
+      "detail": "{\"preset\": \"default\", \"json\": \"{}\"}"
+    },
+    {
+      "name": "contract_intact_no_pageerror",
+      "ok": true,
+      "detail": "{\"final\": {\"ready\": true, \"contract\": true, \"inject\": true, \"exportFn\": true, \"importFn\": true}, \"pageErrors\": []}"
+    }
+  ],
+  "summary": {
+    "total": 30,
+    "failed": 1,
+    "pass": false,
+    "failures": [
+      "w2_toc_field_emission_and_position"
+    ]
+  }
+}

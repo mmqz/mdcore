@@ -1,0 +1,1896 @@
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/examples/render_demo.rs:11:
+ use std::path::PathBuf;
+ 
+ use mdc_canvas::render::{
+-    CanvasRendering, Color, LineCap, PathCmd, Point, Rect, Shape, ShapeStyle,
+-    StrokeDash, StrokeStyle, TextAnchor, TextStyle,
++    CanvasRendering, Color, LineCap, PathCmd, Point, Rect, Shape, ShapeStyle, StrokeDash,
++    StrokeStyle, TextAnchor, TextStyle,
+ };
+ 
+ fn stroke(c: Color, w: f64) -> StrokeStyle {
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/lib.rs:27:
+ pub use events::{CanvasChangeSource, CanvasEvent, Subscription};
+ pub use render::{
+     canvas_bounds, canvas_bounds_geometry, encode_png, export_png, export_svg, parse_color,
+-    shape_bounds, shape_bounds_padded, shape_from_object,
+-    Affine, Bitmap, CanvasRenderer, CanvasRendering, Color, ImageMime, LineCap, LineJoin, PathCmd,
+-    Point, RasterRenderer, Rect, Shape, ShapeStyle, StrokeDash, StrokeStyle, SvgRenderer, TextAnchor,
+-    TextStyle, Transform,
++    shape_bounds, shape_bounds_padded, shape_from_object, Affine, Bitmap, CanvasRenderer,
++    CanvasRendering, Color, ImageMime, LineCap, LineJoin, PathCmd, Point, RasterRenderer, Rect,
++    Shape, ShapeStyle, StrokeDash, StrokeStyle, SvgRenderer, TextAnchor, TextStyle, Transform,
+ };
+ pub use session::{
+     Actor, CanvasCommand, CanvasError, CanvasObject, CanvasSession, CommandOutcome, CommandReceipt,
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:183:
+ 
+     fn check(&self) -> Result<(), CanvasError> {
+         if self.dash != 0 && self.gap == 0 {
+-            return Err(CanvasError::InvalidInput(
+-                "虚线模式 gap 不可为 0".into(),
+-            ));
++            return Err(CanvasError::InvalidInput("虚线模式 gap 不可为 0".into()));
+         }
+         Ok(())
+     }
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:366:
+     MoveTo(Point),
+     LineTo(Point),
+     /// 二次贝塞尔。
+-    QuadTo { ctrl: Point, to: Point },
++    QuadTo {
++        ctrl: Point,
++        to: Point,
++    },
+     /// 三次贝塞尔。
+-    CubicTo { c1: Point, c2: Point, to: Point },
++    CubicTo {
++        c1: Point,
++        c2: Point,
++        to: Point,
++    },
+     Close,
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:395:
+             PathCmd::MoveTo(p) => format!("M{} {}", num(p.x), num(p.y)),
+             PathCmd::LineTo(p) => format!("L{} {}", num(p.x), num(p.y)),
+             PathCmd::QuadTo { ctrl, to } => {
+-                format!("Q{} {} {} {}", num(ctrl.x), num(ctrl.y), num(to.x), num(to.y))
++                format!(
++                    "Q{} {} {} {}",
++                    num(ctrl.x),
++                    num(ctrl.y),
++                    num(to.x),
++                    num(to.y)
++                )
+             }
+             PathCmd::CubicTo { c1, c2, to } => format!(
+                 "C{} {} {} {} {} {}",
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:1783:
+     pub fn into_png(self) -> Result<Vec<u8>, CanvasError> {
+         encode_png(&self.bmp)
+     }
+-
+ }
+ 
+ /// 采样行循环：对区间 [y0,y1] 覆盖的每个像素行回调，给出采样行 y 与
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:1845:
+     let eps = 1e-9;
+     if (b - a).abs() <= eps {
+         // 零宽区间：只按闭区间原点归属一格（避免整段消失）。
+-        let xi = if (a - a.floor() - 0.5).abs() <= 0.5 { a.floor() } else { a.ceil() };
++        let xi = if (a - a.floor() - 0.5).abs() <= 0.5 {
++            a.floor()
++        } else {
++            a.ceil()
++        };
+         if xi >= 0.0 && xi < w {
+             buf.blend_at(xi as u32, y, color, weight);
+         }
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:1890:
+     let dx = bx - ax;
+     let dy = by - ay;
+     let len2 = dx * dx + dy * dy;
+-    sample_rows(buf.height, ay.min(by) - hw, ay.max(by) + hw, |py, sy, weight| {
+-        let mut lo = f64::INFINITY;
+-        let mut hi = f64::NEG_INFINITY;
+-        // 轴向部分：t 轴上距离 <= hw 的区间（半平面判定，不含端帽）。
+-        if len2 > 0.0 {
+-            let a2 = len2;
+-            let b2 = 2.0 * (dx * ax + dy * (ay - sy));
+-            let c2 = ax * ax + (ay - sy) * (ay - sy) - hw * hw;
+-            let disc = b2 * b2 - 4.0 * a2 * c2;
+-            // 判别式恰为 0 = 采样行正好相切胶囊边缘，t0 == t1 退化成一点；
+-            // 这时必须整条轴段都算覆盖（否则 0.5px 线整条消失，本站踩过）。
+-            if (0.0..1e-12).contains(&disc) {
+-                let xa = ax.min(bx);
+-                let xb = ax.max(bx);
+-                lo = lo.min(xa);
+-                hi = hi.max(xb);
+-            } else if disc > 0.0 {
+-                let sq = disc.sqrt();
+-                let t0 = (-b2 - sq) / (2.0 * a2);
+-                let t1 = (-b2 + sq) / (2.0 * a2);
+-                if t1 > 0.0 && t0 < 1.0 {
+-                    // 需要的是该行在原始直线上的 x 范围（不夹到 [0,1]），
+-                    // 端帽由下面的圆补——把 t 夹住会让端帽区变成矩形。
+-                    let xa = ax + t0 * dx;
+-                    let xb = ax + t1 * dx;
+-                    lo = lo.min(xa.min(xb));
+-                    hi = hi.max(xa.max(xb));
++    sample_rows(
++        buf.height,
++        ay.min(by) - hw,
++        ay.max(by) + hw,
++        |py, sy, weight| {
++            let mut lo = f64::INFINITY;
++            let mut hi = f64::NEG_INFINITY;
++            // 轴向部分：t 轴上距离 <= hw 的区间（半平面判定，不含端帽）。
++            if len2 > 0.0 {
++                let a2 = len2;
++                let b2 = 2.0 * (dx * ax + dy * (ay - sy));
++                let c2 = ax * ax + (ay - sy) * (ay - sy) - hw * hw;
++                let disc = b2 * b2 - 4.0 * a2 * c2;
++                // 判别式恰为 0 = 采样行正好相切胶囊边缘，t0 == t1 退化成一点；
++                // 这时必须整条轴段都算覆盖（否则 0.5px 线整条消失，本站踩过）。
++                if (0.0..1e-12).contains(&disc) {
++                    let xa = ax.min(bx);
++                    let xb = ax.max(bx);
++                    lo = lo.min(xa);
++                    hi = hi.max(xb);
++                } else if disc > 0.0 {
++                    let sq = disc.sqrt();
++                    let t0 = (-b2 - sq) / (2.0 * a2);
++                    let t1 = (-b2 + sq) / (2.0 * a2);
++                    if t1 > 0.0 && t0 < 1.0 {
++                        // 需要的是该行在原始直线上的 x 范围（不夹到 [0,1]），
++                        // 端帽由下面的圆补——把 t 夹住会让端帽区变成矩形。
++                        let xa = ax + t0 * dx;
++                        let xb = ax + t1 * dx;
++                        lo = lo.min(xa.min(xb));
++                        hi = hi.max(xa.max(xb));
++                    }
+                 }
+             }
+-        }
+-        // 端帽（圆；退化零长线段也靠这里出像素）。
+-        for (cx, cy) in [(ax, ay), (bx, by)] {
+-            let dv = sy - cy;
+-            if dv.abs() < hw {
+-                let half = (hw * hw - dv * dv).sqrt();
+-                lo = lo.min(cx - half);
+-                hi = hi.max(cx + half);
++            // 端帽（圆；退化零长线段也靠这里出像素）。
++            for (cx, cy) in [(ax, ay), (bx, by)] {
++                let dv = sy - cy;
++                if dv.abs() < hw {
++                    let half = (hw * hw - dv * dv).sqrt();
++                    lo = lo.min(cx - half);
++                    hi = hi.max(cx + half);
++                }
+             }
+-        }
+-        if hi > lo {
+-            blend_span(buf, py, lo, hi, weight, color);
+-        }
+-    });
++            if hi > lo {
++                blend_span(buf, py, lo, hi, weight, color);
++            }
++        },
++    );
+ }
+ 
+ /// 折线描边（首尾相接的线段；closed 时闭合）。
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:2001:
+ }
+ 
+ /// 椭圆描边：环带 [r-hw, r+hw]，用径向距离判定。
+-fn raster_ellipse_stroke(
+-    buf: &mut Bitmap,
+-    c: (f64, f64),
+-    rx: f64,
+-    ry: f64,
+-    hw: f64,
+-    color: Color,
+-) {
++fn raster_ellipse_stroke(buf: &mut Bitmap, c: (f64, f64), rx: f64, ry: f64, hw: f64, color: Color) {
+     if color.a == 0 || rx <= 0.0 || ry <= 0.0 {
+         return;
+     }
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:2015:
+-    sample_rows(buf.height, c.1 - ry - hw, c.1 + ry + hw, |py, sy, weight| {
+-        let dy = sy - c.1;
+-        // 解 (dx/rx)^2 + (dy/ry)^2 = 1 得到该行的水平半宽
+-        let k = 1.0 - (dy / ry) * (dy / ry);
+-        if k <= 0.0 {
+-            // 上下极点的圆帽
+-            let half = hw;
+-            blend_span(buf, py, c.0 - half, c.0 + half, weight, color);
+-            return;
+-        }
+-        let outer = (rx + hw) * k.sqrt();
+-        let inner = (rx - hw).max(0.0) * k.sqrt();
+-        blend_span(buf, py, c.0 - outer, c.0 - inner, weight, color);
+-        if inner > 0.0 {
+-            blend_span(buf, py, c.0 + inner, c.0 + outer, weight, color);
+-        } else {
+-            blend_span(buf, py, c.0 - outer, c.0 + outer, weight, color);
+-        }
+-    });
++    sample_rows(
++        buf.height,
++        c.1 - ry - hw,
++        c.1 + ry + hw,
++        |py, sy, weight| {
++            let dy = sy - c.1;
++            // 解 (dx/rx)^2 + (dy/ry)^2 = 1 得到该行的水平半宽
++            let k = 1.0 - (dy / ry) * (dy / ry);
++            if k <= 0.0 {
++                // 上下极点的圆帽
++                let half = hw;
++                blend_span(buf, py, c.0 - half, c.0 + half, weight, color);
++                return;
++            }
++            let outer = (rx + hw) * k.sqrt();
++            let inner = (rx - hw).max(0.0) * k.sqrt();
++            blend_span(buf, py, c.0 - outer, c.0 - inner, weight, color);
++            if inner > 0.0 {
++                blend_span(buf, py, c.0 + inner, c.0 + outer, weight, color);
++            } else {
++                blend_span(buf, py, c.0 - outer, c.0 + outer, weight, color);
++            }
++        },
++    );
+ }
+ 
+ /// 多边形非零环绕填充（多子路径一次扫描）。
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:2146:
+                     }
+                     if let Some(st) = style.stroke {
+                         if st.width > 0.0 && st.color.a > 0 {
+-                            raster_polyline(&mut self.bmp, &quad, true, st.width * k * 0.5, st.color);
++                            raster_polyline(
++                                &mut self.bmp,
++                                &quad,
++                                true,
++                                st.width * k * 0.5,
++                                st.color,
++                            );
+                         }
+                     }
+                 } else {
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:2171:
+                 }
+                 if let Some(st) = style.stroke {
+                     if st.width > 0.0 && st.color.a > 0 {
+-                        raster_ellipse_stroke(&mut self.bmp, c, rx, ry, st.width * k * 0.5, st.color);
++                        raster_ellipse_stroke(
++                            &mut self.bmp,
++                            c,
++                            rx,
++                            ry,
++                            st.width * k * 0.5,
++                            st.color,
++                        );
+                     }
+                 }
+             }
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:2189:
+                     if st.width > 0.0 && st.color.a > 0 {
+                         let hw = st.width * k * 0.5;
+                         for (i, pts) in polys.iter().enumerate() {
+-                            raster_polyline(&mut self.bmp, pts, fp.subpaths[i].closed, hw, st.color);
++                            raster_polyline(
++                                &mut self.bmp,
++                                pts,
++                                fp.subpaths[i].closed,
++                                hw,
++                                st.color,
++                            );
+                         }
+                     }
+                 }
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:2409:
+             let mut c = i as u32;
+             let mut k = 0;
+             while k < 8 {
+-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
++                c = if c & 1 != 0 {
++                    0xEDB8_8320 ^ (c >> 1)
++                } else {
++                    c >> 1
++                };
+                 k += 1;
+             }
+             table[i] = c;
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/src/render.rs:2462:
+         return Err(CanvasError::InvalidInput("导出像素数超限".into()));
+     }
+     let view = canvas_bounds_geometry(canvas);
+-    let sx = if view.w > 0.0 { size.0 as f64 / view.w } else { 1.0 };
+-    let sy = if view.h > 0.0 { size.1 as f64 / view.h } else { 1.0 };
++    let sx = if view.w > 0.0 {
++        size.0 as f64 / view.w
++    } else {
++        1.0
++    };
++    let sy = if view.h > 0.0 {
++        size.1 as f64 / view.h
++    } else {
++        1.0
++    };
+     let scale = sx.min(sy);
+     let mut r = RasterRenderer::new(size, view, scale, canvas.background);
+     for (s, tf) in &canvas.shapes {
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/tests/golden.rs:49:
+ fn fixtures_are_present_and_non_trivial() {
+     let svg = read_fixture("golden.svg");
+     let png = read_fixture("golden.png");
+-    assert!(svg.len() > 500, "golden.svg 太小，疑似被截断：{}B", svg.len());
+-    assert!(png.len() > 1000, "golden.png 太小，疑似被截断：{}B", png.len());
++    assert!(
++        svg.len() > 500,
++        "golden.svg 太小，疑似被截断：{}B",
++        svg.len()
++    );
++    assert!(
++        png.len() > 1000,
++        "golden.png 太小，疑似被截断：{}B",
++        png.len()
++    );
+     assert_eq!(
+         &png[..8],
+         &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/tests/render.rs:4:
+ //! 「跑通就算过」。像素级断言的容差写在每条断言的注释里。
+ 
+ use mdc_canvas::render::*;
+-use mdc_canvas::{
+-    Actor, CanvasCommand, CanvasObject, CanvasSession, ObjectKind, SessionOptions,
+-};
++use mdc_canvas::{Actor, CanvasCommand, CanvasObject, CanvasSession, ObjectKind, SessionOptions};
+ use std::collections::BTreeMap;
+ 
+ // ── 辅助 ───────────────────────────────────────────────────────
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/tests/render.rs:140:
+     // 4px 描边：边中部必须是纯黑满覆盖（抗锯齿只该出现在两侧）。
+     let b = raster_one(Shape::Rect {
+         rect: Rect::new(0.0, 0.0, 20.0, 12.0),
+-        style: ShapeStyle::both(
+-            Color::WHITE,
+-            StrokeStyle::new(Color::BLACK, 4.0),
+-        ),
++        style: ShapeStyle::both(Color::WHITE, StrokeStyle::new(Color::BLACK, 4.0)),
+     });
+     let mid = b.get(10, 2);
+     assert!(lum(mid) < 30.0, "4px 描边中部应近乎纯黑，实际 {mid:?}");
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/tests/render.rs:240:
+     // 支点 = 包围盒中心 → 中心不动。
+     let c0 = b0.center();
+     let c2 = b2.center();
+-    assert!((c2.x - c0.x).abs() < 1e-9 && (c2.y - c0.y).abs() < 1e-9, "绕中心缩放，中心不动");
++    assert!(
++        (c2.x - c0.x).abs() < 1e-9 && (c2.y - c0.y).abs() < 1e-9,
++        "绕中心缩放，中心不动"
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/tests/render.rs:270:
+     let m = Transform::rotate(std::f64::consts::FRAC_PI_2).with_origin(Point::new(0.0, 0.0));
+     let a = m.to_affine(Point::new(0.0, 0.0));
+     let p = a.apply(Point::new(10.0, 0.0));
+-    assert!((p.x).abs() < 1e-9 && (p.y - 10.0).abs() < 1e-9, "顺时针为正，实际 {p:?}");
++    assert!(
++        (p.x).abs() < 1e-9 && (p.y - 10.0).abs() < 1e-9,
++        "顺时针为正，实际 {p:?}"
++    );
+ }
+ 
+ // ── SVG 导出 ───────────────────────────────────────────────────
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/tests/render.rs:342:
+     );
+     let svg = export_svg(&c);
+     assert!(svg.contains("x=\"50\""), "平移必须体现在输出几何上：{svg}");
+-    assert!(!svg.contains("<g transform"), "走几何折入，不输出 <g transform>");
++    assert!(
++        !svg.contains("<g transform"),
++        "走几何折入，不输出 <g transform>"
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/canvas/tests/render.rs:362:
+         style: ShapeStyle::fill(Color::BLACK),
+     });
+     let png = export_png(&c, (16, 16)).unwrap();
+-    assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a], "PNG 签名");
++    assert_eq!(
++        &png[..8],
++        &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
++        "PNG 签名"
++    );
+     assert_eq!(&png[12..16], b"IHDR", "第一个 chunk 必须是 IHDR");
+     assert!(png.windows(4).any(|w| w == b"IDAT"), "必须有 IDAT");
+-    assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND", "必须以 IEND 收尾");
++    assert_eq!(
++        &png[png.len() - 8..png.len() - 4],
++        b"IEND",
++        "必须以 IEND 收尾"
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/mdcore/tests/external_corpus.rs:209:
+     for mp in [&spec_path, &good_path] {
+         // 判据：文件存在 ≠ 内容有效（CI 上可能被 gitignore 成空占位）。
+         // 用「≥ 1KB」作为有效语料门槛——spec.txt 实际 ~250KB，good.txt ~120KB。
+-        let ok = std::fs::metadata(mp).map(|m| m.len() > 1024).unwrap_or(false);
++        let ok = std::fs::metadata(mp)
++            .map(|m| m.len() > 1024)
++            .unwrap_or(false);
+         if !ok {
+             eprintln!();
+             eprintln!("====================================================================");
+Diff in /home/z/my-project/mdcore-audit/crates/mdcore-wasm/tests/external_corpus.rs:94:
+     // 环境门（issue #89 纪律）：外部语料不在仓（test-artifacts/ 被 gitignore），
+     // CI / 新克隆上必然缺失。缺件 = SKIP（响亮横幅），不是业务 FAIL。
+     let dir_path = corpus_root().join("pandoc");
+-    let dir_ok = std::fs::read_dir(&dir_path).map(|d| d.count() > 0).unwrap_or(false);
++    let dir_ok = std::fs::read_dir(&dir_path)
++        .map(|d| d.count() > 0)
++        .unwrap_or(false);
+     if !dir_ok {
+         eprintln!();
+         eprintln!("====================================================================");
+Diff in /home/z/my-project/mdcore-audit/crates/mdcore-wasm/tests/external_corpus.rs:101:
+         eprintln!("SKIP: l2_external_corpus_pandoc_export_gate");
+-        eprintln!("reason: CORPUS_MISSING: {}", corpus_root().join("pandoc").display());
++        eprintln!(
++            "reason: CORPUS_MISSING: {}",
++            corpus_root().join("pandoc").display()
++        );
+         eprintln!("（外部语料缺件，非业务失败——issue #89 口径：依赖缺失不得伪装成业务 FAIL）");
+         eprintln!("补件指引: 拉 pandoc 导出的 .markdown/.txt 语料到 test-artifacts/external-corpus/pandoc/");
+         eprintln!("====================================================================");
+Diff in /home/z/my-project/mdcore-audit/crates/office-io/tests/docx_table_advanced.rs:22:
+ use std::io::Read as _;
+ 
+ use mdc_office_io::docx::{
+-    Block, CellBorderEdge, CellBorderStyle, CellBorders, CellVMerge, DocxWriter, MergeRange,
+-    TableCellSpec, TableData, TableSpec, read_docx_from_bytes,
++    read_docx_from_bytes, Block, CellBorderEdge, CellBorderStyle, CellBorders, CellVMerge,
++    DocxWriter, MergeRange, TableCellSpec, TableData, TableSpec,
+ };
+ 
+ fn tmp(name: &str) -> String {
+Diff in /home/z/my-project/mdcore-audit/crates/office-io/tests/external_corpus.rs:65:
+     // 环境门（issue #89 纪律）：外部语料不在仓（test-artifacts/ 被 gitignore），
+     // CI / 新克隆上必然缺失。缺件 = SKIP（响亮横幅），不是业务 FAIL。
+     let dir_path = corpus_root().join("poi");
+-    let dir_ok = std::fs::read_dir(&dir_path).map(|d| d.count() > 0).unwrap_or(false);
++    let dir_ok = std::fs::read_dir(&dir_path)
++        .map(|d| d.count() > 0)
++        .unwrap_or(false);
+     if !dir_ok {
+         eprintln!();
+         eprintln!("====================================================================");
+Diff in /home/z/my-project/mdcore-audit/crates/office-io/tests/external_corpus.rs:72:
+         eprintln!("SKIP: l3_external_corpus_poi_docx_gate");
+-        eprintln!("reason: CORPUS_MISSING: {}", corpus_root().join("poi").display());
++        eprintln!(
++            "reason: CORPUS_MISSING: {}",
++            corpus_root().join("poi").display()
++        );
+         eprintln!("（外部语料缺件，非业务失败——issue #89 口径：依赖缺失不得伪装成业务 FAIL）");
+         eprintln!("补件指引: 拉 Apache POI 测试语料 .docx 到 test-artifacts/external-corpus/poi/");
+         eprintln!("====================================================================");
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:70:
+ 
+ impl FieldFlags {
+     /// 从原始 `/Ff` 整数值构造。
+-    pub fn from_raw(raw: i64) -> Self { FieldFlags(raw as u32) }
++    pub fn from_raw(raw: i64) -> Self {
++        FieldFlags(raw as u32)
++    }
+     /// 原始整数值（写回时原样保留）。
+-    pub fn raw(self) -> u32 { self.0 }
++    pub fn raw(self) -> u32 {
++        self.0
++    }
+     /// bit0：只读。
+-    pub fn is_read_only(self) -> bool { self.0 & 1 != 0 }
++    pub fn is_read_only(self) -> bool {
++        self.0 & 1 != 0
++    }
+     /// bit1：必填。
+-    pub fn is_required(self) -> bool { self.0 & 2 != 0 }
++    pub fn is_required(self) -> bool {
++        self.0 & 2 != 0
++    }
+     /// bit2：不导出。
+-    pub fn is_no_export(self) -> bool { self.0 & 4 != 0 }
++    pub fn is_no_export(self) -> bool {
++        self.0 & 4 != 0
++    }
+ }
+ 
+ /// 校验错误类别。
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:206:
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub enum FormField {
+     /// 文本框。`max_len` 来自 `/MaxLen`（None = 不限）。
+-    Text { name: String, value: String, max_len: Option<usize> },
++    Text {
++        name: String,
++        value: String,
++        max_len: Option<usize>,
++    },
+     /// 复选框。`on_name` 是选中态的名字（通常是 `/Yes`，但**不总是**——
+     /// 必须从 `/AP /N` 的键里读，写死 `/Yes` 在真实模板上会勾不上）。
+-    Checkbox { name: String, checked: bool, on_name: String },
++    Checkbox {
++        name: String,
++        checked: bool,
++        on_name: String,
++    },
+     /// 单选按钮组。`options` 是组内各选项名，`selected` 是当前选中项。
+-    Radio { name: String, selected: Option<String>, options: Vec<String> },
++    Radio {
++        name: String,
++        selected: Option<String>,
++        options: Vec<String>,
++    },
+     /// 下拉/列表。`selected` 允许多值（多选列表）。
+-    Choice { name: String, selected: Vec<String>, options: Vec<String>, combo: bool },
++    Choice {
++        name: String,
++        selected: Vec<String>,
++        options: Vec<String>,
++        combo: bool,
++    },
+     /// 数字签名字段（签名内容见 [`crate::signature`]）。
+     Signature { name: String, signed: bool },
+ }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:246:
+         match self {
+             FormField::Text { value, .. } => value.clone(),
+             FormField::Checkbox { checked, .. } => {
+-                if *checked { "on".into() } else { "off".into() }
++                if *checked {
++                    "on".into()
++                } else {
++                    "off".into()
++                }
+             }
+             FormField::Radio { selected, .. } => selected.clone().unwrap_or_default(),
+             FormField::Choice { selected, .. } => selected.join(","),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:253:
+             FormField::Signature { signed, .. } => {
+-                if *signed { "signed".into() } else { "unsigned".into() }
++                if *signed {
++                    "signed".into()
++                } else {
++                    "unsigned".into()
++                }
+             }
+         }
+     }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:342:
+     /// 域不存在。
+     FieldNotFound(String),
+     /// 域类型不匹配（如对复选框 set_text）。
+-    WrongFieldType { name: String, expected: &'static str, actual: String },
++    WrongFieldType {
++        name: String,
++        expected: &'static str,
++        actual: String,
++    },
+     /// 域只读（/Ff bit0）。
+     ReadOnly(String),
+     /// 值不合法（超出 max_len、不在选项集里）。
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:359:
+             FormError::Open(e) => write!(f, "PDF 表单装载失败：{e}"),
+             FormError::Encrypted => write!(f, "文档已加密（表单写回被拒——S5 纪律）"),
+             FormError::FieldNotFound(n) => write!(f, "表单域 {n} 不存在"),
+-            FormError::WrongFieldType { name, expected, actual } => {
++            FormError::WrongFieldType {
++                name,
++                expected,
++                actual,
++            } => {
+                 write!(f, "表单域 {name} 类型不符：期望 {expected}，实际 {actual}")
+             }
+             FormError::ReadOnly(n) => write!(f, "表单域 {n} 只读（/Ff bit0）"),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:462:
+ 
+     // 源二：页 /Annots 里的 /Widget（未登记进 /Fields 的野控件）
+     for (_page_no, page_id) in doc.get_pages() {
+-        let Ok(page) = doc.get_dictionary(page_id) else { continue };
+-        let Ok(annots) = page.get(b"Annots").and_then(Object::as_array) else { continue };
++        let Ok(page) = doc.get_dictionary(page_id) else {
++            continue;
++        };
++        let Ok(annots) = page.get(b"Annots").and_then(Object::as_array) else {
++            continue;
++        };
+         for a in annots {
+-            let Ok(widget_id) = a.as_reference() else { continue };
++            let Ok(widget_id) = a.as_reference() else {
++                continue;
++            };
+             if seen.contains(&widget_id) {
+                 continue;
+             }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:472:
+             if widget_id.0 != 0 {
+-                let Ok(w) = doc.get_dictionary(widget_id) else { continue };
++                let Ok(w) = doc.get_dictionary(widget_id) else {
++                    continue;
++                };
+                 if w.get(b"Subtype").ok().and_then(|s| s.as_name().ok()) != Some(&b"Widget"[..]) {
+                     continue;
+                 }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:508:
+     if depth > 64 || !seen.insert(id) {
+         return;
+     }
+-    let Ok(d) = doc.get_dictionary(id) else { return };
++    let Ok(d) = doc.get_dictionary(id) else {
++        return;
++    };
+ 
+     let local_name = d
+         .get(b"T")
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:666:
+                 .ok()
+                 .and_then(|d| d.get(b"MaxLen").ok().and_then(|o| o.as_i64().ok()))
+                 .map(|n| n.max(0) as usize);
+-            FormField::Text { name: name.to_string(), value, max_len }
++            FormField::Text {
++                name: name.to_string(),
++                value,
++                max_len,
++            }
+         }
+         b"Btn" => {
+             let radio = ff & (1 << 15) != 0;
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:677:
+                 } else {
+                     kids.iter().flat_map(|k| button_on_names(doc, *k)).collect()
+                 };
+-                FormField::Radio { name: name.to_string(), selected, options }
++                FormField::Radio {
++                    name: name.to_string(),
++                    selected,
++                    options,
++                }
+             } else {
+                 let raw = inherited_value_as_name_or_str(doc, id).unwrap_or_else(|| "Off".into());
+                 let checked = !raw.is_empty() && raw != "Off";
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:685:
+                     .into_iter()
+                     .find(|n| n != "Off")
+                     .unwrap_or_else(|| "Yes".into());
+-                FormField::Checkbox { name: name.to_string(), checked, on_name }
++                FormField::Checkbox {
++                    name: name.to_string(),
++                    checked,
++                    on_name,
++                }
+             }
+         }
+         b"Ch" => {
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:692:
+             let combo = ff & (1 << 17) != 0;
+             let options = choice_options(doc, id);
+-            let selected = match doc
+-                .get_dictionary(id)
+-                .ok()
+-                .and_then(|d| d.get(b"V").ok())
+-            {
++            let selected = match doc.get_dictionary(id).ok().and_then(|d| d.get(b"V").ok()) {
+                 Some(Object::Array(a)) => a
+                     .iter()
+                     .filter_map(|o| o.as_str().ok())
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:708:
+                     .unwrap_or_default(),
+                 None => vec![],
+             };
+-            FormField::Choice { name: name.to_string(), selected, options, combo }
++            FormField::Choice {
++                name: name.to_string(),
++                selected,
++                options,
++                combo,
++            }
+         }
+         b"Sig" => {
+             let signed = inherited_str(doc, id, b"V").is_some();
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:715:
+-            FormField::Signature { name: name.to_string(), signed }
++            FormField::Signature {
++                name: name.to_string(),
++                signed,
++            }
+         }
+         _ => FormField::Text {
+             name: name.to_string(),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:724:
+ 
+ /// 按钮的「开」态名字：从 `/AP /N` 的键里读（**不能写死 /Yes**）。
+ fn button_on_names(doc: &Document, id: ObjectId) -> Vec<String> {
+-    let Ok(d) = doc.get_dictionary(id) else { return vec![] };
++    let Ok(d) = doc.get_dictionary(id) else {
++        return vec![];
++    };
+     let ap = match d.get(b"AP").ok() {
+         Some(Object::Reference(r)) => match doc.get_dictionary(*r) {
+             Ok(x) => x,
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:746:
+ 
+ /// 选择域的选项集（`/Opt` 可为字符串数组，或 [导出值, 显示名] 二元组）。
+ fn choice_options(doc: &Document, id: ObjectId) -> Vec<String> {
+-    let Ok(d) = doc.get_dictionary(id) else { return vec![] };
+-    let Ok(opt) = d.get(b"Opt").and_then(Object::as_array) else { return vec![] };
++    let Ok(d) = doc.get_dictionary(id) else {
++        return vec![];
++    };
++    let Ok(opt) = d.get(b"Opt").and_then(Object::as_array) else {
++        return vec![];
++    };
+     opt.iter()
+         .filter_map(|o| match o {
+             Object::String(s, _) => Some(decode_pdf_string(s)),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:754:
+-            Object::Array(pair) => pair.first().and_then(|f| f.as_str().ok()).map(decode_pdf_string),
++            Object::Array(pair) => pair
++                .first()
++                .and_then(|f| f.as_str().ok())
++                .map(decode_pdf_string),
+             _ => None,
+         })
+         .collect()
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:810:
+     /// 值超 `/MaxLen` → [`FormError::InvalidValue`]（**不静默截断**：标书里
+     /// 截断的金额/工期是废标级错误，宁可报错让人看见）。
+     pub fn set_field(&mut self, name: &str, value: &str) -> Result<(), FormError> {
+-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
+-            FormError::FieldNotFound(name.to_string())
+-        })?;
++        let raw = self
++            .fields
++            .get(name)
++            .cloned()
++            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
+         match &raw.model {
+             FormField::Text { max_len, .. } => {
+                 if let Some(max) = max_len {
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:864:
+ 
+     /// 勾选/取消复选框。
+     pub fn set_checkbox(&mut self, name: &str, checked: bool) -> Result<(), FormError> {
+-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
+-            FormError::FieldNotFound(name.to_string())
+-        })?;
+-        let FormField::Checkbox { checked: was, on_name, .. } = &raw.model else {
++        let raw = self
++            .fields
++            .get(name)
++            .cloned()
++            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
++        let FormField::Checkbox {
++            checked: was,
++            on_name,
++            ..
++        } = &raw.model
++        else {
+             return Err(FormError::WrongFieldType {
+                 name: name.to_string(),
+                 expected: "checkbox",
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:892:
+             self.write_field_dict(w, b"AS", val.clone());
+         }
+         if let Some(m) = self.fields.get_mut(name) {
+-            m.model = FormField::Checkbox { name: name.to_string(), checked, on_name };
++            m.model = FormField::Checkbox {
++                name: name.to_string(),
++                checked,
++                on_name,
++            };
+         }
+         self.report.changed += 1;
+         Ok(())
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:900:
+ 
+     /// 选单选组的一项。
+     pub fn set_radio(&mut self, name: &str, option: &str) -> Result<(), FormError> {
+-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
+-            FormError::FieldNotFound(name.to_string())
+-        })?;
++        let raw = self
++            .fields
++            .get(name)
++            .cloned()
++            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
+         let FormField::Radio { options, .. } = &raw.model else {
+             return Err(FormError::WrongFieldType {
+                 name: name.to_string(),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:922:
+         let widgets = raw.widget_ids.clone();
+         for w in widgets {
+             let hit = button_on_names(&self.doc, w).iter().any(|n| n == option);
+-            let as_val = if hit { val.clone() } else { Object::Name(b"Off".to_vec()) };
++            let as_val = if hit {
++                val.clone()
++            } else {
++                Object::Name(b"Off".to_vec())
++            };
+             self.write_field_dict(w, b"AS", as_val);
+         }
+         let options = options.clone();
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:939:
+ 
+     /// 选下拉/列表项（多选列表可传多个）。
+     pub fn set_choice(&mut self, name: &str, values: &[&str]) -> Result<(), FormError> {
+-        let raw = self.fields.get(name).cloned().ok_or_else(|| {
+-            FormError::FieldNotFound(name.to_string())
+-        })?;
++        let raw = self
++            .fields
++            .get(name)
++            .cloned()
++            .ok_or_else(|| FormError::FieldNotFound(name.to_string()))?;
+         let FormField::Choice { options, combo, .. } = &raw.model else {
+             return Err(FormError::WrongFieldType {
+                 name: name.to_string(),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1012:
+             .doc
+             .get_dictionary(widget_id)
+             .ok()
+-            .and_then(|d| d.get(b"Rect").ok().and_then(|o| o.as_array().ok()).map(|a| a.to_vec()))
++            .and_then(|d| {
++                d.get(b"Rect")
++                    .ok()
++                    .and_then(|o| o.as_array().ok())
++                    .map(|a| a.to_vec())
++            })
+             .map(|a| {
+                 let n = |i: usize| match a.get(i) {
+                     Some(Object::Real(r)) => *r as f64,
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1022:
+                 [n(0), n(1), n(2), n(3)]
+             });
+         if let Some(rect) = rect {
+-            self.appearance_jobs.insert(
+-                name.to_string(),
+-                AppearanceJob { widget_id, rect },
+-            );
++            self.appearance_jobs
++                .insert(name.to_string(), AppearanceJob { widget_id, rect });
+         }
+     }
+ }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1079:
+         let font = self.font.clone();
+         let mut built = 0usize;
+         for (name, job) in jobs {
+-            let Some(model) = self.fields.get(&name).map(|r| r.model.clone()) else { continue };
++            let Some(model) = self.fields.get(&name).map(|r| r.model.clone()) else {
++                continue;
++            };
+             let value = match &model {
+                 FormField::Text { value, .. } => value.clone(),
+                 FormField::Choice { selected, .. } => selected.join(","),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1116:
+ 
+     /// `/AcroForm /NeedAppearances` 开关。
+     fn set_need_appearances(&mut self, on: bool) {
+-        let Some(acro_id) = self.acroform_id() else { return };
++        let Some(acro_id) = self.acroform_id() else {
++            return;
++        };
+         self.write_field_dict(acro_id, b"NeedAppearances", Object::Boolean(on));
+     }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1214:
+     s.dict.set("Type", "XObject");
+     s.dict.set("Subtype", "Form");
+     s.dict.set("BBox", bbox(w, h));
+-    s.dict.set("Resources", Object::Dictionary(dictionary! {
+-        "Font" => Object::Dictionary(dictionary! {
+-            "Helv" => Object::Dictionary(dictionary! {
+-                "Type" => "Font",
+-                "Subtype" => "Type1",
+-                "BaseFont" => "Helvetica",
+-                "Encoding" => "WinAnsiEncoding",
++    s.dict.set(
++        "Resources",
++        Object::Dictionary(dictionary! {
++            "Font" => Object::Dictionary(dictionary! {
++                "Helv" => Object::Dictionary(dictionary! {
++                    "Type" => "Font",
++                    "Subtype" => "Type1",
++                    "BaseFont" => "Helvetica",
++                    "Encoding" => "WinAnsiEncoding",
++                }),
+             }),
+         }),
+-    }));
++    );
+     s
+ }
+ /// CIDFont 外观流（Type0 / Identity-H）——中文域值的正确落点。
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1254:
+     s.dict.set("BBox", bbox(w, h));
+     let font_obj = crate::generate::font_object(ttf)
+         .ok_or_else(|| FormError::Save("字体对象构造失败（TTF 缺必需表）".into()))?;
+-    s.dict.set("Resources", Object::Dictionary(dictionary! {
+-        "Font" => Object::Dictionary(dictionary! { "C0" => font_obj }),
+-    }));
++    s.dict.set(
++        "Resources",
++        Object::Dictionary(dictionary! {
++            "Font" => Object::Dictionary(dictionary! { "C0" => font_obj }),
++        }),
++    );
+     Ok(s)
+ }
+ // ---------------------------------------------------------------------------
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1311:
+                 _ => continue,
+             };
+             for wid in &f.widget_ids {
+-                let Ok(wd) = self.doc.get_dictionary(*wid) else { continue };
++                let Ok(wd) = self.doc.get_dictionary(*wid) else {
++                    continue;
++                };
+                 let Some(rect) = wd
+                     .get(b"Rect")
+                     .ok()
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1361:
+         }
+ 
+         for (page_no, ops) in &by_page {
+-            let Some((_, page_id)) = self
+-                .doc
+-                .get_pages()
+-                .into_iter()
+-                .find(|(n, _)| n == page_no)
++            let Some((_, page_id)) = self.doc.get_pages().into_iter().find(|(n, _)| n == page_no)
+             else {
+                 continue;
+             };
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1372:
+-            let stream_id = self
+-                .doc
+-                .add_object(lopdf::Stream::new(dictionary! {}, ops.join("\n").into_bytes()));
++            let stream_id = self.doc.add_object(lopdf::Stream::new(
++                dictionary! {},
++                ops.join("\n").into_bytes(),
++            ));
+             if let Ok(page) = self.doc.get_dictionary_mut(page_id) {
+                 let old = page.get(b"Contents").ok().cloned();
+                 match old {
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1455:
+             .map_err(|e| FormError::Save(format!("扁平化保存失败：{e}")))?;
+         Ok(out)
+     }
+-}// ---------------------------------------------------------------------------
+-// 任务 1：校验
+-// ---------------------------------------------------------------------------
++} // ---------------------------------------------------------------------------
++  // 任务 1：校验
++  // ---------------------------------------------------------------------------
+ 
+ impl PdfForm {
+     /// 整表校验（必填 / 超长 / 选项集）。
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1507:
+                         }
+                     }
+                 }
+-                FormField::Choice { selected, options, .. } => {
++                FormField::Choice {
++                    selected, options, ..
++                } => {
+                     if raw.flags.is_required() && selected.is_empty() {
+                         errors.push(FieldError {
+                             field: name.clone(),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1536:
+             }
+         }
+         errors.sort_by(|a, b| a.field.cmp(&b.field).then(a.kind.code().cmp(b.kind.code())));
+-        ValidationResult { valid: errors.is_empty(), errors }
++        ValidationResult {
++            valid: errors.is_empty(),
++            errors,
++        }
+     }
+ 
+     /// 某域的标志位（校验/接线方可读）。
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1550:
+     /// 的第二道防线（别的工具写进了超 `/MaxLen` 的值）。生产不要用。
+     #[doc(hidden)]
+     pub fn force_raw_value(&mut self, name: &str, value: &str) {
+-        let Some(raw) = self.fields.get(name).cloned() else { return };
++        let Some(raw) = self.fields.get(name).cloned() else {
++            return;
++        };
+         let encoded = encode_pdf_text(value);
+         self.write_field_dict(raw.field_id, b"V", encoded.clone());
+         for wid in &raw.widget_ids {
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1639:
+                 Object::Real(bg as f32 / 255.0),
+                 Object::Real(bb as f32 / 255.0),
+             ]);
+-            let base = self.doc.get_dictionary(raw.field_id).cloned().unwrap_or_default();
++            let base = self
++                .doc
++                .get_dictionary(raw.field_id)
++                .cloned()
++                .unwrap_or_default();
+             let mut mk = match base.get(b"MK").ok() {
+                 Some(Object::Dictionary(d)) => d.clone(),
+                 _ => lopdf::Dictionary::new(),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1706:
+ 
+ /// 给页资源字典挂 `/Font /Ffl`。
+ fn attach_font(doc: &mut Document, page_id: ObjectId, font: Object) {
+-    let Ok(page) = doc.get_dictionary_mut(page_id) else { return };
++    let Ok(page) = doc.get_dictionary_mut(page_id) else {
++        return;
++    };
+     let mut res = match page.get(b"Resources").ok() {
+         Some(Object::Dictionary(d)) => d.clone(),
+         _ => lopdf::Dictionary::new(),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1747:
+     #[test]
+     fn pdf_string_roundtrip_utf16() {
+         let obj = encode_pdf_text("投标函");
+-        let Object::String(bytes, _) = obj else { panic!("应为字符串") };
++        let Object::String(bytes, _) = obj else {
++            panic!("应为字符串")
++        };
+         assert_eq!(&bytes[..2], &[0xFE, 0xFF], "非 ASCII 必须带 UTF-16BE BOM");
+         assert_eq!(decode_pdf_string(&bytes), "投标函");
+     }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1755:
+     #[test]
+     fn ascii_stays_literal() {
+         let obj = encode_pdf_text("ZFCG-2026-001");
+-        let Object::String(bytes, _) = obj else { panic!() };
++        let Object::String(bytes, _) = obj else {
++            panic!()
++        };
+         assert_eq!(String::from_utf8(bytes).unwrap(), "ZFCG-2026-001");
+     }
+ }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/forms.rs:1762:
++
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/generate.rs:123:
+         "FontFile2" => Object::Stream(font_file),
+     };
+     let mut csi = Dictionary::new();
+-    csi.set("Registry", Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal));
+-    csi.set("Ordering", Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal));
++    csi.set(
++        "Registry",
++        Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal),
++    );
++    csi.set(
++        "Ordering",
++        Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal),
++    );
+     csi.set("Supplement", 0);
+     let mut cid = Dictionary::new();
+     cid.set("Type", "Font");
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/generate.rs:140:
+     t0.set("Subtype", "Type0");
+     t0.set("BaseFont", Object::Name(b"EmbeddedCJK".to_vec()));
+     t0.set("Encoding", "Identity-H");
+-    t0.set("DescendantFonts", Object::Array(vec![Object::Dictionary(cid)]));
++    t0.set(
++        "DescendantFonts",
++        Object::Array(vec![Object::Dictionary(cid)]),
++    );
+     t0.set("ToUnicode", Object::Stream(to_unicode));
+     Some(t0)
+ }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/lib.rs:133:
+ pub use cache::PageCache;
+ pub use command::{Command, CommandError, Outcome, Source};
+ pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, PdfSession};
+-#[cfg(feature = "engine-lopdf")]
+-pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
+ #[cfg(feature = "engine-pdfium")]
+ pub use ocr::{ocr_available, ocr_page, OcrEnv};
++#[cfg(feature = "engine-lopdf")]
++pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
+ pub use render::{Rasterizer, RenderRequest, RenderedPage};
+ pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
+ pub use worker::{RenderWorker, WorkerReply};
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:122:
+ impl<'a> Tlv<'a> {
+     /// 内容里逐个子 TLV（仅对 constructed 有意义）。
+     pub fn children(&self) -> DerIter<'_> {
+-        DerIter { data: self.value, pos: 0, base: self.offset + (self.total_len - self.value.len()) }
++        DerIter {
++            data: self.value,
++            pos: 0,
++            base: self.offset + (self.total_len - self.value.len()),
++        }
+     }
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:155:
+ 
+ /// 解析单个 TLV。
+ pub(crate) fn parse_tlv(data: &[u8], offset: usize) -> Result<Tlv<'_>, SignatureError> {
+-    let bad = |o: usize, r: &str| SignatureError::Der { offset: o, reason: r.to_string() };
++    let bad = |o: usize, r: &str| SignatureError::Der {
++        offset: o,
++        reason: r.to_string(),
++    };
+     if data.is_empty() {
+         return Err(bad(offset, "数据为空"));
+     }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:173:
+     } else {
+         let n = (first & 0x7F) as usize;
+         if n == 0 {
+-            return Err(bad(offset, "不定长编码（BER indeterminate）——CMS 应为 DER 定长"));
++            return Err(bad(
++                offset,
++                "不定长编码（BER indeterminate）——CMS 应为 DER 定长",
++            ));
+         }
+         if n > 4 {
+             return Err(bad(offset, "长度字段超过 4 字节（可疑）"));
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:187:
+         }
+         (2 + n, v)
+     };
+-    let end = hdr.checked_add(len).ok_or_else(|| bad(offset, "长度溢出"))?;
++    let end = hdr
++        .checked_add(len)
++        .ok_or_else(|| bad(offset, "长度溢出"))?;
+     if end > data.len() {
+-        return Err(bad(offset, &format!("内容越界（需要 {len} 字节，实有 {}）", data.len() - hdr)));
++        return Err(bad(
++            offset,
++            &format!("内容越界（需要 {len} 字节，实有 {}）", data.len() - hdr),
++        ));
+     }
+-    Ok(Tlv { tag, value: &data[hdr..end], offset, total_len: end })
++    Ok(Tlv {
++        tag,
++        value: &data[hdr..end],
++        offset,
++        total_len: end,
++    })
+ }
+ 
+ /// DER 通用 tag 常量。
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:250:
+ 
+ /// INTEGER → 十六进制串（去前导 0）。
+ pub(crate) fn integer_hex(value: &[u8]) -> String {
+-    let v = value.iter().skip_while(|&&b| b == 0).copied().collect::<Vec<_>>();
++    let v = value
++        .iter()
++        .skip_while(|&&b| b == 0)
++        .copied()
++        .collect::<Vec<_>>();
+     if v.is_empty() {
+         return "0".to_string();
+     }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:442:
+     }
+     let ct_oid = oid_to_string(ct.value);
+     if ct_oid != OID_SIGNED_DATA {
+-        return Err(SignatureError::Cms(format!("不是 SignedData（contentType={ct_oid}）")));
++        return Err(SignatureError::Cms(format!(
++            "不是 SignedData（contentType={ct_oid}）"
++        )));
+     }
+     let content = ci_it
+         .next()
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:481:
+                 // certificates [0] IMPLICIT SET OF Certificate
+                 for c in node.children().flatten() {
+                     if c.tag == tags::SEQUENCE {
+-                        if let Some(ci) = parse_certificate(&der[c.offset..c.offset + c.total_len]) {
++                        if let Some(ci) = parse_certificate(&der[c.offset..c.offset + c.total_len])
++                        {
+                             out.certificates.push(ci);
+                         }
+                     }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:534:
+     let sid_serial: Option<String> = match sid {
+         Some(sid) if sid.tag == tags::SEQUENCE => {
+             let mut it2 = sid.children();
+-            let ias = it2.next().and_then(|r| r.ok()).filter(|x| x.tag == tags::SEQUENCE);
++            let ias = it2
++                .next()
++                .and_then(|r| r.ok())
++                .filter(|x| x.tag == tags::SEQUENCE);
+             ias.and_then(|ias| {
+                 let serial = ias.children().flatten().last();
+                 serial
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:577:
+     let mut seen: std::collections::BTreeSet<lopdf::ObjectId> = std::collections::BTreeSet::new();
+ 
+     // 源一：/AcroForm/Fields
+-    let root = doc.trailer.get(b"Root").ok().and_then(|o| o.as_reference().ok());
++    let root = doc
++        .trailer
++        .get(b"Root")
++        .ok()
++        .and_then(|o| o.as_reference().ok());
+     if let Some(root) = root {
+         if let Ok(catalog) = doc.get_dictionary(root) {
+             let acro = match catalog.get(b"AcroForm").ok() {
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:599:
+ 
+     // 源二：页 /Annots（未登记进 /Fields 的签名控件）
+     for (_n, page_id) in doc.get_pages() {
+-        let Ok(page) = doc.get_dictionary(page_id) else { continue };
+-        let Ok(annots) = page.get(b"Annots").and_then(|o| o.as_array()) else { continue };
++        let Ok(page) = doc.get_dictionary(page_id) else {
++            continue;
++        };
++        let Ok(annots) = page.get(b"Annots").and_then(|o| o.as_array()) else {
++            continue;
++        };
+         for a in annots {
+             if let Ok(id) = a.as_reference() {
+                 if seen.contains(&id) {
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:609:
+                 if let Ok(w) = doc.get_dictionary(id) {
+                     let is_widget = w.get(b"Subtype").ok().and_then(|s| s.as_name().ok())
+                         == Some(&b"Widget"[..]);
+-                    let is_sig = w.get(b"FT").ok().and_then(|o| o.as_name().ok())
+-                        == Some(&b"Sig"[..]);
++                    let is_sig =
++                        w.get(b"FT").ok().and_then(|o| o.as_name().ok()) == Some(&b"Sig"[..]);
+                     if is_widget && is_sig {
+                         visit_sig_field(doc, id, "", &mut out, &mut seen, 0);
+                     }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:633:
+     if depth > 64 || !seen.insert(id) {
+         return;
+     }
+-    let Ok(d) = doc.get_dictionary(id) else { return };
++    let Ok(d) = doc.get_dictionary(id) else {
++        return;
++    };
+     let local = d
+         .get(b"T")
+         .ok()
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:647:
+     } else {
+         format!("{prefix}.{local}")
+     };
+-    let ft = d.get(b"FT").ok().and_then(|o| o.as_name().ok()).map(|n| n.to_vec());
++    let ft = d
++        .get(b"FT")
++        .ok()
++        .and_then(|o| o.as_name().ok())
++        .map(|n| n.to_vec());
+     let kids: Vec<lopdf::ObjectId> = d
+         .get(b"Kids")
+         .ok()
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:670:
+ ) -> SignatureInfo {
+     use lopdf::Object;
+ 
+-
+-
+     // /V → 签名字典（可能是引用）
+     let sig_dict: Option<lopdf::Dictionary> = match dict.get(b"V").ok() {
+         Some(Object::Reference(id)) => doc.get_dictionary(*id).ok().cloned(),
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:749:
+ 
+ /// 去掉 `/Contents` 十六进制块的尾部填充 0（PDF 用 0 填充保留槽位）。
+ pub(crate) fn strip_trailing_zeros(raw: &[u8]) -> Vec<u8> {
+-    let end = raw.iter().rposition(|&b| b != 0).map(|p| p + 1).unwrap_or(0);
++    let end = raw
++        .iter()
++        .rposition(|&b| b != 0)
++        .map(|p| p + 1)
++        .unwrap_or(0);
+     raw[..end].to_vec()
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:808:
+ 
+     #[test]
+     fn utc_time_decoding() {
+-        let t = Tlv { tag: tags::UTC_TIME, value: b"260101120000Z", offset: 0, total_len: 15 };
++        let t = Tlv {
++            tag: tags::UTC_TIME,
++            value: b"260101120000Z",
++            offset: 0,
++            total_len: 15,
++        };
+         assert_eq!(der_time(&t), "2026-01-01 12:00:00");
+     }
+ }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/signature.rs:815:
++
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:113:
+     let mut idat: Vec<u8> = Vec::new();
+ 
+     while pos + 8 <= bytes.len() {
+-        let len = u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
++        let len = u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
++            as usize;
+         let tag = &bytes[pos + 4..pos + 8];
+         let data_start = pos + 8;
+-        let data_end = data_start.checked_add(len).ok_or_else(|| bad("chunk 长度溢出"))?;
++        let data_end = data_start
++            .checked_add(len)
++            .ok_or_else(|| bad("chunk 长度溢出"))?;
+         if data_end > bytes.len() {
+             return Err(bad("chunk 越界（文件截断？）"));
+         }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:178:
+         let ft = raw[y * (stride + 1)];
+         let line = &raw[y * (stride + 1) + 1..y * (stride + 1) + 1 + stride];
+         let (prev_rows, cur_rows) = out.split_at_mut(y * stride);
+-        let prev = if y == 0 { &[][..] } else { &prev_rows[(y - 1) * stride..] };
++        let prev = if y == 0 {
++            &[][..]
++        } else {
++            &prev_rows[(y - 1) * stride..]
++        };
+         let cur = &mut cur_rows[..stride];
+         cur.copy_from_slice(line);
+         unfilter(ft, cur, prev, bpp)?;
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:290:
+             for i in 0..n {
+                 let a = if i >= bpp { cur[i - bpp] as i16 } else { 0 };
+                 let b = if prev.is_empty() { 0 } else { prev[i] as i16 };
+-                let c = if i >= bpp && !prev.is_empty() { prev[i - bpp] as i16 } else { 0 };
++                let c = if i >= bpp && !prev.is_empty() {
++                    prev[i - bpp] as i16
++                } else {
++                    0
++                };
+                 let p = a + b - c;
+                 let pa = (p - a).abs();
+                 let pb = (p - b).abs();
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:297:
+                 let pc = (p - c).abs();
+-                let pred = if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c };
++                let pred = if pa <= pb && pa <= pc {
++                    a
++                } else if pb <= pc {
++                    b
++                } else {
++                    c
++                };
+                 cur[i] = cur[i].wrapping_add(pred as u8);
+             }
+         }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:354:
+ 
+     impl<'a> Bits<'a> {
+         fn new(data: &'a [u8]) -> Self {
+-            Bits { data, pos: 0, bit: 0 }
++            Bits {
++                data,
++                pos: 0,
++                bit: 0,
++            }
+         }
+         fn get(&mut self, n: u32) -> Result<u32, String> {
+             let mut v = 0u32;
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:413:
+                 let count = self.counts[len] as i32;
+                 if code - count < first {
+                     let i = (index + (code - first)) as usize;
+-                    return self.symbols.get(i).copied().ok_or_else(|| "符号越界".to_string());
++                    return self
++                        .symbols
++                        .get(i)
++                        .copied()
++                        .ok_or_else(|| "符号越界".to_string());
+                 }
+                 index += count;
+                 first = (first + count) << 1;
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:503:
+     }
+ 
+     const LEN_BASE: [u16; 29] = [
+-        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99,
+-        115, 131, 163, 195, 227, 258,
++        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115,
++        131, 163, 195, 227, 258,
+     ];
+     const LEN_EXTRA: [u8; 29] = [
+         0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:511:
+     ];
+     const DIST_BASE: [u16; 30] = [
+-        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025,
+-        1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
++        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
++        2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+     ];
+     const DIST_EXTRA: [u8; 30] = [
+-        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12,
+-        12, 13, 13,
++        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12,
++        13, 13,
+     ];
+ 
+     fn inflate_block(
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:590:
+     match src {
+         ImageSource::Jpeg(bytes) => {
+             let (w, h, comps) = jpeg_dimensions(bytes).unwrap_or((1, 1, 3));
+-            let cs = if comps == 1 { "DeviceGray" } else { "DeviceRGB" };
++            let cs = if comps == 1 {
++                "DeviceGray"
++            } else {
++                "DeviceRGB"
++            };
+             let mut s = Stream::new(
+                 dictionary! {
+                     "Type" => "XObject",
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:609:
+             (s, None)
+         }
+         ImageSource::Raw(img) => {
+-            let cs = if img.components == 1 { "DeviceGray" } else { "DeviceRGB" };
++            let cs = if img.components == 1 {
++                "DeviceGray"
++            } else {
++                "DeviceRGB"
++            };
+             let mut s = Stream::new(
+                 dictionary! {
+                     "Type" => "XObject",
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:708:
+ 
+     let mut doc = Document::load_mem(&pdf).map_err(|e| StampError::Io(format!("装载失败：{e}")))?;
+     let pages = doc.get_pages();
+-    let page_id = *pages
+-        .get(&(page + 1))
+-        .ok_or(StampError::BadPage(page))?;
++    let page_id = *pages.get(&(page + 1)).ok_or(StampError::BadPage(page))?;
+ 
+     let src = classify(image)?;
+     let (mut xobj, smask) = image_xobject(&src, opts.opacity);
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:743:
+     let content = format!(
+         "q\n{} 0 0 {} {} {} cm\n/Im0 Do\nQ\n",
+         w, h, rect[0], rect[1]
+-    ).into_bytes();
++    )
++    .into_bytes();
+     let stream_id = doc.add_object(Stream::new(dictionary! {}, content));
+     {
+         let page_dict = doc
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:780:
+     #[test]
+     fn rejects_bad_rect_and_opacity() {
+         assert_eq!(
+-            stamp_image(vec![], 0, [0.0, 0.0, 0.0, 0.0], &[], StampOptions::default()),
++            stamp_image(
++                vec![],
++                0,
++                [0.0, 0.0, 0.0, 0.0],
++                &[],
++                StampOptions::default()
++            ),
+             Err(StampError::BadRect)
+         );
+         let opts = StampOptions { opacity: 1.5 };
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/src/stamp.rs:797:
+         assert!(err.to_string().contains("无法识别"));
+     }
+ }
++
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:34:
+     assert_eq!(form.len(), 8, "投标函模板应读出 8 个域");
+ 
+     let names: Vec<String> = form.fields().iter().map(|f| f.name().to_string()).collect();
+-    for want in ["project_name", "legal_rep", "duration_days", "bid_amount_upper", "consent", "project_type"] {
++    for want in [
++        "project_name",
++        "legal_rep",
++        "duration_days",
++        "bid_amount_upper",
++        "consent",
++        "project_type",
++    ] {
+         assert!(names.iter().any(|n| n == want), "缺域 {want}：{names:?}");
+     }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:41:
+     // 类型识别
+-    assert!(matches!(form.field("project_name"), Some(FormField::Text { .. })));
+-    assert!(matches!(form.field("consent"), Some(FormField::Checkbox { .. })));
+-    assert!(matches!(form.field("project_type"), Some(FormField::Choice { .. })));
++    assert!(matches!(
++        form.field("project_name"),
++        Some(FormField::Text { .. })
++    ));
++    assert!(matches!(
++        form.field("consent"),
++        Some(FormField::Checkbox { .. })
++    ));
++    assert!(matches!(
++        form.field("project_type"),
++        Some(FormField::Choice { .. })
++    ));
+ 
+     // /MaxLen 必须读出来（填值时靠它防截断）
+-    let Some(FormField::Text { max_len, .. }) = form.field("duration_days") else { panic!() };
++    let Some(FormField::Text { max_len, .. }) = form.field("duration_days") else {
++        panic!()
++    };
+     assert_eq!(*max_len, Some(4), "duration_days 的 /MaxLen=4");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:73:
+ 
+     // 读回验证
+     let back = PdfForm::read(&out).unwrap();
+-    let Some(FormField::Text { value, .. }) = back.field("project_name") else { panic!() };
++    let Some(FormField::Text { value, .. }) = back.field("project_name") else {
++        panic!()
++    };
+     assert_eq!(value, "智慧园区弱电工程", "中文往返必须无损");
+-    let Some(FormField::Checkbox { checked, .. }) = back.field("consent") else { panic!() };
++    let Some(FormField::Checkbox { checked, .. }) = back.field("consent") else {
++        panic!()
++    };
+     assert!(checked, "复选框应已勾选");
+-    let Some(FormField::Text { value, .. }) = back.field("duration_days") else { panic!() };
++    let Some(FormField::Text { value, .. }) = back.field("duration_days") else {
++        panic!()
++    };
+     assert_eq!(value, "120");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:123:
+     assert!(matches!(err, FormError::InvalidValue { .. }), "{err:?}");
+     assert!(err.to_string().contains("MaxLen"), "{}", err);
+     // 只报错不改值
+-    let Some(FormField::Text { value, .. }) = form.field("duration_days") else { panic!() };
++    let Some(FormField::Text { value, .. }) = form.field("duration_days") else {
++        panic!()
++    };
+     assert_eq!(value, "", "被拒的值不得写入");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:130:
+ #[test]
+ fn choice_rejects_value_outside_options() {
+     let mut form = PdfForm::read(&bid_letter()).unwrap();
+-    let err = form.set_choice("project_type", &["不存在的选项"]).unwrap_err();
++    let err = form
++        .set_choice("project_type", &["不存在的选项"])
++        .unwrap_err();
+     assert!(matches!(err, FormError::InvalidValue { .. }), "{err:?}");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:146:
+     assert!(warnings[0].contains("NeedAppearances"), "{warnings:?}");
+     let out = form.save().unwrap();
+     let back = PdfForm::read(&out).unwrap();
+-    let Some(FormField::Text { value, .. }) = back.field("project_name") else { panic!() };
++    let Some(FormField::Text { value, .. }) = back.field("project_name") else {
++        panic!()
++    };
+     assert_eq!(value, "中文项目名", "值本身仍是正确的 UTF-16");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:156:
+     form.set_font(&test_font());
+     // 测试字体只含部分汉字——选它覆盖的字
+     form.set_field("project_name", "中标").unwrap();
+-    assert!(form.report().warnings.is_empty(), "注入字体后不该再有字体告警：{:?}", form.report().warnings);
++    assert!(
++        form.report().warnings.is_empty(),
++        "注入字体后不该再有字体告警：{:?}",
++        form.report().warnings
++    );
+     let out = form.save().unwrap();
+     // 产物里必须出现 Type0 字体与 CIDFontType2（CID 嵌入的证据）
+     let text = String::from_utf8_lossy(&out);
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfg_forms.rs:221:
+         once.len()
+     );
+ }
++
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfh_stamp.rs:38:
+     // 中心应当不透明（印章笔画）
+     let center = alpha[200 * 400 + 200];
+     assert!(center > 100, "中心应有印章笔画，实际 alpha={center}");
+-    assert!(alpha.contains(&0) && alpha.iter().any(|&a| a > 0), "应同时有透明与不透明像素");
++    assert!(
++        alpha.contains(&0) && alpha.iter().any(|&a| a > 0),
++        "应同时有透明与不透明像素"
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfh_stamp.rs:48:
+     jpeg.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03]);
+     jpeg.extend_from_slice(&[0u8; 32]);
+     let err = decode_image(&jpeg).unwrap_err();
+-    assert!(err.to_string().contains("DCTDecode"), "JPEG 应走嵌入而非解码：{err}");
++    assert!(
++        err.to_string().contains("DCTDecode"),
++        "JPEG 应走嵌入而非解码：{err}"
++    );
+ }
+ 
+ // ---------------------------------------------------------------- 盖章
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfh_stamp.rs:70:
+     assert!(text.contains("/SMask"), "半透明 PNG 应带软蒙版");
+     assert!(text.contains("Do"), "内容流应有绘制算子");
+     // 图要真画进内容流（打印才带），不是注释
+-    assert!(text.contains("200 0 0 200 100 100 cm") || text.contains("200 0 0 200 100.0 100.0 cm"), "应出现铺满 rect 的 cm 矩阵");
++    assert!(
++        text.contains("200 0 0 200 100 100 cm") || text.contains("200 0 0 200 100.0 100.0 cm"),
++        "应出现铺满 rect 的 cm 矩阵"
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfh_stamp.rs:90:
+ 
+ #[test]
+ fn page_out_of_range_is_typed_error() {
+-    let err = stamp_image(base_pdf(), 99, [0.0, 0.0, 10.0, 10.0], &seal_png(), StampOptions::default())
+-        .unwrap_err();
++    let err = stamp_image(
++        base_pdf(),
++        99,
++        [0.0, 0.0, 10.0, 10.0],
++        &seal_png(),
++        StampOptions::default(),
++    )
++    .unwrap_err();
+     assert!(matches!(err, StampError::BadPage(99)), "{err:?}");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfh_stamp.rs:98:
+ #[test]
+ fn zero_area_rect_rejected() {
+-    let err = stamp_image(base_pdf(), 0, [10.0, 10.0, 10.0, 50.0], &seal_png(), StampOptions::default())
+-        .unwrap_err();
++    let err = stamp_image(
++        base_pdf(),
++        0,
++        [10.0, 10.0, 10.0, 50.0],
++        &seal_png(),
++        StampOptions::default(),
++    )
++    .unwrap_err();
+     assert_eq!(err, StampError::BadRect);
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfh_stamp.rs:105:
+ #[test]
+ fn bad_image_is_typed_error() {
+-    let err = stamp_image(base_pdf(), 0, [0.0, 0.0, 10.0, 10.0], b"nope", StampOptions::default())
+-        .unwrap_err();
++    let err = stamp_image(
++        base_pdf(),
++        0,
++        [0.0, 0.0, 10.0, 10.0],
++        b"nope",
++        StampOptions::default(),
++    )
++    .unwrap_err();
+     assert!(matches!(err, StampError::BadImage(_)), "{err:?}");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfh_stamp.rs:112:
+ #[test]
+ fn stamping_preserves_existing_content() {
+     let base = base_pdf();
+-    let out = stamp_image(base.clone(), 0, [10.0, 10.0, 60.0, 60.0], &seal_png(), StampOptions::default())
+-        .unwrap();
++    let out = stamp_image(
++        base.clone(),
++        0,
++        [10.0, 10.0, 60.0, 60.0],
++        &seal_png(),
++        StampOptions::default(),
++    )
++    .unwrap();
+     // 原有页面文本仍在（内容流是追加不是替换）
+     let base_text = String::from_utf8_lossy(&base).to_string();
+     let out_text = String::from_utf8_lossy(&out).to_string();
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfi_signature.rs:46:
+     assert_eq!(s.certificates.len(), 1, "CMS 内嵌 1 张证书");
+     let c = &s.certificates[0];
+     assert!(c.subject.contains("投标人签字人"), "subject: {}", c.subject);
+-    assert!(c.subject.contains("某建设工程有限公司"), "subject: {}", c.subject);
++    assert!(
++        c.subject.contains("某建设工程有限公司"),
++        "subject: {}",
++        c.subject
++    );
+     assert!(c.issuer.contains("投标人签字人"), "issuer: {}", c.issuer);
+     assert_eq!(c.serial, "1234567890abcdef", "serial: {}", c.serial);
+     assert!(c.not_before.is_some(), "notBefore 应可解析");
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfi_signature.rs:53:
+     assert!(c.not_after.is_some(), "notAfter 应可解析");
+-    assert!(c.not_before.as_deref().unwrap().starts_with("2026-01-01"), "{:?}", c.not_before);
++    assert!(
++        c.not_before.as_deref().unwrap().starts_with("2026-01-01"),
++        "{:?}",
++        c.not_before
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfi_signature.rs:60:
+     let s = &sigs[0];
+     // /Name 未设时取证书 CN
+     assert!(s.signer_name.is_some(), "应能取到签名人");
+-    assert!(s.signer_name.as_deref().unwrap().contains("投标人签字人"), "{:?}", s.signer_name);
++    assert!(
++        s.signer_name.as_deref().unwrap().contains("投标人签字人"),
++        "{:?}",
++        s.signer_name
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfi_signature.rs:67:
+ fn byte_range_is_even_and_ordered() {
+     let sigs = read_signatures(&signed_pdf()).unwrap();
+     let br = &sigs[0].byte_range;
+-    assert_eq!(br.len(), 4, "ByteRange 应为 [start1 len1 start2 len2]：{br:?}");
++    assert_eq!(
++        br.len(),
++        4,
++        "ByteRange 应为 [start1 len1 start2 len2]：{br:?}"
++    );
+     assert_eq!(br[0], 0, "第一段应从 0 开始");
+     assert!(br[1] > 0 && br[2] > br[1], "段应递增：{br:?}");
+     assert!(br[3] > 0, "第二段长度非零：{br:?}");
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:10:
+ 
+ use std::path::PathBuf;
+ 
+-use mdc_pdf::forms::{
+-    Alignment, ErrorKind, FieldAppearance, FormError, PdfForm, ValidationResult,
+-};
++use mdc_pdf::forms::{Alignment, ErrorKind, FieldAppearance, FormError, PdfForm, ValidationResult};
+ 
+ fn fixtures() -> PathBuf {
+     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:36:
+     let form = PdfForm::read(&advanced()).unwrap();
+     // 夹具里 project_name / legal_rep / amount_upper 带 /Ff bit1
+     let flags = form.flags("project_name").expect("应有标志位");
+-    assert!(flags.is_required(), "project_name 应为必填（Ff={}）", flags.raw());
++    assert!(
++        flags.is_required(),
++        "project_name 应为必填（Ff={}）",
++        flags.raw()
++    );
+     assert_eq!(flags.raw(), 2, "必填位 = bit1");
+ 
+     let vr = form.validate();
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:46:
+         assert!(names.contains(&want), "应报必填缺失 {want}：{names:?}");
+     }
+     assert!(vr.errors.iter().all(|e| e.kind == ErrorKind::Required));
+-    assert!(vr.to_message().contains("必填项未填写"), "{}", vr.to_message());
++    assert!(
++        vr.to_message().contains("必填项未填写"),
++        "{}",
++        vr.to_message()
++    );
+ }
+ 
+ #[test]
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:65:
+     // 只读域不该报「必填未填」——它本就不可填
+     let form = PdfForm::read(&advanced()).unwrap();
+     for f in form.fields() {
+-        if form.flags(f.name()).map(|x| x.is_read_only()).unwrap_or(false) {
++        if form
++            .flags(f.name())
++            .map(|x| x.is_read_only())
++            .unwrap_or(false)
++        {
+             assert!(
+                 !form.validate().errors.iter().any(|e| e.field == f.name()),
+                 "只读域 {} 不应进校验错误",
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:102:
+     form.force_raw_value("legal_rep", "一二三四五六七八九十一二三四五六");
+     let vr = form.validate();
+     assert!(
+-        vr.errors.iter().any(|e| e.field == "legal_rep" && e.kind == ErrorKind::TooLong),
++        vr.errors
++            .iter()
++            .any(|e| e.field == "legal_rep" && e.kind == ErrorKind::TooLong),
+         "16 个汉字 = 32 字节，超 30：{vr:?}"
+     );
+     // 15 个汉字 = 30 字节，正好卡线
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:109:
+     let mut form2 = PdfForm::read(&advanced()).unwrap();
+     form2.force_raw_value("legal_rep", "一二三四五六七八九十一二三四五"); // 30 字节
+     let vr2 = form2.validate();
+-    assert!(!vr2.errors.iter().any(|e| e.field == "legal_rep"), "30 字节应通过：{vr2:?}");
++    assert!(
++        !vr2.errors.iter().any(|e| e.field == "legal_rep"),
++        "30 字节应通过：{vr2:?}"
++    );
+ }
+ 
+ // ---------------------------------------------------------------- 任务 1：选项
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:119:
+     // 选择域当前值在选项集内 → 无错
+     let form = PdfForm::read(&advanced()).unwrap();
+     let vr = form.validate();
+-    assert!(!vr.errors.iter().any(|e| e.field == "project_type" && e.kind == ErrorKind::InvalidChoice));
++    assert!(!vr
++        .errors
++        .iter()
++        .any(|e| e.field == "project_type" && e.kind == ErrorKind::InvalidChoice));
+ }
+ 
+ // ---------------------------------------------------------------- 任务 2：外观
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:143:
+     // 写回后 pypdf 应能看到 /DA 与 /Q
+     let out = form.save().unwrap();
+     let text = String::from_utf8_lossy(&out);
+-    assert!(text.contains("/Q 1") || text.contains("/Q 1 "), "应写 /Q 1（居中）");
++    assert!(
++        text.contains("/Q 1") || text.contains("/Q 1 "),
++        "应写 /Q 1（居中）"
++    );
+     assert!(text.contains("14"), "应写字号 14");
+ }
+ 
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:159:
+ #[test]
+ fn appearance_rejects_bad_font_size() {
+     let mut form = PdfForm::read(&advanced()).unwrap();
+-    let app = FieldAppearance { font_size: 0.0, ..Default::default() };
++    let app = FieldAppearance {
++        font_size: 0.0,
++        ..Default::default()
++    };
+     let err = form.set_appearance("project_name", app).unwrap_err();
+     assert!(matches!(err, FormError::InvalidValue { .. }), "{err:?}");
+ }
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:196:
+     let mut form = PdfForm::read(&advanced()).unwrap();
+     form.set_font(&test_font());
+     form.set_field("project_name", "中标").unwrap();
+-    form.set_appearance("project_name", FieldAppearance::default()).unwrap();
++    form.set_appearance("project_name", FieldAppearance::default())
++        .unwrap();
+     let out = form.save().unwrap();
+     let text = String::from_utf8_lossy(&out);
+     assert!(text.contains("/AP"), "中文域也应生成外观流");
+Diff in /home/z/my-project/mdcore-audit/crates/pdf/tests/pdfj_forms_adv.rs:211:
+     let names: Vec<String> = form.fields().iter().map(|f| f.name().to_string()).collect();
+     let count = names.iter().filter(|n| *n == "bidder_name").count();
+     assert_eq!(count, 1, "跨页同名域应合并为 1 个：{names:?}");
+-    assert_eq!(form.len(), 7, "两页共 7 个唯一域（原 8 个 Widget）：{names:?}");
++    assert_eq!(
++        form.len(),
++        7,
++        "两页共 7 个唯一域（原 8 个 Widget）：{names:?}"
++    );
+ }
+ 
+ #[test]

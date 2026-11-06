@@ -1,0 +1,820 @@
+info: syncing channel updates for 1.99.0-x86_64-unknown-linux-gnu
+info: latest update on 2026-10-01 for version 1.99.0 (b940084d7 2026-09-28)
+info: downloading 6 components
+warn: the missing active toolchain `1.99.0-x86_64-unknown-linux-gnu` has been auto-installed
+warn: this might cause rustup commands to take longer time to finish than expected
+info: you may opt out with `RUSTUP_AUTO_INSTALL=0` or `rustup set auto-install disable`
+   Compiling unicode-ident v1.0.26
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling cfg-if v1.0.5
+   Compiling serde_core v1.0.229
+   Compiling memchr v2.8.3
+   Compiling syn v3.0.6
+   Compiling serde v1.0.229
+   Compiling itoa v1.0.18
+   Compiling rustversion v1.0.23
+   Compiling zmij v1.0.23
+   Compiling serde_json v1.0.151
+   Compiling smallvec v1.16.2
+   Compiling serde_derive v1.0.229
+   Compiling libc v0.2.190
+   Compiling scopeguard v1.2.0
+   Compiling pin-project-lite v0.2.17
+   Compiling thiserror v2.0.21
+   Compiling thiserror-impl v2.0.21
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.5.0
+   Compiling parking_lot_core v0.9.12
+   Compiling parking v2.2.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling event-listener v5.4.2
+   Compiling event-listener-strategy v0.5.4
+   Compiling lock_api v0.4.14
+   Compiling hashbrown v0.14.5
+   Compiling async-lock v3.4.2
+   Compiling dashmap v6.2.1
+   Compiling async-trait v0.1.92
+   Compiling smallstr v0.3.1
+   Compiling arc-swap v1.9.3
+   Compiling mdc-evidence v0.1.0 (/home/z/my-project/mdcore-audit/crates/evidence)
+   Compiling yrs v0.28.0
+   Compiling cpufeatures v0.3.1
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling typenum v1.20.1
+   Compiling mdc-collab v0.1.0 (/home/z/my-project/mdcore-audit/crates/collab)
+   Compiling hybrid-array v0.4.15
+   Compiling indexmap v2.14.2
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling const-oid v0.10.2
+   Compiling str_indices v0.4.4
+   Compiling ropey v1.6.1
+   Compiling digest v0.11.3
+   Compiling sha2 v0.11.0
+   Compiling bumpalo v3.20.3
+   Compiling autocfg v1.5.1
+   Compiling mdcore v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore)
+   Compiling libm v0.2.16
+   Compiling num-traits v0.2.19
+   Compiling wasm-bindgen-shared v0.2.129
+   Compiling crc32fast v1.5.2
+   Compiling rand_core v0.10.1
+   Compiling getrandom v0.4.3
+   Compiling mdc-canvas v0.1.0 (/home/z/my-project/mdcore-audit/crates/canvas)
+   Compiling encoding_rs v0.8.42
+   Compiling simd-adler32 v0.3.10
+   Compiling log v0.4.34
+   Compiling siphasher v1.0.4
+   Compiling core_detect v1.0.0
+   Compiling zlib-rs v0.6.8
+   Compiling simdutf8 v0.1.5
+   Compiling multiversion_no_op v1.0.0
+   Compiling phf_shared v0.12.1
+   Compiling zopfli v0.8.4
+   Compiling flate2 v1.1.10
+   Compiling wasm-bindgen-macro-support v0.2.129
+   Compiling wasm-bindgen v0.2.129
+   Compiling syn v2.0.119
+   Compiling aho-corasick v1.1.5
+   Compiling rustix v1.1.5
+   Compiling chrono-tz v0.10.4
+   Compiling typed-path v0.12.3
+   Compiling regex-syntax v0.8.11
+   Compiling iana-time-zone v0.1.65
+   Compiling chrono v0.4.45
+   Compiling regex-automata v0.4.18
+   Compiling zip v8.6.0
+   Compiling wasm-bindgen-macro v0.2.129
+   Compiling bitcode_derive v0.6.9
+   Compiling phf v0.12.1
+   Compiling approx v0.5.1
+   Compiling chacha20 v0.10.2
+   Compiling csv-core v0.1.13
+   Compiling ironcalc_base v0.9.1
+   Compiling bytemuck v1.25.2
+   Compiling linux-raw-sys v0.12.1
+   Compiling futures-core v0.3.34
+   Compiling bitflags v2.13.2
+   Compiling slab v0.4.12
+   Compiling ryu v1.0.23
+   Compiling futures-task v0.3.34
+   Compiling csv v1.4.0
+   Compiling futures-util v0.3.34
+   Compiling bitcode v0.6.9
+   Compiling rand v0.10.3
+   Compiling statrs v0.19.1
+   Compiling regex v1.13.1
+   Compiling quick-xml v0.41.0
+   Compiling mdc-mdbridge v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdbridge)
+   Compiling debug_unsafe v0.1.4
+   Compiling atoi_simd v0.18.1
+   Compiling js-sys v0.3.106
+   Compiling tempfile v3.27.0
+   Compiling codepage v0.1.3
+   Compiling byteorder v1.5.0
+   Compiling fast-float2 v0.2.4
+   Compiling base64 v0.22.1
+   Compiling docx-rs v0.4.22
+   Compiling mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+   Compiling calamine v0.36.1
+   Compiling rust_xlsxwriter v0.99.1
+   Compiling winnow v1.0.4
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling mdc-office-io v0.1.0 (/home/z/my-project/mdcore-audit/crates/office-io)
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling toml_edit v0.25.17+spec-1.1.0
+   Compiling mdc-workbench v0.1.0 (/home/z/my-project/mdcore-audit/crates/workbench)
+   Compiling mdc-settings v0.1.0 (/home/z/my-project/mdcore-audit/crates/settings)
+   Compiling mdshell v0.1.0 (/home/z/my-project/mdcore-audit/crates/shell)
+   Compiling mdc-relay v0.1.0 (/home/z/my-project/mdcore-audit/crates/relay)
+   Compiling mdc-office v0.1.0 (/home/z/my-project/mdcore-audit/crates/office)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 42s
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_canvas-d44d9682125b5b50)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/concurrency.rs (/home/z/my-project/audit-target/debug/deps/concurrency-1beeefe9b71a5fa7)
+
+running 5 tests
+test concurrent_move_lww_converges ... ok
+test concurrent_human_and_ai_converge ... ok
+test hostile_wire_and_maintenance_gc ... ok
+test next_id_skips_ids_revived_from_remote_state ... ok
+test snapshot_restore_and_continue ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/events.rs (/home/z/my-project/audit-target/debug/deps/events-05bacabd618dedc8)
+
+running 10 tests
+test command_event_touched_root_insert ... ok
+test event_updates_forwardable_roundtrip ... ok
+test failed_command_no_event ... ok
+test maintenance_event_pin ... ok
+test group_touched_is_group_object ... ok
+test move_touches_nested_path ... ok
+test remote_event_touched_from_deep_observer ... ok
+test subscription_lifecycle_and_multi_subscriber ... ok
+test remove_and_props_touched ... ok
+test undo_empty_and_redo_events ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/evidence_assoc.rs (/home/z/my-project/audit-target/debug/deps/evidence_assoc-238d09cbd08f0f02)
+
+running 1 test
+test evidence_binds_to_canvas_object_and_degrades_on_move ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden.rs (/home/z/my-project/audit-target/debug/deps/golden-f920e13ec1bea2c0)
+
+running 4 tests
+test fixtures_are_present_and_non_trivial ... ok
+test golden_svg_matches_fixture ... ok
+test golden_png_matches_fixture ... ok
+test svg_and_png_agree_via_external_rasterizer ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/matrix.rs (/home/z/my-project/audit-target/debug/deps/matrix-746f132f545cd8dd)
+
+running 4 tests
+test hostile_inputs ... ok
+test edge_and_group_semantics ... ok
+test node_lifecycle_and_read_model ... ok
+test semantic_fingerprints ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/render.rs (/home/z/my-project/audit-target/debug/deps/render-264d5cee0ebb6ef0)
+
+running 31 tests
+test dangling_edge_is_skipped_not_panicked ... ok
+test bad_props_fall_back_to_defaults ... ok
+test ellipse_is_round_not_rectangular ... ok
+test empty_canvas_still_produces_valid_svg ... ok
+test encode_png_checks_buffer_length ... ok
+test group_object_itself_is_not_drawn ... ok
+test identity_transform_is_exact_noop ... ok
+test image_without_data_draws_placeholder_frame ... ok
+test line_is_not_dropped_by_thin_width ... ok
+test negative_size_is_rejected ... ok
+test line_single_pixel_is_visible_and_symmetric ... ok
+test non_finite_geometry_is_rejected ... ok
+test parsing_helpers_are_total ... ok
+test path_with_curves_draws ... ok
+test png_has_valid_signature_and_chunks ... ok
+test png_ihdr_dimensions_match_request ... ok
+test png_rejects_zero_size ... ok
+test props_protocol_overrides_defaults ... ok
+test rect_fills_and_strokes ... ok
+test rotate_90_maps_axes ... ok
+test rotate_is_clockwise_in_screen_coords ... ok
+test scale_multiplies_size_about_center ... ok
+test png_is_deterministic ... ok
+test svg_escapes_hostile_text ... ok
+test svg_has_all_six_primitives ... ok
+test svg_transform_folds_into_geometry ... ok
+test text_placeholder_box_is_drawn ... ok
+test thick_stroke_is_fully_opaque_mid_edge ... ok
+test session_objects_become_shapes_via_props ... ok
+test translate_shifts_bounds ... ok
+test zero_dash_gap_is_rejected ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/undo_redo.rs (/home/z/my-project/audit-target/debug/deps/undo_redo-4a4fd3cd5e251c38)
+
+running 4 tests
+test per_actor_interleaved_undo ... ok
+test delete_then_undo_restores_same_identity ... ok
+test undo_stack_soft_limit ... ok
+test undo_redo_all_op_types ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_collab-3b92f310f6934a84)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/audit.rs (/home/z/my-project/audit-target/debug/deps/audit-b3caee7856f38754)
+
+running 10 tests
+test audit_update_detects_foreign_roots ... ok
+test audit_update_detects_identity_violations ... ok
+test audit_update_clean_peer_roundtrip ... ok
+test audit_update_detects_missing_text_node ... ok
+test audit_update_detects_shape_drift_violations ... ok
+test audit_update_isolation_and_fail_closed ... ok
+test repair_semantics ... ok
+test repair_coupling_protection_end_to_end ... ok
+test self_audit_clean_after_full_op_matrix ... ok
+test set_block_type_carries_invariant_guards ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/concurrency.rs (/home/z/my-project/audit-target/debug/deps/concurrency-00bed39a61ed884c)
+
+running 4 tests
+test three_way_chain_convergence ... ok
+test concurrent_edits_converge ... ok
+test two_session_full_then_incremental_convergence ... ok
+test undo_semantics_across_sessions ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/events.rs (/home/z/my-project/audit-target/debug/deps/events-bb8fe41a4b95e5d2)
+
+running 11 tests
+test ai_actor_source_distinction ... ok
+test command_event_source_and_updates ... ok
+test failed_command_no_event ... ok
+test event_updates_forwardable_to_peer ... ok
+test maintenance_event_pin ... ok
+test remote_event_on_apply ... ok
+test restored_session_events_after_recovery ... ok
+test subscription_lifecycle ... ok
+test undo_empty_stack_no_event ... ok
+test undo_redo_events ... ok
+test load_blocks_multi_txn_single_event ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/hostile.rs (/home/z/my-project/audit-target/debug/deps/hostile-81f70449efc8c6de)
+
+running 4 tests
+test anchor_sidecar_hostile_payloads ... ok
+test input_byte_limits ... ok
+test invalid_constructor_inputs ... ok
+test bad_ranges_and_missing_blocks ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/marks_readback.rs (/home/z/my-project/audit-target/debug/deps/marks_readback-07309ee14cfc06ed)
+
+running 4 tests
+test mark_removal_readback ... ok
+test find_block_marks_view ... ok
+test single_and_nested_marks_readback ... ok
+test plain_text_no_marks ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/matrix.rs (/home/z/my-project/audit-target/debug/deps/matrix-5a65ae15ea460e15)
+
+running 7 tests
+test container_children_and_own_text ... ok
+test anchor_identity_semantics ... ok
+test replace_text_char_domain_and_marks ... ok
+test nine_kind_load_and_readback ... ok
+test set_attrs_semantics ... ok
+test set_type_and_move_semantics ... ok
+test set_mark_add_remove_and_overlap ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/presence.rs (/home/z/my-project/audit-target/debug/deps/presence-870655497b6dee5f)
+
+running 11 tests
+test invalid_json_rejected ... ok
+test byte_limit_and_garbage_isolation ... ok
+test local_state_lifecycle_and_events ... ok
+test offline_null_state_propagation ... ok
+test multi_client_states_sorted_and_merge ... ok
+test session_presence_client_id_aligned ... ok
+test stale_clock_ignored ... ok
+test subscription_lifecycle ... ok
+test standalone_construction_domain ... ok
+test wire_roundtrip_and_peer_event ... ok
+test targeted_encode_for_known_clients ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/recovery.rs (/home/z/my-project/audit-target/debug/deps/recovery-4bf288a3a24ac0dc)
+
+running 4 tests
+test hostile_wire_inputs_fail_closed ... ok
+test snapshot_interops_with_diff_sync ... ok
+test maintenance_gc_semantics ... ok
+test snapshot_restore_and_continue ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/undo_redo.rs (/home/z/my-project/audit-target/debug/deps/undo_redo-f949412801cefd96)
+
+running 5 tests
+test remove_then_undo_identity ... ok
+test p20_interleaved_undo_regression_lock ... ok
+test typing_granularity_pinned_per_command ... ok
+test undo_redo_all_op_types ... ok
+test undo_stack_soft_limit ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_evidence-22a9f6ccffd493d4)
+
+running 53 tests
+test audit::tests::seq_monotonic_and_continues ... ok
+test calc::tests::checked_neg_boundaries ... ok
+test calc::tests::division_rounding_modes ... ok
+test calc::tests::no_binary_float_artifacts ... ok
+test calc::tests::parse_and_display_roundtrip ... ok
+test calc::tests::quantity_times_price ... ok
+test calc::tests::rescale_explicit ... ok
+test command::tests::envelope_roundtrip_with_domain_payload ... ok
+test command::tests::idempotency_key_domain ... ok
+test evidence::tests::calculated_requires_claimed_value ... ok
+test evidence::tests::linkage_only_degrades_never_recovers ... ok
+test evidence::tests::relation_calc_ref_invariants ... ok
+test evidence::tests::claimed_value_serde_default_keeps_v1_data_loadable ... ok
+test expr::tests::arithmetic_errors_explicit ... ok
+test expr::tests::determinism_same_inputs_same_trace ... ok
+test expr::tests::form_ratio_percent ... ok
+test expr::tests::form_quantity_times_price ... ok
+test expr::tests::form_unit_conversion_factor_literal ... ok
+test expr::tests::form_sum_chain ... ok
+test expr::tests::precedence_parens_and_unary_minus ... ok
+test expr::tests::recalc_evaluation_error ... ok
+test expr::tests::recalc_final_value_none_cannot_pass ... ok
+test expr::tests::limits_enforced ... ok
+test expr::tests::recalc_input_mismatch ... ok
+test expr::tests::recalc_input_unavailable ... ok
+test expr::tests::recalc_pass_path ... ok
+test expr::tests::syntax_and_char_errors ... ok
+test expr::tests::unit_mismatch_on_additive_rejected ... ok
+test expr::tests::recalc_precision_mismatch_on_tamper ... ok
+test expr::tests::unit_propagation_reporting ... ok
+test expr::tests::whitespace_tolerant ... ok
+test expr::tests::unknown_and_duplicate_inputs ... ok
+test fingerprint::tests::fnv64_deterministic_and_sensitive ... ok
+test fingerprint::tests::known_vector ... ok
+test locator::tests::cell_coord_domain ... ok
+test locator::tests::locator_engine_dispatch ... ok
+test locator::tests::region_ordering ... ok
+test refs::tests::fingerprint_requires_algorithm_prefix ... ok
+test refs::tests::content_matches_requires_same_algorithm ... ok
+test sidecar::tests::apply_evaluation_lands_and_refuses_overwrite ... ok
+test sidecar::tests::claim_reverify_is_only_claim_side_recovery ... ok
+test sidecar::tests::body_refresh_breaks_claim_anchor_only ... ok
+test sidecar::tests::duplicate_evidence_id_rejected ... ok
+test sidecar::tests::idempotent_command_replay ... ok
+test sidecar::tests::recalculate_cascades_to_referencing_evidence ... ok
+test sidecar::tests::review_transitions_and_reset_denied ... ok
+test sidecar::tests::corrupt_file_rejected_not_guessed ... ok
+test sidecar::tests::save_load_roundtrip_and_atomicity ... ok
+test sidecar::tests::source_change_degrades_to_stale_and_never_silently_rebinds ... ok
+test sidecar::tests::source_unavailable_marks_missing ... ok
+test status::tests::only_valid_allows_recalc ... ok
+test status::tests::three_states_are_orthogonal_in_serde ... ok
+test sidecar::tests::schema_version_gate ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_mdbridge-40cadae516b8b3f6)
+
+running 2 tests
+test tests::family_codec_roundtrip ... ok
+test tests::kind_mapping_total ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bridge_ops.rs (/home/z/my-project/audit-target/debug/deps/bridge_ops-7aada061200e719e)
+
+running 9 tests
+test insert_toplevel_nested_and_id_writeback ... ok
+test container_and_text_face_prechecks ... ok
+test move_block_cross_parent_and_back ... ok
+test origin_split_stacks_dual_actor ... ok
+test move_block_same_parent_all_positions ... ok
+test remove_then_undo_identity_continuity ... ok
+test replace_text_char_domain_and_bad_range ... ok
+test shadow_full_rematerialize_equivalence_after_mixed_ops ... ok
+test set_type_attrs_mark_dual ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/bridge_publish.rs (/home/z/my-project/audit-target/debug/deps/bridge_publish-86191bedf802f73c)
+
+running 4 tests
+test publish_precheck_failures ... ok
+test publish_marks_visible_and_coverage_equivalent ... ok
+test publish_roundtrip_identity_and_shape ... ok
+test publish_same_tree_twice_distinct_ids ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bridge_sync.rs (/home/z/my-project/audit-target/debug/deps/bridge_sync-8468f697e9e50198)
+
+running 6 tests
+test fake_family_injection_isolated ... ok
+test foreign_mapping_stable_across_rematerialize_rounds ... ok
+test hostile_empty_block_id_orphan ... ok
+test snapshot_restore_same_and_changed_client ... ok
+test undo_local_only_after_remote ... ok
+test two_host_convergence_and_cross_edit ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_office-a7f0c4a766b24087)
+
+running 16 tests
+test sanitize::url_policy::tests::u01_javascript_rejected ... ok
+test sanitize::url_policy::tests::custom_whitelist_and_full_reject ... ok
+test sanitize::url_policy::tests::u02_case_evasion_rejected ... ok
+test sanitize::url_policy::tests::u03_whitespace_normalization_rejected ... ok
+test sanitize::url_policy::tests::u04_data_uri_rejected ... ok
+test sanitize::url_policy::tests::u05_vbscript_rejected ... ok
+test sanitize::url_policy::tests::u06_file_rejected ... ok
+test sanitize::url_policy::tests::u07_unc_rejected ... ok
+test sanitize::url_policy::tests::u08_protocol_relative_allowed ... ok
+test sanitize::url_policy::tests::u09_https_allowed ... ok
+test sanitize::url_policy::tests::u10_mailto_allowed ... ok
+test sanitize::url_policy::tests::u12_attribute_glue_rejected ... ok
+test sanitize::url_policy::tests::u13_nul_truncation_rejected ... ok
+test sanitize::url_policy::tests::u11_internal_link_allowed ... ok
+test sanitize::url_policy::tests::u14_whitelist_case_insensitive ... ok
+test sanitize::url_policy::tests::u15_empty_mailto_and_edges ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sanitize_gates.rs (/home/z/my-project/audit-target/debug/deps/sanitize_gates-d81d3b02328ae9a1)
+
+running 18 tests
+test csv_all_four_triggers_all_modes_matrix ... ok
+test csv_prefix_modes_rewrite_and_passthrough ... ok
+test csv_reject_mode_typed_error ... ok
+test csv_trigger_set_exactly_four_chars ... ok
+test field_embedded_deny_token_injection_blocked ... ok
+test field_deny_families_rejected ... ok
+test field_policy_modes_and_unknown_family ... ok
+test field_whitelist_default_allows_audit_set ... ok
+test html_href_injection_neutralized ... ok
+test xml_corrupt_tier_contrast_output_is_legal ... ok
+test office_crate_zero_dependencies_self_lock ... ok
+test xml_decode_external_convention_and_edges ... ok
+test xml_entities_text_minimal_and_attr_five ... ok
+test xml_escape_boundary_closer_multibyte_members ... ok
+test xml_legal_controls_and_del_pass_through ... ok
+test xml_literal_pattern_disambiguation_regressions ... ok
+test xml_escape_set_boundary_sweep ... ok
+test xml_roundtrip_property_lcg ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/sanitize_security.rs (/home/z/my-project/audit-target/debug/deps/sanitize_security-426c05b39f13d925)
+
+running 44 tests
+test c01_mode_comparisons ... ok
+test c01_dde_injection_prefixed ... ok
+test c02_plus_trigger_prefixed ... ok
+test c03_minus_trigger_prefixed ... ok
+test c04_at_trigger_prefixed ... ok
+test c05_leading_space_untouched ... ok
+test c06_already_disinfected_untouched ... ok
+test c07_legal_apostrophe_text_untouched ... ok
+test c09_plain_formula_still_prefixed ... ok
+test c08_fullwidth_equals_untouched ... ok
+test e01_all_entities_baseline ... ok
+test c10_tab_prefix_untouched ... ok
+test e03_attribute_injection_neutralized ... ok
+test e02_already_escaped_treated_as_literal ... ok
+test e04_cdata_terminator_escaped ... ok
+test e06_numeric_entity_smuggling_neutralized ... ok
+test e05_control_char_integrated_path ... ok
+test e07_tag_smuggling_neutralized ... ok
+test f02_ddeauto_rejected ... ok
+test f01_includetext_rejected ... ok
+test f03_nested_injection_after_switch_rejected ... ok
+test f04_switch_position_injection_rejected ... ok
+test f05_case_evasion_rejected ... ok
+test f06_quoted_deny_keyword_word_semantics_pinned ... ok
+test f07_whitelist_families_allowed ... ok
+test f09_conservative_false_positive_registered ... ok
+test f08_shorter_prefix_not_keyword_allowed ... ok
+test h01_tag_injection_neutralized ... ok
+test f10_superset_prefix_caught_same_class_as_f09 ... ok
+test h02_attribute_breakout_neutralized ... ok
+test h03_url_scheme_attack_ineffective_to_char_escaping ... ok
+test h04_data_uri_ineffective_to_char_escaping ... ok
+test h05_single_quote_breakout_neutralized ... ok
+test h06_already_escaped_literal_roundtrip ... ok
+test x01_nul_escaped ... ok
+test x02_literal_form_disambiguated ... ok
+test x03_reencode_prefix_grows_level_by_level ... ok
+test x04_legal_controls_and_del_untouched ... ok
+test x05_legal_char_spoof_form_disambiguated ... ok
+test x06_uppercase_x_not_a_form ... ok
+test x07_wrong_hex_length_not_a_form ... ok
+test x08_non_hex_digit_not_a_form ... ok
+test x09_ffff_two_paths_symmetric ... ok
+test x10_fffe_real_char_escaped ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_relay-35827655852e65e3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/canvas_harness.rs (/home/z/my-project/audit-target/debug/deps/canvas_harness-c8d41afeed66d5ae)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/doc_harness.rs (/home/z/my-project/audit-target/debug/deps/doc_harness-9ecda87113c2bcc4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/relay.rs (/home/z/my-project/audit-target/debug/deps/relay-0fa3ea19b0eaf107)
+
+running 9 tests
+test canvas_domain_same_relay ... ok
+test failed_update_zero_fanout ... ok
+test doc_three_client_fanout_convergence ... ok
+test join_idempotent_and_presence_limit_inherited ... ok
+test interval_auto_checkpoint ... ok
+test late_joiner_diff_sync ... ok
+test leave_stops_delivery ... ok
+test presence_fanout_via_relay ... ok
+test snapshot_checkpoint_and_new_relay_recovery ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_settings-ab438c58fa064e9b)
+
+running 1 test
+test tests::default_document_roundtrips_to_defaults ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/closure_lock.rs (/home/z/my-project/audit-target/debug/deps/closure_lock-10a623ad3800c6a4)
+
+running 1 test
+test dependency_closure_is_domain_agnostic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_workbench-ceb646f47aa2525f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/anonymous_export.rs (/home/z/my-project/audit-target/debug/deps/anonymous_export-bedbcdf759735125)
+
+running 4 tests
+test g3_e2_memory_session_bytes ... ok
+test g3_e1_file_session_full_chain ... ok
+test g3_e3_marker_gate_shared ... ok
+test g3_e4_command_dispatch ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/collab_composition.rs (/home/z/my-project/audit-target/debug/deps/collab_composition-ced36ad9b646c9fa)
+
+running 3 tests
+test collab_body_remote_event_observed_by_raw_peer ... ok
+test collab_body_ai_polish_stale_rebind_and_undo_recovery ... ok
+test collab_body_two_peer_convergence_human_and_ai ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/command_layer.rs (/home/z/my-project/audit-target/debug/deps/command_layer-9669e8b94eaba23b)
+
+running 5 tests
+test idempotent_replay_and_version_conflict_semantics ... ok
+test full_loop_through_command_dispatch ... ok
+test path_policy_blocks_out_of_root_everywhere ... ok
+test scale_limits_enforced ... ok
+test path_policy_blocks_symlink_escape ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/eight_step_loop.rs (/home/z/my-project/audit-target/debug/deps/eight_step_loop-dabc7ab74c246010)
+
+running 4 tests
+test clean_export_detects_markers ... ok
+test eight_step_closed_loop ... ok
+test proposals_fail_closed_on_stale_views_and_bad_targets ... ok
+test source_correction_full_recovery_path ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/memory_session.rs (/home/z/my-project/audit-target/debug/deps/memory_session-1184cfd71257bc7e)
+
+running 3 tests
+test memory_session_fail_closed_faces ... ok
+test memory_session_sidecar_json_roundtrip ... ok
+test memory_session_eight_step_closed_loop ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/persistence_recovery.rs (/home/z/my-project/audit-target/debug/deps/persistence_recovery-6f8ec56cfb0f1cd0)
+
+running 6 tests
+test corrupt_truncated_and_missing_sidecar_fail_closed_on_open ... ok
+test body_changed_between_sessions_fails_closed ... ok
+test cross_session_idempotent_replay ... ok
+test interrupted_publish_leftover_does_not_break_recovery ... ok
+test session_reopen_state_and_continuity ... ok
+test source_version_monotonic_across_reopen ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/review_gate.rs (/home/z/my-project/audit-target/debug/deps/review_gate-8185e45023e50fbd)
+
+running 6 tests
+test custom_reviewer_prefixes ... ok
+test default_gate_blocks_ai_reviewer ... ok
+test gate_enforced_through_command_dispatch ... ok
+test default_gate_blocks_approval_of_stale_linkage ... ok
+test relaxed_scenario_allows_broken_linkage_approval ... ok
+test value_threshold_requires_passed_calc ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdshell-a194076aa45535d0)
+
+running 5 tests
+test session::tests::default_limit_is_sixteen ... ok
+test tests::full_open_save_roundtrip_keeps_identity ... ok
+test tests::progressive_open_rejects_dangling_fence_without_partial_state ... ok
+test tests::save_document_roundtrip_via_session ... ok
+test tests::progressive_open_matches_one_shot_and_reports_progress ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contract_freeze.rs (/home/z/my-project/audit-target/debug/deps/contract_freeze-34c5f627df75ea32)
+
+running 5 tests
+test contract_doc_frozen_v1_present ... ok
+test contract_doc_v1_1_settings_face_present ... ok
+test contract_doc_v1_1_session_face_present ... ok
+test shell_native_blueprint_uses_frozen_event_family ... ok
+test mdshell_surface_shapes_frozen ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r24_packaging.rs (/home/z/my-project/audit-target/debug/deps/r24_packaging-c7bb6e2dc33cd0d7)
+
+running 4 tests
+test build_scripts_inject_version_from_single_source ... ok
+test naming_gate_documented_before_placeholder_replacement ... ok
+test version_single_source_via_workspace ... ok
+test packaging_artifacts_present_and_naming_scoped ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r24_session.rs (/home/z/my-project/audit-target/debug/deps/r24_session-4588d5dc173e5194)
+
+running 10 tests
+test core_dirty_via_session_get_mut_feeds_plan_reload ... ok
+test duplicate_and_unknown_window_rejected ... ok
+test core_dirty_lifecycle_view_system_undo_adopt ... ok
+test future_session_record_rejected_and_malformed_rejected ... ok
+test lifecycle_open_focus_close_tracks_mru_order ... ok
+test one_document_one_window_and_reverse_mapping ... ok
+test resource_limit_enforced_and_freed_by_close ... ok
+test open_document_feeds_session_restore_pipeline ... ok
+test session_record_roundtrip_preserves_focus_order_and_skips_pathless ... ok
+test session_record_json_is_deterministic ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r24_settings.rs (/home/z/my-project/audit-target/debug/deps/r24_settings-f6436c4d083fa4d1)
+
+running 20 tests
+test defaults_align_with_core_constants ... ok
+test future_schema_loads_defaults_and_refuses_save ... ok
+test corrupt_file_degrades_to_defaults_and_save_repairs ... ok
+test invalid_theme_enum_degrades_to_system ... ok
+test load_accepts_handwritten_inline_section ... ok
+test i18n_language_key_set_reload_and_domain ... ok
+test out_of_range_value_degrades_that_key_only ... ok
+test partial_file_merges_defaults_clean ... ok
+test missing_file_is_created_status_and_save_persists_full_defaults ... ok
+test set_on_missing_section_writes_standard_table_and_survives_reload ... ok
+test set_rejects_unknown_path_and_reserved_keys ... ok
+test set_promotes_inline_section_preserving_values ... ok
+test set_rejects_wrong_types_and_out_of_range ... ok
+test set_updates_doc_snapshot_and_survives_reload ... ok
+test settings_json_shape_roundtrips ... ok
+test unknown_keys_and_comments_survive_roundtrip ... ok
+test v0_file_without_version_key_migrates_to_v1 ... ok
+test tr16_docx_export_keys_set_reload_and_domain ... ok
+test wrong_typed_key_degrades_that_key_only ... ok
+test w2a_docx_toc_anonymize_keys_set_reload_and_domain ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests mdc_canvas
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_collab
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_evidence
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_mdbridge
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_office
+
+running 5 tests
+test crates/office/src/sanitize/field_whitelist.rs - sanitize::field_whitelist (line 20) ... ok
+test crates/office/src/sanitize/csv_formula.rs - sanitize::csv_formula (line 19) ... ok
+test crates/office/src/sanitize/html_escape.rs - sanitize::html_escape (line 15) ... ok
+test crates/office/src/sanitize/xml_control.rs - sanitize::xml_control (line 31) ... ok
+test crates/office/src/sanitize/xml_entities.rs - sanitize::xml_entities (line 14) ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+   Doc-tests mdc_relay
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_settings
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdc_workbench
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mdshell
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

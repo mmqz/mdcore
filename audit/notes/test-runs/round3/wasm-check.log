@@ -1,0 +1,148 @@
+    Checking cfg-if v1.0.5
+    Checking memchr v2.8.3
+   Compiling wasm-bindgen-shared v0.2.129
+    Checking once_cell v1.21.4
+    Checking unicode-ident v1.0.26
+   Compiling wasm-bindgen v0.2.129
+   Compiling serde_core v1.0.229
+    Checking typenum v1.20.1
+    Checking itoa v1.0.18
+    Checking scopeguard v1.2.0
+    Checking hybrid-array v0.4.15
+   Compiling serde v1.0.229
+    Checking pin-project-lite v0.2.17
+   Compiling thiserror v2.0.21
+   Compiling zmij v1.0.23
+   Compiling crc32fast v1.5.2
+    Checking simd-adler32 v0.3.10
+   Compiling serde_json v1.0.151
+    Checking crypto-common v0.2.2
+    Checking smallvec v1.16.2
+    Checking adler2 v2.0.1
+    Checking miniz_oxide v0.9.1
+   Compiling encoding_rs v0.8.42
+    Checking hashbrown v0.17.1
+    Checking log v0.4.34
+    Checking equivalent v1.0.2
+    Checking zlib-rs v0.6.8
+    Checking rand_core v0.10.1
+   Compiling getrandom v0.4.3
+    Checking flate2 v1.1.10
+   Compiling libm v0.2.16
+    Checking indexmap v2.14.2
+   Compiling num-traits v0.2.19
+    Checking futures-core v0.3.34
+    Checking futures-task v0.3.34
+    Checking slab v0.4.12
+    Checking futures-util v0.3.34
+    Checking block-padding v0.4.2
+    Checking block-buffer v0.12.1
+    Checking const-oid v0.10.2
+    Checking bumpalo v3.20.3
+    Checking zopfli v0.8.4
+    Checking digest v0.11.3
+    Checking js-sys v0.3.106
+    Checking inout v0.2.2
+    Checking typed-path v0.12.3
+   Compiling parking_lot_core v0.9.12
+   Compiling crossbeam-utils v0.8.23
+    Checking zip v8.6.0
+    Checking cipher v0.5.2
+    Checking approx v0.5.1
+    Checking event-listener v5.4.2
+    Checking csv-core v0.1.13
+    Checking bytemuck v1.25.2
+    Checking ryu v1.0.23
+    Checking csv v1.4.0
+    Checking bitcode v0.6.9
+   Compiling ironcalc_base v0.9.1
+    Checking event-listener-strategy v0.5.4
+    Checking statrs v0.19.1
+    Checking sha2 v0.11.0
+    Checking quick-xml v0.41.0
+    Checking lock_api v0.4.14
+    Checking hashbrown v0.14.5
+    Checking debug_unsafe v0.1.4
+    Checking tinyvec v1.13.3
+    Checking regex-lite v0.1.9
+    Checking alloc-no-stdlib v2.0.4
+    Checking alloc-stdlib v0.2.4
+    Checking unicode-normalization v0.1.25
+    Checking atoi_simd v0.18.1
+    Checking dashmap v6.2.1
+    Checking async-lock v3.4.2
+    Checking fastrand v2.5.0
+    Checking codepage v0.1.3
+    Checking chacha20 v0.10.2
+    Checking smallstr v0.3.1
+    Checking arc-swap v1.9.3
+    Checking base64 v0.22.1
+    Checking byteorder v1.5.0
+    Checking fast-float2 v0.2.4
+    Checking unicode-bidi v0.3.18
+    Checking chrono v0.4.45
+    Checking unicode-properties v0.1.4
+    Checking cpubits v0.1.1
+    Checking aes v0.9.3
+    Checking stringprep v0.1.5
+    Checking rust_xlsxwriter v0.99.1
+    Checking calamine v0.36.1
+    Checking docx-rs v0.4.22
+    Checking yrs v0.28.0
+    Checking rand v0.10.3
+    Checking mdc-formula v0.1.0 (/home/z/my-project/mdcore-audit/crates/formula)
+    Checking brotli-decompressor v5.0.3
+    Checking ecb v0.2.1
+    Checking cbc v0.2.1
+    Checking md-5 v0.11.0
+    Checking mdc-evidence v0.1.0 (/home/z/my-project/mdcore-audit/crates/evidence)
+    Checking nom v8.0.0
+    Checking rangemap v1.8.0
+    Checking str_indices v0.4.4
+    Checking weezl v0.2.1
+    Checking bitflags v2.13.2
+    Checking ropey v1.6.1
+    Checking mdc-office-io v0.1.0 (/home/z/my-project/mdcore-audit/crates/office-io)
+    Checking lopdf v0.45.0
+    Checking mdc-workbench v0.1.0 (/home/z/my-project/mdcore-audit/crates/workbench)
+    Checking mdcore v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore)
+    Checking mdc-canvas v0.1.0 (/home/z/my-project/mdcore-audit/crates/canvas)
+    Checking mdc-collab v0.1.0 (/home/z/my-project/mdcore-audit/crates/collab)
+    Checking console_error_panic_hook v0.1.7
+    Checking mdc-pdf v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf)
+    Checking mdcore-wasm v0.1.0 (/home/z/my-project/mdcore-audit/crates/mdcore-wasm)
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/canvas.rs:377:20
+    |
+377 |     #[wasm_bindgen(static_method_of = WasmCanvas)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/collab.rs:504:20
+    |
+504 |     #[wasm_bindgen(static_method_of = WasmCollabSession)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/workbench.rs:352:20
+    |
+352 |     #[wasm_bindgen(static_method_of = WasmWorkbench)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/lib.rs:229:20
+    |
+229 |     #[wasm_bindgen(static_method_of = WasmCore)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: unused variable: `static_method_of`
+   --> crates/mdcore-wasm/src/lib.rs:238:20
+    |
+238 |     #[wasm_bindgen(static_method_of = WasmCore)]
+    |                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_static_method_of`
+
+warning: `mdcore-wasm` (lib) generated 5 warnings (run `cargo fix --lib -p mdcore-wasm` to apply 5 suggestions)
+    Checking mdc-pdf-wasm v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf-wasm)
+    Finished `dev` profile [unoptimized] target(s) in 28.63s

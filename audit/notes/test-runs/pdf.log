@@ -1,0 +1,336 @@
+   Compiling typenum v1.20.1
+   Compiling unicode-ident v1.0.26
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling hybrid-array v0.4.15
+   Compiling syn v3.0.6
+   Compiling crypto-common v0.2.2
+   Compiling block-padding v0.4.2
+   Compiling inout v0.2.2
+   Compiling cipher v0.5.2
+   Compiling block-buffer v0.12.1
+   Compiling crc32fast v1.5.2
+   Compiling const-oid v0.10.2
+   Compiling serde_core v1.0.229
+   Compiling digest v0.11.3
+   Compiling tinyvec v1.13.3
+   Compiling simd-adler32 v0.3.10
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling memchr v2.8.3
+   Compiling unicode-normalization v0.1.25
+   Compiling alloc-stdlib v0.2.4
+   Compiling miniz_oxide v0.9.1
+   Compiling thiserror-impl v2.0.21
+   Compiling unicode-properties v0.1.4
+   Compiling cpubits v0.1.1
+   Compiling unicode-bidi v0.3.18
+   Compiling aes v0.9.3
+   Compiling stringprep v0.1.5
+   Compiling thiserror v2.0.21
+   Compiling flate2 v1.1.10
+   Compiling brotli-decompressor v5.0.3
+   Compiling nom v8.0.0
+   Compiling sha2 v0.11.0
+   Compiling md-5 v0.11.0
+   Compiling serde_derive v1.0.229
+   Compiling ecb v0.2.1
+   Compiling cbc v0.2.1
+   Compiling weezl v0.2.1
+   Compiling bitflags v2.13.2
+   Compiling rangemap v1.8.0
+   Compiling lopdf v0.45.0
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling mdc-pdf v0.1.0 (/home/z/my-project/mdcore-audit/crates/pdf)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.25s
+     Running unittests src/lib.rs (/home/z/my-project/audit-target/debug/deps/mdc_pdf-d735a66b789437e0)
+
+running 24 tests
+test annotate::tests::days_from_civil_epoch_anchors ... ok
+test annotate::tests::date_roundtrip_known_values ... ok
+test forms::tests::ascii_stays_literal ... ok
+test forms::tests::pdf_string_roundtrip_utf16 ... ok
+test forms::tests::dict_text_reads_both_string_and_name ... ok
+test generate::tests::a4_single_page_and_font_tree ... ok
+test generate::tests::determinism_bytes ... ok
+test generate::tests::to_unicode_rank_kangxi_preferential ... ok
+test generate::tests::typed_errors ... ok
+test generate::tests::multi_page_pagination ... ok
+test layers::tests::visibility_semantics ... ok
+test organize::tests::page_size_validation ... ok
+test organize::tests::permutation_validator_semantics ... ok
+test organize::tests::report_defaults_all_zero ... ok
+test organize::tests::rotate_math_is_modular ... ok
+test signature::tests::integer_hex_strips_leading_zeros ... ok
+test signature::tests::oid_decoding ... ok
+test signature::tests::parses_simple_tlv ... ok
+test signature::tests::rejects_indefinite_length ... ok
+test signature::tests::rejects_truncated ... ok
+test signature::tests::utc_time_decoding ... ok
+test stamp::tests::rejects_bad_rect_and_opacity ... ok
+test stamp::tests::unknown_image_format_is_typed_error ... ok
+test generate::tests::unmapped_chars_counted_not_silent ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pdfb_skeleton.rs (/home/z/my-project/audit-target/debug/deps/pdfb_skeleton-f79ef60e0a6b0e90)
+
+running 39 tests
+test annot_ids_are_monotonic_from_one ... ok
+test annotate_list_filters_kind_page_origin ... ok
+test attach_engine_validates_page_count_consistency ... ok
+test author_length_limit_hard_rejects_over_200_chars ... ok
+test annotation_serde_roundtrip_with_ai_origin ... ok
+test dangerous_family_serde_names_frozen ... ok
+test command_envelope_roundtrip_and_json_tags ... ok
+test document_engine_trait_is_object_safe ... ok
+test encrypted_assessment_denies_writes_policy_first ... ok
+test extract_text_span_shape_and_v0_empty_payload ... ok
+test ink_serde_defaults_for_legacy_json ... ok
+test ink_serde_roundtrip_with_color_width ... ok
+test ink_width_clamped_on_add ... ok
+test limits_defaults_match_security_policy_table ... ok
+test open_assessment_form_probe_serde_shape ... ok
+test limits_enforce_family_behaviors ... ok
+test open_validates_geometry_outline_and_emptiness ... ok
+test outline_empty_tree_and_single_root_boundaries ... ok
+test open_entry_limit_checks_reason_codes_and_boundary ... ok
+test page_span_out_of_range_rejected_at_command_layer ... ok
+test outline_iterates_depth_first_in_document_order ... ok
+test page_span_rejects_inverted_range_at_construction ... ok
+test patch_inapplicable_faces_are_ignored_as_noop ... ok
+test patch_applies_three_mutable_faces_and_advances_mtime ... ok
+test protocol_constants_are_frozen ... ok
+test patch_never_changes_kind ... ok
+test rect_rejects_inverted_coordinates ... ok
+test quad_point_serde_roundtrip ... ok
+test rotation_0_180_keep_dimensions_and_degrees_mapping ... ok
+test rotation_90_270_swaps_effective_dimensions ... ok
+test search_case_folding_and_snippet_char_safety ... ok
+test search_empty_query_is_hard_rejected ... ok
+test search_overlap_semantics_is_consistent_across_modes ... ok
+test search_max_hits_clamps_with_truncated_flag ... ok
+test serde_inverted_rect_is_rejected ... ok
+test serde_reversed_page_span_is_rejected ... ok
+test source_mirror_bidirectional_exact_count ... ok
+test source_mirrors_mdcore_five_values ... ok
+test version_single_source_with_workspace_package ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfc_cache_worker.rs (/home/z/my-project/audit-target/debug/deps/pdfc_cache_worker-ddff221bdb0fe3ec)
+
+running 23 tests
+test engine_error_constructor_clamps_message ... ok
+test boxed_rasterizer_object_form ... ok
+test lru_byte_budget_is_exact ... ok
+test lru_clear_resets_all_counters ... ok
+test lru_duplicate_put_updates_in_place ... ok
+test lru_entries_iterate_lru_to_mru ... ok
+test lru_eviction_order_is_lru_first ... ok
+test lru_miss_and_contains_do_not_promote ... ok
+test lru_oversized_entry_self_evicts ... ok
+test lru_get_promotes_recency ... ok
+test lru_put_update_with_oversized_value_self_evicts ... ok
+test mock_end_to_end_cache_fill_and_hit ... ok
+test worker_cancel_first_job_id_zero_is_honored ... ok
+test worker_cancel_skips_queued_job ... ok
+test worker_factory_panic_graceful_disconnect ... ok
+test worker_panic_isolated_and_recovers ... ok
+test worker_replacement_factory_panic_disconnects ... ok
+test worker_sequential_roundtrip_in_order ... ok
+test worker_shutdown_joins_promptly ... ok
+test worker_watchdog_replays_queue_and_cancels_in_order ... ok
+test worker_watchdog_times_out_poisons_and_replaces ... ok
+test render_types_serde_roundtrip ... ok
+test worker_without_watchdog_serves_slow_job_to_completion ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+     Running tests/pdfc_engine.rs (/home/z/my-project/audit-target/debug/deps/pdfc_engine-9cc728c16dd6387a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfc_perf.rs (/home/z/my-project/audit-target/debug/deps/pdfc_perf-785b33eac002caed)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfd_session_flush.rs (/home/z/my-project/audit-target/debug/deps/pdfd_session_flush-454e1e3a06626770)
+
+running 9 tests
+test flush_s5_encrypted_denied_before_idle_shortcircuit ... ok
+test dirty_set_precision_add_edit_noop ... ok
+test flush_without_writer_dirty_errors_zero_dirty_ok ... ok
+test flush_save_failure_retry_safe ... ok
+test flush_writes_dirty_in_id_order_then_idempotent ... ok
+test pdf_date_string_known_values ... ok
+test origin_author_codec_roundtrip ... ok
+test writer_trait_contract_mock_stats ... ok
+test writer_requires_no_engine ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfd_writer.rs (/home/z/my-project/audit-target/debug/deps/pdfd_writer-c026d87d7b103bf6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdfe_security.rs (/home/z/my-project/audit-target/debug/deps/pdfe_security-3a30d10191d28f37)
+
+running 11 tests
+test open_scan_rejects_oversized_input ... ok
+test open_scan_rejects_over_budget ... ok
+test scan_benign_document_zero_warnings ... ok
+test scan_depth_guard_bounds_recursion ... ok
+test scan_detects_all_eight_families ... ok
+test scan_family_details_and_dedup ... ok
+test scan_encrypted_flag_and_detection_boundary ... ok
+test scan_form_probe_acroform_fields ... ok
+test scan_form_walk_terminates_on_cycles ... ok
+test session_open_with_scanned_assessment_end_to_end ... ok
+test writer_from_bytes_carries_assessment ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pdff2_annotate.rs (/home/z/my-project/audit-target/debug/deps/pdff2_annotate-03c9b5c45dc50955)
+
+running 9 tests
+test annotator_input_validation ... ok
+test acrobat_interop_common_fields ... ok
+test external_reading_independent_fixture ... ok
+test read_report_counters ... ok
+test eleven_kinds_roundtrip_field_exact ... ok
+test remove_added_annotation_incremental ... ok
+test session_command_new_kinds_flush ... ok
+test wire_compat_old_json ... ok
+test remove_external_annotation ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/pdff3_render_ext.rs (/home/z/my-project/audit-target/debug/deps/pdff3_render_ext-faee14834858f772)
+
+running 3 tests
+test links_corpus_real_sweep ... ok
+test links_handcrafted_full_forms ... ok
+test layers_handcrafted_read_and_toggle ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/pdff4_ocr.rs (/home/z/my-project/audit-target/debug/deps/pdff4_ocr-08b983937f2c4946)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pdff_organize.rs (/home/z/my-project/audit-target/debug/deps/pdff_organize-ce31254b163dcad9)
+
+running 16 tests
+test corpus_sweep_all_operations ... ok
+test assessment_carried_from_scan ... ok
+test delete_bookmarks_remap_and_drop ... ok
+test delete_pages_input_validation ... ok
+test delete_pages_count_and_content_streams ... ok
+test extract_independent_pdf ... ok
+test insert_blank_page_geometry ... ok
+test large_manual_delete_extract ... ok
+test merge_form_and_outline_adopt ... ok
+test merge_totals_content_and_bookmarks ... ok
+test reorder_permutation_and_page_order ... ok
+test report_loss_registry_accuracy ... ok
+test encrypted_rejected_s5 ... ok
+test roundtrip_10x_no_bloat ... ok
+test rotate_additive_and_geometry ... ok
+test split_every_totals ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+     Running tests/pdfg_forms.rs (/home/z/my-project/audit-target/debug/deps/pdfg_forms-2e7b3186982cc2ed)
+
+running 15 tests
+test choice_rejects_value_outside_options ... ok
+test cjk_missing_glyph_is_loud_error ... ok
+test cjk_with_font_builds_cid_appearance ... ok
+test empty_bytes_is_error_not_panic ... ok
+test cjk_without_font_warns_but_succeeds ... ok
+test fill_text_and_checkbox_then_save ... ok
+test flatten_refuses_cjk_without_font ... ok
+test maxlen_overflow_is_rejected_not_truncated ... ok
+test flatten_removes_acroform_and_widgets ... ok
+test reads_all_fields_from_real_bid_letter ... ok
+test save_is_idempotent_when_nothing_changed ... ok
+test roundtrip_does_not_inflate ... ok
+test unchanged_value_counts_as_unchanged ... ok
+test unknown_field_is_typed_error ... ok
+test wrong_field_type_is_typed_error ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/pdfh_stamp.rs (/home/z/my-project/audit-target/debug/deps/pdfh_stamp-63cc522170e8f7e7)
+
+running 8 tests
+test bad_image_is_typed_error ... ok
+test jpeg_path_is_recognised_for_embedding ... ok
+test decodes_transparent_png_seal ... ok
+test page_out_of_range_is_typed_error ... ok
+test opacity_multiplies_into_alpha ... ok
+test stamping_preserves_existing_content ... ok
+test zero_area_rect_rejected ... ok
+test stamps_seal_into_page_content_stream ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/pdfi_signature.rs (/home/z/my-project/audit-target/debug/deps/pdfi_signature-1036b6d49dc4aca6)
+
+running 7 tests
+test byte_range_is_even_and_ordered ... ok
+test garbage_bytes_is_typed_error ... ok
+test extracts_certificate_details ... ok
+test reads_real_signature_from_signed_pdf ... ok
+test signature_algorithm_is_reported ... ok
+test unsigned_pdf_returns_empty_vec ... ok
+test signer_name_falls_back_to_cert_cn ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/pdfi_xref_chain.rs (/home/z/my-project/audit-target/debug/deps/pdfi_xref_chain-ddc8ec4691cf1db1)
+
+running 4 tests
+test fixture_canary_small_pdf_pristine ... ok
+test mangled_product_shape_is_exactly_the_incident ... ok
+test read_rejects_unreachable_page_tree ... ok
+test writer_rejects_reconstructed_input ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/pdfj_forms_adv.rs (/home/z/my-project/audit-target/debug/deps/pdfj_forms_adv-042667a72f548bf0)
+
+running 14 tests
+test appearance_builds_styled_ap_stream_for_ascii ... ok
+test appearance_cjk_path_still_builds_cid_ap ... ok
+test appearance_rejects_bad_font_size ... ok
+test appearance_rejects_non_text_field ... ok
+test appearance_roundtrip_through_dict ... ok
+test cross_page_field_is_merged_into_one ... ok
+test invalid_choice_is_detected ... ok
+test cross_page_fill_syncs_all_widgets ... ok
+test readonly_fields_skip_validation ... ok
+test max_len_counts_cjk_as_two_bytes ... ok
+test required_fields_are_detected_when_empty ... ok
+test required_error_clears_after_fill ... ok
+test too_long_value_is_reported ... ok
+test validation_result_message_is_human_readable ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+   Doc-tests mdc_pdf
+
+running 1 test
+test crates/pdf/src/forms.rs - forms::dict_text (line 767) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
