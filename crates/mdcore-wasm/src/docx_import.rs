@@ -998,6 +998,8 @@ mod tests {
             comments: Vec::new(),
             footnotes: Vec::new(),
             endnotes: Vec::new(),
+            // #257：节面默认空（helper 断言不涉节）。
+            sections: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -1715,6 +1717,8 @@ mod tests {
             comments: Vec::new(),
             footnotes: Vec::new(),
             endnotes: Vec::new(),
+            // #257：节面默认空（helper 断言不涉节）。
+            sections: Vec::new(),
             warnings: vec![mdc_office_io::io::CompatibilityWarning {
                 part: "word/document.xml".into(),
                 kind: mdc_office_io::io::WarningKind::BrokenReference,
@@ -1777,6 +1781,8 @@ mod tests {
             comments: Vec::new(),
             footnotes: Vec::new(),
             endnotes: Vec::new(),
+            // #257：节面默认空（helper 断言不涉节）。
+            sections: Vec::new(),
             warnings: Vec::new(),
         };
         let (md, stats) = docx_to_markdown(&doc);
@@ -1819,6 +1825,8 @@ mod tests {
             comments: Vec::new(),
             footnotes: Vec::new(),
             endnotes: Vec::new(),
+            // #257：节面默认空（helper 断言不涉节）。
+            sections: Vec::new(),
             warnings: Vec::new(),
         };
         let (md, stats) = docx_to_markdown(&doc);
@@ -1870,6 +1878,8 @@ mod tests {
             comments: Vec::new(),
             footnotes: Vec::new(),
             endnotes: Vec::new(),
+            // #257：节面默认空（helper 断言不涉节）。
+            sections: Vec::new(),
             warnings: Vec::new(),
         };
         let (md, stats) = docx_to_markdown(&doc);
@@ -1934,6 +1944,8 @@ mod tests {
             comments: Vec::new(),
             footnotes: Vec::new(),
             endnotes: Vec::new(),
+            // #257：节面默认空（helper 断言不涉节）。
+            sections: Vec::new(),
             warnings: Vec::new(),
         };
         let (md, _) = docx_to_markdown(&doc);
@@ -1992,6 +2004,8 @@ mod tests {
                     blocks: Vec::new(),
                 },
             ],
+            // #257：节面默认空（本断言不涉节）。
+            sections: Vec::new(),
             warnings: Vec::new(),
         };
         let (_, stats) = docx_to_markdown(&doc);

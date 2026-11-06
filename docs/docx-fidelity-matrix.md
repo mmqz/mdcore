@@ -80,7 +80,9 @@
   消息含原因，调用方可诊断。
 3. **编辑面的模型边界**：编辑辖 `word/document.xml` 段落（body/表格内/
    文本框内扁平索引）；页眉页脚/脚注/批注内容不进编辑面（原样保留=
-   该面保真）；`w:sectPr`/numbering 定义/styles 定义同辖外（不动=保真）。
+   该面保真）；`w:sectPr`/numbering 定义/styles 定义同辖外（不动=保真——
+   多节文档手术编辑后节结构不变，#257 起由 `tests/docx_sections.rs::
+   edit_preserves_sections` 回归钉住）。
 
 ## 5. 复现
 
@@ -94,4 +96,21 @@ python3 scripts/t1_realdoc_verify.py   # 沙箱侧脚本，仓外复现
 # 编辑驱动器（任意 docx）
 cargo run -p mdc-office-io --example docx_edit_probe -- list <in.docx>
 MDC_EDIT_POLICY=edit cargo run -p mdc-office-io --example docx_edit_probe -- edit <in.docx> <idx> <新文本> <out.docx>
+# 多节分节符读写面（#257）
+cargo test -p mdc-office-io --test docx_sections
 ```
+
+## 6. 多节分节符读写面（#257，2026-11-06 增补）
+
+编辑矩阵之外的**节级**读写面（审计 P1-1：多节文档中段节页眉/页脚
+静默丢——`extract_headers_footers` 只读末节 `section_property`）：
+
+| 面 | 判定 | 锚点 |
+|---|---|---|
+| 节读取（几何/槽位/块区间） | ✅ `DocxDocument::sections`（恒 ≥1 条，中段节六槽位引擎第二趟自解析） | `tests/docx_sections.rs`（docx4j `headers_footers_sections_multiple`：中段节 3 页眉 + 3 页脚恢复；POI `Headers.docx`：3 节各归位） |
+| 节写入（封面/正文异构） | ✅ `DocxWriter::section_break`（SectionBreakSpec：几何/titlePg/起始页码/本节六槽位）+ `page_number_start`（末节） | 同上 `section_break_write_read_roundtrip`（双节回环 + OOXML 直检） |
+| 编辑幸存 | ✅ sectPr 辖外不动=保真（回归钉住） | 同上 `edit_preserves_sections` |
+
+末节行为零变化：文档级 `DocxDocument::headers`/`footers` 语义 = 末节
+（health-check 基线零漂移——`corpus_docx4j_mid_section_slots_recovered`
+双口径断言：文档级仅末节 / `sections[0]` 中段节全量）。

@@ -197,6 +197,29 @@
 //!   入正文**——四实现面共识（LO 渲染/LO 导入/pandoc/python-docx）
 //!   裁决 = docs/field-code-semantics.md（#40）；
 //!
+//! **#257 增量（2026-11-06，多节分节符读写面——审计 P1-1 修复）**：
+//! 主题 = **多节文档全量承载**（此前读面只取末节——中段节页眉/页脚/
+//! 几何/节边界静默丢，P1-1；写面单节不可表达）：
+//! - **节（读）**：[`DocxDocument::sections`]（恒 ≥1 条——单节文档 =
+//!   1 条末节）逐节承载几何（pgSz/pgMar twips——[`PageGeometry`]
+//!   同域）/titlePg/分栏数/节类型/起始页码/六槽位页眉页脚/**块区间**
+//!   `[start, end)`（连续切分 `blocks` 全序）。中段节页眉/页脚部件
+//!   **引擎第二趟自解析**（docx-rs `read_docx` 只把内容联接到末节
+//!   ——`read_docx.rs:232-290`，引用在而内容不联接 = P1-1 静默丢的
+//!   根因）；末节槽位 = 文档级 [`DocxDocument::headers`]/[`footers`]
+//!   同源（既有语义零变化——health-check 基线零漂移）；
+//! - **节（写）**：[`DocxWriter::section_break`]（[`SectionBreakSpec`]
+//!   ——几何/titlePg/起始页码/本节六槽位）在已发射内容后闭合一节
+//!   （OOXML 段落级 sectPr 语义——docx-rs `DocumentChild::Section`
+//!   落地）；末节起始页码 [`DocxWriter::page_number_start`]（封面
+//!   不计数 + 正文从 1 起算的典型位）；几何正值域校验同 V9（构造期
+//!   粘性拒绝）；
+//! - **编辑面**：sectPr 属编辑辖外（不动 = 保真）——多节文档手术
+//!   编辑节结构不变，`tests/docx_sections.rs::edit_preserves_sections`
+//!   回归钉住；
+//! - **证据链**：`tests/docx_sections.rs`（写→读回环 + 单节基线 +
+//!   docx4j/POI 真实语料 P1-1 钉面 + 编辑幸存 + 校验门）。
+//!
 //! 写侧**不支持**（引擎能力在[docx-rs 写面远大于本切片]，未实测
 //! 不暴露）：图片自动转码（`Pic::new` 需 `image` 特性 = +23 crate
 //! 依赖树——登记，PNG 显式尺寸面已暴露）、非 PNG 图片、浮动定位/
@@ -1654,6 +1677,62 @@ pub struct HeaderFooterData {
     pub blocks: Vec<Block>,
 }
 
+/// 分节符行为类型（`w:sectPr/w:type`——**本节末分节符**的换页语义；
+/// 缺省 = NextPage。读面透传，激活/渲染语义归消费方）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SectionKind {
+    NextPage,
+    NextColumn,
+    Continuous,
+    EvenPage,
+    OddPage,
+}
+
+/// 节属性来源（#257）：中段节（`w:p/w:pPr/w:sectPr`——承载段落为
+/// 本节末段）/ 末节（body 级 `w:sectPr`——文档收尾，无承载段落）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SectionSource {
+    Mid,
+    Final,
+}
+
+/// 文档节（#257 多节分节符读写面）：每节的几何/槽位/块区间。
+///
+/// 读面单一真源：`DocxDocument.sections` **恒 ≥1 条**（单节文档 =
+/// 1 条末节）——节序 = 文档序，`block_range` 连续切分 `blocks`
+/// 全序（节 i 的 end = 节 i+1 的 start；末节 end = `blocks.len()`）。
+///
+/// 中段节页眉/页脚部件由引擎第二趟自解析（docx-rs `read_docx` 只把
+/// 内容联接到末节——`read_docx.rs:232-290`；中段节引用在、内容不
+/// 联接，P1-1 静默丢的根因）；末节槽位与 [`DocxDocument::headers`]/
+/// [`DocxDocument::footers`] 同源（既有单一真源，本表复制一份供
+/// 逐节统一访问）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionData {
+    /// 节序（0 起，文档序）。
+    pub index: usize,
+    /// 属性来源（中段节 / 末节）。
+    pub source: SectionSource,
+    /// 页面几何（pgSz/pgMar，twips——与写面 [`PageGeometry`] 同域，
+    /// 读模板 → 写导出零换算）。
+    pub geometry: PageGeometry,
+    /// 首页不同（`w:titlePg`——first 槽位的激活位，语义解释归消费方）。
+    pub title_page: bool,
+    /// 分栏数（`w:cols/@w:num`；缺省 1）。
+    pub columns: usize,
+    /// 分节符类型（`w:type`；缺省 None = NextPage 语义）。
+    pub section_type: Option<SectionKind>,
+    /// 起始页码（`w:pgNumType/@w:start`；None = 续前节）。
+    pub page_number_start: Option<u32>,
+    /// 本节页眉（六槽位中实际挂接的——变体 + 块序，同文档级口径）。
+    pub headers: Vec<HeaderFooterData>,
+    /// 本节页脚（同上）。
+    pub footers: Vec<HeaderFooterData>,
+    /// 本节覆盖的块区间 `[start, end)`（`DocxDocument::blocks` 索引；
+    /// 中段节 end = 承载 sectPr 的段落块之后的边界）。
+    pub block_range: (usize, usize),
+}
+
 /// 整档提取结果：块序 + 页眉页脚 + 媒体清单 + 结构化警告（容器门面，
 /// 与 XLSX 一致）。
 #[derive(Debug, Clone, PartialEq)]
@@ -1674,6 +1753,10 @@ pub struct DocxDocument {
     pub footnotes: Vec<FootnoteData>,
     /// #19：尾注（word/endnotes.xml——分隔符条目已滤）。
     pub endnotes: Vec<FootnoteData>,
+    /// #257：文档节（多节分节符读写面——恒 ≥1 条，节序 = 文档序；
+    /// 单节文档 = 1 条末节。中段节页眉页脚此前静默丢（审计 P1-1），
+    /// 本面补齐）。
+    pub sections: Vec<SectionData>,
     pub warnings: Vec<CompatibilityWarning>,
 }
 
@@ -1822,7 +1905,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     // #19：脚注引用位扫描（w:footnoteReference——引擎 run 模型不
     // 承载，文档级第二趟；body 块索引 → id 序）。
     let note_refs = scan_note_references(&document_xml);
-    let (blocks, comment_anchors) = extract_blocks(
+    let (blocks, comment_anchors, section_marks) = extract_blocks(
         &docx,
         &bundle,
         &numbering_index,
@@ -1831,6 +1914,8 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         &mut warnings,
         &note_refs,
     )?;
+    // #257：节边界分离（apply_vml_textboxes 插入位移同步重映射）。
+    let mut section_boundaries: Vec<usize> = section_marks.iter().map(|(b, _)| *b).collect();
     // #18：VML 文本框插入（宿主块后——DrawingML 形态已在
     // extract_blocks 模型面发射，mc:Fallback 副本防双取）。
     let blocks = apply_vml_textboxes(
@@ -1841,6 +1926,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         &style_index,
         strict,
         &mut warnings,
+        &mut section_boundaries,
     )?;
     let (headers, footers) = extract_headers_footers(
         &docx,
@@ -1849,6 +1935,22 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         &style_index,
         strict,
         &mut warnings,
+    )?;
+    // #257：文档节全量构建（中段节标记 + 末节；中段节页眉页脚部件
+    // 引擎第二趟自解析——docx-rs read_docx 只联末节）。
+    let sections = build_sections(
+        &docx,
+        &section_marks,
+        &section_boundaries,
+        blocks.len(),
+        bytes,
+        &bundle,
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+        &headers,
+        &footers,
     )?;
     // #19：批注面（模型面 comments + 锚关联——VML 插入后的最终块序
     // lockstep 重 walk 解析数组索引）。
@@ -1902,6 +2004,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         comments,
         footnotes,
         endnotes,
+        sections,
         warnings,
     })
 }
@@ -2776,6 +2879,9 @@ fn apply_vml_textboxes(
     styles: &StyleIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
+    // #257：节边界同步重映射（VML 插入点及之后的边界随插入位移——
+    // 插入的文本框块是其宿主段的内容，归属宿主段所在节）。
+    section_boundaries: &mut [usize],
 ) -> Result<Vec<Block>, io::ReadError> {
     if !document_xml.contains("txbxContent") {
         return Ok(blocks); // 快路径零成本
@@ -2796,6 +2902,13 @@ fn apply_vml_textboxes(
             continue;
         }
         let insert_at = (*host + 1).min(blocks.len());
+        // #257：插入点及之后的节边界同步 +1（逆序插入下当前
+        // insert_at 即最终坐标系——后续插入点更小，不受本次位移）。
+        for b in section_boundaries.iter_mut() {
+            if *b >= insert_at {
+                *b += 1;
+            }
+        }
         blocks.insert(
             insert_at,
             Block::TextBox(TextBoxData {
@@ -2811,6 +2924,14 @@ fn apply_vml_textboxes(
 ///（首现语义在 extract_comments 消费面归并）。
 type CommentAnchors = Vec<(usize, usize)>;
 
+/// #257：中段节标记——extract_blocks 副产（文档序）：承载段落级
+/// sectPr 的段落闭合一节，`boundary` = 该段（含其 DrawingML 文本框
+/// 块）入序后的 blocks 长度。`sp` 克隆自 docx-rs 模型（引用/几何/
+/// titlePg/pgNumType 全量——中段节页眉页脚内容 docx-rs 不联接，
+/// 引擎第二趟自解析）。
+/// 边界为 **VML 插入前**坐标系——apply_vml_textboxes 插入时同步重映射。
+type SectionMarks = Vec<(usize, docx_rs::SectionProperty)>;
+
 fn extract_blocks(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
@@ -2819,12 +2940,14 @@ fn extract_blocks(
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
     note_refs: &HashMap<usize, Vec<i64>>,
-) -> Result<(Vec<Block>, CommentAnchors), io::ReadError> {
+) -> Result<(Vec<Block>, CommentAnchors, SectionMarks), io::ReadError> {
     let table = bundle.document.as_ref();
     let mut blocks = Vec::new();
     // #19：批注锚采集（body 块索引, 批注 id）+ body 块计数器
     //（w:p/w:tbl 序——与 scan_note_references 的 XML 计数一致）。
     let mut comment_anchors: CommentAnchors = Vec::new();
+    // #257：中段节标记（文档序）——承载 sectPr 的段落闭合一节。
+    let mut section_marks: SectionMarks = Vec::new();
     let mut body_idx: usize = 0;
     for child in &docx.document.children {
         match child {
@@ -2874,6 +2997,12 @@ fn extract_blocks(
                         }));
                     }
                 }
+                // #257：段落级 sectPr = 本节闭合（该段为本节末段——
+                // 边界含本段及其文本框块；末节属性在 body 级，不在
+                // 段落级，此处只记中段节）。
+                if let Some(sp) = &p.property.section_property {
+                    section_marks.push((blocks.len(), sp.clone()));
+                }
             }
             docx_rs::DocumentChild::Table(t) => {
                 let k = body_idx;
@@ -2904,7 +3033,7 @@ fn extract_blocks(
             _ => {}
         }
     }
-    Ok((blocks, comment_anchors))
+    Ok((blocks, comment_anchors, section_marks))
 }
 
 /// numId → 各 ilvl 级 numFmt 解析索引（r4-t3——numbering.xml 链的
@@ -3664,6 +3793,393 @@ fn extract_headers_footers(
 }
 
 // ---------------------------------------------------------------------------
+// #257：多节分节符读面（中段节——docx-rs read_docx 只联末节的补齐）
+// ---------------------------------------------------------------------------
+
+/// 节几何提取（pgSz/pgMar → [`PageGeometry`]，twips 同域）。
+///
+/// `PageSize.w/h` 私有无 getter（docx-rs 0.4.22）——经 serde_json 序列化
+/// 通道读取（同 gridSpan/verticalMerge 合并面先例 P2-1：版本钉死
+/// 0.4.22，升版即静默退化的已知风险面，代码内登记）。`PageMargin`
+///（types 版）字段全 pub——直接访问。
+fn section_geometry(sp: &docx_rs::SectionProperty) -> PageGeometry {
+    // camelCase 对单字母字段 w/h 无改写；解析失败防御回落默认 A4
+    //（敌意畸形值已被容器门/panic 预检拦在前——此处仅类型对齐防御）。
+    let size = serde_json::to_value(&sp.page_size).ok();
+    let (width, height) = match size
+        .as_ref()
+        .and_then(|v| v.get("w"))
+        .and_then(|v| v.as_u64())
+        .zip(
+            size.as_ref()
+                .and_then(|v| v.get("h"))
+                .and_then(|v| v.as_u64()),
+        ) {
+        Some((w, h)) => (w as u32, h as u32),
+        None => (11906, 16838), // docx-rs PageSize::default（A4）
+    };
+    PageGeometry {
+        width,
+        height,
+        margin_top: sp.page_margin.top,
+        margin_right: sp.page_margin.right,
+        margin_bottom: sp.page_margin.bottom,
+        margin_left: sp.page_margin.left,
+        margin_header: sp.page_margin.header,
+        margin_footer: sp.page_margin.footer,
+        gutter: sp.page_margin.gutter,
+    }
+}
+
+/// 节类型映射（docx-rs `SectionType` → 引擎 [`SectionKind`]——透传，
+/// 一一对应）。
+fn section_kind(sp: &docx_rs::SectionProperty) -> Option<SectionKind> {
+    sp.section_type.map(|t| match t {
+        docx_rs::SectionType::NextPage => SectionKind::NextPage,
+        docx_rs::SectionType::NextColumn => SectionKind::NextColumn,
+        docx_rs::SectionType::Continuous => SectionKind::Continuous,
+        docx_rs::SectionType::EvenPage => SectionKind::EvenPage,
+        docx_rs::SectionType::OddPage => SectionKind::OddPage,
+    })
+}
+
+/// 页眉部件子块提取（`docx_rs::Header` → 块序——与末节提取同构：
+/// 段落/表 + StructuredDataTag 面外跳过登记；numPr/ind 承载同路径）。
+#[allow(clippy::too_many_arguments)]
+fn header_children_blocks(
+    header: &docx_rs::Header,
+    bundle: &RelsBundle,
+    part: &str,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<Block>, io::ReadError> {
+    let table = bundle.by_part.get(part);
+    let mut blocks = Vec::new();
+    for child in &header.children {
+        match child {
+            docx_rs::HeaderChild::Paragraph(p) => blocks.push(Block::Paragraph(extract_paragraph(
+                p,
+                table,
+                index,
+                styles,
+                part,
+                BlockSource::Header,
+                strict,
+                warnings,
+            )?)),
+            docx_rs::HeaderChild::Table(t) => {
+                for td in extract_table(
+                    t,
+                    table,
+                    index,
+                    styles,
+                    part,
+                    BlockSource::Header,
+                    strict,
+                    warnings,
+                )? {
+                    blocks.push(Block::Table(td));
+                }
+            }
+            // StructuredDataTag——面外跳过（登记；同末节提取口径）。
+            _ => {}
+        }
+    }
+    Ok(blocks)
+}
+
+/// 页脚部件子块提取（同 [`header_children_blocks`]）。
+#[allow(clippy::too_many_arguments)]
+fn footer_children_blocks(
+    footer: &docx_rs::Footer,
+    bundle: &RelsBundle,
+    part: &str,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<Vec<Block>, io::ReadError> {
+    let table = bundle.by_part.get(part);
+    let mut blocks = Vec::new();
+    for child in &footer.children {
+        match child {
+            docx_rs::FooterChild::Paragraph(p) => blocks.push(Block::Paragraph(extract_paragraph(
+                p,
+                table,
+                index,
+                styles,
+                part,
+                BlockSource::Footer,
+                strict,
+                warnings,
+            )?)),
+            docx_rs::FooterChild::Table(t) => {
+                for td in extract_table(
+                    t,
+                    table,
+                    index,
+                    styles,
+                    part,
+                    BlockSource::Footer,
+                    strict,
+                    warnings,
+                )? {
+                    blocks.push(Block::Table(td));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(blocks)
+}
+
+/// 中段节页眉/页脚部件装载（zip 单趟收集——部件集先全量解析再复用）。
+///
+/// 返回 part path → 部件 XML。读取失败的部件**不入表**（调用面按
+/// 缺件处理——严格拒 / 兼容警告）；门 2 已验部件良构性，此处失败 =
+/// 损失解码等边缘态，走降级通道不崩。
+fn load_section_part_xml(bytes: &[u8], paths: &[String]) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    if paths.is_empty() {
+        return out;
+    }
+    let Ok(mut za) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
+        return out;
+    };
+    for path in paths {
+        if out.contains_key(path) {
+            continue;
+        }
+        if let Ok(mut zf) = za.by_name(path) {
+            let mut xml = String::new();
+            if zf.read_to_string(&mut xml).is_ok() {
+                out.insert(path.clone(), xml);
+            }
+        }
+    }
+    out
+}
+
+/// 中段节六槽位提取（引用 rid → 部件 → 引擎侧解析——docx-rs
+/// `read_docx` 只把内容联接到末节，中段节引用在、内容不联接，本函数
+/// 补齐 P1-1 的静默丢）。
+///
+/// 槽位语义与末节提取一致：引用悬空 = 严格拒 / 兼容 BrokenReference
+/// 警告 + 跳过（slot_part_path 复用）；部件在而解析失败 = 严格拒 /
+/// 兼容 MalformedXml 警告 + 跳过（与末节「内容挂接失败」同语义）。
+#[allow(clippy::too_many_arguments)]
+fn mid_section_slots(
+    sp: &docx_rs::SectionProperty,
+    part_xml: &HashMap<String, String>,
+    bundle: &RelsBundle,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<(Vec<HeaderFooterData>, Vec<HeaderFooterData>), io::ReadError> {
+    use docx_rs::FromXML;
+    let mut headers = Vec::new();
+    let mut footers = Vec::new();
+    // 页眉三槽位（default/first/even——引用在而部件缺 = 同末节降级语义）。
+    for (variant, reference) in [
+        (HeaderFooterVariant::Default, &sp.header_reference),
+        (HeaderFooterVariant::First, &sp.first_header_reference),
+        (HeaderFooterVariant::Even, &sp.even_header_reference),
+    ] {
+        let Some(r) = reference else { continue };
+        let Some(part) = slot_part_path(&r.id, bundle, strict, warnings)? else {
+            continue;
+        };
+        let Some(xml) = part_xml.get(&part) else {
+            let detail = format!("header part '{part}' unreadable (lossy decode or io)");
+            if strict {
+                return Err(io::ReadError::InvalidPart {
+                    part: part.clone(),
+                    detail,
+                });
+            }
+            warnings.push(CompatibilityWarning {
+                part: part.clone(),
+                kind: WarningKind::MalformedXml,
+                detail: format!("compat mode: {detail} (slot skipped)"),
+            });
+            continue;
+        };
+        match docx_rs::Header::from_xml(xml.as_bytes()) {
+            Ok(h) => {
+                let blocks =
+                    header_children_blocks(&h, bundle, &part, index, styles, strict, warnings)?;
+                headers.push(HeaderFooterData { variant, blocks });
+            }
+            Err(_) => {
+                let detail = format!("header part '{part}' parse failed");
+                if strict {
+                    return Err(io::ReadError::InvalidPart {
+                        part: part.clone(),
+                        detail,
+                    });
+                }
+                warnings.push(CompatibilityWarning {
+                    part: part.clone(),
+                    kind: WarningKind::MalformedXml,
+                    detail: format!("compat mode: {detail} (slot skipped)"),
+                });
+            }
+        }
+    }
+    // 页脚三槽位。
+    for (variant, reference) in [
+        (HeaderFooterVariant::Default, &sp.footer_reference),
+        (HeaderFooterVariant::First, &sp.first_footer_reference),
+        (HeaderFooterVariant::Even, &sp.even_footer_reference),
+    ] {
+        let Some(r) = reference else { continue };
+        let Some(part) = slot_part_path(&r.id, bundle, strict, warnings)? else {
+            continue;
+        };
+        let Some(xml) = part_xml.get(&part) else {
+            let detail = format!("footer part '{part}' unreadable (lossy decode or io)");
+            if strict {
+                return Err(io::ReadError::InvalidPart {
+                    part: part.clone(),
+                    detail,
+                });
+            }
+            warnings.push(CompatibilityWarning {
+                part: part.clone(),
+                kind: WarningKind::MalformedXml,
+                detail: format!("compat mode: {detail} (slot skipped)"),
+            });
+            continue;
+        };
+        match docx_rs::Footer::from_xml(xml.as_bytes()) {
+            Ok(f) => {
+                let blocks =
+                    footer_children_blocks(&f, bundle, &part, index, styles, strict, warnings)?;
+                footers.push(HeaderFooterData { variant, blocks });
+            }
+            Err(_) => {
+                let detail = format!("footer part '{part}' parse failed");
+                if strict {
+                    return Err(io::ReadError::InvalidPart {
+                        part: part.clone(),
+                        detail,
+                    });
+                }
+                warnings.push(CompatibilityWarning {
+                    part: part.clone(),
+                    kind: WarningKind::MalformedXml,
+                    detail: format!("compat mode: {detail} (slot skipped)"),
+                });
+            }
+        }
+    }
+    Ok((headers, footers))
+}
+
+/// 文档节全量构建（#257 读面收口）：中段节标记（文档序）+ 末节 →
+/// `Vec<SectionData>`（恒 ≥1 条；块区间连续切分 blocks 全序）。
+///
+/// `boundaries` 与 `marks` 等长（VML 插入后重映射的最终坐标系）；
+/// 末节 `headers`/`footers` 复用文档级提取结果（单一真源复制——
+/// 逐节统一访问面；中段节经 [`mid_section_slots`] 第二趟自解析）。
+#[allow(clippy::too_many_arguments)]
+fn build_sections(
+    docx: &docx_rs::Docx,
+    marks: &[(usize, docx_rs::SectionProperty)],
+    boundaries: &[usize],
+    block_count: usize,
+    bytes: &[u8],
+    bundle: &RelsBundle,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+    final_headers: &[HeaderFooterData],
+    final_footers: &[HeaderFooterData],
+) -> Result<Vec<SectionData>, io::ReadError> {
+    debug_assert_eq!(
+        marks.len(),
+        boundaries.len(),
+        "section marks/boundaries lockstep"
+    );
+    // 中段节部件集（六槽位引用 → part path 全量解析，zip 单趟）。
+    let mut part_paths: Vec<String> = Vec::new();
+    for (_, sp) in marks {
+        // rid 统一收集（header/footer 引用类型不同——id 同域 String）。
+        let mut rids: Vec<&str> = Vec::new();
+        for r in [
+            sp.header_reference.as_ref(),
+            sp.first_header_reference.as_ref(),
+            sp.even_header_reference.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            rids.push(r.id.as_str());
+        }
+        for r in [
+            sp.footer_reference.as_ref(),
+            sp.first_footer_reference.as_ref(),
+            sp.even_footer_reference.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            rids.push(r.id.as_str());
+        }
+        for rid in rids {
+            if let Some(path) = slot_part_path(rid, bundle, strict, warnings)? {
+                if !part_paths.contains(&path) {
+                    part_paths.push(path);
+                }
+            }
+        }
+    }
+    let part_xml = load_section_part_xml(bytes, &part_paths);
+
+    let mut sections = Vec::with_capacity(marks.len() + 1);
+    let mut start = 0usize;
+    for (i, ((_, sp), end)) in marks.iter().zip(boundaries.iter()).enumerate() {
+        let (headers, footers) =
+            mid_section_slots(sp, &part_xml, bundle, index, styles, strict, warnings)?;
+        // 分栏数（w:cols/@w:num——docx-rs 固定发射 w:cols，读面缺省 1；
+        // 0 为敌意值防御钳 1）。
+        let columns = sp.columns.max(1);
+        sections.push(SectionData {
+            index: i,
+            source: SectionSource::Mid,
+            geometry: section_geometry(sp),
+            title_page: sp.title_pg,
+            columns,
+            section_type: section_kind(sp),
+            page_number_start: sp.page_num_type.as_ref().and_then(|t| t.start),
+            headers,
+            footers,
+            block_range: (start, *end),
+        });
+        start = *end;
+    }
+    // 末节（body 级 sectPr——docx-rs 模型恒在）。
+    let sp = &docx.document.section_property;
+    sections.push(SectionData {
+        index: sections.len(),
+        source: SectionSource::Final,
+        geometry: section_geometry(sp),
+        title_page: sp.title_pg,
+        columns: sp.columns.max(1),
+        section_type: section_kind(sp),
+        page_number_start: sp.page_num_type.as_ref().and_then(|t| t.start),
+        headers: final_headers.to_vec(),
+        footers: final_footers.to_vec(),
+        block_range: (start, block_count),
+    });
+    Ok(sections)
+}
+
+// ---------------------------------------------------------------------------
 // 写 API（新建语义——DocxWriter）
 // ---------------------------------------------------------------------------
 
@@ -3762,6 +4278,43 @@ impl PageGeometry {
             gutter: 0,
         }
     }
+}
+
+/// 节槽位组（#257 写面）：[`SectionBreakSpec`] 的六槽位——`None` =
+/// 不挂接（OOXML 缺省 = 继承前节同位槽）。单段语义同文档级
+/// [`DocxWriter::header`]/[`DocxWriter::footer`] 六方法。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SectionSlots {
+    /// 默认页眉（default 槽位）。
+    pub default_header: Option<Vec<RunSpec>>,
+    /// 首页页眉（first 槽位——`title_page = true` 时激活）。
+    pub first_header: Option<Vec<RunSpec>>,
+    /// 偶数页页眉（even 槽位——settings evenAndOddHeaders 激活语义
+    /// 归消费方，与文档级六方法同口径）。
+    pub even_header: Option<Vec<RunSpec>>,
+    /// 默认页脚。
+    pub default_footer: Option<Vec<RunSpec>>,
+    /// 首页页脚。
+    pub first_footer: Option<Vec<RunSpec>>,
+    /// 偶数页页脚。
+    pub even_footer: Option<Vec<RunSpec>>,
+}
+
+/// 节断点规格（#257 写面）：[`DocxWriter::section_break`] 入参——
+/// 闭合一节的全部节属性。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SectionBreakSpec {
+    /// 页面几何（None = docx-rs 默认 A4 + 默认边距；正值域校验同
+    /// [`PageGeometry`] V9）。
+    pub geometry: Option<PageGeometry>,
+    /// 首页不同（`w:titlePg`）。
+    pub title_page: bool,
+    /// 起始页码（`w:pgNumType/@w:start`；None = 续前节）。
+    pub page_number_start: Option<u32>,
+    /// 本节页眉槽位组。
+    pub headers: SectionSlots,
+    /// 本节页脚槽位组。
+    pub footers: SectionSlots,
 }
 
 /// 行距规则（w:spacing w:lineRule——`line` 值语义随规则变化）。
@@ -5050,6 +5603,126 @@ impl DocxWriter {
     pub fn save_to_path(&mut self, path: &str) -> Result<(), DocxError> {
         let mut buf = self.save_to_vec()?;
         std::fs::write(path, &mut buf).map_err(|e| DocxError::Io(format!("write {path}: {e}")))
+    }
+
+    /// #257：多节分节符——在**已发射内容之后**闭合一节。
+    ///
+    /// OOXML 语义：分节符 = 承载 `sectPr` 的段落（本节末段）。本方法
+    /// 追加一个承载 `spec` 属性的空段（docx-rs `DocumentChild::Section`
+    /// 落地——zip 序列化时该段发射为 `<w:p><w:pPr><w:sectPr>…`），
+    /// 之后的段落属于下一节（末节属性由 [`Self::page_geometry`] +
+    /// [`Self::header`]/[`Self::footer`] 六方法治理——文档级单值语义
+    /// 不变）。
+    ///
+    /// 投标文件典型用法（封面/正文异构格式）：
+    /// ```text
+    /// 封面段落… → section_break(封面节：无页眉 + titlePg + 起始页码)
+    /// 正文段落… → page_geometry(正文边距) + header/footer(页眉页脚页码)
+    /// ```
+    ///
+    /// - `geometry`：本节 pgSz/pgMar（None = docx-rs 默认 A4+默认边距）；
+    ///   正值域校验同 V9（粘性拒绝——本方法签名不可 Result 化，首个
+    ///   违规落 `validation_error`，save 漏斗拒）。
+    /// - `title_page`：`w:titlePg`（本节首页不同——first 槽位激活位）。
+    /// - `page_number_start`：`w:pgNumType/@w:start`（本节起始页码——
+    ///   封面不计数 = 正文节 start=1 的前置位）。
+    /// - `headers`/`footers`：本节六槽位（`None` 槽位不挂接——OOXML
+    ///   缺省 = 继承前节同位槽；`Vec<RunSpec>` 单段语义同文档级六方法）。
+    ///
+    /// r4-t2 计数：节断点段（承载 sectPr 的空段）+1 段。
+    pub fn section_break(&mut self, spec: SectionBreakSpec) {
+        // V9 同域校验（几何正值域）——粘性拒绝，与 page_geometry 的
+        // save 漏斗校验同判据（本处提前到构造期，失败更快）。
+        if let Some(g) = &spec.geometry {
+            let bad = g.width == 0
+                || g.height == 0
+                || g.width > 40000
+                || g.height > 40000
+                || g.margin_top < 0
+                || g.margin_right < 0
+                || g.margin_bottom < 0
+                || g.margin_left < 0
+                || g.margin_header < 0
+                || g.margin_footer < 0
+                || g.gutter < 0;
+            if bad {
+                self.validation_error = Some(format!(
+                    "section_break geometry out of domain: {g:?} (twips; pgSz 1-40000, margins >= 0)"
+                ));
+                return;
+            }
+        }
+        let mut section = docx_rs::Section::new();
+        if let Some(g) = &spec.geometry {
+            section = section
+                .page_size(docx_rs::PageSize::new().width(g.width).height(g.height))
+                .page_margin(
+                    docx_rs::PageMargin::new()
+                        .top(g.margin_top)
+                        .right(g.margin_right)
+                        .bottom(g.margin_bottom)
+                        .left(g.margin_left)
+                        .header(g.margin_header)
+                        .footer(g.margin_footer)
+                        .gutter(g.gutter),
+                );
+        }
+        if spec.title_page {
+            section = section.title_pg();
+        }
+        if let Some(start) = spec.page_number_start {
+            section = section.page_num_type(docx_rs::PageNumType::new().start(start));
+        }
+        // 六槽位（temp_header 通道——add_section 分配 rid + 计数，
+        // zipper 收集段落级节页眉部件：zipper/mod.rs:197-201）。
+        let mut spec_runs: Vec<&[RunSpec]> = Vec::new();
+        if let Some(runs) = &spec.headers.default_header {
+            section =
+                section.header(docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs)));
+            spec_runs.push(runs);
+        }
+        if let Some(runs) = &spec.headers.first_header {
+            section = section
+                .first_header(docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs)));
+            spec_runs.push(runs);
+        }
+        if let Some(runs) = &spec.headers.even_header {
+            section =
+                section.even_header(docx_rs::Header::new().add_paragraph(specs_to_paragraph(runs)));
+            spec_runs.push(runs);
+        }
+        if let Some(runs) = &spec.footers.default_footer {
+            section =
+                section.footer(docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs)));
+            spec_runs.push(runs);
+        }
+        if let Some(runs) = &spec.footers.first_footer {
+            section = section
+                .first_footer(docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs)));
+            spec_runs.push(runs);
+        }
+        if let Some(runs) = &spec.footers.even_footer {
+            section =
+                section.even_footer(docx_rs::Footer::new().add_paragraph(specs_to_paragraph(runs)));
+            spec_runs.push(runs);
+        }
+        for runs in spec_runs {
+            self.count_specs(1, runs);
+        }
+        self.docx = std::mem::take(&mut self.docx).add_section(section);
+        // r4-t2：节断点段（承载 sectPr 的空段）计数。
+        self.paragraphs += 1;
+    }
+
+    /// #257：末节起始页码（`w:pgNumType/@w:start`——文档级单值语义，
+    /// 多次调用后值覆盖；中段节起始页码经 [`Self::section_break`] 的
+    /// [`SectionBreakSpec::page_number_start`] 治理）。
+    ///
+    /// 投标文件典型位：封面节不计页码（无页脚页码域）+ 正文节
+    /// `page_number_start(1)`——正文从 1 起算。
+    pub fn page_number_start(&mut self, start: u32) {
+        self.docx.document.section_property.page_num_type =
+            Some(docx_rs::PageNumType::new().start(start));
     }
 
     /// 保存到内存缓冲（zip 容器字节）。r4-t2：save 面统一漏斗——

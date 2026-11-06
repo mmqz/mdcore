@@ -17,6 +17,7 @@
 | #232 | mdc-pdf 表格结构化提取 | [gates/232.md](gates/232.md) | ✅ |
 | #233 | office-io zip-exotica 防线 | [gates/233.md](gates/233.md) | ✅ |
 | #234 | .doc 旧格式识别 | [gates/234.md](gates/234.md) | ✅ |
+| #257 | office-io 多节分节符读写面 | [gates/257.md](gates/257.md) | ✅ |
 
 
 > 主档 §15.3 四条硬 Gate 的量化判定 + §28 P0-3 拆分实测。
