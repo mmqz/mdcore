@@ -71,6 +71,7 @@ use crate::page::{PageGeometry, PageIndex, PageSpan, Rotation};
 use crate::render::{Rasterizer, RenderRequest, RenderedPage};
 use crate::security::{LimitBehavior, Limits, REASON_DECODE_OUTPUT};
 use crate::table::PositionedChar;
+use crate::transform::PageTransform;
 
 /// 库定位环境变量（文件路径；优先级最高）。
 pub const PDFIUM_LIB_ENV: &str = "MDC_PDFIUM_LIB";
@@ -242,17 +243,28 @@ impl DocumentEngine for PdfiumEngine {
             .media()
             .map_err(CommandError::engine)?
             .bounds;
-        let rotation = match page.rotation().map_err(CommandError::engine)? {
-            PdfPageRenderRotation::None => Rotation::Deg0,
-            PdfPageRenderRotation::Degrees90 => Rotation::Deg90,
-            PdfPageRenderRotation::Degrees180 => Rotation::Deg180,
-            PdfPageRenderRotation::Degrees270 => Rotation::Deg270,
-        };
+        let rotation = page_rotation(&page)?;
         Ok(PageGeometry {
             width_pt: media.width().value,
             height_pt: media.height().value,
             rotation,
         })
+    }
+
+    /// 单页变换（#304 覆写）：真实双盒（`FPDFPage_GetMediaBox` +
+    /// `FPDFPage_GetCropBox`——**CropBox 缺失时 pdfium 回落 MediaBox**
+    /// = 渲染显示域语义，与 rasterize 的 `FPDF_GetPageWidthF` 口径
+    /// 同源）+ `/Rotate`。默认实现（from_geometry 近似）在此被真实
+    /// 双盒替换：CropBox 非零偏移/非原点 MediaBox 的文档上落点不再偏。
+    fn page_transform(&self, idx: PageIndex) -> Result<PageTransform, CommandError> {
+        let page = self.page(idx)?;
+        let boundaries = page.boundaries();
+        let media = rect_from_pdfium(boundaries.media().map_err(CommandError::engine)?.bounds)
+            .map_err(|e| CommandError::engine(format!("MediaBox 非良构：{e:?}")))?;
+        let crop = rect_from_pdfium(boundaries.crop().map_err(CommandError::engine)?.bounds)
+            .map_err(|e| CommandError::engine(format!("CropBox 非良构：{e:?}")))?;
+        let rotation = page_rotation(&page)?;
+        Ok(PageTransform::new(media, crop, rotation))
     }
 
     /// 大纲：pdfium 书签树 → [`OutlineTree`]（前序文档序由树结构承载）。
@@ -293,6 +305,34 @@ impl DocumentEngine for PdfiumEngine {
         }
         Ok(out)
     }
+}
+
+// ---------------------------------------------------------------------------
+// #304：几何→变换辅助（page_geometry / page_transform 共用）
+// ---------------------------------------------------------------------------
+
+/// 页 `/Rotate` → [`Rotation`]（pdfium 枚举直转）。
+fn page_rotation(page: &PdfPage<'_>) -> Result<Rotation, CommandError> {
+    match page.rotation().map_err(CommandError::engine)? {
+        PdfPageRenderRotation::None => Ok(Rotation::Deg0),
+        PdfPageRenderRotation::Degrees90 => Ok(Rotation::Deg90),
+        PdfPageRenderRotation::Degrees180 => Ok(Rotation::Deg180),
+        PdfPageRenderRotation::Degrees270 => Ok(Rotation::Deg270),
+    }
+}
+
+/// pdfium `PdfRect` → 用户空间 [`Rect`](crate::annotation::Rect)（四坐标
+/// 直转；良构由 pdfium 返回值域 + `Rect::new` 类型层共同保证——非良构
+/// 返回 `RectError` 交调用方包装成 Engine 错误）。
+fn rect_from_pdfium(
+    rect: pdfium_render::prelude::PdfRect,
+) -> Result<crate::annotation::Rect, crate::annotation::RectError> {
+    crate::annotation::Rect::new(
+        rect.left().value,
+        rect.bottom().value,
+        rect.right().value,
+        rect.top().value,
+    )
 }
 
 /// 书签 → 大纲节点（目标解析失败/越界 → None（丢弃子树）；标题缺失

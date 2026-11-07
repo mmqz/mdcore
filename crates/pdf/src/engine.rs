@@ -12,6 +12,7 @@
 use crate::command::CommandError;
 use crate::outline::OutlineTree;
 use crate::page::{PageGeometry, PageIndex, PageSpan};
+use crate::transform::PageTransform;
 
 /// 文档引擎抽象（只读数据面；标注写入走 PDF-d 会话增量写路径）。
 pub trait DocumentEngine {
@@ -27,6 +28,20 @@ pub trait DocumentEngine {
     /// 单页几何（原始 MediaBox 尺寸 + `/Rotate`；归一化取
     /// [`PageGeometry::effective_width`] 等——消费方不自行处理旋转）。
     fn page_geometry(&self, idx: PageIndex) -> Result<PageGeometry, CommandError>;
+
+    /// 单页变换（#304）：MediaBox/CropBox/`/Rotate` 全量组合的设备↔
+    /// 用户空间变换面（屏幕像素 ↔ 用户空间点 + QuadPoints 落点）。
+    ///
+    /// **默认实现 = 近似**（[`PageTransform::from_geometry`]：CropBox
+    /// 缺失按 MediaBox @ 原点 0,0——零偏移文档上精确，CropBox ⊄ 原点
+    /// MediaBox 的文档上有偏移）；引擎实装**应覆写**取真实双盒
+    /// （pdfium：`FPDFPage_GetMediaBox` + `FPDFPage_GetCropBox`——
+    /// CropBox 缺失时 pdfium 回落 MediaBox = 渲染显示域语义）。
+    /// 标注落点管线（UI 接线）以此为准，不得绕过走 page_geometry 近似。
+    fn page_transform(&self, idx: PageIndex) -> Result<PageTransform, CommandError> {
+        let geo = self.page_geometry(idx)?;
+        Ok(PageTransform::from_geometry(&geo))
+    }
 
     /// 文档大纲（书签树；无大纲文档返回空树而非 Err）。
     fn outline(&self) -> Result<OutlineTree, CommandError>;

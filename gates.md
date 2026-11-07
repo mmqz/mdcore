@@ -25,6 +25,7 @@
 | #280 | wasm 桥双税（备份分档 + 轮询守卫） | [gates/280.md](gates/280.md) | ✅ |
 | #281 | 状态栏 I/O 缓存 + 字数守卫（R-e/R-f 首批） | [gates/281.md](gates/281.md) | 🔄 PR 中 |
 | #283 | XLSX 消费倒挂——XlsxEditor 接产品导出路径 | [gates/283.md](gates/283.md) | 🔄 PR 中 |
+| #304 | 设备↔用户空间变换 API（PageTransform） | [gates/304.md](gates/304.md) | 🔄 PR 中 |
 
 
 

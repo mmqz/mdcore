@@ -92,8 +92,11 @@ pub mod page;
 pub mod protocol;
 pub mod render;
 pub mod security;
+// #304（P1·审计 P2-4）：设备↔用户空间变换——旋转页/CropBox 文档上
+// 标注落点偏移的修复基座（常开：纯数学零引擎依赖）。
 #[cfg(feature = "engine-lopdf")]
 pub mod security_scan;
+pub mod transform;
 // #232 / R9·P1：表格结构化提取（读面）——位置字符 → 单元格文本 +
 // 列序 + 包围盒（行列可重建）。算法层纯函数零引擎依赖（位置层 =
 // engine_pdfium::positioned_chars，feature 门内）。
@@ -148,5 +151,6 @@ pub use ocr::{ocr_available, ocr_page, OcrEnv};
 pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
 pub use render::{Rasterizer, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
+pub use transform::{PageTransform, TransformError};
 pub use worker::{RenderWorker, WorkerReply};
 pub use writer::{AnnotationWriter, IncrementalSave, MockWriter};
