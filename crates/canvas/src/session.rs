@@ -399,6 +399,17 @@ pub struct CommandReceipt {
     pub undo_cleared: bool,
 }
 
+/// 批量回执（#352/#44 步6）：逐命令 outcome + 批级撤销面（整批 = 单
+/// 事务 = 一个撤销单元——一次 undo 全撤）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchReceipt {
+    /// 逐命令回执（含批内自动分配的对象 ID——消费方据此接线）。
+    pub outcomes: Vec<CommandOutcome>,
+    /// 批级撤销深度（应用后）。
+    pub undo_depth: usize,
+    pub undo_cleared: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
     NodeAdded {
@@ -925,6 +936,113 @@ impl CanvasSession {
         };
         Ok(CommandReceipt {
             outcome,
+            undo_depth: self.undo_depth(actor),
+            undo_cleared: self.take_undo_cleared(),
+        })
+    }
+
+    // ── 批量命令面（#352/#44 步6）─────────────────────────
+
+    /// 派生沙箱 client_id（确定性，与自身 client_id 错开命名空间——
+    /// 批内自动分配的对象 ID 落在 `{sandbox_client}-{seq}` 前缀下，
+    /// 天然不与本地计数器序列撞号）。越 (0, 2^53) 域时回落取模
+    /// （残余撞号由 `next_id` 的占用跳过环兜底）。
+    fn sandbox_client_id(&self) -> u64 {
+        const OFFSET: u64 = 4_000_000_000_000;
+        let id = self.options.client_id.wrapping_add(OFFSET);
+        if id == 0 || id & (u64::MAX << 53) != 0 {
+            OFFSET + self.options.client_id % 1_000_000_000_000
+        } else {
+            id
+        }
+    }
+
+    /// 批量命令原子执行（#352/#44 步6）：**整批全成或全不成；整批 =
+    /// 单事务 = 一个撤销单元**（一次 undo 全撤、一次 redo 全恢复）。
+    ///
+    /// 实现路线（yrs 0.28 无 Transaction rollback——`Drop for
+    /// TransactionMut` 无条件 `commit()`，单事务回滚不可行）：
+    /// **沙箱校验 + 差量转移**。
+    /// ① 沙箱 = 状态等价副本（独立 client_id 的 `CanvasSession`）；
+    ///    顺序执行全批——cmd N 可见 cmd N-1 的效果（依赖序列合法）；
+    ///    任一失败即返回错误，**真实 doc 零接触**（原子性；沙箱即弃）。
+    /// ② 全批通过 → `encode_diff(批前 SV)` 取批效果差量 → 真实 doc
+    ///    单事务 + actor origin 落地（撤销单元化 + 恰一个 Command 事件）。
+    /// 成本：O(state) 状态副本——批是命令级稀有路径（用户/AI 显式
+    /// 批操作），换零回滚依赖与零既有路径改动。
+    ///
+    /// 语义注：
+    /// · 批内自动分配 ID 落在沙箱命名空间（回执如实返回实际 ID）；
+    ///   后续单命令自动分配不受影响（`next_id` 占用跳过环兜底）。
+    /// · 差量字节数计入真实入向限额（批效果聚合计——单命令逐条计
+    ///   之外的批级门）。
+    /// · 失败路径零事件、零撤销入栈、读模型/指纹不变。
+    pub fn execute_batch(
+        &mut self,
+        actor: Actor,
+        cmds: Vec<CanvasCommand>,
+    ) -> Result<BatchReceipt, CanvasError> {
+        if cmds.is_empty() {
+            return Err(CanvasError::InvalidInput(
+                "空批不可执行（无意义的撤销单元）".into(),
+            ));
+        }
+        // 批前基线：全量状态（沙箱种子）+ 真实 SV（差量基准）。
+        let full = self.doc.transact().encode_diff_v1(&StateVector::default());
+        let sv_real = self.state_vector();
+        // 沙箱限额放宽到能容纳状态副本（自身数据非敌意入向；批效果
+        // 聚合计走 ② 的真实入向门）。
+        let mut sandbox_opts = self.options.clone();
+        sandbox_opts.client_id = self.sandbox_client_id();
+        sandbox_opts.input_byte_limit = self.options.input_byte_limit.max(full.len());
+        let mut sandbox = CanvasSession::open(sandbox_opts)?;
+        sandbox.apply_update(&full)?;
+        // ① 沙箱顺序执行全批。
+        let mut outcomes = Vec::with_capacity(cmds.len());
+        for cmd in &cmds {
+            let receipt = sandbox.execute(actor, cmd.clone())?;
+            outcomes.push(receipt.outcome);
+        }
+        // ② 批效果差量 → 真实 doc 单事务落地。
+        let diff = sandbox.encode_diff(&sv_real)?;
+        self.check_inbound(diff.len())?;
+        self.collector.begin();
+        self.touched.begin();
+        let doc = &self.doc;
+        let applied = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let update =
+                Update::decode_v1(&diff).map_err(|e| CanvasError::Decode(e.to_string()))?;
+            let mut txn = doc.transact_mut_with(actor.wire());
+            txn.apply_update(update)
+                .map_err(|e| CanvasError::Decode(e.to_string()))?;
+            txn.commit();
+            Ok(())
+        }));
+        match applied {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let _ = self.collector.drain();
+                let _ = self.touched.drain();
+                return Err(e);
+            }
+            Err(p) => {
+                let _ = self.collector.drain();
+                let _ = self.touched.drain();
+                return Err(CanvasError::Panic(panic_message(&p)));
+            }
+        }
+        let updates = self.collector.drain();
+        let touched = self.touched.drain();
+        if !updates.is_empty() {
+            self.hub.dispatch(&CanvasEvent {
+                source: CanvasChangeSource::Command { actor },
+                updates,
+                touched,
+            });
+        }
+        self.enforce_undo_limit(actor);
+        Ok(BatchReceipt {
+            outcomes,
             undo_depth: self.undo_depth(actor),
             undo_cleared: self.take_undo_cleared(),
         })

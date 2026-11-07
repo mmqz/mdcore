@@ -286,6 +286,69 @@ pub fn parse_cmd_core(json: &str) -> Result<CanvasCommand, CvError> {
     }
 }
 
+/// 批量命令 JSON（flat 命令对象数组）→ `Vec<CanvasCommand>`（#352）。
+/// 逐条复用 [`parse_cmd_core`]（单/批解析面同源——不另造语法）；
+/// 非数组/空数组拒收（空批在引擎层也有门，这里提前给出更近的错误）。
+pub fn parse_cmds_core(json: &str) -> Result<Vec<CanvasCommand>, CvError> {
+    let arr: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| bad_json("commands", e.to_string()))?;
+    let arr = match arr {
+        serde_json::Value::Array(a) => a,
+        other => {
+            return Err(bad_json(
+                "commands",
+                format!("expected JSON array of command objects, got {other}"),
+            ))
+        }
+    };
+    if arr.is_empty() {
+        return Err(bad_json("commands", "empty batch".into()));
+    }
+    arr.iter()
+        .map(|v| {
+            parse_cmd_core(
+                &serde_json::to_string(v).map_err(|e| bad_json("commands", e.to_string()))?,
+            )
+        })
+        .collect()
+}
+
+/// 批量回执 → JSON（#352）：逐命令 outcome 扁平化 + 批级撤销面。
+/// outcome 字段面与单命令 [`receipt_json`] 同构（kind + 键值对）。
+pub fn batch_receipt_json(r: &mdc_canvas::BatchReceipt) -> String {
+    let outs: Vec<String> = r
+        .outcomes
+        .iter()
+        .map(|o| {
+            let (kind, key, val) = match o {
+                CommandOutcome::NodeAdded { id } => ("node_added", "id", id.clone()),
+                CommandOutcome::NodeMoved { id } => ("node_moved", "id", id.clone()),
+                CommandOutcome::NodeResized { id } => ("node_resized", "id", id.clone()),
+                CommandOutcome::EdgeAdded { id } => ("edge_added", "id", id.clone()),
+                CommandOutcome::PropsSet { id } => ("props_set", "id", id.clone()),
+                CommandOutcome::ObjectRemoved { id } => ("object_removed", "id", id.clone()),
+                CommandOutcome::Grouped { group_id } => ("grouped", "group_id", group_id.clone()),
+                CommandOutcome::Ungrouped { group_id } => {
+                    ("ungrouped", "group_id", group_id.clone())
+                }
+                // #350 笔迹面：与单命令 receipt_json 同构
+                CommandOutcome::StrokeAdded { id } => ("stroke_added", "id", id.clone()),
+                CommandOutcome::StrokeStyled { id } => ("stroke_styled", "id", id.clone()),
+            };
+            format!(
+                "{{\"outcome\":\"{kind}\",\"{key}\":{}}}",
+                serde_json::to_string(&val).unwrap()
+            )
+        })
+        .collect();
+    format!(
+        "{{\"outcomes\":[{}],\"undo_depth\":{},\"undo_cleared\":{}}}",
+        outs.join(","),
+        r.undo_depth,
+        r.undo_cleared
+    )
+}
+
 fn kind_wire(k: ObjectKind) -> &'static str {
     match k {
         ObjectKind::Node => "node",
@@ -517,6 +580,19 @@ impl WasmCanvas {
             receipt.undo_depth,
             receipt.undo_cleared,
         ))
+    }
+
+    /// 批量命令原子执行（#352）：flat 命令对象数组 JSON；整批全成
+    /// 或全不成；整批 = 一个撤销单元。回执：
+    /// `{"outcomes":[{outcome,...},...],"undo_depth":N,"undo_cleared":B}`。
+    pub fn execute_batch(&mut self, actor: &str, cmds_json: &str) -> Result<String, JsValue> {
+        let actor = parse_actor(actor).map_err(|e| e.to_js())?;
+        let cmds = parse_cmds_core(cmds_json).map_err(|e| e.to_js())?;
+        let receipt = self
+            .session
+            .execute_batch(actor, cmds)
+            .map_err(|e| CvError::from(e).to_js())?;
+        Ok(batch_receipt_json(&receipt))
     }
 
     /// 撤销（按 origin 分栈）。
