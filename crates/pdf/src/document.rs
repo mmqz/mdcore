@@ -118,6 +118,13 @@ pub struct PdfSession {
     /// 脏标注集（PDF-d：待落盘标注——Add 入脏 / Edit 实际变更重标 / flush
     /// 成功清空；升序遍历 = BTreeSet 键序确定性）。
     dirty_annots: BTreeSet<AnnotId>,
+    /// 标注修订号（#305 方案 A：渲染缓存键控失效的源头）。0 起步；
+    /// 每次**成功** flush 且实际追加字节（`bytes_appended > 0`——产物
+    /// 真变了）时 +1。语义合同：`annotation_rev` 相同 ⟺ 产物字节相同
+    /// ⟺ 渲染输出可复用——渲染缓存以 (页, 宽, 高, rev) 键控
+    /// （[`crate::render::RenderKey`]），flush 后旧位图自然 miss。
+    /// 零追加幂等 flush 不 bump（位图没变——命中率不因空转受损）。
+    annotation_rev: u64,
     /// 下一标注 id（单调；1 起步——0 = 永不签发哨兵）。
     next_annot_id: u64,
     /// 会话时钟（epoch ms，宿主注入）。
@@ -163,9 +170,18 @@ impl PdfSession {
             engine: None,
             annot_writer: None,
             dirty_annots: BTreeSet::new(),
+            annotation_rev: 0,
             next_annot_id: 1,
             now_ms: 0,
         })
+    }
+
+    /// 标注修订号（#305：渲染缓存键控面——flush 推进，见字段文档）。
+    /// 消费方：渲染缓存键 [`crate::render::RenderKey::annotation_rev`]；
+    /// flush 后对旧 rev 条目做 [`crate::render::RenderKey`]
+    /// 感知失效（`invalidate_stale_revisions`）回收预算。
+    pub fn annotation_rev(&self) -> u64 {
+        self.annotation_rev
     }
 
     /// 单一调度入口（六命令；成功载荷/typed 错误见 command.rs）。
@@ -305,13 +321,15 @@ impl PdfSession {
         // （写器侧零待保存 = 零追加 + 真产物长度）；无写器且零脏 → 无
         // 产物面（双 0 常数——未落盘会话的诚实占位，非伪造长度）。
         if self.dirty_annots.is_empty() {
-            return match self.annot_writer.as_mut() {
-                Some(writer) => writer.save_incremental(),
-                None => Ok(IncrementalSave {
+            let stats = match self.annot_writer.as_mut() {
+                Some(writer) => writer.save_incremental()?,
+                None => IncrementalSave {
                     bytes_appended: 0,
                     prefix_bytes: 0,
-                }),
+                },
             };
+            self.bump_rev_if_appended(stats);
+            return Ok(stats);
         }
         let Some(writer) = self.annot_writer.as_mut() else {
             return Err(CommandError::engine(
@@ -331,7 +349,17 @@ impl PdfSession {
         // ④ 保存 + 清脏（成功才清：保存失败 → dirty 原样保留，重试安全）。
         let stats = writer.save_incremental()?;
         self.dirty_annots.clear();
+        self.bump_rev_if_appended(stats);
         Ok(stats)
+    }
+
+    /// rev 推进（#305）：flush 成功且实际追加字节时 +1（saturating——
+    /// u64 溢出前宇宙热寂）。失败路径不调用（失败 flush 不 bump——
+    /// 产物未变，缓存不该 miss）。
+    fn bump_rev_if_appended(&mut self, stats: IncrementalSave) {
+        if stats.bytes_appended > 0 {
+            self.annotation_rev = self.annotation_rev.saturating_add(1);
+        }
     }
 
     // -----------------------------------------------------------------------

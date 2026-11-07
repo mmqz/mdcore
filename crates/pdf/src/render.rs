@@ -1,5 +1,5 @@
-//! 渲染抽象——光栅化请求/产物 + [`Rasterizer`] trait（PDF-c 阅读面，
-//! 常开模块）。
+//! 渲染抽象——光栅化请求/产物 + [`Rasterizer`] trait + [`RenderKey`]
+//! 渲染缓存键（PDF-c 阅读面，常开模块）。
 //!
 //! 分层纪律：本模块只冻结**抽象面**（mock 可测——worker/cache 的语义锁
 //! 不依赖引擎）；pdfium 实装在 [`crate::engine_pdfium`]（feature
@@ -15,6 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::cache::PageCache;
 use crate::command::CommandError;
 use crate::page::PageIndex;
 
@@ -24,6 +25,91 @@ use crate::page::PageIndex;
 pub struct RenderRequest {
     pub page: PageIndex,
     pub width_px: u32,
+}
+
+/// 渲染缓存键（#305 方案 A——键控失效）：光栅产物身份的完整因子集。
+///
+/// **语义合同**：`RenderKey` 相等 ⟺ 光栅输出可复用。四因子缺一不可：
+/// - `page`：页不同 → 内容不同；
+/// - `width_px` / `height_px`：目标尺寸不同 → 位图不同（高度独立于宽
+///   入键——几何/裁剪域差异下同宽可以异高，报告尺寸
+///   [`RenderedPage::height_px`] 是引擎侧事实，不是宽的函数）；
+/// - `annotation_rev`：**标注修订号**（[`crate::document::PdfSession::
+///   annotation_rev`]——flush 成功且实际追加字节时 +1）。渲染面
+///   `render_annotations(true)` 位图含标注（engine_pdfium.rs 显式钉定），
+///   标注落盘后旧位图即陈旧——rev 入键使旧条目自然 miss，新渲染以新
+///   rev 入缓存（同 rev 重复取 = 命中，翻页性能不因键控受损）。
+///
+/// **失效配套**（方案 B——预算回收，与键控互补）：键控让旧 rev 条目
+/// miss，但它们仍占预算直到 LRU 驱逐；`invalidate_stale_revisions`
+/// 即刻摘除回收。见 [`PageCache<RenderKey, V>`] 实现块。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RenderKey {
+    /// 0 基页号（与 [`RenderRequest::page`] 的 `PageIndex.0` 同值域）。
+    pub page: u32,
+    /// 目标像素宽（= [`RenderRequest::width_px`]）。
+    pub width_px: u32,
+    /// 目标像素高（= 产物 [`RenderedPage::height_px`]——引擎侧报告值）。
+    pub height_px: u32,
+    /// 标注修订号（会话 flush 推进——见类型文档语义合同）。
+    pub annotation_rev: u64,
+}
+
+impl RenderKey {
+    /// 全因子构造（请求 + 引擎报告高度 + 会话 rev——渲染完成时三源齐）。
+    pub fn new(page: u32, width_px: u32, height_px: u32, annotation_rev: u64) -> Self {
+        Self {
+            page,
+            width_px,
+            height_px,
+            annotation_rev,
+        }
+    }
+
+    /// 由请求 + 产物 + 会话 rev 构造（渲染回执落账的最短路径）。
+    pub fn from_outcome(
+        request: &RenderRequest,
+        rendered: &RenderedPage,
+        annotation_rev: u64,
+    ) -> Self {
+        Self {
+            page: request.page.0,
+            width_px: rendered.width_px,
+            height_px: rendered.height_px,
+            annotation_rev,
+        }
+    }
+}
+
+/// PDF 感知失效粒度（#305 方案 B——`PageCache<RenderKey, V>` 专用面）。
+///
+/// 三个粒度按「变更影响域」递增；返回值 = 被摘除键集（LRU→MRU 序，
+/// 与 [`PageCache::put`] 驱逐键集同款载荷——调用方据此作废关联资源
+/// 如 GPU 纹理/宿主位图句柄）：
+/// - **单页**（[`invalidate_page`](Self::invalidate_page)）：页几何/
+///   单页内容变更——其它页的命中零扰动；
+/// - **陈旧修订**（[`invalidate_stale_revisions`](Self::invalidate_stale_revisions)）：
+///   flush 后回收旧 rev 条目（当前 rev 条目全部在位——「加标注 → 重
+///   渲染」的恰好一轮，不多不少）；
+/// - **全量**（[`invalidate_all`](Self::invalidate_all)）：标注渲染开关
+///   翻转/会话换代等影响全部条目的变更（`clear` 的键回报版——
+///   [`PageCache::clear`] 是无载荷全量复位，两者按「要不要键集」分工）。
+impl<V> PageCache<RenderKey, V> {
+    /// 失效指定页的全部条目（全部宽度/全部修订——页级变更影响域）。
+    pub fn invalidate_page(&mut self, page: u32) -> Vec<RenderKey> {
+        self.invalidate_matching(|k| k.page == page)
+    }
+
+    /// 失效全部**陈旧修订**条目（`annotation_rev < current`——flush 后
+    /// 旧位图即刻回收；当前修订条目零扰动，命中率保持）。
+    pub fn invalidate_stale_revisions(&mut self, current_rev: u64) -> Vec<RenderKey> {
+        self.invalidate_matching(|k| k.annotation_rev < current_rev)
+    }
+
+    /// 失效全部条目（影响域 = 全量时用——见实现块文档与 `clear` 的分工）。
+    pub fn invalidate_all(&mut self) -> Vec<RenderKey> {
+        self.invalidate_matching(|_| true)
+    }
 }
 
 /// 光栅化产物（BGRA 位图；格式语义见模块文档）。
