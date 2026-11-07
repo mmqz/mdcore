@@ -34,8 +34,12 @@
 //! 1. **body 级 sdt 内容整体丢**（P1-2 已登记）：`DocumentChild` 词汇表
 //!    外跳过（docx.rs extract_blocks `_ => {}`）。语料 29 件（段/表/
 //!    文本框三形态，可见性计数不静默）。
-//! 2. **表内文本框丢**：单元格内容扁平化为文本串（`TableData::rows`），
-//!    `w:tc` 内 `w:txbxContent` 结构与内容双丢。语料 10 件。
+//! 2. **表内文本框丢（已修 #345——#318 D2 闭项）**：单元格内容扁平化
+//!    为文本串（`TableData::rows`），`w:tc` 内 `w:txbxContent` 结构与
+//!    内容双丢 → 文档级第二趟补提取（`scan_tc_textbox_regions`/
+//!    `apply_tc_textboxes`——宿主表块跨度后发射 TextBox 块）。
+//!    语料 10 件（可见性计数保留——修复前基线对账面；平价公式已
+//!    重钉：`txbx_in_tc` 扣除项移除，tests/tr32_tc_textbox.rs 锚）。
 //! 3. **组内文本框每组只留 1**：`wgp`（DrawingML 组）内多个 `wsp:txbx`
 //!    引擎只解析一个。语料 2 件（60316 组 2 留 1、shapes-with-text
 //!    组 2 留 1）。
@@ -901,9 +905,12 @@ fn parity_violations(file: &str, gt: &Gt, m: &Mc) -> Vec<String> {
         m.all_nested_table,
     );
     let group_loss = gt.txbx_in_group - gt.groups_with_txbx.min(gt.txbx_in_group);
+    // #345（#318 D2）：表内文本框已由文档级第二趟补提取——
+    // `txbx_in_tc` 扣除项移除（平价重钉：GT 最外层框数 = 模型
+    // TextBox 块数 + sdt/组内两损失族扣除；tests/tr32_tc_textbox.rs）。
     chk(
         "textboxes",
-        gt.txbx_outermost - gt.txbx_in_sdt - gt.txbx_in_tc - group_loss,
+        gt.txbx_outermost - gt.txbx_in_sdt - group_loss,
         m.all_textbox,
     );
     chk("top_para", gt.p_direct + gt.p_in_ac, m.top_para);
@@ -936,7 +943,7 @@ fn full_corpus_structural_parity() {
     let mut gt_fails: Vec<String> = Vec::new();
     let mut violations: Vec<String> = Vec::new();
     // 已知损失可见性聚合（不静默——汇总打印）。
-    let (mut sdt_loss, mut txbx_tc_loss, mut group_loss_files, mut odd_ref_files) =
+    let (mut sdt_loss, mut txbx_tc_fixed, mut group_loss_files, mut odd_ref_files) =
         (0usize, 0usize, 0usize, 0usize);
     let (mut ac_flatten_files, mut strict_files, mut attr_drop_files) = (0usize, 0usize, 0usize);
     let (
@@ -1011,7 +1018,7 @@ fn full_corpus_structural_parity() {
             sdt_loss += 1;
         }
         if gt.txbx_in_tc > 0 {
-            txbx_tc_loss += 1;
+            txbx_tc_fixed += 1;
         }
         if gt.txbx_in_group > gt.groups_with_txbx {
             group_loss_files += 1;
@@ -1068,7 +1075,7 @@ fn full_corpus_structural_parity() {
     // ---- 可见性汇总（已知损失不静默——#260 账本面）----
     eprintln!("[structural-ledger] 630 件：ok {ok} / 容器拒绝 {reject_container} / 解析拒绝 {reject_parse} / panic 0");
     eprintln!("[structural-ledger] 五类覆盖：嵌套表 {nested_files} / 文本框 {txbx_files} / 修订 {ins_files} / 页眉页脚 {hf_files} / 脚注 {fn_files} / 批注 {cm_files} / 多节 {multi_sect}");
-    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / 表内文本框丢 {txbx_tc_loss} 件 / 组内文本框丢 {group_loss_files} 件 / odd 型引用丢 {odd_ref_files} 件 / strict 引用丢 {strict_files} 件 / 空属性节丢 {attr_drop_files} 件 / AC 扁平重复 {ac_flatten_files} 件");
+    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / 组内文本框丢 {group_loss_files} 件 / odd 型引用丢 {odd_ref_files} 件 / strict 引用丢 {strict_files} 件 / 空属性节丢 {attr_drop_files} 件 / AC 扁平重复 {ac_flatten_files} 件；表内文本框已修（#345 D2——第二趟补提取）{txbx_tc_fixed} 件");
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,12 +1119,16 @@ fn five_category_pinned_anchors() {
     assert_eq!(m.ins_runs, 13, "cr043-tracked ins run 数");
     assert_eq!(m.endnotes, 3, "cr043-tracked 尾注条目");
 
-    // ③ 文本框：extraction-probe（10 框——11 原始框 − 1 表内框[已知损失 #2]）。
+    // ③ 文本框：extraction-probe（11 框——#345（#318 D2）修复后表内框
+    //    TBX25_IN_CELL 已补：第二趟补提取 + 平价重钉，基线 10 → 11）。
     let m = model_counts(&read_one("docx4j/text-extraction_extraction-probe.docx"));
-    assert_eq!(m.all_textbox, 10, "extraction-probe 文本框数");
+    assert_eq!(
+        m.all_textbox, 11,
+        "extraction-probe 文本框数（D2 修复后含表内框）"
+    );
     let g = gt_one("docx4j/text-extraction_extraction-probe.docx");
     assert_eq!(g.txbx_outermost, 11, "GT 原始最外层框数");
-    assert_eq!(g.txbx_in_tc, 1, "表内框（已知损失可见性）");
+    assert_eq!(g.txbx_in_tc, 1, "表内框计数（D2 已修——GT 计数保留对账面）");
 
     // ④ 页眉页脚：60293（5 槽 = 6 引用 − 1 odd 型丢[已知损失 #5]）
     //    + headers_footers_sections_multiple（多节 7 槽全挂）。

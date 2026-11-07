@@ -220,6 +220,26 @@
 //! - **证据链**：`tests/docx_sections.rs`（写→读回环 + 单节基线 +
 //!   docx4j/POI 真实语料 P1-1 钉面 + 编辑幸存 + 校验门）。
 //!
+//! **#345 增量（2026-11-07，#318 D2 修复——表内 DrawingML 文本框）**：
+//! 主题 = **`w:tc` 容器内 `w:drawing > wps:txbx > w:txbxContent` 补提取**
+//! （此前单元格路径只取 `TableCellContent::Paragraph` 文本，DrawingML
+//! 文本框子树静默双丢——结构与内容均不可见，费率表等条款区常见形态）：
+//! - **第二趟**（[`scan_tc_textbox_regions`]/[`apply_tc_textboxes`]——
+//!   与 #18 VML 趟同构 quick-xml local-name 通道）：捕获 tc 内 drawing
+//!   形态 txbxContent（裸 drawing 或 mc:AlternateContent Choice 主选；
+//!   Fallback 副本 / body 级 sdt 包裹 / 嵌套非最外层 / VML 形态四类
+//!   跳过——与 GT 账本 `txbx_in_tc` 计数条件互补成对）；
+//! - **发射位**：宿主表块**完整跨度后**（外层表块 + 全部内层表块——
+//!   lockstep 重走对齐 body 子层序到最终数组坐标；表内框归属整表）；
+//! - **边界**：与 D4（wgp 组内文本框——#346）边界清晰：本修复只做
+//!   tc 容器内形态；页眉/页脚部件内的表内框维持登记（第二趟仅扫
+//!   document.xml，与 VML 趟同口径）；
+//! - **证据链**：tests/tr32_tc_textbox.rs（10 件真实语料锚——
+//!   extraction-probe 族 8 + mc-fun AC 包裹 2：条款文本在场 + 恰一次
+//!   [零双提取] + 宿主表完整 + 发射位钉定）+ 结构账本
+//!   `txbx_in_tc` 扣除项移除（tests/docx_structural_ledger.rs——平价
+//!   公式重钉）。
+//!
 //! 写侧**不支持**（引擎能力在[docx-rs 写面远大于本切片]，未实测
 //! 不暴露）：图片自动转码（`Pic::new` 需 `image` 特性 = +23 crate
 //! 依赖树——登记，PNG 显式尺寸面已暴露）、非 PNG 图片、浮动定位/
@@ -2014,7 +2034,21 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     let mut section_boundaries: Vec<usize> = section_marks.iter().map(|(b, _)| *b).collect();
     // #18：VML 文本框插入（宿主块后——DrawingML 形态已在
     // extract_blocks 模型面发射，mc:Fallback 副本防双取）。
-    let mut blocks = apply_vml_textboxes(
+    let blocks = apply_vml_textboxes(
+        blocks,
+        &document_xml,
+        &bundle,
+        &numbering_index,
+        &style_index,
+        strict,
+        &mut warnings,
+        &mut section_boundaries,
+    )?;
+    // #345（#318 D2）：表内 DrawingML 文本框插入（宿主表块跨度后——
+    // tc 容器内 wps:txbx 形态：模型面单元格路径只取段落文本，该子树
+    // 静默丢，此趟补提取；VML 表内形态仍由上一步既有通道承载，两趟
+    // 捕获条件互补不重叠）。
+    let mut blocks = apply_tc_textboxes(
         blocks,
         &document_xml,
         &bundle,
@@ -2629,6 +2663,165 @@ fn scan_vml_textbox_regions(xml: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// #345（#318 D2）：表内 DrawingML 文本框第二趟扫描——`w:tc` 容器内
+/// `w:drawing > wps:txbx > w:txbxContent`（裸 drawing 或
+/// mc:AlternateContent 的 Choice 主选形态）。
+///
+/// 机制：单元格内容走 `TableCellContent::Paragraph` 文本扁平化
+/// （`extract_table_inner`），docx-rs 段落模型的 DrawingML 文本框子树
+/// 在该路径无承载 → 表内框的结构与内容双丢（费率表等条款区常见形
+/// 态）。本趟与 `scan_vml_textbox_regions` 同构（quick-xml local-name
+/// 通道，命名空间无关——strict OOXML 天然兼容），捕获条件互补不重叠。
+///
+/// 返回 (宿主块索引, txbxContent 原始 XML 区段) 序列（文档序）。
+/// 宿主块索引 = 区段所在顶层块（承载 w:tbl 的 body 直接子层序——
+/// 与既有第二趟宿主语义同构；发射位由 `apply_tc_textboxes` 对齐到
+/// 宿主表块跨度之后，tc 归属沿文档序对齐单元格序）。跳过面（与 GT
+/// 账本 `txbx_in_tc` 计数条件互补成对——见 docx_structural_ledger）：
+/// · **mc:Fallback 副本**（AlternateContent 双写——Choice 主选已由
+///   本趟取，Fallback 的 VML 副本再取 = 双提取）；
+/// · **body 级 sdt 包裹**（GT 归 `txbx_in_sdt` 损失族——sdt 内容丢
+///   是独立缺陷面，本趟不越界）；
+/// · **非最外层**（嵌套文本框并入外层区段——内层经
+///   `TextBoxContent::read` 的段落解析自然展开，边界登记）；
+/// · **非 drawing 形态的表内框**（VML 形态由 `scan_vml_textbox_regions`
+///   既有通道承载——本趟不双取）。
+fn scan_tc_textbox_regions(xml: &str) -> Vec<(usize, String)> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth: usize = 0;
+    let mut body_child_depth: Option<usize> = None;
+    let mut block_idx: usize = 0;
+    let mut in_fallback: usize = 0;
+    let mut in_drawing: usize = 0;
+    // w:tc 容器深度（表内上下文——捕获的必要条件）。
+    let mut in_tc: usize = 0;
+    // body 级 sdt 包裹深度标记（进入位 depth；离开清空——该子树整体
+    // 归 sdt 损失族，捕获面排除。近似口径：仅 body 直接子层的 sdt
+    // 置标记；tc 内层 sdt 不置（与 GT `in_bsdt` 置位条件一致——
+    // 语料实测零命中，防御性排除）。
+    let mut in_body_sdt: Option<usize> = None;
+    // 外层 txbxContent 捕获态（嵌套文本框并入外层区段）。
+    let mut capture: Option<(usize, usize)> = None; // (host, txbx 嵌套深度)
+    let mut span_start = 0usize;
+    let mut out: Vec<(usize, String)> = Vec::new();
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "body" => body_child_depth = Some(depth + 1),
+                    "Fallback" => in_fallback += 1,
+                    "drawing" => in_drawing += 1,
+                    "tc" => in_tc += 1,
+                    "sdt" | "sdtContent" => {
+                        if in_body_sdt.is_none()
+                            && body_child_depth == Some(depth)
+                            && in_tc == 0
+                        {
+                            in_body_sdt = Some(depth);
+                        }
+                    }
+                    "txbxContent" => {
+                        if in_fallback == 0
+                            && in_drawing > 0
+                            && in_tc > 0
+                            && in_body_sdt.is_none()
+                            && capture.is_none()
+                        {
+                            // 宿主 = 最近一个已计数的顶层块（承载本 w:tbl
+                            // 的 body 直接子层序）。
+                            capture = Some((block_idx.saturating_sub(1), 1));
+                            span_start = pos_before;
+                        } else if let Some((_, d)) = capture.as_mut() {
+                            *d += 1;
+                        }
+                    }
+                    "p" | "tbl"
+                        // 顶层块计数：Start 时 depth = 该元素自身层（body
+                        // 直接子层 = body_child_depth）——depth 在 match 后
+                        // 才自增，此处比 body_child_depth 本值（非 +1）。
+                        // 捕获态冻结（txbxContent 内层 w:p 非顶层——与
+                        // scan_vml_textbox_regions 同防御）。
+                        if capture.is_none() && in_fallback == 0 && body_child_depth == Some(depth)
+                        => {
+                            block_idx += 1;
+                        }
+                    _ => {}
+                }
+                depth += 1;
+            }
+            // 自闭合 `<w:p/>` / `<w:tbl/>`（空形态）：与 Start+End 等价计
+            // 一个顶层块；自闭合 txbxContent 无内容不捕获。
+            Ok(Event::Empty(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                if (name == "p" || name == "tbl")
+                    && capture.is_none()
+                    && in_fallback == 0
+                    && body_child_depth == Some(depth)
+                {
+                    block_idx += 1;
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "Fallback" => in_fallback = in_fallback.saturating_sub(1),
+                    "drawing" => in_drawing = in_drawing.saturating_sub(1),
+                    "tc" => in_tc = in_tc.saturating_sub(1),
+                    "sdt" | "sdtContent" => {
+                        if let Some(m) = in_body_sdt {
+                            // 离开标记层（本元素的 End 在 depth = m + 1——
+                            // Start 置位时 depth = m，随后自增）。
+                            if depth == m + 1 {
+                                in_body_sdt = None;
+                            }
+                        }
+                    }
+                    "txbxContent" => {
+                        if let Some((host, d)) = capture.as_mut() {
+                            *d -= 1;
+                            if *d == 0 {
+                                let host = *host;
+                                capture = None;
+                                let span_end = reader.buffer_position() as usize;
+                                // quick-xml 0.41 buffer_position 边界计量偏移
+                                // （与 scan_vml_textbox_regions 同修——区段
+                                // 起点前导空白 / 终点闭合标签截断的双端
+                                // 前向修复，详见该函数批 4 注释）。
+                                let bytes = xml.as_bytes();
+                                let mut s = span_start.min(xml.len());
+                                while s < xml.len() && bytes[s] != b'<' {
+                                    s += 1;
+                                }
+                                let mut e = span_end.min(xml.len());
+                                if e == 0 || bytes[e - 1] != b'>' {
+                                    while e < xml.len() && bytes[e] != b'>' {
+                                        e += 1;
+                                    }
+                                    if e < xml.len() {
+                                        e += 1;
+                                    }
+                                }
+                                if s < e {
+                                    out.push((host, xml[s..e].to_string()));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => break, // 门 2+3 已过结构校验（严格）；兼容面防御终止
+        }
+    }
+    out
+}
+
 /// #18：VML 区段 → 内层块（docx-rs 读面复用：EventReader 直喂
 /// `TextBoxContent::read`——零第二解析器，约束 #1/#2 纪律）。
 #[allow(clippy::too_many_arguments)]
@@ -3088,6 +3281,106 @@ fn apply_vml_textboxes(
                 source: BlockSource::Body,
             }),
         );
+    }
+    Ok(blocks)
+}
+
+/// #345（#318 D2）：表内 DrawingML 文本框块序插入（宿主表块跨度后）。
+///
+/// 与 `apply_vml_textboxes` 同构的第二趟发射面，差异在**发射位**：
+/// 表内框的宿主是表——插入位对齐到宿主表在块流中的**完整跨度之后**
+/// （外层表块 + 其全部内层表块——`extract_table` 沿文档序独立成块的
+/// 既有发射面），而非 ordinal+1 近似（该近似会把表内框插进外层表与
+/// 内层表块之间——语义上表内框归属整表，须整表块后）。块流 lockstep
+/// 重走（段/非嵌套表计 body 序——TextBox 块与嵌套表块跳过）把 body
+/// 子层序映射到最终数组坐标。同宿主多框沿文档序追加（span_end 随插
+/// 自增）；不同宿主升序处理（前方插入不位移后方宿主跨度）。
+#[allow(clippy::too_many_arguments)]
+fn apply_tc_textboxes(
+    mut blocks: Vec<Block>,
+    document_xml: &str,
+    bundle: &RelsBundle,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+    // #257：节边界同步重映射（与 apply_vml_textboxes 同语义——插入位
+    // 及之后的边界随插入位移；节边界 = 段落级 sectPr 闭合，恒不在表
+    // 跨度内，升序插入下逐次重映射为累积正确坐标）。
+    section_boundaries: &mut [usize],
+) -> Result<Vec<Block>, io::ReadError> {
+    if !document_xml.contains("txbxContent") {
+        return Ok(blocks); // 快路径零成本（与 VML 趟同口径）
+    }
+    let regions = scan_tc_textbox_regions(document_xml);
+    if regions.is_empty() {
+        return Ok(blocks);
+    }
+    // 宿主升序分组（同宿主保持文档序——扫描输出已文档序）。
+    let mut hosts: Vec<usize> = regions.iter().map(|(h, _)| *h).collect();
+    hosts.sort_unstable();
+    hosts.dedup();
+    for host in hosts {
+        // lockstep 重走：body 子层序 → 宿主表跨度终点（当前数组坐标）。
+        // 每次插入后数组已变——每宿主重走一次（升序下前方插入只位移
+        // 后方坐标，重走天然吸收）。
+        let mut body_child = 0usize;
+        let mut span_end = blocks.len();
+        for (i, b) in blocks.iter().enumerate() {
+            match b {
+                Block::Paragraph(_) => body_child += 1,
+                Block::Table(t) => {
+                    if !t.nested {
+                        body_child += 1;
+                        if body_child == host + 1 {
+                            // 宿主表首块——跨度 = 本块 + 后续连续内层表块。
+                            let mut j = i + 1;
+                            while j < blocks.len() {
+                                match &blocks[j] {
+                                    Block::Table(nt) if nt.nested => j += 1,
+                                    _ => break,
+                                }
+                            }
+                            span_end = j;
+                            break;
+                        }
+                    }
+                    // nested 表块：属前方表跨度，不计 body 序。
+                }
+                Block::TextBox(_) => {} // 非顶层 body 子层（模型面/第二趟发射块）
+            }
+        }
+        // 该宿主的全部区段（文档序）沿 span_end 逐个追加。
+        for (h, region) in regions.iter().filter(|(h, _)| *h == host) {
+            debug_assert_eq!(*h, host);
+            let tb_blocks = parse_textbox_region(
+                region,
+                bundle.document.as_ref(),
+                index,
+                styles,
+                "word/document.xml",
+                strict,
+                warnings,
+            )?;
+            if tb_blocks.is_empty() {
+                continue;
+            }
+            let insert_at = span_end.min(blocks.len());
+            // #257：插入点及之后的节边界同步 +1（升序逐次重映射）。
+            for b in section_boundaries.iter_mut() {
+                if *b >= insert_at {
+                    *b += 1;
+                }
+            }
+            blocks.insert(
+                insert_at,
+                Block::TextBox(TextBoxData {
+                    blocks: tb_blocks,
+                    source: BlockSource::Body,
+                }),
+            );
+            span_end += 1; // 同宿主后续框追加在本框之后（文档序）。
+        }
     }
     Ok(blocks)
 }
@@ -3710,7 +4003,10 @@ fn extract_table_inner(
                     }
                     // StructuredDataTag / TableOfContents：面外项（既有
                     // 策略不变——跳过；单元格文本面无承载，登记于模块
-                    // 文档「丢弃面」）。
+                    // 文档「丢弃面」）。注：单元格段落内的 DrawingML 文本
+                    // 框子树（wps:txbx）同样不入本路径的段落文本——由
+                    // #345（#318 D2）文档级第二趟补提取
+                    // （apply_tc_textboxes，发射宿主表块跨度后）。
                     _ => {}
                 }
             }
