@@ -14,6 +14,15 @@
 //! - `oversized_input_is_rejected_before_parsing`——S3-L7 输入门（注入
 //!   面确定性触发——默认 1 GiB 不在单测里真造，与 pdfe_security 7 号
 //!   同款策略）。
+//!
+//! #408 签名门（已签名档盖章必毁签——默认 fail-closed）：
+//! - `signed_pdf_stamp_is_rejected`——验收 1：默认参数拒；
+//! - `signed_pdf_stamp_succeeds_when_break_explicit`——验收 2：显式放行
+//!   可盖（签名确实失效——如实）；
+//! - 验收 3（未签名档正常）：既有 `stamps_seal_into_page_content_stream`
+//!   等全套 small.pdf 用例即覆盖，不重复。
+//! 判定面三路分支（SigFlags / /FT /Sig / /Perms /DocMDP）的确定性单测
+//! 在 stamp.rs 内联 tests（构造目录标记，不依赖夹具）。
 
 use std::path::PathBuf;
 
@@ -102,7 +111,10 @@ fn opacity_multiplies_into_alpha() {
         0,
         [50.0, 50.0, 150.0, 150.0],
         &seal_png(),
-        StampOptions { opacity: 0.5 },
+        StampOptions {
+            opacity: 0.5,
+            ..Default::default()
+        },
     )
     .unwrap();
     // SMask 仍在（alpha 已按 0.5 缩放）
@@ -300,4 +312,50 @@ fn oversized_input_is_rejected_before_parsing() {
         exact,
     );
     assert!(ok.is_ok(), "等长边界应放行：{:?}", ok.err());
+}
+
+// ---------------------------------------------------------------- #408 签名门
+
+fn signed_pdf() -> Vec<u8> {
+    std::fs::read(fixtures().join("signed_sample.pdf")).expect("signed_sample.pdf 缺失")
+}
+
+#[test]
+fn signed_pdf_stamp_is_rejected() {
+    // 验收 1：已签名档 + 默认参数 → SignedDocument（fail-closed）。
+    // 夹具 = pyhanko 真结构签名（/AcroForm + /FT /Sig 在档）。
+    let err = stamp_image(
+        signed_pdf(),
+        0,
+        [50.0, 50.0, 150.0, 150.0],
+        &seal_png(),
+        StampOptions::default(),
+    )
+    .unwrap_err();
+    assert_eq!(err, StampError::SignedDocument, "默认必须拒：{err:?}");
+    assert!(
+        err.to_string().contains("已签名"),
+        "错误文案可指向 UI 提示：{err}"
+    );
+}
+
+#[test]
+fn signed_pdf_stamp_succeeds_when_break_explicit() {
+    // 验收 2：allow_break_signature=true → 盖章成功（签名确实失效——
+    // 如实；产物应比原档大——新增图对象，且含 /XObject 面）。
+    let opts = StampOptions {
+        allow_break_signature: true,
+        ..Default::default()
+    };
+    let out = stamp_image(
+        signed_pdf(),
+        0,
+        [50.0, 50.0, 150.0, 150.0],
+        &seal_png(),
+        opts,
+    )
+    .expect("显式放行应可盖");
+    assert!(out.len() > signed_pdf().len(), "产物应包含新增图对象");
+    let text = String::from_utf8_lossy(&out).to_string();
+    assert!(text.contains("/XObject"), "图对象应在产物内");
 }
