@@ -671,6 +671,219 @@ gh issue view <N> --json labels,milestone
 ```
 
 ---
+## 0.0.9 rebase 解完冲突后必须扫残留标记
+
+**`git rebase --continue` 成功 ≠ 冲突解干净了。**
+
+## 为什么
+
+```
+rebase 时如果漏了某个冲突文件没 git add：
+  · git rebase --continue 仍会成功（它只看已 add 的文件）
+  · 但漏掉的文件里还留着 <<<<<<< ======= >>>>>>>
+  · 本地不编译 → 推上去 CI 红 → 白等 3 分钟才发现
+```
+
+**2026-11-07 实测**：ai-bid #371 rebase 后 `lib.rs:72` 残留 `>>>>>>>`，
+导致 `error: unknown start of token: \u{2014}`——本地编译失败，CI 必红。
+
+## 一条命令（< 0.5 秒）
+
+```bash
+grep -rn --include="*.rs" --include="*.md" --include="*.py" --include="*.toml" --include="*.json" \
+  -E "^(<<<<<<<|=======$|>>>>>>>)" . | head -20
+```
+
+**有输出 = 还有残留，必须继续解。**
+
+## 完整流程（rebase 后必做）
+
+```bash
+# 1. rebase
+git fetch origin main && git rebase origin/main
+
+# 2. 解冲突（每个冲突文件都要 git add）
+#    ...
+
+# 3. continue
+git rebase --continue
+
+# 4. ★ 扫残留标记（最容易忘的一步）
+grep -rn --include="*.rs" --include="*.md" --include="*.py" -E "^(<<<<<<<|=======$|>>>>>>>)" . | head
+
+# 5. 确认无未合并文件
+git diff --name-only --diff-filter=U     # 必须为空
+
+# 6. 本地编译（比等 CI 快 10 倍）
+cargo check --workspace --all-targets
+
+# 7. 推
+git push --force
+```
+
+## 为什么第 6 步必做
+
+```
+本地 cargo check：  1-3 分钟（有缓存时几十秒）
+等 CI cargo check： 3-5 分钟 + 排队
+
+差 2-4 倍。而且本地报错立刻能改，CI 报错要等一轮。
+```
+
+## 一次漏检的真实代价
+
+```
+漏检 → push → 等 3 分钟 CI → 看到 unknown start of token
+     → 修 → 再 push → 再等 3 分钟
+= 白等 6-10 分钟 + 一轮 CI 配额
+
+grep 一次 = 0.5 秒。
+```
+
+## 高频残留位置
+
+```
+① 手写面（TOOL_NAMES / schema.rs / tools.rs）——加工具时最容易漏
+② 派生面（state_machine_matrix.rs）——但 tool-surface 会覆盖，问题不大
+③ 文档（contract.md / SKILL.md）——两节都编号 23 这种
+④ 配置文件（Cargo.toml 的 [[bin]] 段）——每个新 bin 都往末尾加
+```
+
+## 补充：冲突解完先跑 tool-surface
+
+```bash
+# 如果冲突涉及工具面/位串矩阵：
+cargo run -p bid-mcp --bin tool-surface -- --write
+cargo run -p bid-mcp --bin tool-surface -- --check
+```
+
+**它能自动修掉 4 个派生面的不同步，比手工算位串快得多。**
+
+
+
+## rebase --continue 之后必须验证再 push
+
+**2026-11-07 事故：脚本里 rebase --continue 失败（文件没 add），但脚本继续执行下一句 push —— 把 main 推到了 D6 分支上，PR #379 被 GitHub 自动关闭。**
+
+```bash
+# ✅ 正确顺序
+git add <冲突文件>
+git diff --name-only --diff-filter=U    # 必须为空，否则 continue 会失败
+git -c core.editor=true rebase --continue
+
+# ★ continue 之后必须验证三件事
+git status                    # 不能有 unmerged
+git log --oneline -1          # 必须是期望的 commit，不能是 main 的 merge commit
+test ! -d .git/rebase-merge   # rebase 必须真的结束
+
+# 三件都过了才 push
+git push --force
+```
+
+**自动化脚本里尤其注意：rebase --continue 失败不要继续往下走，要 exit 1。**
+
+## 0.0.10 引擎能力 ≠ 产品可用——PR 必须证明「用户操作 → 产品行为」闭环
+
+**本仓最贵的教训：代码写了、测试绿了、issue 关了，但用户点下去没反应。**
+
+## 2026-11-07 一次核查抓出四个「测试绿但没闭环」
+
+```
+① PDF 批注不落盘
+   PdfAnnotateController::save() 存在，零调用方
+   Editor::save() 对只读态 return true（假装成功）
+   → 用户画高亮 → Ctrl+S 无报错 → 关闭 → 重开 → 没了
+   → PR #336 的测试测的是「控制器能存盘」，不是「用户操作调到存盘」
+
+② overlay 层孤岛
+   crates/overlay 六模块完整，git grep mdc-overlay -- Cargo.toml 零命中
+   → 两套批注体系并存，统一层没人用
+
+③ XLSX 桌面只读
+   PR #300 只接了 mdcore-wasm，mang-shell 里 XlsxEditor 零命中
+   → issue #283 关闭了，但桌面端消费倒挂没修
+
+④ GPUI 六缺陷补洞而非重做
+   PR #297 修了六个 bug，但根因「自己手写 UI」没解决
+```
+
+## 提交 PR 前自问三个问题
+
+```
+① 用户怎么触发这个功能？
+   「打开 xlsx 双击单元格改值」——说得出来吗？
+   说不出来 = 没有产品入口 = 别急着交 PR
+
+② 触发之后，文件/状态真的变了吗？
+   「Ctrl+S 后 .pdf 字节变了」——能证明吗？
+   只证明「控制器能存盘」不算
+
+③ 测试是从用户操作开始的吗？
+   ✅ app.click(...) → app.save_active() → 读文件断言
+   ❌ 直接调控制器 API 断言返回值
+```
+
+## 三种「假闭环」形态
+
+```
+形态 A：有引擎没接线
+   crate 写了，测试绿了，但没有任何产品 crate 依赖它
+   查法：git grep "<CrateName>" -- Cargo.toml
+
+形态 B：有接线没落盘
+   视图能改内存，但不写文件（或写入后不读回验证）
+   查法：从视图的 save 方法往上追到 fs::write
+
+形态 C：测试跳过视图层
+   测控制器/服务层，不测「用户手势 → Shell → 文件」
+   查法：看测试第一行是 app.xxx() 还是 Controller::xxx()
+```
+
+## PR 描述里必须写的三行
+
+```markdown
+## 产品闭环
+
+- 用户入口：<菜单/快捷键/右键，具体到哪个按钮>
+- 操作后变化：<文件字节变了 / 状态变了 / 界面刷新了>
+- 端到端测试：<测试名>（从 <用户操作> 开始，断言 <可观测结果>）
+```
+
+**缺这三行的 PR，Lead 会要求补。**
+
+## 例外
+
+```
+以下 PR 不需要「产品闭环」三行：
+  · 纯引擎面（明确标注「本 PR 只做引擎，产品接线见 #<N>」）
+  · 纯文档 / CI / 重构（行为不变）
+  · 测试补充（不改变产品行为）
+
+但纯引擎面 PR 必须在描述里写清楚「谁在什么时候接线」，
+不能只是「我做完了」。
+```
+
+## 反例（真实发生）
+
+```
+❌ 声明：「forms.rs save 是增量的，签名仍有效」
+   实际：全量重写，签名必毁
+   → 声称与实现倒挂，比不做更糟
+
+❌ PR #336 标题：「桌面 PDF 标注接线」
+   实际：接了一半（内存态），没接文件
+   → 「接线」这个词被用滥了，要说清接的是哪一段
+```
+
+## 一句话
+
+```
+能点、能改、能存住、能重开看到——四件事都做到才算闭环。
+```
+
+
+---
+
 ## 0.0.1 一个 issue 只能有一个 PR
 
 ```
