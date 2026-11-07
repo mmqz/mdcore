@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AppImage 构建（R24-c；实体验证留 R24-d——本脚本在开发环境执行）
 #
-# 输入：宿主壳 release 产物（主线壳 mang-shell，GPUI/wgpu 自绘链）
+# 输入：宿主壳 release 产物（主线壳 mang-shell，wgpu 自绘链）
 # 输出：mdcore-<VERSION>-x86_64.AppImage
 #
 # 用法：packaging/appimage/build-appimage.sh <path-to-shell-binary>
@@ -9,7 +9,7 @@
 #       版本锁定见下 *_VER）。
 # #319（2026-11-07）：去 --plugin gtk。旧壳 mdshell-native（tao+wry+GTK3）
 # 时代引入；mang-shell 零 GTK 引用 → 插件无法自动检测版本首跑必红
-# （DEPLOY_GTK_VERSION 强制才能出包，且捆绑的 GTK 运行时对 GPUI 壳
+# （DEPLOY_GTK_VERSION 强制才能出包，且捆绑的 GTK 运行时对自绘壳
 # 全为死重）。去掉后 linuxdeploy 只收敛 DT_NEEDED 直链集（xcb/xkbcommon
 # 系），#270 验收实测出包 36.9MB 全链可跑。
 set -euo pipefail
@@ -77,7 +77,7 @@ sed -e 's/{{APP_EXEC}}/mdcore/g' \
     "$ROOT/packaging/appimage/AppRun" > "$APPDIR/AppRun"
 chmod 0755 "$APPDIR/AppRun"
 
-# linuxdeploy 收敛运行时 + appimagetool 出包（#319：mang-shell 为 GPUI
+# linuxdeploy 收敛运行时 + appimagetool 出包（#319：mang-shell 为 wgpu
 # 自绘链，无 GTK 运行时依赖——不挂插件，只收敛直链集）
 "$ROOT/build/_tools/linuxdeploy-x86_64.AppImage" \
   --appdir "$APPDIR" \
