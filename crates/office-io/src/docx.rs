@@ -2079,8 +2079,10 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         &style_index,
         strict,
         &mut warnings,
-        &headers,
-        &footers,
+        // #347（#318 D5）：可变传播——build_sections 内 odd 引用挂接
+        // 追加的末节槽位同步进文档级 headers/footers（单一真源保持）。
+        &mut headers,
+        &mut footers,
         &document_xml,
         &column_break_blocks,
     )?;
@@ -4782,6 +4784,129 @@ fn mid_section_slots(
     Ok((headers, footers))
 }
 
+/// #347（#318 D5）：odd 引用容错挂接（Word 容忍口径：旧值 odd =
+/// 现代 Default 语义——奇数页槽位；`build_sections` 中段节与末节
+/// 两调用面）。
+///
+/// 挂接规则（可见性恒登记——容错不静默）：
+/// · **Default 槽位空缺** → 解析 odd 引用部件内容，以 Default 变体
+///   追加 + 容错 Warning（odd → default 语义挂接在档）；
+/// · **Default 槽位已在**（合法引用先占）→ 跳过 + Warning（odd 与
+///   default 并存 = 语义歧义面——以合法值为准，不覆盖）；
+/// · 部件缺席/解析失败 → 严格拒 / 兼容警告跳过（与既有槽位降级
+///   同语义——mid_section_slots 口径）。
+#[allow(clippy::too_many_arguments)]
+fn attach_legacy_odd_slots(
+    headers: &mut Vec<HeaderFooterData>,
+    footers: &mut Vec<HeaderFooterData>,
+    odd: &[LegacyOddRef],
+    part_xml: &HashMap<String, String>,
+    bundle: &RelsBundle,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<(), io::ReadError> {
+    use docx_rs::FromXML;
+    for r in odd {
+        let (slot_taken, kind) = if r.is_footer {
+            (
+                footers
+                    .iter()
+                    .any(|f| f.variant == HeaderFooterVariant::Default),
+                "footer",
+            )
+        } else {
+            (
+                headers
+                    .iter()
+                    .any(|h| h.variant == HeaderFooterVariant::Default),
+                "header",
+            )
+        };
+        if slot_taken {
+            warnings.push(CompatibilityWarning {
+                part: "word/document.xml".to_string(),
+                kind: WarningKind::MalformedXml,
+                detail: format!(
+                    "compat note: legacy odd {kind}Reference (rid {}) skipped — \
+                     default slot already present (odd → default 并存，以合法值为准)",
+                    r.rid
+                ),
+            });
+            continue;
+        }
+        let Some(part) = slot_part_path(&r.rid, bundle, strict, warnings)? else {
+            // 悬空 rid：严格模式 slot_part_path 已 typed 拒；兼容模式
+            // 已登记 BrokenReference 警告（该函数内置）。
+            continue;
+        };
+        let Some(xml) = part_xml.get(&part) else {
+            let detail = format!("odd {kind} part '{part}' unreadable (lossy decode or io)");
+            if strict {
+                return Err(io::ReadError::InvalidPart {
+                    part: part.clone(),
+                    detail,
+                });
+            }
+            warnings.push(CompatibilityWarning {
+                part: part.clone(),
+                kind: WarningKind::MalformedXml,
+                detail: format!("compat mode: {detail} (odd slot skipped)"),
+            });
+            continue;
+        };
+        // 部件内容解析（mid_section_slots 同构——docx-rs 部件面复用）。
+        // 双层 Result 展平：外层 = 部件 XML typed 解析（docx-rs），
+        // 内层 = 块提取（children_blocks 的 io typed 拒经 `?` 直传播
+        // ——严格模式语义与既有槽位一致）。
+        let parsed = if r.is_footer {
+            docx_rs::Footer::from_xml(xml.as_bytes())
+                .map(|f| footer_children_blocks(&f, bundle, &part, index, styles, strict, warnings))
+        } else {
+            docx_rs::Header::from_xml(xml.as_bytes())
+                .map(|h| header_children_blocks(&h, bundle, &part, index, styles, strict, warnings))
+        };
+        let blocks = match parsed {
+            Ok(inner) => inner?,
+            Err(_) => {
+                let detail = format!("odd {kind} part '{part}' parse failed");
+                if strict {
+                    return Err(io::ReadError::InvalidPart {
+                        part: part.clone(),
+                        detail,
+                    });
+                }
+                warnings.push(CompatibilityWarning {
+                    part: part.clone(),
+                    kind: WarningKind::MalformedXml,
+                    detail: format!("compat mode: {detail} (odd slot skipped)"),
+                });
+                continue;
+            }
+        };
+        warnings.push(CompatibilityWarning {
+            part: "word/document.xml".to_string(),
+            kind: WarningKind::MalformedXml,
+            detail: format!(
+                "compat note: legacy odd {kind}Reference (rid {}) attached as \
+                 default slot (Word 容忍口径：旧值 odd = 现代 default 语义)",
+                r.rid
+            ),
+        });
+        let data = HeaderFooterData {
+            variant: HeaderFooterVariant::Default,
+            blocks,
+        };
+        if r.is_footer {
+            footers.push(data);
+        } else {
+            headers.push(data);
+        }
+    }
+    Ok(())
+}
+
 /// #268：解析 document.xml 全部 `sectPr/w:cols`（文档序）。
 ///
 /// docx-rs 0.4.22 `SectionProperty` 只携 num/space（equalWidth/sep/
@@ -4912,12 +5037,107 @@ fn attr_local<'a>(a: &'a quick_xml::events::attributes::Attribute<'a>) -> &'a [u
     }
 }
 
+/// #347（#318 D5）：解析 document.xml 全部 sectPr 内 `w:type="odd"`
+/// 页眉/页脚引用（文档序，每 sectPr 一条收集）。
+///
+/// ECMA-376 合法值 default/first/even；Word 容忍旧值 **odd**（pre-97
+/// 语义：奇数页槽位 = 现代 default 语义）并照常挂接，docx-rs 0.4.22
+/// typed 词汇表外整体丢弃（引用 + 内容双丢——读面已知损失 #5）。
+/// 本函数为 office-io 自有 quick-xml 第二趟（#268 cols 趟同族技术；
+/// sectPr 序 = 节序，与 build_sections 的 marks+末节序列对齐；
+/// `w:sectPrChange` 内嵌套旧节属性不计——修订面非当前生效）。
+/// local-name 通道命名空间无关——strict OOXML（purl）天然兼容。
+fn parse_legacy_odd_refs(xml: &str) -> Vec<Vec<LegacyOddRef>> {
+    use quick_xml::events::Event;
+    let mut out: Vec<Vec<LegacyOddRef>> = Vec::new();
+    let mut in_sect_pr = false;
+    let mut in_sect_pr_change = false;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => match e.local_name().as_ref() {
+                b"sectPrChange" => in_sect_pr_change = true,
+                b"sectPr" if !in_sect_pr_change => {
+                    in_sect_pr = true;
+                    out.push(Vec::new());
+                }
+                b"headerReference" | b"footerReference" if in_sect_pr && !in_sect_pr_change => {
+                    if let Some(r) = legacy_odd_ref_attr(&e) {
+                        out.last_mut().expect("sectPr 已置位").push(r);
+                    }
+                }
+                _ => {}
+            },
+            // 自闭 `<w:sectPr/>`：空属性区即时闭（无后续 End 事件）。
+            Ok(Event::Empty(e)) => match e.local_name().as_ref() {
+                b"sectPr" if !in_sect_pr_change => out.push(Vec::new()),
+                b"headerReference" | b"footerReference" if in_sect_pr && !in_sect_pr_change => {
+                    if let Some(r) = legacy_odd_ref_attr(&e) {
+                        out.last_mut().expect("sectPr 已置位").push(r);
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"sectPrChange" => in_sect_pr_change = false,
+                b"sectPr" if !in_sect_pr_change => in_sect_pr = false,
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            Err(_) => break, // 门 2+3 已过结构校验（严格）；防御终止
+            Ok(_) => {}
+        }
+        buf.clear();
+    }
+    out
+}
+
+/// #347（#318 D5）：odd 引用条目（`w:type="odd"` 才收——合法值
+/// default/first/even 已由 docx-rs typed 模型承载，第二趟不双取）。
+#[derive(Debug, Clone)]
+struct LegacyOddRef {
+    is_footer: bool,
+    rid: String,
+}
+
+/// #347（#318 D5）：引用元素的 w:type / r:id 属性读取（type="odd"
+/// 才返回条目；r:id 缺席的畸形引用返回 None——防御跳过）。
+fn legacy_odd_ref_attr(e: &quick_xml::events::BytesStart<'_>) -> Option<LegacyOddRef> {
+    let is_footer = e.local_name().as_ref() == b"footerReference";
+    let mut ty: Option<String> = None;
+    let mut rid: Option<String> = None;
+    for a in e.attributes() {
+        let Ok(a) = a else { continue };
+        match attr_local(&a) {
+            b"type" => {
+                ty = std::str::from_utf8(a.value.as_ref())
+                    .ok()
+                    .map(str::to_string)
+            }
+            b"id" => {
+                rid = std::str::from_utf8(a.value.as_ref())
+                    .ok()
+                    .map(str::to_string)
+            }
+            _ => {}
+        }
+    }
+    if ty.as_deref() == Some("odd") {
+        rid.map(|rid| LegacyOddRef { is_footer, rid })
+    } else {
+        None
+    }
+}
+
 /// 文档节全量构建（#257 读面收口）：中段节标记（文档序）+ 末节 →
 /// `Vec<SectionData>`（恒 ≥1 条；块区间连续切分 blocks 全序）。
 ///
 /// `boundaries` 与 `marks` 等长（VML 插入后重映射的最终坐标系）；
-/// 末节 `headers`/`footers` 复用文档级提取结果（单一真源复制——
-/// 逐节统一访问面；中段节经 [`mid_section_slots`] 第二趟自解析）。
+/// 末节 `headers`/`footers` 复用文档级提取结果（单一真源——**可变
+/// 引用**：#347（#318 D5）odd 引用容错挂接在本函数内追加，末节槽
+/// 与文档级 `DocxDocument::headers`/`footers` 同源保持；中段节经
+/// [`mid_section_slots`] 第二趟自解析）。
 #[allow(clippy::too_many_arguments)]
 fn build_sections(
     docx: &docx_rs::Docx,
@@ -4930,8 +5150,8 @@ fn build_sections(
     styles: &StyleIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
-    final_headers: &[HeaderFooterData],
-    final_footers: &[HeaderFooterData],
+    final_headers: &mut Vec<HeaderFooterData>,
+    final_footers: &mut Vec<HeaderFooterData>,
     document_xml: &str,
     column_break_blocks: &[usize],
 ) -> Result<Vec<SectionData>, io::ReadError> {
@@ -4941,6 +5161,30 @@ fn build_sections(
         "section marks/boundaries lockstep"
     );
     // 中段节部件集（六槽位引用 → part path 全量解析，zip 单趟）。
+    // #347（#318 D5）：odd 引用部件一并装载（中段 + 末节——挂接面
+    // 共用本 part_xml 缓存）。
+    let odd_refs_raw = parse_legacy_odd_refs(document_xml);
+    let section_count = marks.len() + 1;
+    let empty_odd: Vec<LegacyOddRef> = Vec::new();
+    let odd_refs: Vec<&Vec<LegacyOddRef>> = if odd_refs_raw.len() == section_count {
+        odd_refs_raw.iter().collect()
+    } else {
+        // 计数分歧 = 解析面分歧（cols 趟同族降级）——odd 挂接整体
+        // 放弃 + 兼容警告（宁缺毋错：错位挂接比丢弃更糟）。
+        if odd_refs_raw.iter().any(|v| !v.is_empty()) {
+            warnings.push(crate::io::CompatibilityWarning {
+                part: "word/document.xml".to_string(),
+                kind: WarningKind::MalformedXml,
+                detail: format!(
+                    "compat note: sectPr count mismatch (xml walk {} vs model {}); \
+                     legacy odd references not attached",
+                    odd_refs_raw.len(),
+                    section_count
+                ),
+            });
+        }
+        vec![&empty_odd; section_count]
+    };
     let mut part_paths: Vec<String> = Vec::new();
     for (_, sp) in marks {
         // rid 统一收集（header/footer 引用类型不同——id 同域 String）。
@@ -4973,6 +5217,16 @@ fn build_sections(
             }
         }
     }
+    // #347（#318 D5）：odd 引用部件（全节——含末节；挂接面消费）。
+    for odd in &odd_refs {
+        for r in odd.iter() {
+            if let Some(path) = slot_part_path(&r.rid, bundle, strict, warnings)? {
+                if !part_paths.contains(&path) {
+                    part_paths.push(path);
+                }
+            }
+        }
+    }
     let part_xml = load_section_part_xml(bytes, &part_paths);
 
     // #268：cols 全字段（自有 quick-xml 第二趟——文档序与 marks+末节
@@ -4980,7 +5234,6 @@ fn build_sections(
     // 的 num 基础面仍有效]，严格模式同降级[非容器损坏是内部一致性
     // 面向——typed 拒会误伤可读档]）。
     let cols_specs = parse_columns_specs(document_xml);
-    let section_count = marks.len() + 1;
     let cols_specs = if cols_specs.len() == section_count {
         cols_specs
     } else {
@@ -5019,8 +5272,22 @@ fn build_sections(
     let mut sections = Vec::with_capacity(marks.len() + 1);
     let mut start = 0usize;
     for (i, ((_, sp), end)) in marks.iter().zip(boundaries.iter()).enumerate() {
-        let (headers, footers) =
+        let (mut headers, mut footers) =
             mid_section_slots(sp, &part_xml, bundle, index, styles, strict, warnings)?;
+        // #347（#318 D5）：中段节 odd 引用容错挂接（Default 语义）。
+        if let Some(odd) = odd_refs.get(i) {
+            attach_legacy_odd_slots(
+                &mut headers,
+                &mut footers,
+                odd,
+                &part_xml,
+                bundle,
+                index,
+                styles,
+                strict,
+                warnings,
+            )?;
+        }
         sections.push(SectionData {
             index: i,
             source: SectionSource::Mid,
@@ -5037,10 +5304,25 @@ fn build_sections(
         });
         start = *end;
     }
-    // 末节（body 级 sectPr——docx-rs 模型恒在）。
+    // 末节（body 级 sectPr——docx-rs 模型恒在）。#347（#318 D5）：odd
+    // 引用挂接**先于** SectionData 装配（可变引用追加——末节槽与
+    // 文档级 headers/footers 同源保持，见函数文档）。
     let sp = &docx.document.section_property;
     let final_index = sections.len();
     let final_start = start;
+    if let Some(odd) = odd_refs.get(final_index) {
+        attach_legacy_odd_slots(
+            final_headers,
+            final_footers,
+            odd,
+            &part_xml,
+            bundle,
+            index,
+            styles,
+            strict,
+            warnings,
+        )?;
+    }
     sections.push(SectionData {
         index: final_index,
         source: SectionSource::Final,
