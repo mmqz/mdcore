@@ -116,6 +116,9 @@ pub mod docx_edit;
 // #226 R2：docx-rs 读层 panic 预检防御（私有 seam——docx 读面内部消费，
 // 模块文档含位点清单与修复策略）。
 mod docx_panic_guard;
+// #307 阶段①：DOCX → PDF 导出桥（LibreOffice headless 通道——探测/
+// 独立 profile/超时/分类错误含无 LO 安装指引）。
+pub mod convert;
 pub mod io;
 pub mod numbering;
 pub mod rebuild;

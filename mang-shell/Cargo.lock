@@ -3226,6 +3226,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-net",
+ "docx-rs",
  "flate2",
  "futures-lite",
  "gpui",

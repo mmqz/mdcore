@@ -903,6 +903,9 @@ impl ShellApp {
             theme_mode: self.theme_mode,
             left_open: self.left_open,
             git_view: self.git_view,
+            // #307：「导出为 PDF」门槛（仅 docx 形态提供；md/pdf/xlsx/
+            // canvas 标签上灰显）。
+            active_is_docx: tab.is_some_and(|t| t.editor.read(cx).doc_kind() == "docx"),
             recent_files: self.recent.recent_files().to_vec(),
         }
     }
@@ -999,6 +1002,8 @@ impl ShellApp {
                 None => {}
             },
             Act::SaveAs => self.prompt_save_as(window, cx),
+            // #307 阶段①：导出为 PDF（DOCX → LibreOffice headless → PDF）。
+            Act::ExportPdf => self.export_active_pdf(window, cx),
             // 与标题栏 × 钮同一条 cx.quit 既有路径（该路径不经
             // on_should_close 脏确认——× 钮现状同此，行为对齐不超范围
             // 修补；统一走脏确认建议另开 issue）。
@@ -1518,6 +1523,93 @@ impl ShellApp {
         if let Some(ws) = self.workspace.as_ref().cloned() {
             ws.update(cx, |tree, _| tree.set_active_file(active));
         }
+    }
+
+    /// #307 阶段①：导出活动 DOCX 为 PDF（菜单「文件 → 导出为 PDF」）。
+    ///
+    /// 流：docx 门槛 → 脏位拦截（导出以磁盘内容为准——先保存再导出，
+    /// 不静默用旧盘面）→ LO 探测（缺席 = 原生对话框指引，#185 兜底
+    /// 通道；不静默失败）→ 输出路径对话框（建议名 = 当前名去扩展
+    /// 加 .pdf）→ 后台转换（读盘 → LO headless → 写盘——UI 不卡）
+    /// → 成功/失败通知横幅（失败带指引文案）。
+    fn export_active_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        if tab.editor.read(cx).doc_kind() != "docx" {
+            self.show_notice(
+                "导出为 PDF 仅支持 DOCX 文档（当前标签不是 .docx）。".to_string(),
+                cx,
+            );
+            return;
+        }
+        if tab.editor.read(cx).is_modified() {
+            self.show_notice(
+                "文档有未保存修改——请先保存（Ctrl+S）再导出（导出以磁盘内容为准）。".to_string(),
+                cx,
+            );
+            return;
+        }
+        let src = tab.path.clone();
+        // LO 探测：缺席走原生错误对话框（zenity/kdialog/MessageBox 族，
+        // #185 同通道——比通知横幅更醒目，符合「显式指引」验收）。
+        if mdc_office_io::convert::detect_libreoffice().is_none() {
+            let err = mdc_office_io::convert::ExportPdfError::NoLibreOffice;
+            let shown = crate::native_dialog::show_error(&crate::native_dialog::DialogSpec {
+                title: "导出 PDF 需要 LibreOffice".to_string(),
+                message: format!("{}\n\n{}", err, err.guidance()),
+            });
+            if !shown {
+                // 无对话框工具（无桌面会话）——横幅兜底，不静默。
+                self.show_notice(
+                    format!("导出 PDF 需要 LibreOffice（未探测到）。{}", err.guidance()),
+                    cx,
+                );
+            }
+            return;
+        }
+        let directory = src
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let suggested = src
+            .file_stem()
+            .map(|n| format!("{}.pdf", n.to_string_lossy()));
+        let rx = cx.prompt_for_new_path(&directory, suggested.as_deref());
+        cx.spawn_in(window, async move |this, cx| match rx.await {
+            Ok(Ok(Some(out_path))) => {
+                // 后台转换：读盘 → LO → 写盘（IO + 外部进程全离主线程）。
+                let src_clone = src.clone();
+                let out_clone = out_path.clone();
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let docx = std::fs::read(&src_clone)
+                            .map_err(|e| format!("读取源文件失败：{e}"))?;
+                        let pdf = mdc_office_io::convert::docx_to_pdf(&docx)
+                            .map_err(|e| format!("{e}\n{}", e.guidance()))?;
+                        std::fs::write(&out_clone, &pdf)
+                            .map_err(|e| format!("写出 PDF 失败：{e}"))?;
+                        Ok::<(), String>(())
+                    })
+                    .await;
+                let _ = this.update_in(cx, |shell, _window, cx| match result {
+                    Ok(()) => shell.show_notice(format!("已导出 PDF：{}", out_path.display()), cx),
+                    Err(message) => {
+                        shell.show_notice(format!("导出 PDF 失败：{message}"), cx);
+                    }
+                });
+            }
+            Ok(Ok(None)) => {}
+            Ok(Err(err)) => {
+                let message = format!("导出对话框不可用：{err}");
+                let _ = this.update_in(cx, |shell, _window, cx| {
+                    shell.show_notice(message, cx);
+                });
+            }
+            Err(_canceled) => {}
+        })
+        .detach();
     }
 
     /// F4：Ctrl+Shift+S 另存为对话框（prompt_for_new_path——
