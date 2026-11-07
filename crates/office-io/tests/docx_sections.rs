@@ -105,6 +105,8 @@ fn section_break_write_read_roundtrip() {
         geometry: None,
         title_page: true,
         page_number_start: None,
+        section_type: None,
+        columns: None,
         headers: SectionSlots::default(),
         footers: SectionSlots::default(),
     });
