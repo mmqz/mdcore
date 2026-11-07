@@ -85,6 +85,15 @@ mdc-canvas = { path = "../crates/canvas" }
 image = { version = "0.25", default-features = false }
 smallvec = "1"
 
+# #333：Wayland seat 前置探测（src/wayland_probe.rs——无 seat 合成器的
+# 优雅降级前置）。wayland-client 是 gpui_platform 的 wayland 特性既有
+# 传递依赖（Cargo.lock 0.31.15）——此处显式声明 = 零新增 crate / 零
+# lock 变更（循 serde_json/regex/async-channel 的「闭包内既有」先例）。
+# Linux 门控：wayland-client 依赖 unix 系统面，Windows/macOS 构建面
+# 不引入（模块内同 cfg 门控，跨平台无操作占位）。
+[target.'cfg(target_os = "linux")'.dependencies]
+wayland-client = "0.31"
+
 [dev-dependencies]
 # #169：Cmd::ALL 运行时执行面——gpui TestAppContext（真实实体/窗口/
 # 上下文，无头）。test-support 仅测试编译期生效（feature 在 dev 与

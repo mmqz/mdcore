@@ -3243,6 +3243,7 @@ dependencies = [
  "text",
  "theme",
  "ui",
+ "wayland-client",
  "zlog",
 ]
 
