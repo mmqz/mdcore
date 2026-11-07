@@ -5816,6 +5816,18 @@ impl DocxWriter {
         self.paragraph(&[RunSpec::text(text)]);
     }
 
+    /// **分页符段**（#307 ② PDF→DOCX 文本版导出桥——页位保持）：
+    /// 发射只含 `w:br w:type="page"` run 的段落。r4-t2 计数：1 段 +
+    /// 1 run（break run 非 RunSpec 面——按发射面诚实计数，与
+    /// [`Self::paragraph`] 同走 save 漏斗上限）。
+    pub fn page_break(&mut self) {
+        let run = docx_rs::Run::new().add_break(docx_rs::BreakType::Page);
+        let p = docx_rs::Paragraph::new().add_run(run);
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
+        self.runs += 1;
+    }
+
     /// 富文本段落（run 级加粗/斜体 + 外部超链接）。r4-t2：段/run 计数
     /// （发射调用累计——脚注规格额外 +1 段 +1 run[内容段]）。
     pub fn paragraph(&mut self, runs: &[RunSpec]) {

@@ -121,6 +121,9 @@ mod docx_panic_guard;
 pub mod convert;
 pub mod io;
 pub mod numbering;
+// #307 ②功能独立项：PDF→DOCX 文本版导出桥（纯数据边界模型 + 段落
+// 启发式 + docx 写面——对 mdc-pdf 零依赖，装配在组合根）。
+pub mod pdf_import;
 pub mod rebuild;
 pub mod style;
 pub mod write;

@@ -76,6 +76,10 @@ pub mod perf;
 #[path = "pdf_annotate.rs"]
 pub mod pdf_annotate;
 
+/// #307 ②功能独立项：PDF→DOCX 文本版导出桥组合根（mdc-pdf 提取 ×
+/// mdc-office-io 写面的唯一装配处——三域纪律组合点）。
+pub mod pdf_export_docx;
+
 /// #289-④：PDF 页面位图视图（pdfium 光栅化 → uniform_list 竖排；
 /// 纯函数面（宽量子化/槽高/位图转换）进 lib 树供单测——CI 无
 /// libpdfium 同样真跑）。

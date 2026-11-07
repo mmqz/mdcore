@@ -85,6 +85,8 @@ pub struct MenuContext {
     pub git_view: bool,
     /// 活动标签是 DOCX（#307「导出为 PDF」门槛——仅 docx 形态提供）。
     pub active_is_docx: bool,
+    /// 活动标签是 PDF（#307 ②「导出为 DOCX」门槛——仅 pdf 形态提供）。
+    pub active_is_pdf: bool,
     /// 最近打开的文件（路径序 = 子菜单条目序；`OpenRecent(usize)` 按此序回查）。
     pub recent_files: Vec<PathBuf>,
 }
@@ -111,6 +113,10 @@ pub enum MenuAction {
     /// #307 阶段①：导出为 PDF（shell `export_active_pdf`——DOCX 经
     /// LibreOffice headless 转 PDF；仅 docx 标签启用）。
     ExportPdf,
+    /// #307 ②功能独立项：导出为 DOCX（shell `export_active_docx`——
+    /// PDF 文本层经 mdc-pdf 引擎提取 + office-io 写面构造；仅 pdf 标签
+    /// 启用；扫描件零文本显式拒（OCR 面 #306））。
+    ExportDocx,
     /// 退出（与标题栏 × 钮同一条 `cx.quit` 既有路径）。
     Quit,
     /// 关于（既有提示横幅 `show_notice` 承载——层 3 可发现性验收项）。
@@ -277,6 +283,9 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
                 MenuEntry::item("file-export-pdf", "导出为 PDF")
                     .act(MenuAction::ExportPdf)
                     .with_enabled(ctx.active_is_docx),
+                MenuEntry::item("file-export-docx", "导出为 DOCX（文本版）")
+                    .act(MenuAction::ExportDocx)
+                    .with_enabled(ctx.active_is_pdf),
                 MenuEntry::Separator,
                 MenuEntry::submenu("最近打开", recent_entries(ctx)),
                 MenuEntry::Separator,
@@ -750,6 +759,7 @@ mod tests {
             left_open: true,
             git_view: false,
             active_is_docx: true,
+            active_is_pdf: false,
             recent_files: vec![
                 PathBuf::from("/tmp/m209-a.md"),
                 PathBuf::from("/tmp/不存在-b.md"),
@@ -768,6 +778,7 @@ mod tests {
             left_open: true,
             git_view: false,
             active_is_docx: false,
+            active_is_pdf: false,
             recent_files: Vec::new(),
         }
     }
@@ -1140,23 +1151,23 @@ mod tests {
         let menus = build_menus(&full_ctx());
         let mut state = MenuBarState::default();
         state.open_menu(0, 0., &menus);
-        // 文件菜单条目：新建0 打开1 打开文件夹2 保存3 另存为4 导出PDF5 |sep6| 最近打开7 |sep8| 退出9
+        // 文件菜单条目：新建0 打开1 打开文件夹2 保存3 另存为4 导出PDF5 导出DOCX6 |sep7| 最近打开8 |sep9| 退出10
         assert_eq!(state.selected, 0);
         state.move_vertical(&menus, true);
         assert_eq!(state.selected, 1);
-        // 步进到子菜单标题（7）再下一步是 9（跳过 8 分隔线）。
+        // 步进到子菜单标题（8）再下一步是 10（跳过 9 分隔线）。
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
-        assert_eq!(state.selected, 7, "停在「最近打开」");
+        assert_eq!(state.selected, 8, "停在「最近打开」");
         state.move_vertical(&menus, true);
-        assert_eq!(state.selected, 9, "跳过分隔线 8 到「退出」");
+        assert_eq!(state.selected, 10, "跳过分隔线 9 到「退出」");
         state.move_vertical(&menus, true);
         assert_eq!(state.selected, 0, "wrap 回首项");
         state.move_vertical(&menus, false);
-        assert_eq!(state.selected, 9, "反向 wrap 回末项（退出）");
+        assert_eq!(state.selected, 10, "反向 wrap 回末项（退出）");
     }
 
     /// Enter 在子菜单标题上：展开子菜单；↓ 移动后再次 Enter 激活子菜单
