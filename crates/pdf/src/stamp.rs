@@ -59,6 +59,17 @@ pub enum StampError {
     Encrypted,
     /// 输入超过 S3-L7 上限（open 家族入口统一——先于一切解析）。
     TooLarge,
+    /// 已签名档守卫（#408：盖章是全量重写，保存即毁签）。默认 fail-closed
+    /// 拒盖；显式放行 [`StampOptions::allow_break_signature`]（放行后
+    /// 签名确实失效——如实发生，调用方负责向用户揭示后果）。
+    ///
+    /// 对比：[`crate::writer_lopdf`] 增量写保签；[`crate::organize`]
+    /// 全量重写但在 organize.rs 头部如实声明「签名档不验签」；stamp
+    /// 此前两者皆无——本门补齐。判定三路（`doc_declares_signature`）：
+    /// /Perms /DocMDP 在位、/AcroForm /SigFlags 置位、字段表含 /FT /Sig，
+    /// 任一命中即拒。宽拒窄放：误拒（结构标记在但无实效签名）由调用
+    /// 方显式放行兑底；误放（真签名档静默毁签）不可逆。
+    SignedDocument,
 }
 
 impl std::fmt::Display for StampError {
@@ -70,6 +81,10 @@ impl std::fmt::Display for StampError {
             StampError::Io(e) => write!(f, "文档操作失败：{e}"),
             StampError::Encrypted => write!(f, "文档已加密（盖章被拒——S5 纪律：加密档零写）"),
             StampError::TooLarge => write!(f, "输入字节超过 S3-L7 上限（盖章被拒）"),
+            StampError::SignedDocument => write!(
+                f,
+                "文档已签名（盖章被拒——全量重写将毁签；确需盖章置 allow_break_signature 显式放行）"
+            ),
         }
     }
 }
@@ -721,12 +736,98 @@ fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32, u8)> {
 pub struct StampOptions {
     /// 透明度 0.0~1.0（公章常见 0.6~0.85）。1.0 = 完全不透明。
     pub opacity: f32,
+    /// #408：显式允许在已签名档上盖章（默认 `false`——fail-closed）。
+    ///
+    /// 盖章是**全量重写**：放行后签名必然失效（如实发生，不是「尽量
+    /// 保留」）。此开关是桌面确认框「仍然盖章（签名将失效）」的引擎
+    /// 侧锚点——调用方必须先把后果呈现给用户，再置位。
+    pub allow_break_signature: bool,
 }
 
 impl Default for StampOptions {
     fn default() -> Self {
-        StampOptions { opacity: 1.0 }
+        StampOptions {
+            opacity: 1.0,
+            allow_break_signature: false,
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// #408 签名门判定
+// ---------------------------------------------------------------------------
+
+/// 把对象解析成字典（直接字典 / 间接引用两形态——AcroForm 与 /Perms
+/// 两形态都常见，与 organize.rs 字段摘除同款宽容）。
+fn as_dict<'a>(doc: &'a Document, obj: &'a Object) -> Option<&'a lopdf::Dictionary> {
+    match obj {
+        Object::Dictionary(d) => Some(d),
+        Object::Reference(id) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(d)) => Some(d),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// 档是否声明了签名纪律（#408 守卫的判定面，三路任一命中即 true）：
+///
+/// 1. catalog `/Perms /DocMDP` 在位（DocMDP 变换 = 签名在场的规范标记）；
+/// 2. `/AcroForm /SigFlags` bit0（SignaturesExist）置位；
+/// 3. `/AcroForm /Fields`（含 /Kids 递归）里有 `/FT /Sig` 域——兑底：
+///    部分生成器不写 SigFlags（`fixtures/signed_sample.pdf` 即是）。
+///
+/// 宽拒窄放：误拒（无实效签名但结构标记在）由调用方显式放行兑底；
+/// 误放（真签名档静默毁签）不可逆。
+fn doc_declares_signature(doc: &Document) -> bool {
+    let Ok(catalog) = doc.catalog() else {
+        return false;
+    };
+    // ① /Perms /DocMDP（直接字典 / 间接引用两形态）。
+    if let Ok(perms) = catalog.get(b"Perms") {
+        if let Some(p) = as_dict(doc, perms) {
+            if p.get(b"DocMDP").is_ok() {
+                return true;
+            }
+        }
+    }
+    // ②③ /AcroForm。
+    let Ok(form_obj) = catalog.get(b"AcroForm") else {
+        return false;
+    };
+    let Some(form) = as_dict(doc, form_obj) else {
+        return false;
+    };
+    if let Ok(Object::Integer(flags)) = form.get(b"SigFlags") {
+        if *flags & 1 != 0 {
+            return true;
+        }
+    }
+    if let Ok(Object::Array(fields)) = form.get(b"Fields") {
+        for f in fields {
+            if field_tree_has_sig(doc, f, 0) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 单个字段（含 /Kids 子树，限深 16 防环）是否为 `/FT /Sig`。
+fn field_tree_has_sig(doc: &Document, node: &Object, depth: u8) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    let Some(d) = as_dict(doc, node) else {
+        return false;
+    };
+    if matches!(d.get(b"FT"), Ok(Object::Name(n)) if n == b"Sig") {
+        return true;
+    }
+    if let Ok(Object::Array(kids)) = d.get(b"Kids") {
+        return kids.iter().any(|k| field_tree_has_sig(doc, k, depth + 1));
+    }
+    false
 }
 
 /// 给 PDF 盖章（把图片画进页面内容流——与正文同等地位，打印必带）。
@@ -754,7 +855,9 @@ pub fn stamp_image(
 /// 1. **S3-L7 输入字节**❶——先于一切解析；
 /// 2. 参数校验（透明度/矩形——纯参数面零解析，不耗预算）；
 /// 3. lopdf 装载 → **S5 加密双拒**（仍加密 || 曾加密——加密档零写）；
-/// 4. 页面定位与写面。
+/// 4. **#408 签名门**——`doc_declares_signature` 命中且未显式放行 →
+///    [`StampError::SignedDocument`]（全量重写毁签，fail-closed）；
+/// 5. 页面定位与写面。
 pub fn stamp_image_with_limits(
     pdf: Vec<u8>,
     page: u32,
@@ -787,6 +890,13 @@ pub fn stamp_image_with_limits(
     //   加密层（安全降级）——文件本体是加密档即拒（v0 S5）。
     if doc.is_encrypted() || doc.was_encrypted() {
         return Err(StampError::Encrypted);
+    }
+    // #408 签名门（S5 之后第二道写前守卫）：盖章 = 全量重写，保存即毁签
+    // ——对比 writer_lopdf 增量写保签。默认拒；显式放行 = 调用方已向
+    // 用户揭示「签名将失效」（与 organize 头部「声明毁签」同哲学，
+    // 但 stamp 此前连声明都没有——本门补齐）。
+    if !opts.allow_break_signature && doc_declares_signature(&doc) {
+        return Err(StampError::SignedDocument);
     }
     let pages = doc.get_pages();
     let page_id = *pages.get(&(page + 1)).ok_or(StampError::BadPage(page))?;
@@ -869,7 +979,10 @@ mod tests {
             ),
             Err(StampError::BadRect)
         );
-        let opts = StampOptions { opacity: 1.5 };
+        let opts = StampOptions {
+            opacity: 1.5,
+            ..Default::default()
+        };
         assert!(matches!(
             stamp_image(vec![], 0, [0.0, 0.0, 10.0, 10.0], &[], opts),
             Err(StampError::BadImage(_))
@@ -881,5 +994,63 @@ mod tests {
         let err = decode_image(b"not an image").unwrap_err();
         assert!(matches!(err, StampError::BadImage(_)));
         assert!(err.to_string().contains("无法识别"));
+    }
+
+    #[test]
+    fn signature_gate_detection_branches() {
+        // #408：doc_declares_signature 三路判定（SigFlags / /FT /Sig /
+        // /Perms /DocMDP）——small.pdf 无签名基座，逐路注入目录标记
+        // 验证（真夹具路径由 pdfh_stamp.rs 验收面覆盖）。
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/small.pdf"),
+        )
+        .expect("small.pdf 缺失");
+
+        // 基座：无任何签名标记。
+        let doc = Document::load_mem(&bytes).unwrap();
+        assert!(!doc_declares_signature(&doc), "基座不应声明签名");
+
+        // ② /AcroForm /SigFlags bit0（SignaturesExist；bit1 顺带在位）。
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        doc.catalog_mut()
+            .unwrap()
+            .set("AcroForm", dictionary! { "SigFlags" => 3 });
+        assert!(doc_declares_signature(&doc), "SigFlags 置位应命中");
+
+        // ③ 字段表 /FT /Sig（SigFlags 缺失的生成器兜底——夹具即此形态）。
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        doc.catalog_mut().unwrap().set(
+            "AcroForm",
+            dictionary! {
+                "Fields" => Object::Array(vec![Object::Dictionary(
+                    dictionary! { "FT" => "Sig" },
+                )]),
+            },
+        );
+        assert!(doc_declares_signature(&doc), "/FT /Sig 字段应命中");
+
+        // ① /Perms /DocMDP（DocMDP 变换在场——P=2 形态）。
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        doc.catalog_mut().unwrap().set(
+            "Perms",
+            dictionary! {
+                "DocMDP" => dictionary! {
+                    "TransformParams" => dictionary! { "P" => 2 },
+                },
+            },
+        );
+        assert!(doc_declares_signature(&doc), "/Perms /DocMDP 应命中");
+
+        // 控制组：/FT /Tx（文本域）不命中——宽拒不等于见 AcroForm 就拒。
+        let mut doc = Document::load_mem(&bytes).unwrap();
+        doc.catalog_mut().unwrap().set(
+            "AcroForm",
+            dictionary! {
+                "Fields" => Object::Array(vec![Object::Dictionary(
+                    dictionary! { "FT" => "Tx" },
+                )]),
+            },
+        );
+        assert!(!doc_declares_signature(&doc), "/FT /Tx 不应命中");
     }
 }
