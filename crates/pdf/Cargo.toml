@@ -17,6 +17,12 @@ description = "第二 Document Model（PDF 面）：页/大纲/标注三层模�
 #   default-features = false——默认特性 chrono-clock / rayon 全关；解析必需
 #   依赖（nom / flate2 / md-5 等）为 lopdf 非可选面随包引入；image 系
 #   （embed_image）保持关闭——与 pdfium-render 面同一零 image 纪律。
+# - sha2 0.11（#308 签名摘要一致性）：**零新增编译单元**——lopdf 0.45
+#   自身已依赖 sha2 ^0.11（见 Cargo.lock），这里只是把它声明为直接依赖
+#   供 signature.rs 计算 ByteRange 覆盖段摘要。caret 语义（非精确 pin）：
+#   mang-shell 嵌套 workspace 的锁文件把 lopdf 面解析到 0.11.1，精确
+#   pin =0.11.0 会与之冲突（PR #310 CI 事故：两个锁文件各持 0.11.0/
+#   0.11.1 时 cargo 拒绝选择）。仅随 engine-lopdf 启用（signature 门）。
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -25,6 +31,7 @@ pdfium-render = { version = "=0.9.4", optional = true, default-features = false,
     "thread_safe",
 ] }
 lopdf = { version = "=0.45.0", optional = true, default-features = false }
+sha2 = { version = "0.11.0", optional = true, default-features = false }
 
 [features]
 default = []
@@ -34,5 +41,6 @@ default = []
 engine-pdfium = ["dep:pdfium-render"]
 # lopdf 标注增量写实装（writer_lopdf 模块 + 标注面测试面）。增量语义
 # （原字节前缀逐位保持）与标准 Annot 对象纪律见 writer_lopdf.rs；
-# 测试环境需 fixtures（spike 取件位，同 engine-pdfium 面）。
-engine-lopdf = ["dep:lopdf"]
+# 测试环境需 fixtures（spike 取件位，同 engine-pdfium 面）。sha2 随本门
+# 启用（signature.rs 摘要一致性，#308——依赖树已在，零编译单元增量）。
+engine-lopdf = ["dep:lopdf", "dep:sha2"]

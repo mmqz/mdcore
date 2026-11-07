@@ -3330,6 +3330,7 @@ dependencies = [
  "pdfium-render",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
 ]
 
 [[package]]

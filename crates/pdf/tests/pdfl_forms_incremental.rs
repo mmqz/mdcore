@@ -220,6 +220,13 @@ fn signed_bid_letter_fill_keeps_signature_valid() {
         "签名应仍结构完整：{:?}",
         s.structural_issue
     );
+    // #308 交叉锁：填表保存后摘要仍一致（digest_matches 把「签名存活」
+    // 从 ByteRange 逐位对比（机制面）升级为摘要比对（密码学语义面））。
+    assert_eq!(
+        s.digest_matches,
+        Some(true),
+        "增量保存产物摘要应一致（messageDigest = 覆盖段实际摘要）"
+    );
     assert_eq!(s.field_name, "Signature1");
     assert_eq!(
         s.byte_range.len(),
