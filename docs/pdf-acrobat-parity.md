@@ -22,7 +22,7 @@
 | 6 | 签名 | 验签/签署/修订完整性 | **部分**（读 + 结构验证 + 已签名保护；不验签不签署） | `signature.rs:589` `read_signatures`、`forms.rs:1761` `has_signed_signature_fields`；测试 `parity_signature_read_and_signed_probe`、`pdfi_signature`(7) | 长尾⑥ |
 | 7 | 盖章 | 图章注释/公章 | **对齐**（注释 Stamp + 内容流图片盖章双路径） | `annotation.rs:198`、`stamp.rs:723` `stamp_image`（PNG/JPEG/透明度）；测试 `pdfh_stamp`(8)、`pdff2_annotate` Stamp 往返 | 长尾⑧ |
 | 8 | 标注 | 高亮/批注/注释管理 | **对齐**（11 kind 读/写/删 + 渲染可见 + Acrobat 互通公共面） | `annotate.rs:514` `PdfAnnotator`、`annotation.rs:153`；测试 `parity_annotation_add_persist_remove`、`pdfd_writer`(16)、`pdff2_annotate`(11) | 长尾⑨ |
-| 9 | 打印 | 页面设置/缩放/注释打印开关 | **缺失**（全仓零打印管线） | 全仓检索：Rust 侧无 print API/命令/菜单；web 仅 `@media print` CSS 且 PDF 面板在打印态隐藏（`web/index.html:30-40`） | **P1（已开 issue）** |
+| 9 | 打印 | 页面设置/缩放/注释打印开关 | **部分**（web 面已通：打印态 PDF 页参与 + 全页渲染 + 一页一纸；引擎面打印渲染原语 #354/PR #373 在审；壳面系统打印对话框仍缺） | web：`web/index.html` `@media print`（`body[data-pdf-active]` 判据）+ `web/src/pdf_view.ts` `printDocument`/`renderAllPages`；测试 `web/tests/pdf_print.py`（8 锁含 `page.pdf()` 真分页主锁）。引擎：#354（PR #373 在审）。壳：mang-shell 打印对话框未接线（#240 任务②） | **P1（#240 分层跟进中）** |
 | 10 | 搜索 | 全文搜索/高亮定位 | **对齐**（无 rect 几何命中） | `command.rs:98` `Command::Search`、`document.rs:396`（限额/折叠/摘录）；web `pdf_view.ts`（计数+几何高亮）；测试 `pdfb_skeleton::search_*`(4) | 长尾② |
 | 11 | OCR | Reader 无此功能 | **对齐（超 Reader）**（tesseract 外进程，中英混合） | `ocr.rs:107` `ocr_page`（200DPI→PGM→tesseract）；测试 `pdff4_ocr`(5，环境门控) | 长尾⑩ |
 | 12 | 文档安全 | 权限位/口令/证书 | **部分**（打开扫描八族 + 限额 + 加密写拒；无解密/权限位模型） | `security.rs`、`security_scan.rs:41` `open_scan`；测试 `pdfe_security`(12)、`pdfb_skeleton::encrypted_assessment_denies_writes…` | 长尾⑤⑦ |
@@ -41,7 +41,7 @@
 | 表单 | `parity_form_fill_save_reopen` | 填中文值 → 增量保存（前缀逐位）→ 重开可见 |
 | 签名 | `parity_signature_read_and_signed_probe` | 读签名（结构/签名人）+ 已签名探针阴阳双态 |
 | 标注 | `parity_annotation_add_persist_remove` | 增→存（增量）→重开可见→删→重开零残留 |
-| 打印 | —（能力缺失，P1 issue 跟进） | — |
+| 打印 | web e2e `pdf_print.py`（#240 层③：CSS 面 + 全页渲染 + `page.pdf()` 真分页 ≥3 页主锁） | 打印态 PDF 页参与（位图即内容）+ 编辑器打印回归锁 + 顶栏死选择器修正 |
 
 ## 缺口清单（分级入册——不静默）
 
@@ -49,7 +49,7 @@
 
 | 缺口 | issue | 说明 |
 |---|---|---|
-| ① 打印管线 0% | #240 | 高频验收面完全缺失。最小闭环建议：复用 `Rasterizer` 渲染输出 → 宿主打印流（页面设置/缩放模式/注释打印开关分层落地）；web 面 `@media print` 当前把 PDF 面板藏掉 |
+| ① 打印管线 | #240 | 高频验收面分层收口中：引擎面打印渲染原语已拆 #354（PR #373 在审）；web 面已交付（#240 层③——打印态 PDF 页参与，`web/tests/pdf_print.py`）；壳面系统打印对话框（Windows/macOS/CUPS）待接。页面设置/缩放模式/注释打印开关随壳面层落地 |
 
 ### 长尾登记（按性价比排序，暂不开单——排期总纲滚动评估）
 

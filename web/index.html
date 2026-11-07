@@ -28,15 +28,39 @@
   html { --ed-font-size: 15px; } /* TR-UI 批 C-1：编辑器字号（Ctrl+=/-/0） */
   .cm-content { font-size: var(--ed-font-size); }
   /* 打印样式（TR-UI 批 C-2）：Ctrl+P = 轻量纸面输出（隐藏一切 chrome，
-     只留文档正文——重排 max-width 适配纸面） */
+     只留文档正文——重排 max-width 适配纸面）。#240 层③修正：原清单的
+     #topbar 是死选择器（真实顶栏 id = #toolbar——修正前顶栏会打进
+     纸面）。 */
   @media print {
     body { background: #fff !important; color: #000 !important; }
-    #topbar, #view-tabs, #format-toolbar, #status-bar, #find-panel, #toc-panel,
-    #docx-export-options, #evidence-panel, #grid-panel, #pdf-panel, #canvas-panel,
+    #toolbar, #view-tabs, #format-toolbar, #status-bar, #find-panel, #toc-panel,
+    #docx-export-options, #evidence-panel, #grid-panel, #canvas-panel,
     #settings-overlay { display: none !important; }
     #editor { max-width: 100% !important; margin: 0 !important; }
     .cm-editor { background: #fff !important; }
     .cm-line.cm-heading { color: #000 !important; }
+    /* #240 层③：PDF 页签激活时打印 PDF 页——打印态不再藏 #pdf-panel。
+       判据 = body[data-pdf-active]（pdf_view.ts setupTabs 维护——tab 激
+       活置位/切走移除，打印 CSS 单一权威）。未激活时维持旧行为（打印
+       编辑器正文）。 */
+    body:not([data-pdf-active]) #pdf-panel { display: none !important; }
+    body[data-pdf-active] #editor { display: none !important; }
+    body[data-pdf-active] #pdf-panel { display: block !important; max-width: none !important;
+                                       margin: 0 !important; padding: 0 !important;
+                                       height: auto !important; }
+    /* 应用 chrome（工具栏/状态行）不进纸面；滚动容器在打印态解禁
+       （overflow:auto 会裁剪打印内容）。 */
+    body[data-pdf-active] #pdf-toolbar, body[data-pdf-active] #pdf-status { display: none !important; }
+    body[data-pdf-active] #pdf-viewport { overflow: visible !important; height: auto !important;
+                                          border: none !important; background: #fff !important; }
+    body[data-pdf-active] #pdf-content { width: auto !important; padding: 0 !important; margin: 0 !important; }
+    /* 页 = 纸：一页一纸（break-after），末页不再续纸；位图即内容
+       （canvas z-index 1 在场），文字层/交互叠加层不进纸面。 */
+    body[data-pdf-active] .pdf-page { margin: 0 !important; border: none !important;
+                                      box-shadow: none !important; break-after: page; }
+    body[data-pdf-active] .pdf-page:last-child { break-after: auto; }
+    body[data-pdf-active] .pdf-page .textLayer,
+    body[data-pdf-active] .pdf-page .pdf-overlay { display: none !important; }
   }
   /* 帮助面板（TR-UI 批 C-3）：快捷键速查 */
   #help-overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.38);

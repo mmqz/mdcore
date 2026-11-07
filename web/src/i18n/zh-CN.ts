@@ -182,6 +182,11 @@ export const zhCN: Dict = {
   'pdf.open': '打开 PDF',
   'pdf.openTitle': '在「PDF」页签打开文档（pdf.js 显示 + wasm 会话模型）',
   'pdf.saveAnnotated': '保存批注 PDF',
+  // #240 层③：打印面（web 打印态不再藏 PDF 面板）
+  'pdf.print': '打印',
+  'pdf.printTitle': '全页渲染后打印（PDF 面板参与打印）',
+  'pdf.printNoDoc': '请先打开 PDF（当前无可打印内容）',
+  'pdf.printPartial': '打印可能缺页：已渲染 {done}/{total} 页',
   'pdf.zoomOutTitle': '缩小',
   'pdf.zoomInTitle': '放大',
   'pdf.fitWidth': '适应宽度',

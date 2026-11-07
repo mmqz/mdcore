@@ -186,6 +186,11 @@ export const en = {
   'pdf.open': 'open .pdf',
   'pdf.openTitle': 'Open a PDF in this panel (pdf.js display + wasm session model)',
   'pdf.saveAnnotated': 'save annotated.pdf',
+  // #240 层③：打印面（web 打印态不再藏 PDF 面板）
+  'pdf.print': 'print',
+  'pdf.printTitle': 'Render all pages then print (PDF panel participates in print)',
+  'pdf.printNoDoc': 'open a .pdf first (nothing to print)',
+  'pdf.printPartial': 'print may miss pages: {done}/{total} rendered',
   'pdf.zoomOutTitle': 'zoom out',
   'pdf.zoomInTitle': 'zoom in',
   'pdf.fitWidth': 'fit width',
