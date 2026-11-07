@@ -24,7 +24,7 @@
 //! | 尾注条目 | endnotes.xml `w:endnote`（同上） | `endnotes` | 相等 |
 //! | 批注条目 | comments.xml `w:comment` | `comments` | 相等 |
 //! | 脚注引用位 | body 直接段内 `w:footnoteReference`（排 txbx/Fallback） | Σ `footnote_refs` | 相等 |
-//! | 修订插入 run | `w:ins` 内 `w:r`（排 tc/sdt/del/Fallback/hyperlink/move 容器） | Σ `revision_inserted` run | 相等 |
+//! | 修订插入 run | `w:ins` 内 `w:r`（排 tc/sdt/del/Fallback/move 容器；#343 修复后 hyperlink 容器计入） | Σ `revision_inserted` run | 相等 |
 //!
 //! # 已知损失清单（GT 公式扣除项——每条机制背书 + 可见性计数）
 //!
@@ -52,9 +52,10 @@
 //!    sectPr 引用引擎不解析（段落内容不受影响）。语料 1 件
 //!    （strict-sample）。
 //! 8. **修订面排除容器**（非损失——语义正确面）：`w:del` 内
-//!    delText 不提取（#17）；hyperlink 内嵌 `w:ins` 的 run 引擎整体
-//!    丢（review-for-word「lease」一词——**内容损失缺陷**，GT 排除
-//!    钉定现行為）；moveFrom/moveTo 容器内 ins 不标记（Tika-792）。
+//!    delText 不提取（#17）；moveFrom/moveTo 容器内 ins 不标记
+//!    （Tika-792）。（历史：hyperlink 内嵌 `w:ins` 的 run 整体丢
+//!    ——#318 D3 缺陷，#343 修复后从排除项移除，修订插入 run 面
+//!    GT 公式同步收紧计入。）
 //!
 //! # 分类锚点（语料冻结态——重钉须显式）
 //!
@@ -154,7 +155,6 @@ struct Ctx {
     in_fallback: bool,
     in_ins: bool,
     in_del: bool,
-    in_hyperlink: bool,
     in_move: bool,
     in_ac: bool,
     in_wgp: bool,
@@ -416,7 +416,6 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                             && !top.in_tc
                             && !top.in_bsdt
                             && !top.in_del
-                            && !top.in_hyperlink
                             && !top.in_move
                             && !top.in_fallback
                         {
@@ -463,7 +462,6 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                     }
                     b"ins" => c.in_ins = true,
                     b"del" => c.in_del = true,
-                    b"hyperlink" => c.in_hyperlink = true,
                     b"moveFrom" | b"moveTo" | b"moveFromRangeStart" | b"moveToRangeStart" => {
                         c.in_move = true
                     }
@@ -550,7 +548,6 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                             && !top.in_tc
                             && !top.in_bsdt
                             && !top.in_del
-                            && !top.in_hyperlink
                             && !top.in_move
                             && !top.in_fallback
                         {
@@ -1137,6 +1134,18 @@ fn five_category_pinned_anchors() {
         "docx4j/revisions_editor_review_review-for-word.docx",
     ));
     assert_eq!(m.comments, 5, "review-for-word 批注条目");
+    // #343（#318 D3）修复重钉：hyperlink 内嵌 ins 的 run 计入修订插入
+    // 面（「lease」一词——原先 GT 排除 + 模型静默丢 = 17，两侧同步
+    // 收紧后 = 18，含 hyperlink 内 id=45 的 1 run）。
+    let g = gt_one("docx4j/revisions_editor_review_review-for-word.docx");
+    assert_eq!(
+        m.ins_runs, 18,
+        "review-for-word 修订插入 run（含 hyperlink 内）"
+    );
+    assert_eq!(
+        g.ins_runs, 18,
+        "review-for-word GT 同步计入 hyperlink 内 ins"
+    );
 
     // ---- 结构面补充钉定 ----
     // 节：cr065（7 sectPr − 2 空属性丢[已知损失 #6] = 5 节）。

@@ -3385,6 +3385,33 @@ fn carry_indent(ind: &docx_rs::Indent) -> ParagraphIndent {
     }
 }
 
+/// #17 + #343（#318 D3）：`w:ins` 子序提取——段落级与超链接内
+/// 共用的单一语义源：`InsertChild::Run` = 当前生效文本，正常提取 +
+/// `revision_inserted` 标记（去向经 `emit` 回调由调用方定——超链接内
+/// 追加目标挂接）；内嵌 `w:del`（删除容器在插入容器内——罕见）只
+/// 计 delText、内容不提取（与段落级 `Delete` 分支同一语义）。域机器
+/// 段落作用域延续（域可跨 ins 边界——状态机由调用方持有透传）。
+fn extract_insert_children(
+    ins: &docx_rs::Insert,
+    fm: &mut FieldMachine,
+    del_text_runs: &mut usize,
+    emit: &mut dyn FnMut(RunData),
+) {
+    for c in &ins.children {
+        if let docx_rs::InsertChild::Run(r) = c {
+            *del_text_runs += count_del_text(r);
+            emit(extract_run(r, fm, true));
+        }
+        if let docx_rs::InsertChild::Delete(del) = c {
+            for dc in &del.children {
+                if let docx_rs::DeleteChild::Run(r) = dc {
+                    *del_text_runs += count_del_text(r);
+                }
+            }
+        }
+    }
+}
+
 /// 段落提取：样式透传 + run 序（Run + Hyperlink 内 run[目标联接]）+
 /// 编号/缩进承载（r4-t3）+ 块源定值（P2-1 `source` 参数）。
 #[allow(clippy::too_many_arguments)]
@@ -3426,13 +3453,28 @@ fn extract_paragraph(
                 runs.push(extract_run(r, &mut fm, false))
             }
             // 超链接：内文本保留（run 边界保持）+ 目标联接（docx-r1）。
+            // #343（#318 D3）：内嵌 `w:ins` 与段落级同语义提取（run 带
+            // `revision_inserted` 标记 + 目标挂接——review-for-word
+            // 「lease」实锚，原先整支静默丢）。
             docx_rs::ParagraphChild::Hyperlink(h) => {
                 let target = resolve_hyperlink(h, table, part, strict, warnings)?;
                 for c in &h.children {
-                    if let docx_rs::ParagraphChild::Run(r) = c {
-                        let mut rd = extract_run(r, &mut fm, false);
-                        rd.hyperlink = Some(target.clone());
-                        runs.push(rd);
+                    match c {
+                        docx_rs::ParagraphChild::Run(r) => {
+                            let mut rd = extract_run(r, &mut fm, false);
+                            rd.hyperlink = Some(target.clone());
+                            runs.push(rd);
+                        }
+                        docx_rs::ParagraphChild::Insert(ins) => extract_insert_children(
+                            ins,
+                            &mut fm,
+                            &mut del_text_runs,
+                            &mut |mut rd| {
+                                rd.hyperlink = Some(target.clone());
+                                runs.push(rd);
+                            },
+                        ),
+                        _ => {}
                     }
                 }
             }
@@ -3440,21 +3482,7 @@ fn extract_paragraph(
             // revision_inserted 标记（消费方可辨修订通道）。域机器同段
             // 作用域延续（域可跨 ins 边界）。
             docx_rs::ParagraphChild::Insert(ins) => {
-                for c in &ins.children {
-                    if let docx_rs::InsertChild::Run(r) = c {
-                        del_text_runs += count_del_text(r);
-                        runs.push(extract_run(r, &mut fm, true));
-                    }
-                    // ins 内嵌套 w:del（删除容器在插入容器内——罕见）：
-                    // delText 计数、内容不提取（同一语义）。
-                    if let docx_rs::InsertChild::Delete(del) = c {
-                        for dc in &del.children {
-                            if let docx_rs::DeleteChild::Run(r) = dc {
-                                del_text_runs += count_del_text(r);
-                            }
-                        }
-                    }
-                }
+                extract_insert_children(ins, &mut fm, &mut del_text_runs, &mut |rd| runs.push(rd));
             }
             // #17：修订删除容器（w:del）——内容整体不提取（已删除）；
             // delText 计数入告警。
