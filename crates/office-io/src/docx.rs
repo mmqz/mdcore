@@ -4761,6 +4761,31 @@ impl LineSpacingSpec {
     }
 }
 
+/// 段落对齐（`w:jc`——#309② 写面薄片：行距/对齐可控）。
+///
+/// 四值 = 中标书段落对齐的实用全集（OOXML `w:jc` 词汇表还有
+/// distribute/start/end 等——写面不暴露，登记最小面）；`Justify`
+/// 映射 `both`（OOXML 两端对齐值——Word UI「两端对齐」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParaAlign {
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
+impl ParaAlign {
+    /// 引擎枚举映射（docx-rs `AlignmentType`）。
+    fn to_engine(self) -> docx_rs::AlignmentType {
+        match self {
+            ParaAlign::Left => docx_rs::AlignmentType::Left,
+            ParaAlign::Center => docx_rs::AlignmentType::Center,
+            ParaAlign::Right => docx_rs::AlignmentType::Right,
+            ParaAlign::Justify => docx_rs::AlignmentType::Both,
+        }
+    }
+}
+
 /// 正文默认排版（docDefaults rPr 面——**公开 API 单位换算**：
 /// `size_half_points` 半磅[10pt=20；#8 实测「全文 10pt」= 引擎缺省
 /// 面的修复入口]；字体三槽 ascii/east_asia/cs——中文标书场景
@@ -5436,6 +5461,66 @@ impl DocxWriter {
         let p = specs_to_paragraph(runs);
         self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
         self.count_specs(1, runs);
+    }
+
+    /// **版面段**（#309② 写面薄片——对齐/行距/段距可控）：
+    /// `w:jc`（`align`）+ `w:spacing`（`spacing`——复用读面
+    /// [`LineSpacingSpec`] 类型，读写对称 [`PageGeometry`] 先例；
+    /// `multiple()`/`exact_twips()` 构造器直用）。两参数独立可选
+    /// ——`None` 面零发射（与既有 `paragraph()` 产物逐字节一致）。
+    ///
+    /// 校验（V9 同族——正值域粘性拒）：`line < 0` 拒（OOXML 值域
+    /// 非负；`multiple(f)` 构造器恒产正值，直构裸结构才可能违规）。
+    /// r4-t2 计数：1 段 + run 面（与 `paragraph()` 同判据）。
+    pub fn paragraph_layout(
+        &mut self,
+        runs: &[RunSpec],
+        align: Option<ParaAlign>,
+        spacing: Option<LineSpacingSpec>,
+    ) {
+        if let Some(sp) = &spacing {
+            if sp.line.is_some_and(|l| l < 0) && self.validation_error.is_none() {
+                self.validation_error = Some(format!(
+                    "paragraph_layout line spacing negative: {sp:?} (twips/倍数×240 均非负)"
+                ));
+            }
+        }
+        let mut p = specs_to_paragraph(runs);
+        if let Some(a) = align {
+            p = p.align(a.to_engine());
+        }
+        if let Some(sp) = &spacing {
+            let mut ls = docx_rs::LineSpacing::new();
+            if let Some(line) = sp.line {
+                ls = ls.line(line);
+            }
+            if let Some(rule) = sp.line_rule {
+                ls = ls.line_rule(match rule {
+                    LineRuleSpec::Auto => docx_rs::LineSpacingType::Auto,
+                    LineRuleSpec::AtLeast => docx_rs::LineSpacingType::AtLeast,
+                    LineRuleSpec::Exact => docx_rs::LineSpacingType::Exact,
+                });
+            }
+            if let Some(before) = sp.before {
+                ls = ls.before(before);
+            }
+            if let Some(after) = sp.after {
+                ls = ls.after(after);
+            }
+            p = p.line_spacing(ls);
+        }
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.count_specs(1, runs);
+    }
+
+    /// 对齐段糖衣（`paragraph_layout(runs, Some(align), None)`）。
+    pub fn paragraph_aligned(&mut self, runs: &[RunSpec], align: ParaAlign) {
+        self.paragraph_layout(runs, Some(align), None);
+    }
+
+    /// 行距段糖衣（`paragraph_layout(runs, None, Some(spacing))`）。
+    pub fn paragraph_spaced(&mut self, runs: &[RunSpec], spacing: LineSpacingSpec) {
+        self.paragraph_layout(runs, None, Some(spacing));
     }
 
     /// **书签定义段**（office-g Phase 2——生产侧：被链接的目标）。
