@@ -64,11 +64,9 @@ use mdc_pdf::writer::{AnnotationWriter, IncrementalSave, MockWriter};
 // ---------------------------------------------------------------------------
 
 fn geometry() -> PageGeometry {
-    PageGeometry {
-        width_pt: 612.0,
-        height_pt: 792.0,
-        rotation: Rotation::Deg0,
-    }
+    // #304：PageGeometry 加 media_box/crop_box 后改用 simple() 构造器
+    // （media_box = (0,0,w,h)，crop_box = None = 显示域取 MediaBox）
+    PageGeometry::simple(612.0, 792.0, Rotation::Deg0)
 }
 
 fn session(page_count: u32) -> PdfSession {
