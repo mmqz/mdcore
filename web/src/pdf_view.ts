@@ -29,6 +29,19 @@
 //
 //   所有 wasm 调用包裹：抛出的 JSON 串解析为 typed {ok:false, code,
 //   message}——本模块任何路径不向顶层抛出。
+//
+// #240 层③——打印面（web 打印态不再藏 PDF 面板）：
+//
+//   打印 CSS（index.html @media print）键于 body[data-pdf-active]
+//   （setupTabs 维护）：PDF 页签激活时打印 PDF 页（canvas 位图 + 一页
+//   一纸 break-after；工具栏/状态行/文字层/交互叠加层不进纸面），未激
+//   活时维持旧行为（打印编辑器正文）。
+//
+//   全页渲染：懒渲染/远页 canvas 释放面向**屏幕**——打印需要每页位图
+//   在场。打印按钮（#pdf-print-btn）= renderAllPages() → window.print()
+//   → afterprint 恢复懒态（主路径，全保真）。Ctrl+P（beforeprint）无法
+//   await（浏览器同步进预览快照）——best-effort 启动全页渲染，未完成
+//   的页可能空白（诚实登记；打印按钮路径无此限制）。
 
 import { wasmBoot } from './wasm_boot.js';
 import { mount_surface_guide } from './empty_state.js';
@@ -406,6 +419,15 @@ declare global {
     __pdfSelection: () => string;
     /** evidence-jump 钩子记录（后续阶段接真数据——本阶段钩子面）。 */
     __pdfJumpLog: () => number[];
+    /** #240 层③：打印态面观测（CSS 判据 + 渲染完备度——e2e 用）。 */
+    __pdfPrintInfo: () => {
+      pdfActive: boolean;
+      pages: number;
+      rendered: number;
+    };
+    /** #240 层③：打印准备（全页渲染——打印按钮同一路径；返回渲染
+     * 完成数，不调 window.print()——测试面/宿主可单独驱动）。 */
+    __pdfPrintPrepare: () => Promise<number>;
   }
 }
 
@@ -632,11 +654,15 @@ export class PdfViewUI {
     saveBtn.id = 'pdf-save-btn';
     saveBtn.textContent = t('pdf.saveAnnotated');
 
+    // #240 层③：打印按钮（全页渲染 → window.print()——懒渲染面向
+    // 屏幕，打印需要每页位图在场；与探针 __pdfPrintPrepare 同一路径）。
+    const printBtn = mkBtn('pdf-print-btn', t('pdf.print'), t('pdf.printTitle'));
+
     toolbar.append(
       openBtn, fileInput, pageLabel,
       zoomOut, zoomLabel, zoomIn, zoomFit,
       searchInput, searchPrev, searchNext, searchCount,
-      modeSelect, inkColor, inkWidth, saveBtn,
+      modeSelect, inkColor, inkWidth, saveBtn, printBtn,
     );
 
     const viewport = document.createElement('div');
@@ -717,6 +743,27 @@ export class PdfViewUI {
       void this.save();
     });
 
+    // #240 层③：打印按钮（全页渲染 → window.print()）。
+    document.getElementById('pdf-print-btn')?.addEventListener('click', () => {
+      void this.printDocument();
+    });
+
+    // #240 层③：Ctrl+P 路径（beforeprint）——best-effort 启动全页渲染
+    // （无法 await：浏览器同步进入预览快照——未完成的页可能空白；
+    // 打印按钮路径无此限制，诚实登记见模块文档）。afterprint 恢复
+    // 懒渲染纪律（远页位图重释放——屏幕内存面回归）。
+    window.addEventListener('beforeprint', () => {
+      if (document.body.dataset.pdfActive !== undefined && this.doc) {
+        void this.renderAllPages();
+      }
+    });
+    window.addEventListener('afterprint', () => {
+      if (document.body.dataset.pdfActive !== undefined) {
+        this.scheduleRenderVisible();
+        this.clearFarCanvases(); // 恢复「只保视口附近位图」的内存纪律
+      }
+    });
+
     // 滚动：页码跟踪 + 远页释放（rAF 节流）
     this.viewportEl.addEventListener('scroll', () => {
       if (this.scrollRafPending) return;
@@ -794,7 +841,9 @@ export class PdfViewUI {
     });
   }
 
-  /** 视图 tab（doc/grid 既有逻辑不动——本模块只追加 pdf 面显隐）。 */
+  /** 视图 tab（doc/grid 既有逻辑不动——本模块只追加 pdf 面显隐）。
+   * #240 层③：showPdf/hidePdf 同时维护 body[data-pdf-active]——
+   * 打印 CSS 的单一判据（打印态打印 PDF 页而非藏面板）。 */
   private setupTabs(): void {
     const pdfTab = document.getElementById('tab-pdf');
     const docTab = document.getElementById('tab-doc');
@@ -809,6 +858,7 @@ export class PdfViewUI {
       editor.style.display = 'none';
       gridPanel.style.display = 'none';
       this.panel.style.display = 'block';
+      document.body.dataset.pdfActive = '1'; // #240 层③：打印态判据
       if (this.defaultFitPending) {
         // 打开时面板隐藏（clientWidth 0）→ fit 宽度挂起，此时补算
         this.defaultFitPending = false;
@@ -819,6 +869,7 @@ export class PdfViewUI {
     const hidePdf = (): void => {
       pdfTab.classList.remove('active');
       this.panel.style.display = 'none';
+      delete document.body.dataset.pdfActive; // #240 层③：打印态判据
     };
     pdfTab.addEventListener('click', showPdf);
     docTab.addEventListener('click', hidePdf); // 叠加监听——不动既有处理器
@@ -1377,6 +1428,39 @@ export class PdfViewUI {
     const next = prev.catch(() => {}).then(() => this.doRenderPage(i));
     this.renderChain.set(i, next);
     return next;
+  }
+
+  // -----------------------------------------------------------------------
+  // #240 层③：打印面（全页渲染 → window.print → 懒态恢复）
+  // -----------------------------------------------------------------------
+
+  /** 打印按钮路径：全页渲染（懒渲染面向屏幕——打印需要每页位图在
+   * 场）→ window.print()（打印 CSS 键于 body[data-pdf-active]）。
+   * afterprint 监听器负责懒态恢复（见 installHandlers）。 */
+  private async printDocument(): Promise<void> {
+    if (!this.doc || this.pages.length === 0) {
+      this.showStatus(t('pdf.printNoDoc'), 'warn');
+      return;
+    }
+    const rendered = await this.renderAllPages();
+    if (rendered < this.pages.length) {
+      // 渲染链有页未完成（取消/失败）——如实提示不静默（打印可能缺页）。
+      this.showStatus(
+        t('pdf.printPartial', { done: rendered, total: this.pages.length }),
+        'warn',
+      );
+    }
+    window.print();
+  }
+
+  /** 全页渲染（顺序走既有 renderPage 链——已渲染/缓存命中的页零成本；
+   * 与探针 __pdfPrintPrepare / beforeprint best-effort 同一路径）。
+   * 返回渲染完成数。 */
+  private async renderAllPages(): Promise<number> {
+    for (let i = 0; i < this.pages.length; i++) {
+      await this.renderPage(i);
+    }
+    return this.pages.filter((st) => st.rendered).length;
   }
 
   /** 实际渲染（缓存命中贴位图；否则 pdf.js render + 位图入缓存）。
@@ -2022,6 +2106,10 @@ export class PdfViewUI {
 
   private syncButtons(): void {
     this.saveBtn.disabled = this.doc === null || this.session === null;
+    // #240 层③：打印只需显示面（display-only 降级也可打印——位图
+    // 即内容，不依赖 wasm 会话）。
+    const printBtn = document.getElementById('pdf-print-btn') as HTMLButtonElement | null;
+    if (printBtn) printBtn.disabled = this.doc === null;
   }
 
   // -----------------------------------------------------------------------
@@ -2082,6 +2170,17 @@ export class PdfViewUI {
     window.__pdfScale = () => this.scale;
     window.__pdfSelection = () => window.getSelection()?.toString() ?? '';
     window.__pdfJumpLog = () => [...this.jumpLog];
+    // #240 层③：打印态面探针（CSS 判据 + 渲染完备度；prepare =
+    // 打印按钮同一路径，不调 window.print()——测试/宿主可单独驱动）。
+    window.__pdfPrintInfo = () => ({
+      pdfActive: document.body.dataset.pdfActive !== undefined,
+      pages: this.pages.length,
+      rendered: this.pages.filter((st) => st.rendered).length,
+    });
+    window.__pdfPrintPrepare = async () => {
+      if (!this.doc) return 0;
+      return this.renderAllPages();
+    };
 
     // 证据跳转钩子（evidence_panel 的 evidence-jump 事件——后续阶段接真
     // 数据；本阶段记录 + 状态行提示）。

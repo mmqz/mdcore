@@ -191,6 +191,15 @@ TOC（fixed 右侧零布局侵入 + 层级缩进 + 文本定位跳转）；查�
 撤全）；帮助面板（F1，12 行速查表）；字号 Ctrl+=/-/0（clamp
 11-28 + localStorage）；`@media print`（chrome 全隐只留正文）。
 
+**打印（#240 层③）**：PDF 页签激活时打印 PDF 页——`body[data-pdf-active]`
+判据（`pdf_view.ts` setupTabs 维护）：面板可见 + 一页一纸（`break-after:
+page`）+ 位图即内容（文字层/交互叠加层不进纸面）；工具条「打印」按钮 =
+全页渲染（懒渲染面向屏幕——打印需每页位图在场）→ `window.print()` →
+afterprint 恢复懒态。Ctrl+P 为 best-effort（beforeprint 无法 await，未
+完成渲染的页可能空白——按钮路径无此限制）。未激活 PDF 时维持旧行为
+（打印编辑器正文）。测试 `tests/pdf_print.py`（8 锁——含 `page.pdf()`
+真实打印管线分页主锁）。
+
 ### 8.5 测试面
 
 `editor_toolbar.py`（26 checks）+ `hostile_ui.py`（8 checks：
