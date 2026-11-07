@@ -149,9 +149,15 @@ interface EventLogEntry {
 // ---------------------------------------------------------------------------
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-/** 主画布逻辑尺寸（px，1:1 无缩放——bench 口径）。 */
-const SVG_W = 2400;
-const SVG_H = 1600;
+/** 相机缩放钳制（#367——tldraw/Excalidraw 同量级）。 */
+const CAM_Z_MIN = 0.1;
+const CAM_Z_MAX = 8;
+/** 适配视图的包围盒外扩比例（#367）。 */
+const CAM_FIT_PAD = 0.05;
+/** 滚轮缩放步长（指数曲率：factor = exp(±delta×k)—— deltaY ±100 ≈ ×1.1）。 */
+const CAM_WHEEL_K = 0.001;
+/** 滚轮单事件最大 |deltaY| 钦定（触控板高分辨率事件量级大——防一次跳多级）。 */
+const CAM_WHEEL_MAX_DELTA = 200;
 /** AI 镜像 viewBox（等比缩放只读概览）。 */
 const AI_VIEW_W = 1200;
 const AI_VIEW_H = 800;
@@ -241,7 +247,15 @@ declare global {
       redoDepth: number;
       /** WasmCanvas ctor 在场（false = e2e SKIP 门）。 */
       wasm: boolean;
+      /** #367 相机态 + 双计数器（camSeq 增而 renderSeq 恒定 = 卸载命题）。 */
+      camera: { x: number; y: number; z: number };
+      camSeq: number;
+      renderSeq: number;
     };
+    /** #367 相机只读探针（独立于模型面——无 wasm 也可测）。 */
+    __canvasCamera: () =>
+      | { ok: true; x: number; y: number; z: number; camSeq: number; renderSeq: number }
+      | CvFail;
     /** objects_json 解析透传（side 缺省 main；'ai' = AI 端实例）。 */
     __canvasObjects: (side?: 'main' | 'ai') => CanvasObjectJ[];
     /** 程序化加节点（测试/宿主面——默认几何 + label）。 */
@@ -342,6 +356,19 @@ export class CanvasViewUI {
   /** 行内编辑位关联对象（单编辑位）。 */
   private editingId: string | null = null;
 
+  // 相机态（#367——视图层临时态，不入模型；同滚动位置语义）。
+  // 卸载命题：applyCamera = 恰一次 setAttribute，零 renderObject、
+  // 零对象 DOM 变更——camSeq/renderSeq 两计数器使其可观测可断言。
+  private cam = { x: 0, y: 0, z: 1 };
+  private cameraEl: SVGGElement | null = null;
+  private zoomLabel: HTMLElement | null = null;
+  /** 相机变更计数（每次 applyCamera 递增）。 */
+  private camSeq = 0;
+  /** 对象渲染计数（renderObject 入口递增——相机不动它）。 */
+  private renderSeq = 0;
+  /** 背景平移拖拽态（null = 非平移中）。 */
+  private pan: { lastX: number; lastY: number } | null = null;
+
   // 事件日志（探针面）+ 快照
   private readonly eventLog: EventLogEntry[] = [];
   private eventSeq = 0;
@@ -402,12 +429,23 @@ export class CanvasViewUI {
     const restoreBtn = mkBtn('canvas-restore-btn', t('cv.restore'), t('cv.restoreTitle'));
     const clearBtn = mkBtn('canvas-clear-btn', t('cv.clear'), t('cv.clearTitle'));
 
+    // #367 相机按钮组：缩小 / 百分比指示 / 放大 / 适配 / 复位。
+    const zoomOutBtn = mkBtn('canvas-zoom-out-btn', t('cv.zoomOut'), t('cv.zoomOutTitle'));
+    const zoomInBtn = mkBtn('canvas-zoom-in-btn', t('cv.zoomIn'), t('cv.zoomInTitle'));
+    const fitBtn = mkBtn('canvas-fit-btn', t('cv.fitView'), t('cv.fitViewTitle'));
+    const camResetBtn = mkBtn('canvas-cam-reset-btn', t('cv.resetView'), t('cv.resetViewTitle'));
+    const zoomLabel = document.createElement('span');
+    zoomLabel.id = 'canvas-zoom';
+    zoomLabel.textContent = '100%';
+    this.zoomLabel = zoomLabel;
+
     const status = document.createElement('span');
     status.id = 'canvas-status';
 
     toolbar.append(
       addNodeBtn, edgeModeBtn, groupBtn, ungroupBtn, undoBtn, redoBtn,
-      aiAddBtn, saveBtn, restoreBtn, clearBtn, status,
+      aiAddBtn, saveBtn, restoreBtn, clearBtn,
+      zoomOutBtn, zoomLabel, zoomInBtn, fitBtn, camResetBtn, status,
     );
 
     // 双面板布局：主画布（可编辑）+ AI 端只读镜像（协同演示）
@@ -420,16 +458,24 @@ export class CanvasViewUI {
 
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.id = 'canvas-svg';
-    svg.setAttribute('width', `${SVG_W}`);
-    svg.setAttribute('height', `${SVG_H}`);
+    // #367 相机模型：svg 填充容器（无固定尺寸——无限画布 viewport），
+    // 导航交给相机层（滚轮缩放/背景平移），滚动条退役。
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    // 相机层（#367——tldraw tl-html-layer 同构）：三层唯一包裹者，
+    // 相机移动 = 本元素恰一次 transform 写入，对象 DOM 零变更。
+    const camera = document.createElementNS(SVG_NS, 'g');
+    camera.id = 'cv-camera';
     const lg = document.createElementNS(SVG_NS, 'g');
     lg.id = 'cv-l-groups';
     const le = document.createElementNS(SVG_NS, 'g');
     le.id = 'cv-l-edges';
     const ln = document.createElementNS(SVG_NS, 'g');
     ln.id = 'cv-l-nodes';
-    svg.append(lg, le, ln);
+    camera.append(lg, le, ln);
+    svg.append(camera);
     scroll.appendChild(svg);
+    this.cameraEl = camera;
     // #3 UI 批 E：空态引导卡片（对象计数零 = 显示——svg 底盘仍在）。
     this.guideEl = mount_surface_guide(scroll, 'canvas-guide', {
       icon: 'M7.5 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z M13.5 13.5h7v7h-7z M4 21l7.5-7.5',
@@ -472,6 +518,11 @@ export class CanvasViewUI {
       aiAddBtn, saveBtn, restoreBtn, clearBtn, aiAddBtn2]) {
       this.buttons.set(b.id, b);
       b.disabled = this.ctor === null; // wasm 缺位 = 显示面可用、动作面禁用
+    }
+    // #367 相机按钮：注册进 buttons 供 wireToolbar，但**不随 wasm 缺位
+    // 禁用**——相机是纯视图层，bridge_absent 配置下缩放/平移照常可用。
+    for (const b of [zoomOutBtn, zoomInBtn, fitBtn, camResetBtn]) {
+      this.buttons.set(b.id, b);
     }
   }
 
@@ -818,8 +869,17 @@ export class CanvasViewUI {
     this.els.delete(id);
   }
 
-  /** 单对象渲染（缓存 → DOM；缺对象 = DOM 移除）。 */
+  /** 以视口中心为锚的缩放（按钮路径——复用 zoomAt 锥制/幂等）。 */
+  private zoomCenter(factor: number): void {
+    const rect = this.svg?.getBoundingClientRect();
+    if (!rect) return;
+    this.zoomAt(rect.width / 2, rect.height / 2, factor);
+  }
+
+  /** 单对象渲染（缓存 → DOM；缺对象 = DOM 移除）。renderSeq 随入口
+   * 递增（#367——与 camSeq 分离：相机变更不计入渲染计数）。 */
   private renderObject(id: string): void {
+    this.renderSeq += 1;
     const obj = this.objects.get(id);
     if (!obj) {
       this.removeEl(id);
@@ -986,10 +1046,93 @@ export class CanvasViewUI {
   }
 
   // -----------------------------------------------------------------------
+  // 相机层（#367——视图态；卸载命题：applyCamera 零对象渲染）
+  // -----------------------------------------------------------------------
+
+  /** 应用相机：**恰一次** transform 写入（tldraw tl-html-layer 同构）。
+   * 不触碰对象 DOM、不调 renderObject——camSeq 递增、renderSeq 不动。 */
+  private applyCamera(): void {
+    this.cameraEl?.setAttribute(
+      'transform',
+      `translate(${this.cam.x},${this.cam.y}) scale(${this.cam.z})`,
+    );
+    this.camSeq += 1;
+    if (this.zoomLabel) {
+      this.zoomLabel.textContent = `${Math.round(this.cam.z * 100)}%`;
+    }
+  }
+
+  /** 世界坐标 → 视口坐标（svg 原点系——相机线性变换）。 */
+  private worldToView(x: number, y: number): { x: number; y: number } {
+    return { x: x * this.cam.z + this.cam.x, y: y * this.cam.z + this.cam.y };
+  }
+
+  /** 以视口锚点为中心缩放：锚下世界坐标保持不动（光标跟随缩放）。 */
+  private zoomAt(viewX: number, viewY: number, factor: number): void {
+    const z0 = this.cam.z;
+    const z1 = Math.min(CAM_Z_MAX, Math.max(CAM_Z_MIN, z0 * factor));
+    if (z1 === z0) return; // 钳制边界零变更（幂等——camSeq 不虚增）
+    // 反解锚点世界坐标（z0/旧 pan），再按 z1 复位 pan 使锚点回原视口位。
+    const wx = (viewX - this.cam.x) / z0;
+    const wy = (viewY - this.cam.y) / z0;
+    this.cam.z = z1;
+    this.cam.x = viewX - wx * z1;
+    this.cam.y = viewY - wy * z1;
+    this.applyCamera();
+  }
+
+  /** 屏幕像素平移（拖拽增量直加——无缩放语义）。 */
+  private panBy(dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    this.cam.x += dx;
+    this.cam.y += dy;
+    this.applyCamera();
+  }
+
+  /** 适配视图：对象包围盒外扩 5% 居中（空画布 = 复位语义）。 */
+  private fitView(): void {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const o of this.objects.values()) {
+      if (o.kind === 'node') {
+        x0 = Math.min(x0, o.x); y0 = Math.min(y0, o.y);
+        x1 = Math.max(x1, o.x + o.w); y1 = Math.max(y1, o.y + o.h);
+      } else if (o.kind === 'group') {
+        const b = this.groupBBox(o);
+        if (b) {
+          x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+          x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+        }
+      }
+    }
+    const vw = this.svg?.clientWidth ?? 0;
+    const vh = this.svg?.clientHeight ?? 0;
+    if (!Number.isFinite(x0) || vw <= 0 || vh <= 0) {
+      this.resetCamera();
+      return;
+    }
+    const pad = 1 + CAM_FIT_PAD;
+    const z = Math.min(
+      CAM_Z_MAX,
+      Math.max(CAM_Z_MIN, Math.min(vw / ((x1 - x0) * pad || 1), vh / ((y1 - y0) * pad || 1))),
+    );
+    this.cam.z = z;
+    this.cam.x = (vw - (x1 - x0) * z) / 2 - x0 * z;
+    this.cam.y = (vh - (y1 - y0) * z) / 2 - y0 * z;
+    this.applyCamera();
+  }
+
+  /** 复位：z=1、pan=0。 */
+  private resetCamera(): void {
+    this.cam = { x: 0, y: 0, z: 1 };
+    this.applyCamera();
+  }
+
+  // -----------------------------------------------------------------------
   // 交互层（pointer O(n) 命中 → DOM 预览 → pointerup 单次提交）
   // -----------------------------------------------------------------------
 
-  /** 屏幕坐标 → SVG 用户坐标（无 viewBox 缩放——CTM 平移面）。 */
+  /** 屏幕坐标 → SVG 世界坐标（#367 后含相机：CTM = 相机层 transform
+   * 之逆——命中/几何零改动自动正确）。 */
   private toSvgPoint(e: { clientX: number; clientY: number }): { x: number; y: number } {
     const svg = this.svg as SVGSVGElement;
     const ctm = svg.getScreenCTM();
@@ -1023,7 +1166,25 @@ export class CanvasViewUI {
     if (!svg) return;
 
     svg.addEventListener('pointerdown', (e) => {
-      if (!this.main) return;
+      // #367 中键 = 平移（任意处——含节点上方；纯视图层，先于一切分支）。
+      if (e.button === 1) {
+        this.pan = { lastX: e.clientX, lastY: e.clientY };
+        this.svg?.classList.add('panning');
+        svg.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+      // bridge_absent（无模型面）：视图层交互照常——背景左键 = 平移；
+      // 命中/命令面无对象可命中，自然短路。
+      if (!this.main) {
+        if (e.button === 0) {
+          this.pan = { lastX: e.clientX, lastY: e.clientY };
+          this.svg?.classList.add('panning');
+          svg.setPointerCapture(e.pointerId);
+          e.preventDefault();
+        }
+        return;
+      }
       const p = this.toSvgPoint(e);
 
       // 连线模式：点两个节点建边（一次性）
@@ -1091,12 +1252,35 @@ export class CanvasViewUI {
         return;
       }
 
-      // 空白：清选
+      // #367 背景左键拖拽 = 平移（空白命中——清选后起 pan 态；
+      // 平移纯视图像素增量，零对象渲染）。
       this.selected.clear();
       this.applySelectionClasses();
+      if (e.button === 0) {
+        this.pan = { lastX: e.clientX, lastY: e.clientY };
+        this.svg?.classList.add('panning');
+        svg.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      }
     });
 
+    // #367 滚轮 = 以光标为锚缩放（Excalidraw 惯例；触控板高分辨率事件
+    // 钦定单次 |deltaY| 防跳级）。preventDefault：容器不滚动（相机取代）。
+    svg.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const dy = Math.max(-CAM_WHEEL_MAX_DELTA, Math.min(CAM_WHEEL_MAX_DELTA, e.deltaY));
+      this.zoomAt(e.clientX - rect.left, e.clientY - rect.top, Math.exp(-dy * CAM_WHEEL_K));
+    }, { passive: false });
+
     svg.addEventListener('pointermove', (e) => {
+      // #367 平移优先于拖拽（互斥态——pan 起手时无节点命中）。
+      if (this.pan) {
+        this.panBy(e.clientX - this.pan.lastX, e.clientY - this.pan.lastY);
+        this.pan.lastX = e.clientX;
+        this.pan.lastY = e.clientY;
+        return;
+      }
       if (!this.drag) return;
       const p = this.toSvgPoint(e);
       const nx = p.x - this.drag.offX;
@@ -1112,6 +1296,12 @@ export class CanvasViewUI {
     });
 
     const endDrag = (commit: boolean): void => {
+      // #367 平移态优先收尾（不提交任何命令）。
+      if (this.pan) {
+        this.pan = null;
+        this.svg?.classList.remove('panning');
+        return;
+      }
       const d = this.drag;
       if (!d) return;
       this.drag = null;
@@ -1254,9 +1444,12 @@ export class CanvasViewUI {
     input.id = 'canvas-edit-input';
     input.type = 'text';
     input.value = obj.props.label ?? '';
-    input.style.left = `${obj.x}px`;
-    input.style.top = `${obj.y + obj.h + 2}px`;
-    input.style.width = `${Math.max(obj.w, 80)}px`;
+    // #367 相机随动：世界坐标 → 视口坐标（svg 填充 scroll 容器且零
+    // 边距——视口系 = scroll 内容系；宽随 z 缩放，字号保持可读）。
+    const pos = this.worldToView(obj.x, obj.y + obj.h + 2);
+    input.style.left = `${pos.x}px`;
+    input.style.top = `${pos.y}px`;
+    input.style.width = `${Math.max(obj.w, 80) * this.cam.z}px`;
     this.scrollEl.appendChild(input);
     this.editInput = input;
     this.editingId = id;
@@ -1309,6 +1502,12 @@ export class CanvasViewUI {
     on('canvas-edge-mode-btn', () => this.setEdgeMode(!this.edgeMode));
     on('canvas-group-btn', () => this.toolbarGroup());
     on('canvas-ungroup-btn', () => this.toolbarUngroup());
+    // #367 相机按钮：± 步进以视口中心为锚（factor 与滚轮单步同量级；
+    // in = 放大（×1.1），out = 缩小（÷1.1）——与滚轮 deltaY 符号口径一致）。
+    on('canvas-zoom-in-btn', () => this.zoomCenter(1.1));
+    on('canvas-zoom-out-btn', () => this.zoomCenter(1 / 1.1));
+    on('canvas-fit-btn', () => this.fitView());
+    on('canvas-cam-reset-btn', () => this.resetCamera());
     on('canvas-undo-btn', () => this.toolbarUndo());
     on('canvas-redo-btn', () => this.toolbarRedo());
     on('canvas-ai-add-btn', () => this.aiAddNode());
@@ -1534,6 +1733,18 @@ export class CanvasViewUI {
       undoDepth: this.main ? this.safeDepth('undo') : 0,
       redoDepth: this.main ? this.safeDepth('redo') : 0,
       wasm: this.ctor !== null,
+      camera: { x: this.cam.x, y: this.cam.y, z: this.cam.z },
+      camSeq: this.camSeq,
+      renderSeq: this.renderSeq,
+    });
+    // #367 相机探针：无 wasm 也可测（视图层独立——bridge_absent 纪律）。
+    window.__canvasCamera = () => ({
+      ok: true,
+      x: this.cam.x,
+      y: this.cam.y,
+      z: this.cam.z,
+      camSeq: this.camSeq,
+      renderSeq: this.renderSeq,
     });
     window.__canvasObjects = (side?: 'main' | 'ai') => {
       const box = side === 'ai' ? this.ai : this.main;
