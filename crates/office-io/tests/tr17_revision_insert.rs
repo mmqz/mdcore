@@ -95,3 +95,76 @@ fn revision_delete_registered_as_warning() {
         "登记面消息形态"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #343（#318 D3）：hyperlink 内嵌 w:ins 的 run 提取。
+// ---------------------------------------------------------------------------
+
+/// 实锚：结构账本 #260 GT 对照发现的内容损失件——「as the lease
+/// says.」中 *lease* 一词在 `w:hyperlink > w:ins > w:r`（修订插入的
+/// 超链接文本），原先 Hyperlink 分支只提 Run 直接子 → 静默丢词。
+const HC_FIXTURE: &str =
+    "../../test-artifacts/health-check/corpus/docx4j/revisions_editor_review_review-for-word.docx";
+/// 宿主段完整文本（ins 三段 + 超链接词 + 尾段——修复后应零缺词）。
+const HOST_PARA_FULL: &str = "The tenant pays rent monthly in advance, as the lease says.";
+/// 超链接目标（word/_rels/document.xml.rels rIdmrgxhxfn → External）。
+const LEASE_TARGET: &str = "https://www.docx4java.org/";
+
+#[test]
+fn hyperlink_insert_run_extracted_with_flag_and_target() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(HC_FIXTURE);
+    let bytes = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("fixture missing: {} ({e})", path.display()));
+    let doc = read_docx_from_bytes_with_options(&bytes, &ReadOptions { compat: true })
+        .expect("compat read of review-for-word");
+
+    // ① 宿主段完整（hyperlink > ins 文本内联——不再缺词）。
+    let all_text: Vec<String> = doc
+        .blocks
+        .iter()
+        .filter_map(|b| match b {
+            Block::Paragraph(p) => Some(p.text()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        all_text.iter().any(|t| t == HOST_PARA_FULL),
+        "宿主段零缺词（lease 在场）: {all_text:?}"
+    );
+
+    // ② run 三元：text=lease + revision_inserted 标记 + 目标挂接。
+    let mut lease_runs = 0usize;
+    for b in &doc.blocks {
+        if let Block::Paragraph(p) = b {
+            for r in &p.runs {
+                if r.text == "lease" {
+                    assert!(
+                        r.revision_inserted,
+                        "hyperlink > ins 的 run 带修订标记（#17 语义）"
+                    );
+                    match &r.hyperlink {
+                        Some(mdc_office_io::docx::HyperlinkTarget::External { target }) => {
+                            assert_eq!(target, LEASE_TARGET, "目标关系联接")
+                        }
+                        other => panic!("lease run 目标应为 External：{other:?}"),
+                    }
+                    lease_runs += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(lease_runs, 1, "lease run 恰一（提取不重复）");
+
+    // ③ 同文件段内裸 ins（id=43/44——hyperlink 外）维持原提取面，
+    //    回归保护（修复只扩 hyperlink 容器内，不动段落级）。
+    let mut flagged = 0usize;
+    for b in &doc.blocks {
+        if let Block::Paragraph(p) = b {
+            flagged += p.runs.iter().filter(|r| r.revision_inserted).count();
+        }
+    }
+    assert!(
+        flagged >= lease_runs + 5,
+        "段落级 ins run 面不回归（id=43 五 run + id=44 一 run + lease）: {flagged}"
+    );
+}
