@@ -192,6 +192,13 @@ const WIRED_MODULES: &[(&str, &str, &[&str])] = &[
         "document.rs",
         &["pdf_doc::"],
     ),
+    // #289-④：pdf 页面位图视图——shell 挂载消费（editor_area 按模式
+    // 分派；页视图与文本模型并存可切）。
+    (
+        "pdf_pages.rs（pdf 页面视图）",
+        "shell.rs",
+        &["PdfPagesView"],
+    ),
     (
         "editor/xlsx_doc.rs（xlsx 读面）",
         "document.rs",
@@ -323,7 +330,7 @@ fn status_bar_consumes_status_info() {
 /// find_regex）已全实现且被消费——只缺 UI 壳。
 #[test]
 fn settings_panel_ui_exists() {
-    // ① 图标条设置钮必须恢复（#182 明确要求）。
+    // ① 图标条设置钮必须恢复（#182 明确要求；#289-⑤ 起开弹窗）。
     let ab = src("activity_bar.rs");
     assert!(
         ab.contains("act-settings"),
@@ -332,13 +339,15 @@ fn settings_panel_ui_exists() {
     );
 
     // ② 设置面板本体：src/ 全仓必须出现设置面板渲染符号（实现载体不限：
-    // settings_view.rs / shell.rs / panels.rs 均可——锚点取常见命名）。
+    // settings_view.rs / shell.rs / panels.rs 均可——锚点取常见命名；
+    // #289-⑤ 起形态为模态弹窗，settings_modal 同样入表）。
     let panel_syms = [
         "render_settings",
         "settings_view",
         "SettingsPanel",
         "settings_panel",
         "SettingsView",
+        "settings_modal",
     ];
     let hits: Vec<String> = all_src_files()
         .iter()

@@ -165,8 +165,13 @@ fn face2_shell_shortcuts_reach_commands() {
 // 面 3：面板切换 → 状态变更
 // ---------------------------------------------------------------------------
 
-/// 图标条四钮（文件树/git/设置/右栏）→ shell toggle 方法 → 状态字段翻转
-/// → `cx.notify()`（状态变更必须触发重绘，否则「点了没反应」）。
+/// 图标条钮（文件树/git/设置）+ 右缘 dock 条钮（属性/来源）→ shell
+/// toggle 方法 → 状态字段翻转 → `cx.notify()`（状态变更必须触发重绘，
+/// 否则「点了没反应」）。
+///
+/// #289-⑤：设置钮打开**弹窗**（`toggle_settings` → `settings_open` 翻转），
+/// 右栏开关移至右缘 dock 条（`right_dock.rs` 的 `dock-toggle-right`）——
+/// 左图标条只管左栏。
 #[test]
 fn face3_panel_toggle_changes_state() {
     let bar = src("activity_bar.rs");
@@ -174,13 +179,23 @@ fn face3_panel_toggle_changes_state() {
         ("act-file-tree", "toggle_left"),
         ("act-git", "toggle_git"),
         ("act-settings", "toggle_settings"),
-        ("act-toggle-right", "toggle_right"),
     ] {
         assert!(
             bar.contains(id) && bar.contains(&format!("this.{method}(cx)")),
             "【面 3：面板切换 → 状态变更】图标条断链——{id} 未接 this.{method}(cx)"
         );
     }
+    // 右缘 dock 条（#289-⑤）：右栏开关归右缘。
+    let dock = src("right_dock.rs");
+    assert!(
+        dock.contains("dock-toggle-right") && dock.contains("this.toggle_right(cx)"),
+        "【面 3：面板切换 → 状态变更】右缘 dock 条断链——dock-toggle-right 未接 this.toggle_right(cx)"
+    );
+    // 左图标条不再承载右栏开关（#289-⑤ 语义收口）。
+    assert!(
+        !bar.contains("act-toggle-right"),
+        "【面 3：面板切换 → 状态变更】act-toggle-right 不应在左图标条（#289-⑤：右栏开关归右缘 dock 条）"
+    );
     // 状态变更体：字段翻转 + notify（渲染层可见的前提）。
     let shell = src("shell.rs");
     for (decl, flip, what) in [
@@ -192,8 +207,8 @@ fn face3_panel_toggle_changes_state() {
         ("fn toggle_git(", "git_view = true", "git 视图置位"),
         (
             "fn toggle_settings(",
-            "settings_view = true",
-            "设置视图置位",
+            "settings_open = !self.settings_open",
+            "设置弹窗开合字段翻转",
         ),
         (
             "fn toggle_right(",

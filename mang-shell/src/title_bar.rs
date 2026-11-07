@@ -1,10 +1,19 @@
-//! 自绘标题栏（#63 Lead：顶部标题栏，可拖拽窗口；#209：左侧标题后
-//! 挂菜单栏）。
+//! 自绘标题栏（#63 Lead：顶部标题栏，可拖拽窗口；#209：菜单栏挂载；
+//! #289-②：菜单栏提到最左——zed/vscode 同款布局，应用名不再占用
+//! 菜单位）。
 //!
-//! 结构：`[标题 16px 边距] [菜单栏 文件/编辑/查看/帮助] [flex 拖拽区]
+//! 结构：`[菜单栏 文件/编辑/查看/帮助] [flex 拖拽区（居中标题）]
 //! [窗口控制钮 3 个]`。菜单栏渲染在 [`crate::menu_bar_view`]（结构与
 //! 状态在 `crate::menu_bar` / `ShellApp.menu_bar`）；窗口控制钮与拖拽
-//! 语义本模块自持，#209 未改动。
+//! 语义本模块自持。
+//!
+//! #289-② 布局裁决（用户原话「我不喜欢左上角的mang字样这个应该是
+//! zed和vscode同款的菜单栏的位置」）：
+//! - 旧：`[标题「mang — 文件」] [菜单栏] [拖拽区] [控制钮]`——应用名
+//!   占了菜单栏的位置，菜单被推到右侧；
+//! - 新：菜单栏贴窗口左缘（zed Windows / vscode 同款），文档标题居中
+//!   在拖拽区（vscode 同款），不再出现左上角「mang」字样；窗口标题
+//!   （任务栏/Alt-Tab）仍由 main.rs 的 window title 承载。
 //!
 //! 拖拽的跨平台路径（#68 Lead Windows 真机验证后修正——原
 //! `start_window_move()` 单路径在 Windows 失效）：
@@ -14,7 +23,8 @@
 //!   ① `start_window_move()` 在 gpui_windows 是 trait 默认空体（静默
 //!   no-op，仅 Linux/macOS 有真实现）；② 任何消费鼠标事件的监听器都会
 //!   阻止 DefWindowProc 接管——故 Windows 分支**不得**再挂
-//!   on_mouse_down/on_click。
+//!   on_mouse_down/on_click（拖拽区中央的标题 Label 是纯展示元素、
+//!   零鼠标监听，不阻断）。
 //! - **Linux**：`start_window_move()` 有真实现（X11 `_NET_WM_MOVERESIZE`
 //!   / Wayland `xdg_toplevel._move()`）——保留显式调用。
 //! - 双击最大化 `titlebar_double_click()` 仅 macOS 有实现（Linux/Windows
@@ -42,7 +52,8 @@ pub const TITLE_BAR_HEIGHT: Pixels = px(36.);
 
 /// 渲染标题栏。`menus` / `menu_state` = #209 菜单栏（结构与状态由
 /// shell 提供——本模块只做布局挂载；`cx.listener` 需要 ShellApp 上下文，
-/// activity_bar/tab_bar 同款签名口径）。
+/// activity_bar/tab_bar 同款签名口径）。`title` 仅用于拖拽区中央的
+/// 居中文案（#289-②——不再占用左侧菜单位）。
 pub fn title_bar(
     title: &str,
     menus: &[menu_bar::TopMenu],
@@ -56,29 +67,25 @@ pub fn title_bar(
         .flex_none()
         .w_full()
         .bg(colors.title_bar_background)
-        // 标题（固定列——不参与拖拽；菜单栏紧随其后，见 issue #209 布局）。
+        // #289-②：菜单栏贴窗口左缘（zed/vscode 同款）——应用名不再
+        // 占用菜单位（旧版此处是「mang — 文件」标题列）。
+        .child(menu_bar_view::menu_titles(menus, menu_state, cx))
+        // 拖拽区（flex）：中央居中文档标题（vscode 同款；纯展示 Label
+        // 零鼠标监听——不阻断 Windows HTCAPTION 原生接管）。
         .child(
             h_flex()
-                .id("title-bar-caption")
+                .id("title-bar-drag")
+                .flex_1()
                 .h_full()
-                .flex_none()
+                .min_w_0()
                 .items_center()
-                .pl_4()
+                .justify_center()
+                .overflow_hidden()
                 .child(
                     Label::new(title)
                         .size(LabelSize::Small)
                         .color(ui::Color::Muted),
-                ),
-        )
-        // #209：菜单栏（文件/编辑/查看/帮助——点击下拉；快捷键标签、
-        // 键盘导航、灰显态见 menu_bar / menu_bar_view）。
-        .child(menu_bar_view::menu_titles(menus, menu_state, cx))
-        // 拖拽只挂中央弹性区——避免点控制钮/菜单标题时连带触发窗口移动。
-        .child(
-            div()
-                .id("title-bar-drag")
-                .flex_1()
-                .h_full()
+                )
                 // Windows：注册窗口控制命中区（Drag）→ WM_NCHITTEST 返回
                 // HTCAPTION → GPUI 不消费时 DefWindowProcW 原生接管拖拽
                 // 与双击最大化（gpui_windows/src/events.rs 既有链路）。

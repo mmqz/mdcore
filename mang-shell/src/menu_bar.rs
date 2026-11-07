@@ -113,6 +113,9 @@ pub enum MenuAction {
     /// 命令面板（`Editor::toggle_command_palette`——Ctrl+Shift+P 键位臂
     /// 的既有逻辑提取为公开方法，两入口共用，行为零变化）。
     TogglePalette,
+    /// #289-⑤：打开设置弹窗（shell `open_settings`——左条设置钮同链；
+    /// 弹窗形态，不占任何 dock 视图）。
+    OpenSettings,
     /// 设置主题模式（shell 既有 `set_theme_mode`）。
     SetTheme(&'static str),
     /// 字号增大 1px（shell 既有 `apply_font_size`——Ctrl+= 同链）。
@@ -370,6 +373,9 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
                 MenuEntry::item("view-status-bar", "状态栏").with_enabled(false),
                 // 全屏无既有命令（owner 点名的禁用示例）——置灰。
                 MenuEntry::item("view-fullscreen", "全屏").with_enabled(false),
+                // #289-⑤：设置入口（弹窗形态——vscode「偏好沉底」同款
+                // 位置；与左条设置钮同一条 open_settings 链，不占右栏）。
+                MenuEntry::item("view-settings", "设置").act(MenuAction::OpenSettings),
             ],
         },
         TopMenu {
@@ -693,11 +699,10 @@ pub fn row_y_offset(entries: &[MenuEntry], idx: usize) -> f32 {
 
 // ─── 标题栏布局常量（视图层与锚点估算共用——两处必须同值） ──────────
 
-/// 标题栏左内边距（pl_4——title_bar.rs 标题列）。
-pub const TITLE_LEFT_PAD: f32 = 16.;
-/// 标题文案与首个菜单标题的间距。
-pub const TITLE_TO_MENUS_GAP: f32 = 12.;
 /// 菜单标题按钮左右内边距（px_3——menu_bar_view 同值）。
+///
+/// #289-②：菜单栏贴窗口左缘（旧 TITLE_LEFT_PAD/TITLE_TO_MENUS_GAP
+/// 随「左侧标题列」一起废弃——首个菜单自身的 px 即左缘内边距）。
 pub const TITLE_BTN_PAD_X: f32 = 12.;
 /// 菜单标题按钮间距（gap_1）。
 pub const TITLES_GAP: f32 = 4.;
@@ -706,11 +711,11 @@ pub const TITLES_GAP: f32 = 4.;
 ///
 /// 鼠标路径不走估算（on_mouse_down 捕获真实点击 x）；只有 ←→ 键盘切换
 /// 才用本估算重锚——误差 ±10px 量级（字符宽度近似），换取零测量成本。
-pub fn estimate_anchor_x(menus: &[TopMenu], idx: usize, title_text: &str) -> f32 {
-    let mut x = TITLE_LEFT_PAD
-        + context_menu::estimate_width(title_text)
-        + TITLE_TO_MENUS_GAP
-        + TITLE_BTN_PAD_X;
+///
+/// #289-②：菜单栏贴窗口左缘后，锚点不再受应用/文档标题影响（`title_text`
+/// 参数保留是为了 navigate 调用面稳定，布局上已不参与估算）。
+pub fn estimate_anchor_x(menus: &[TopMenu], idx: usize, _title_text: &str) -> f32 {
+    let mut x = TITLE_BTN_PAD_X;
     for (i, menu) in menus.iter().enumerate() {
         if i >= idx {
             break;
@@ -1287,10 +1292,13 @@ mod tests {
             assert!(x > prev, "锚点应随菜单序递增：{prev} → {x}");
             prev = x;
         }
-        // 标题更长 → 锚点更右（标题在菜单行左侧）。
-        assert!(
-            estimate_anchor_x(&menus, 0, "mang — 很长很长的文档名.md")
-                > estimate_anchor_x(&menus, 0, "mang")
+        // #289-②：菜单栏贴窗口左缘——标题不再参与锚点估算（旧版「标题
+        // 更长 → 锚点更右」已随左侧标题列废弃）。
+        assert_eq!(
+            estimate_anchor_x(&menus, 0, "mang — 很长很长的文档名.md"),
+            estimate_anchor_x(&menus, 0, "mang")
         );
+        // 首个菜单锚点 = 自身左内边距（窗口左缘起算）。
+        assert_eq!(estimate_anchor_x(&menus, 0, ""), TITLE_BTN_PAD_X);
     }
 }

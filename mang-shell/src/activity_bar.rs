@@ -5,14 +5,18 @@
 //! 修正项，优先于布局草图的 48px 字面值（36 + 2×8 > 48，两者不可同时
 //! 满足；按钮本体 36×36 与 8px 边距为硬规格，宽度取其和）。
 //!
-//! 主面板钮（文件树/搜索）在上，右栏开关沉底。无 AI 面板——
-//! agent 能力全部走 MCP 暴露（#63 Lead 裁决），不比 Zed/VS Code 照抄。
-//!
-//! #165：搜索钮接线 `Cmd::OpenFind`（与 Ctrl+F / 右键菜单「查找」同一
-//! 分派路径 `Editor::run_command`——不另造入口）。设置钮已移除：全仓
-//! 无设置面板 UI（settings.rs 是持久化 + 字体/主题 provider，无入口可
-//! 接；file_tree.rs 的忽略名单注释也写明「可配置面随 F6 设置件落位」）。
-//! 按 #165 铁律「接不了就从界面移除」执行；设置面板建好后钮再回来。
+//! #289-⑤ 语义收口（用户原话「左侧边栏成了右侧按钮的详情菜单了这个
+//! 很不好」）：**左图标条只管左栏**——
+//! - 主面板钮（文件树/git）在上，切换左栏视图（vscode 资源管理器/
+//!   源代码管理同构）；
+//! - 搜索钮接线 `Cmd::OpenFind`（与 Ctrl+F / 右键菜单「查找」同一
+//!   分派路径 `Editor::run_command`——不另造入口）；
+//! - 设置钮沉底（vscode 同款位置）：#289-⑤ 起改为打开**设置弹窗**
+//!   （`ShellApp::open_settings`——不再占用右栏视图；zed/vscode 的
+//!   「设置不是任何 dock 的视图」语义）；
+//! - 右栏（属性/来源）开关**不在左条**——移至右缘 dock 条
+//!   （[`crate::right_dock`]，「右侧面板的事归右侧」）。
+//! - 无 AI 面板——agent 能力全部走 MCP 暴露（#63 Lead 裁决）。
 //!
 //! 按钮为自绘单元而非 `IconButton`：后者方形尺寸由 IconSize 的 rem 机器
 //! 推导（icon + 2×padding），无法钉定 36×36 字面规格；自绘单元同时掌控
@@ -32,16 +36,16 @@ pub const BUTTON_SIZE: Pixels = px(36.);
 /// 按钮纵向间距（px）。
 const BUTTON_GAP: Pixels = px(4.);
 /// 图标条四周内边距（px）。
-const BAR_PADDING: Pixels = px(8.);
+///
+/// #289-⑤ 起 [`crate::right_dock`] 复用（右缘条同规格）。
+pub(crate) const BAR_PADDING: Pixels = px(8.);
 
-/// 渲染图标条。`left_open`/`right_open` 决定选中态与右栏开关钮图标方向；
-/// `git_view`/`settings_view` 是左右栏的当前视图（决定 git/设置钮的
-/// 选中态）。
+/// 渲染图标条。`left_open`/`git_view` 决定文件树/git 钮的选中态；
+/// `settings_open` 决定设置钮的选中态（弹窗开 = 选中视觉）。
 pub fn activity_bar(
     left_open: bool,
     git_view: bool,
-    right_open: bool,
-    settings_view: bool,
+    settings_open: bool,
     cx: &mut Context<ShellApp>,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
@@ -56,7 +60,7 @@ pub fn activity_bar(
         .child(bar_button(
             "act-file-tree",
             IconName::FileTree,
-            left_open,
+            left_open && !git_view,
             "文件树",
             colors.element_hover,
             colors.element_selected,
@@ -87,41 +91,26 @@ pub fn activity_bar(
                 }
             }),
         ))
-        // #182：设置钮回归（#172 曾按「无面板可接」移除——#182 纠正为
-        // 「该有但还没做 → 补实现」：设置面板落位，钮接真实行为——
-        // 右栏切到设置视图；已开且在设置视图时折叠，与 git 钮同构）。
+        .child(div().flex_1())
+        // #289-⑤：设置钮沉底（vscode 同款位置）——打开设置**弹窗**
+        // （不再驱动右栏视图；右栏只归属性/来源，右缘 dock 条自管）。
         .child(bar_button(
             "act-settings",
             IconName::Settings,
-            right_open && settings_view,
+            settings_open,
             "设置",
             colors.element_hover,
             colors.element_selected,
             cx.listener(|this, _, _, cx| this.toggle_settings(cx)),
         ))
-        .child(div().flex_1())
-        .child({
-            let icon = if right_open {
-                IconName::ThreadsSidebarRightOpen
-            } else {
-                IconName::ThreadsSidebarRightClosed
-            };
-            bar_button(
-                "act-toggle-right",
-                icon,
-                right_open,
-                "属性 / 来源",
-                colors.element_hover,
-                colors.element_selected,
-                cx.listener(|this, _, _, cx| this.toggle_right(cx)),
-            )
-        })
 }
 
 /// 36×36 图标按钮单元：hover/selected 主题色（色值由调用方从当前主题注入），
 /// 图标 16px（IconSize::Medium），tooltip 走 ui::Tooltip。
+///
+/// #289-⑤ 起 [`crate::right_dock`] 复用本单元（左右两条按钮视觉同语系）。
 #[allow(clippy::too_many_arguments)]
-fn bar_button(
+pub(crate) fn bar_button(
     id: &'static str,
     icon: IconName,
     selected: bool,

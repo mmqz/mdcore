@@ -19,13 +19,13 @@ pub mod doc_events;
 #[path = "editor/mod.rs"]
 pub mod editor;
 
-/// 外壳设置面（编辑器构造读缩进单位/面板宽度——src/settings.rs 同源）。
-#[path = "settings.rs"]
-pub mod settings;
 /// 右键菜单数据/几何面（#63 打磨项）：纯数据，零 GPUI 依赖——菜单摆放
 /// 算法（边缘翻转/夹紧）必须能脱离窗口单测，见模块文档。
 #[path = "context_menu.rs"]
 pub mod context_menu;
+/// 外壳设置面（编辑器构造读缩进单位/面板宽度——src/settings.rs 同源）。
+#[path = "settings.rs"]
+pub mod settings;
 
 /// #209：顶部菜单栏模型层（菜单结构/Cmd 映射/键盘导航状态机/下拉几何
 /// 估算）——纯数据零 GPUI 依赖，与 context_menu 同分层进 lib 树（渲染层
@@ -69,3 +69,9 @@ pub mod native_dialog;
 /// 逐键 / find_matches 全文查找）由 #164 后续提交按两行式接入。
 #[path = "perf.rs"]
 pub mod perf;
+
+/// #289-④：PDF 页面位图视图（pdfium 光栅化 → uniform_list 竖排；
+/// 纯函数面（宽量子化/槽高/位图转换）进 lib 树供单测——CI 无
+/// libpdfium 同样真跑）。
+#[path = "pdf_pages.rs"]
+pub mod pdf_pages;
