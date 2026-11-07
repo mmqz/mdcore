@@ -47,6 +47,16 @@ jobs:
             fi
           fi
 
+      # 结构体加字段守卫（#317）——2026-11-07 单日三次同类事故：
+      #   Anchor/#285②、ParagraphData/#266、PageGeometry/#304
+      #   共同根因：给结构体加字段后没检查所有字面量构造点。
+      # `#[serde(default)]` 只让反序列化兼容，Rust 字面量仍是全字段必需。
+      # 本步骤是**报告模式**（不判红）——先让风险面可见；
+      # 存量清零后再改 -Strict 变硬门禁。
+      - name: Struct field guard (加字段风险面报告)
+        shell: pwsh
+        run: |
+          ./scripts/struct-field-guard.ps1 -Repo $PWD
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

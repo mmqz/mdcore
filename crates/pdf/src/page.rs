@@ -114,6 +114,34 @@ pub struct PageGeometry {
     pub crop_box: Option<PageBox>,
 }
 
+/// `PageGeometry` 的 `Default`（#304 加字段后的兼容面）。
+///
+/// **为什么需要**：`#[serde(default)]` 只让反序列化兼容——Rust 结构体
+/// 字面量初始化仍是全字段必需。加 `media_box`/`crop_box` 后，
+/// 17 处旧字面量（`PageGeometry { width_pt, height_pt, rotation }`）
+/// 全部 E0063 编译失败（2026-11-07 main 因此变红）。
+///
+/// 有了 `Default` 后，新增字段只改这一处，调用方写
+/// `PageGeometry { width_pt, ..Default::default() }` 即可。
+///
+/// 缺省语义：A4 纵向（595×842 pt）、无旋转、MediaBox 原点 (0,0)、无 CropBox。
+impl Default for PageGeometry {
+    fn default() -> Self {
+        Self {
+            width_pt: 595.0,
+            height_pt: 842.0,
+            rotation: Rotation::Deg0,
+            media_box: PageBox {
+                x0: 0.0,
+                y0: 0.0,
+                x1: 595.0,
+                y1: 842.0,
+            },
+            crop_box: None,
+        }
+    }
+}
+
 impl PageGeometry {
     /// 简单页构造（无裁剪、原点 (0,0)）：`media_box = (0, 0, w, h)`、
     /// `crop_box = None`（显示域 = MediaBox）。测试与合成几何的便捷
