@@ -35,11 +35,13 @@ pub const STATUS_BAR_HEIGHT: Pixels = px(24.);
 /// 渲染状态栏。`editor`：打开的编辑器实体（`None` = 无文档就绪态）；
 /// `workspace`：工作区根（F2——`None` = 未打开）；`pdf_view_mode`：
 /// #289-④ pdf 页面视图开关态（仅 pdf 标签活跃时消费——切换钮挂
-/// 右侧信息区）。
+/// 右侧信息区）；`xlsx_grid_view_mode`：#389 阶段 1 xlsx 网格视图
+/// 开关态（仅 xlsx 标签活跃时消费——网格/文本切换钮，pdf 先例同构）。
 pub fn status_bar(
     editor: Option<&Entity<Editor>>,
     workspace: Option<std::path::PathBuf>,
     pdf_view_mode: bool,
+    xlsx_grid_view_mode: bool,
     cx: &mut Context<ShellApp>,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
@@ -148,6 +150,14 @@ pub fn status_bar(
     } else {
         "切换到页面视图"
     };
+    // #389 阶段 1：xlsx 标签 → 网格/文本视图切换钮（pdf 先例同构——
+    // 非 xlsx 态不占位）。
+    let is_xlsx = editor.is_some_and(|ed| ed.read(cx).doc_kind() == "xlsx");
+    let xlsx_toggle_label = if xlsx_grid_view_mode {
+        "切换到文本视图"
+    } else {
+        "切换到网格视图"
+    };
     let hover = colors.element_hover;
 
     h_flex()
@@ -191,6 +201,27 @@ pub fn status_bar(
                             ))
                             .child(
                                 Label::new(pdf_toggle_label)
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Muted),
+                            ),
+                    )
+                })
+                // #389 阶段 1：xlsx 网格/文本视图切换（pdf 先例同构——
+                // 非 xlsx 标签不占位）。
+                .when(is_xlsx, |el| {
+                    el.child(
+                        div()
+                            .id("xlsx-view-toggle")
+                            .px_2()
+                            .rounded_sm()
+                            .hover(move |el| el.bg(hover))
+                            .on_click(cx.listener(
+                                |this, _ev: &ClickEvent, _window: &mut Window, cx| {
+                                    this.toggle_xlsx_view_mode(cx);
+                                },
+                            ))
+                            .child(
+                                Label::new(xlsx_toggle_label)
                                     .size(LabelSize::XSmall)
                                     .color(ui::Color::Muted),
                             ),
