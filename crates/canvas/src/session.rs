@@ -39,6 +39,9 @@ const F_POINTS: &str = "points";
 const F_COLOR: &str = "color";
 const F_SWIDTH: &str = "swidth";
 const F_TOOL: &str = "tool";
+/// #402：z 序键（fractional index 字符串——字典序即 z 序；缺省
+/// `zorder::DEFAULT_KEY`，存量对象读侧兼容）。
+const F_ZINDEX: &str = "zindex";
 
 /// 画布对象种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,6 +128,12 @@ pub struct CanvasObject {
     pub width: Option<f64>,
     /// 笔迹工具（非 Stroke = None）。
     pub tool: Option<StrokeTool>,
+    /// #402：z 序键（fractional index——字典序即 z 序；渲染按
+    /// `(z_index, id)` 排序，ID 决胜吸收并发同键）。新建对象置顶
+    /// （generate(max, None)）；存量对象缺省 [`zorder::DEFAULT_KEY`]。
+    /// Group 对象的 z 不影响成员渲染（成员各自成图元），字段统一
+    /// 仅为模型一致性。
+    pub z_index: String,
     /// 开放属性（label/color/…；字符串值面）。
     pub props: BTreeMap<String, String>,
 }
@@ -148,6 +157,7 @@ impl Default for CanvasObject {
             color: None,
             width: None,
             tool: None,
+            z_index: crate::zorder::DEFAULT_KEY.to_string(),
             props: BTreeMap::new(),
         }
     }
@@ -233,6 +243,42 @@ impl Actor {
         match self {
             Actor::Human => Origin::from("mdc:human"),
             Actor::Ai => Origin::from("mdc:ai"),
+        }
+    }
+}
+
+/// #402：z 序重排操作（四向——Figma/Excalidraw/tldraw 标准集）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReorderOp {
+    /// 置顶（绝对——越过所有其他对象）。
+    BringToFront,
+    /// 置底（绝对）。
+    SendToBack,
+    /// 上移一层（相对；已在顶层则无变化）。
+    BringForward,
+    /// 下移一层（相对；已在底层则无变化）。
+    SendBackward,
+}
+
+impl ReorderOp {
+    /// 线格式（wasm 桥 / JSON 命令面）。
+    pub fn wire(self) -> &'static str {
+        match self {
+            ReorderOp::BringToFront => "front",
+            ReorderOp::SendToBack => "back",
+            ReorderOp::BringForward => "forward",
+            ReorderOp::SendBackward => "backward",
+        }
+    }
+
+    /// 线格式反解（未知串 → None——敌意面缺省拒）。
+    pub fn from_wire(s: &str) -> Option<ReorderOp> {
+        match s {
+            "front" => Some(ReorderOp::BringToFront),
+            "back" => Some(ReorderOp::SendToBack),
+            "forward" => Some(ReorderOp::BringForward),
+            "backward" => Some(ReorderOp::SendBackward),
+            _ => None,
         }
     }
 }
@@ -337,6 +383,12 @@ pub enum CanvasCommand {
         width: f64,
         tool: StrokeTool,
     },
+    /// #402：z 序重排（fractional index 改写——单对象原子属性，
+    /// O(1) 无写放大）。
+    Reorder {
+        id: String,
+        op: ReorderOp,
+    },
 }
 
 /// 命令回执。
@@ -349,16 +401,40 @@ pub struct CommandReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
-    NodeAdded { id: String },
-    NodeMoved { id: String },
-    NodeResized { id: String },
-    EdgeAdded { id: String },
-    PropsSet { id: String },
-    ObjectRemoved { id: String },
-    Grouped { group_id: String },
-    Ungrouped { group_id: String },
-    StrokeAdded { id: String },
-    StrokeStyled { id: String },
+    NodeAdded {
+        id: String,
+    },
+    NodeMoved {
+        id: String,
+    },
+    NodeResized {
+        id: String,
+    },
+    EdgeAdded {
+        id: String,
+    },
+    PropsSet {
+        id: String,
+    },
+    ObjectRemoved {
+        id: String,
+    },
+    Grouped {
+        group_id: String,
+    },
+    Ungrouped {
+        group_id: String,
+    },
+    StrokeAdded {
+        id: String,
+    },
+    /// #402：z 序已重排（新键已写入；幂等无变化也回此回执）。
+    Reordered {
+        id: String,
+    },
+    StrokeStyled {
+        id: String,
+    },
 }
 
 /// Canvas 会话。
@@ -702,6 +778,17 @@ impl CanvasSession {
             .collect()
     }
 
+    /// #402：全量对象（z 序：`(z_index, id)` 决胜——渲染消费面）。
+    ///
+    /// 与 [`Self::objects`]（ID 序）并存：指纹/断言等稳定性敏感面用
+    /// ID 序；绘制顺序（遮挡关系）用本面。并发同键（两副本同邻位
+    /// 插入）由 ID 决胜吸收——合并后两副本全序一致。
+    pub fn objects_z_ordered(&self) -> Vec<CanvasObject> {
+        let mut out = self.objects();
+        out.sort_by(|a, b| (&a.z_index, &a.id).cmp(&(&b.z_index, &b.id)));
+        out
+    }
+
     pub fn find_object(&self, id: &str) -> Option<CanvasObject> {
         let root = self.root();
         let txn = self.doc.transact();
@@ -831,6 +918,10 @@ impl CanvasSession {
                 self.set_stroke_style(actor, &id, &color, width, tool)?;
                 CommandOutcome::StrokeStyled { id }
             }
+            CanvasCommand::Reorder { id, op } => {
+                self.reorder_object(actor, &id, op)?;
+                CommandOutcome::Reordered { id }
+            }
         };
         Ok(CommandReceipt {
             outcome,
@@ -861,6 +952,131 @@ impl CanvasSession {
             .iter()
             .map(|(k, v)| (k.as_str(), In::Any(Any::String(v.as_str().into()))))
             .collect()
+    }
+
+    // ── z 序（#402）─────────────────────────────────────────────
+
+    /// 新建对象的置顶 z 键（max 之上生成——新形状在上层，行业惯例）。
+    ///
+    /// 现存 z 键含敌意非法值时生成失败 → 兜底 `DEFAULT_KEY`（宁缺毋错：
+    /// 新对象落缺省位，不 panic；重排命令面会拒绝非法键并报错）。
+    fn next_top_z(&self) -> String {
+        let max = self.objects().into_iter().map(|o| o.z_index).max();
+        match crate::zorder::generate_between(max.as_deref(), None) {
+            Ok(z) => z,
+            Err(_) => crate::zorder::DEFAULT_KEY.to_string(),
+        }
+    }
+
+    /// 对象裸 Map 引用（重排/属性写面的公共取位——无 kind 门禁）。
+    fn object_map(&self, id: &str) -> Result<yrs::MapRef, CanvasError> {
+        self.check_inbound(id.len())?;
+        let root = self.root();
+        let txn = self.doc.transact();
+        match root.get(&txn, id) {
+            Some(Out::YMap(m)) => Ok(m),
+            _ => Err(CanvasError::ObjectNotFound {
+                object_id: id.to_string(),
+            }),
+        }
+    }
+
+    /// #402：z 序重排——按当前全序计算新键并单事务写入。
+    ///
+    /// - BringToFront / SendToBack：绝对（越过所有其他对象）；
+    /// - BringForward / SendBackward：相对一步——跨过最近的**不同 z**
+    ///   邻层（同键并列对象视为同层，一步整层跨过）；
+    /// - 相对操作已在端点 → 幂等无变化（不产生空写 = 零 CRDT 字节
+    ///   = 零事件，与既有命令的事件语义一致）；
+    /// - 邻层 z 键非法（敌意面）→ `InvalidInput` 拒绝（fail-closed，
+    ///   不静默排错）。
+    fn reorder_object(&mut self, actor: Actor, id: &str, op: ReorderOp) -> Result<(), CanvasError> {
+        self.check_inbound(id.len())?;
+        // 全序快照 (z, id)——邻域计算面（排序在 objects_z_ordered 同口径）
+        let mut zs: Vec<(String, String)> = self
+            .objects()
+            .into_iter()
+            .map(|o| (o.z_index, o.id))
+            .collect();
+        zs.sort();
+        let Some(pos) = zs.iter().position(|(_, oid)| oid == id) else {
+            return Err(CanvasError::ObjectNotFound {
+                object_id: id.to_string(),
+            });
+        };
+        let cur_z = zs[pos].0.clone();
+        let map_err = |e: crate::zorder::ZOrderError| {
+            CanvasError::InvalidInput(format!("z 序键生成失败（{e}）——现存键面非法"))
+        };
+        let new_z = match op {
+            ReorderOp::BringToFront => {
+                let max_other = zs
+                    .iter()
+                    .filter(|(_, oid)| oid != id)
+                    .map(|(z, _)| z.clone())
+                    .max();
+                crate::zorder::generate_between(max_other.as_deref(), None).map_err(map_err)?
+            }
+            ReorderOp::SendToBack => {
+                let min_other = zs
+                    .iter()
+                    .filter(|(_, oid)| oid != id)
+                    .map(|(z, _)| z.clone())
+                    .min();
+                crate::zorder::generate_between(None, min_other.as_deref()).map_err(map_err)?
+            }
+            ReorderOp::BringForward => {
+                // 上邻 u = 第一个不同 z 的在上方对象；新键 ∈ (u, u 之上
+                // 第一层)——落在 u 的**上方**（跨过整层）。
+                let upper = zs[pos + 1..]
+                    .iter()
+                    .find(|(z, _)| z.as_str() > cur_z.as_str())
+                    .map(|(z, _)| z.clone());
+                match upper {
+                    None => cur_z.clone(), // 已在顶层：幂等
+                    Some(u) => {
+                        let above_u = zs[pos + 1..]
+                            .iter()
+                            .find(|(z, _)| z.as_str() > u.as_str())
+                            .map(|(z, _)| z.clone());
+                        crate::zorder::generate_between(Some(&u), above_u.as_deref())
+                            .map_err(map_err)?
+                    }
+                }
+            }
+            ReorderOp::SendBackward => {
+                // 下邻 l = 第一个不同 z 的在下方对象；新键 ∈ (l 之下
+                // 第一层, l)——落在 l 的**下方**（跨过整层）。
+                let lower = zs[..pos]
+                    .iter()
+                    .rev()
+                    .find(|(z, _)| z.as_str() < cur_z.as_str())
+                    .map(|(z, _)| z.clone());
+                match lower {
+                    None => cur_z.clone(), // 已在底层：幂等
+                    Some(l) => {
+                        let below_l = zs[..pos]
+                            .iter()
+                            .rev()
+                            .find(|(z, _)| z.as_str() < l.as_str())
+                            .map(|(z, _)| z.clone());
+                        crate::zorder::generate_between(below_l.as_deref(), Some(&l))
+                            .map_err(map_err)?
+                    }
+                }
+            }
+        };
+        if new_z == cur_z {
+            return Ok(()); // 幂等：零写入零事件
+        }
+        let m = self.object_map(id)?;
+        {
+            let mut txn = self.doc.transact_mut_with(actor.wire());
+            m.insert(&mut txn, F_ZINDEX, In::Any(Any::String(new_z.into())));
+            txn.commit();
+        }
+        self.enforce_undo_limit(actor);
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)] // 命令域字段直传——结构化入参组（id/几何/属性）属领域形状
@@ -899,6 +1115,7 @@ impl CanvasSession {
             None => self.next_id(),
         };
         {
+            let z = self.next_top_z();
             let mut obj: MapPrelim = Vec::<(&'static str, In)>::new().into_iter().collect();
             obj.insert(
                 F_KIND.into(),
@@ -908,6 +1125,7 @@ impl CanvasSession {
             obj.insert(F_Y.into(), In::Any(Any::Number(Number::Float(y))));
             obj.insert(F_W.into(), In::Any(Any::Number(Number::Float(w))));
             obj.insert(F_H.into(), In::Any(Any::Number(Number::Float(h))));
+            obj.insert(F_ZINDEX.into(), In::Any(Any::String(z.into())));
             obj.insert(F_PROPS.into(), In::Map(Self::props_prelim(props)));
             let root = self.root();
             let mut txn = self.doc.transact_mut_with(actor.wire());
@@ -1014,6 +1232,7 @@ impl CanvasSession {
             None => self.next_id(),
         };
         {
+            let z = self.next_top_z();
             let mut obj: MapPrelim = Vec::<(&'static str, In)>::new().into_iter().collect();
             obj.insert(
                 F_KIND.into(),
@@ -1021,6 +1240,7 @@ impl CanvasSession {
             );
             obj.insert(F_FROM.into(), In::Any(Any::String(from.into())));
             obj.insert(F_TO.into(), In::Any(Any::String(to.into())));
+            obj.insert(F_ZINDEX.into(), In::Any(Any::String(z.into())));
             obj.insert(F_PROPS.into(), In::Map(Self::props_prelim(props)));
             let root = self.root();
             let mut txn = self.doc.transact_mut_with(actor.wire());
@@ -1120,6 +1340,7 @@ impl CanvasSession {
             None => self.next_id(),
         };
         {
+            let z = self.next_top_z();
             let mut obj: MapPrelim = Vec::<(&'static str, In)>::new().into_iter().collect();
             obj.insert(
                 F_KIND.into(),
@@ -1135,6 +1356,7 @@ impl CanvasSession {
                         .into(),
                 )),
             );
+            obj.insert(F_ZINDEX.into(), In::Any(Any::String(z.into())));
             obj.insert(F_PROPS.into(), In::Map(MapPrelim::default()));
             let root = self.root();
             let mut txn = self.doc.transact_mut_with(actor.wire());
@@ -1238,6 +1460,7 @@ impl CanvasSession {
                     ]
                 })
                 .collect();
+            let z = self.next_top_z();
             let mut obj: MapPrelim = Vec::<(&'static str, In)>::new().into_iter().collect();
             obj.insert(
                 F_KIND.into(),
@@ -1247,6 +1470,7 @@ impl CanvasSession {
             obj.insert(F_COLOR.into(), In::Any(Any::String(color.into())));
             obj.insert(F_SWIDTH.into(), In::Any(Any::Number(Number::Float(width))));
             obj.insert(F_TOOL.into(), In::Any(Any::String(tool.wire().into())));
+            obj.insert(F_ZINDEX.into(), In::Any(Any::String(z.into())));
             obj.insert(F_PROPS.into(), In::Map(MapPrelim::default()));
             let root = self.root();
             let mut txn = self.doc.transact_mut_with(actor.wire());
@@ -1374,6 +1598,9 @@ fn read_object(root: &yrs::MapRef, txn: &yrs::Transaction, id: &str) -> Option<C
     } else {
         (None, None, None)
     };
+    // #402：z 序键（缺省 DEFAULT_KEY——存量对象/敌意缺字段兼容；
+    // 不在此校验键型：排序面只做字典序比较，重排命令面才校验）。
+    let z_index = str_field(F_ZINDEX).unwrap_or_else(|| crate::zorder::DEFAULT_KEY.to_string());
     let mut props = BTreeMap::new();
     if let Some(Out::YMap(p)) = m.get(txn, F_PROPS) {
         for (k, v) in p.iter(txn) {
@@ -1396,6 +1623,7 @@ fn read_object(root: &yrs::MapRef, txn: &yrs::Transaction, id: &str) -> Option<C
         color,
         width,
         tool,
+        z_index,
         props,
     })
 }
@@ -1442,6 +1670,9 @@ pub fn fingerprint_object(o: &CanvasObject) -> String {
     for (k, v) in &o.props {
         acc.push_str(&format!("|p:{k}={v}"));
     }
+    // #402：z 序键入指纹（重排 = 语义变更 → 证据失效——与「位置漂移
+    // 即语义变更」同粒度：遮挡关系是视觉语义面）。
+    acc.push_str(&format!("|z={}", o.z_index));
     mdc_evidence::Fnv64.fingerprint(acc.as_bytes()).0
 }
 
