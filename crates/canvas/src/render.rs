@@ -979,8 +979,12 @@ impl CanvasRendering {
     }
 
     /// 从 session 会话取渲染模型（对象到图元）。
+    ///
+    /// #402：消费 [`CanvasSession::objects_z_ordered`]（`(z_index, id)`
+    /// 全序）——绘制顺序 = z 序（遮挡关系语义）；边端点解析仍以完整
+    /// 对象面进行（from_objects 内部 `all` 引用，与顺序无关）。
     pub fn from_session(session: &CanvasSession) -> CanvasRendering {
-        CanvasRendering::from_objects(&session.objects())
+        CanvasRendering::from_objects(&session.objects_z_ordered())
     }
 
     /// 从读模型快照构建（会话或纯数据皆可）。

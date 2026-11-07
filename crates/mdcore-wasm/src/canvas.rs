@@ -31,7 +31,7 @@ use wasm_bindgen::prelude::*;
 
 use mdc_canvas::{
     Actor, CanvasCommand, CanvasError, CanvasObject, CanvasSession, CommandOutcome, ObjectKind,
-    SessionOptions, StrokeTool,
+    ReorderOp, SessionOptions, StrokeTool,
 };
 
 // ---------------------------------------------------------------------------
@@ -269,9 +269,19 @@ pub fn parse_cmd_core(json: &str) -> Result<CanvasCommand, CvError> {
             width: f("width")?,
             tool: tool("tool")?,
         }),
+        "reorder" => {
+            // #402：z 序重排（op = front/back/forward/backward）。
+            let op = ReorderOp::from_wire(&s("op")?).ok_or_else(|| {
+                bad_json(
+                    "command",
+                    "`op` must be front/back/forward/backward".to_string(),
+                )
+            })?;
+            Ok(CanvasCommand::Reorder { id: s("id")?, op })
+        }
         other => Err(bad_json(
             "command",
-            format!("unknown command `{other}` (10 commands: add_node/move_node/resize_node/add_edge/set_props/remove_object/group_objects/ungroup/add_stroke/set_stroke_style)"),
+            format!("unknown command `{other}` (11 commands: add_node/move_node/resize_node/add_edge/set_props/remove_object/group_objects/ungroup/add_stroke/set_stroke_style/reorder)"),
         )),
     }
 }
@@ -322,7 +332,7 @@ pub fn object_json(o: &CanvasObject) -> String {
         None => "null".to_string(),
     };
     format!(
-        "{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"from\":{},\"to\":{},\"members\":[{}],\"points\":[{}],\"color\":{},\"width\":{},\"tool\":{},\"props\":{{{}}}}}",
+        "{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"from\":{},\"to\":{},\"members\":[{}],\"points\":[{}],\"color\":{},\"width\":{},\"tool\":{},\"z_index\":{},\"props\":{{{}}}}}",
         serde_json::to_string(&o.id).unwrap(),
         kind_wire(o.kind),
         o.x,
@@ -336,6 +346,7 @@ pub fn object_json(o: &CanvasObject) -> String {
         opt_str(&o.color),
         width,
         tool,
+        serde_json::to_string(&o.z_index).unwrap(),
         props.join(","),
     )
 }
@@ -353,6 +364,7 @@ pub fn receipt_json(outcome: &CommandOutcome, undo_depth: usize, undo_cleared: b
         CommandOutcome::Ungrouped { group_id } => ("ungrouped", "group_id", group_id.clone()),
         CommandOutcome::StrokeAdded { id } => ("stroke_added", "id", id.clone()),
         CommandOutcome::StrokeStyled { id } => ("stroke_styled", "id", id.clone()),
+        CommandOutcome::Reordered { id } => ("reordered", "id", id.clone()),
     };
     format!(
         "{{\"outcome\":\"{kind}\",\"{key}\":{},\"undo_depth\":{undo_depth},\"undo_cleared\":{undo_cleared}}}",

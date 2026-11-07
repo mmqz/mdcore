@@ -23,6 +23,7 @@
 pub mod events;
 pub mod render;
 pub mod session;
+pub mod zorder;
 
 pub use events::{CanvasChangeSource, CanvasEvent, Subscription};
 pub use render::{
@@ -33,5 +34,5 @@ pub use render::{
 };
 pub use session::{
     Actor, CanvasCommand, CanvasError, CanvasObject, CanvasSession, CommandOutcome, CommandReceipt,
-    ObjectKind, SessionOptions, StrokeTool,
+    ObjectKind, ReorderOp, SessionOptions, StrokeTool,
 };

@@ -356,3 +356,48 @@ fn stroke_error_codes_reuse_existing_variants() {
     let e: mdcore_wasm::canvas::CvError = e.into();
     assert_eq!(e.code, "cv_object_not_found");
 }
+
+/// #402：reorder 命令 JSON 解析（四 op + 错误面）+ z_index 入读模型
+/// JSON + 端到端重排经 JSON 命令通道。
+#[test]
+fn parse_reorder_command_and_z_index_json() {
+    // 四 op 全形态
+    for (op_json, expect) in [
+        ("front", "front"),
+        ("back", "back"),
+        ("forward", "forward"),
+        ("backward", "backward"),
+    ] {
+        let cmd = parse_cmd_core(&format!(r#"{{"t":"reorder","id":"n1","op":"{op_json}"}}"#))
+            .unwrap_or_else(|e| panic!("parse {expect}: {e:?}"));
+        assert!(matches!(cmd, mdc_canvas::CanvasCommand::Reorder { .. }));
+    }
+    // 错误面：坏 op / 缺 op / 缺 id
+    assert!(parse_cmd_core(r#"{"t":"reorder","id":"n1","op":"sideways"}"#).is_err());
+    assert!(parse_cmd_core(r#"{"t":"reorder","id":"n1"}"#).is_err());
+    assert!(parse_cmd_core(r#"{"t":"reorder","op":"front"}"#).is_err());
+
+    // 端到端：两对象 → JSON 通道把顶层 n2 置底 → 回执 + z 序变化 +
+    // z_index 字段（n1 底层 z=a0、n2 顶层 z=a1——新建置顶语义）
+    let mut s = session(41);
+    add_node(&mut s, "n1", 0.0, 0.0);
+    add_node(&mut s, "n2", 100.0, 0.0);
+    let z2_before = s.find_object("n2").unwrap().z_index.clone();
+    assert!(z2_before.as_str() > s.find_object("n1").unwrap().z_index.as_str());
+    let cmd = parse_cmd_core(r#"{"t":"reorder","id":"n2","op":"back"}"#).unwrap();
+    let receipt = s.execute(mdc_canvas::Actor::Human, cmd).unwrap();
+    assert_eq!(
+        receipt_json(&receipt.outcome, receipt.undo_depth, receipt.undo_cleared),
+        r#"{"outcome":"reordered","id":"n2","undo_depth":3,"undo_cleared":false}"#
+    );
+    let z2_after = s.find_object("n2").unwrap().z_index.clone();
+    let z1 = s.find_object("n1").unwrap().z_index.clone();
+    assert!(
+        z2_after.as_str() < z1.as_str(),
+        "置底后 n2 的 z 降到 n1 之下"
+    );
+
+    // 读模型 JSON 含 z_index 字段（字符串）
+    let json = object_json(&s.find_object("n2").unwrap());
+    assert!(json.contains("\"z_index\":\""), "z_index 应入 JSON：{json}");
+}
