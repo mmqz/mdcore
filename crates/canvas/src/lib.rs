@@ -21,6 +21,7 @@
 //! 画布域的证据粒度决策，注册于 Locator::CanvasObject 文档。
 
 pub mod events;
+pub mod export;
 pub mod render;
 pub mod session;
 pub mod zorder;
