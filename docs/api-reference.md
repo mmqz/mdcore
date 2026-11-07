@@ -92,6 +92,8 @@ pub enum BlockSource { Body, Header, Footer }
 | `image(png_bytes, w_px, h_px)` | PNG-only 写面 |
 | `RunSpec::` `text` / `styled` / `link` / `anchor_link` / `footnote` / `field_page` / `field_num_pages` / `field_toc` / `field_toc_heading_range(lo, hi)` | run 构造器族（TOC 域 V8 校验：1-9 且 lo≤hi） |
 | `page_geometry(PageGeometry)` / `default_typography(DefaultTypography)` | G2 排版参数（twips 全八字段 / 字体三槽 + 半磅字号 + 行距） |
+| `section_break(SectionBreakSpec)` | #257/#423 节属性面：闭合一节（geometry/titlePg/pgNumType/六槽位 + `section_type`[w:type 五值] + `columns`[w:cols 全字段——equalWidth/sep/`w:col` 子表]；后两项 docx-rs 0.4.22 无中段节通道，save 漏斗打包后注入） |
+| `section_type(SectionKind)` / `columns(ColumnsSpec)` | #423 末节文档级单值（原生 w:type 直赋 / 全形态注入置换——None 语义精确往返；V10 域校验 num 1-63） |
 | `save_to_vec()` / `save_to_path()` | 打包产出（save 漏斗域校验 V1-V9） |
 | `anonymize_docx_props(bytes)`（自由函数） | 暗标元数据后处理：core.xml → 匿名常量（unknown 作者 + epoch 零时）+ app/custom/people 清空 + 批注作者匿名化；幂等 |
 

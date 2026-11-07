@@ -5032,10 +5032,36 @@ pub struct SectionBreakSpec {
     pub title_page: bool,
     /// 起始页码（`w:pgNumType/@w:start`；None = 续前节）。
     pub page_number_start: Option<u32>,
+    /// #423：分节符类型（`w:type`——**本节末分节符**的换页语义；
+    /// None = 缺省 nextPage。类型复用读面 [`SectionKind`]（五值
+    /// 透传，读模板 → 写导出零换算）。docx-rs 0.4.22 `Section` 的
+    /// delegate 宏未暴露 setter——save 漏斗打包后 XML 注入（N-4
+    /// 同构，见 [`DocxWriter::section_break`] 文档）。
+    pub section_type: Option<SectionKind>,
+    /// #423：分栏规格（`w:cols` 全字段——复用读面 #268
+    /// [`ColumnsSpec`]：num/space/equalWidth/sep/`w:col` 子表；
+    /// None = 引擎缺省单栏发射）。docx-rs 0.4.22 只能发射
+    /// num/space 两属性且中段节无 setter 通道——save 漏斗打包后
+    /// XML 注入置换（缺省字段 = 属性缺席，读回逐字段一致）。
+    /// V10 域校验（num 1-63 / twips 域 / equalWidth=0 栏数一致）
+    /// 粘性拒绝。
+    pub columns: Option<ColumnsSpec>,
     /// 本节页眉槽位组。
     pub headers: SectionSlots,
     /// 本节页脚槽位组。
     pub footers: SectionSlots,
+}
+
+/// #423：中段节 sectPr 增补账本条目（[`DocxWriter::section_break`]
+/// 记账——两字段在 docx-rs 0.4.22 均无中段节发射通道，save 漏斗
+/// 打包后注入；私有面：账本形态不进公开 API）。
+#[derive(Debug, Clone, Default)]
+struct SectionSectExtras {
+    /// `w:type`（分节符换页语义——注入发射）。
+    section_type: Option<SectionKind>,
+    /// `w:cols` 全字段（含 num/space 简形——`Section.property` 无
+    /// setter，统一走注入以保 None 语义的精确往返）。
+    columns: Option<ColumnsSpec>,
 }
 
 /// 行距规则（w:spacing w:lineRule——`line` 值语义随规则变化）。
@@ -5624,6 +5650,15 @@ pub struct DocxWriter {
     /// numbered_list_item 引用/级域校验；save_to_vec 重建基态时随
     /// Self::new() 重置[新档无自定义编号]）。
     defined_numberings: std::collections::HashMap<usize, usize>,
+    /// #423：中段节 sectPr 增补账本（section_break 逐节记账——索引
+    /// = 节序 0 基，与 document.xml `<w:sectPr` 出现序对齐；docx-rs
+    /// 0.4.22 `Section` 的 delegate 宏未暴露 cols/type 通道，save
+    /// 漏斗打包后 XML 注入。save 后随基态重置）。
+    mid_section_extras: Vec<SectionSectExtras>,
+    /// #423：末节分栏账本（文档级 [`DocxWriter::columns`] 单值语义
+    /// ——docx-rs 只能发射缺省 cols 形态且 None 语义不可原生表达，
+    /// 统一走注入。save 后随基态重置）。
+    final_columns_extra: Option<ColumnsSpec>,
 }
 
 impl DocxWriter {
@@ -5686,6 +5721,8 @@ impl DocxWriter {
             header_tables: std::collections::HashSet::new(),
             defined_styles: std::collections::HashSet::new(),
             defined_numberings: std::collections::HashMap::new(),
+            mid_section_extras: Vec::new(),
+            final_columns_extra: None,
         }
     }
 
@@ -6461,6 +6498,14 @@ impl DocxWriter {
                 return;
             }
         }
+        // #423 V10 分栏域校验（粘性拒绝——同几何漏斗纪律：构造期
+        // 快败，save 漏斗首查零产出）。
+        if let Some(cols) = &spec.columns {
+            if let Err(msg) = validate_columns_spec(cols) {
+                self.validation_error = Some(msg);
+                return;
+            }
+        }
         let mut section = docx_rs::Section::new();
         if let Some(g) = &spec.geometry {
             section = section
@@ -6519,6 +6564,13 @@ impl DocxWriter {
             self.count_specs(1, runs);
         }
         self.docx = std::mem::take(&mut self.docx).add_section(section);
+        // #423：中段节 sectPr 增补记账（cols/type 无 docx-rs 发射通道
+        // ——save 漏斗打包后按节序注入；索引与 `<w:sectPr` 出现序
+        // 对齐[中段节按调用序，末节恒居尾]）。
+        self.mid_section_extras.push(SectionSectExtras {
+            section_type: spec.section_type,
+            columns: spec.columns,
+        });
         // r4-t2：节断点段（承载 sectPr 的空段）计数。
         self.paragraphs += 1;
     }
@@ -6592,6 +6644,38 @@ impl DocxWriter {
         self.typography = Some(t);
     }
 
+    /// #423：末节分节符类型（`w:sectPr/w:type`——本节末分节符的换页
+    /// 语义；文档级单值，多次调用后值覆盖）。docx-rs **原生通道**
+    /// （`document.section_property` 直赋——[`Self::page_number_start`]
+    /// 同先例；五值零手术）；中段节类型经 [`Self::section_break`] 的
+    /// [`SectionBreakSpec::section_type`] 治理（无原生通道——save 漏斗
+    /// 注入）。读回 [`SectionData::section_type`]（读面 #257 既有面）。
+    pub fn section_type(&mut self, kind: SectionKind) {
+        self.docx.document.section_property.section_type = Some(section_type_forward(kind));
+    }
+
+    /// #423：末节分栏（`w:sectPr/w:cols` 全字段——文档级单值语义，
+    /// 多次调用后值覆盖；中段节分栏经 [`Self::section_break`] 的
+    /// [`SectionBreakSpec::columns`] 治理）。
+    ///
+    /// **为什么全形态走打包后注入而非 docx-rs 原生字段**：
+    /// `SectionProperty` 只有 `columns`/`space` 两 `usize`（恒发射
+    /// `<w:cols w:space="425" w:num="1" />` 缺省形态），None 语义
+    /// （属性缺席——读回 [`ColumnsSpec`] 的 None 字段）不可原生表达；
+    /// 注入面按 spec 精确发射（缺省字段 = 属性缺席，写 → 读逐字段
+    /// 一致——roundtrip 单一判据）。
+    ///
+    /// V10 域校验（num 1-63 / space·col 子表 twips ≤ 31680 /
+    /// equalWidth=0 形态 num 与 `w:col` 子表数一致）粘性拒绝——
+    /// save 漏斗首查零产出。
+    pub fn columns(&mut self, spec: ColumnsSpec) {
+        if let Err(msg) = validate_columns_spec(&spec) {
+            self.validation_error = Some(msg);
+            return;
+        }
+        self.final_columns_extra = Some(spec);
+    }
+
     pub fn save_to_vec(&mut self) -> Result<Vec<u8>, DocxError> {
         // office-g V7 粘性校验首查（fail-closed：半合法文档零产出——
         // 与超限零产物同语义）。**不 take 不重置**：错误路径与 Limit
@@ -6654,6 +6738,28 @@ impl DocxWriter {
         } else {
             let tables = std::mem::take(&mut self.header_tables);
             mark_table_header_rows(&bytes, &tables)?
+        };
+        // #423：sectPr 增补注入（中段节 cols/type + 末节 cols——账本
+        // 空 = 字节级零变化透传[不用本面的文档零手术]）。失败粘性
+        // 拒绝：账本不 take（错误路径写器原状），validation_error 落
+        // 账保证后续 save 恒拒而非静默丢增补。
+        let out = if self.mid_section_extras.is_empty() && self.final_columns_extra.is_none() {
+            out
+        } else {
+            let mut sections = self.mid_section_extras.clone();
+            sections.push(SectionSectExtras {
+                section_type: None,
+                columns: self.final_columns_extra.clone(),
+            });
+            match apply_section_extras(&out, &sections) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.validation_error = Some(format!(
+                        "sectPr 增补注入失败（fail-closed——后续 save 恒拒）：{e}"
+                    ));
+                    return Err(e);
+                }
+            }
         };
         // build() 消费 self.docx —— 重建基态（写器可续写：幂等语义，
         // 已写内容已在 built 内落盘，续写 = 新档；numbering 惰性位
@@ -7526,6 +7632,309 @@ fn inject_tbl_header(
     }
     out.push_str(rest);
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// #423：sectPr 增补写面（分栏 w:cols 全字段 + 分节符类型 w:type）
+// ——docx-rs 0.4.22 发射缺口打包后补位（N-4 同构）
+// ---------------------------------------------------------------------------
+
+/// #423：`SectionKind` → docx-rs `SectionType`（正向映射——读面
+/// [`section_kind`] 的逆向；末节原生通道直赋用）。
+fn section_type_forward(kind: SectionKind) -> docx_rs::SectionType {
+    match kind {
+        SectionKind::NextPage => docx_rs::SectionType::NextPage,
+        SectionKind::NextColumn => docx_rs::SectionType::NextColumn,
+        SectionKind::Continuous => docx_rs::SectionType::Continuous,
+        SectionKind::EvenPage => docx_rs::SectionType::EvenPage,
+        SectionKind::OddPage => docx_rs::SectionType::OddPage,
+    }
+}
+
+/// #423：`SectionKind` → wire 名（`w:type/@w:val`——与 docx-rs
+/// `SectionType::Display` 同串、读面 docx-rs reader 同词表）。
+fn section_kind_wire(kind: SectionKind) -> &'static str {
+    match kind {
+        SectionKind::NextPage => "nextPage",
+        SectionKind::NextColumn => "nextColumn",
+        SectionKind::Continuous => "continuous",
+        SectionKind::EvenPage => "evenPage",
+        SectionKind::OddPage => "oddPage",
+    }
+}
+
+/// #423 V10：分栏域校验（写面策略——读面不钳位，[#268] 纪律）。
+///
+/// 域：
+/// - `num` 1-63（Word 分栏 UI 上限 63——超出属畸形面）；
+/// - `space`/`w:col` 子表 twips ≤ 31680（与 V9 段距 before/after
+///   同族上界——2 页高防御界）；
+/// - `equalWidth=0` 形态 `num` 与 `w:col` 子表数一致（ECMA §17.6.4：
+///   equalWidth=false 时栏数由 col 子表承载——两者同时在场必一致）。
+fn validate_columns_spec(spec: &ColumnsSpec) -> Result<(), String> {
+    if let Some(n) = spec.num {
+        if !(1..=63).contains(&n) {
+            return Err(format!(
+                "V10: section columns num out of domain: {n} (must be 1-63, Word column limit)"
+            ));
+        }
+    }
+    if let Some(s) = spec.space {
+        if s > 31680 {
+            return Err(format!(
+                "V10: section columns space out of domain: {s} twips (must be <= 31680)"
+            ));
+        }
+    }
+    for c in &spec.columns {
+        if let Some(w) = c.width {
+            if !(1..=31680).contains(&w) {
+                return Err(format!(
+                    "V10: column width out of domain: {w} twips (must be 1-31680)"
+                ));
+            }
+        }
+        if let Some(s) = c.space {
+            if s > 31680 {
+                return Err(format!(
+                    "V10: column space out of domain: {s} twips (must be <= 31680)"
+                ));
+            }
+        }
+    }
+    if spec.equal_width == Some(false) && !spec.columns.is_empty() {
+        if let Some(n) = spec.num {
+            if n as usize != spec.columns.len() {
+                return Err(format!(
+                    "V10: equalWidth=0 requires num == w:col count (num={n}, col children={}; \
+                     ECMA 17.6.4: column count is carried by col children when equalWidth=false)",
+                    spec.columns.len()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #423：`ColumnsSpec` → `w:cols` 元素 XML（注入置换形态）。
+///
+/// 发射策略（缺省字段 = 属性缺席——读回 [`ColumnsSpec`] 逐字段一致，
+/// None 不代填 [#268 同口径]）；属性序 num→space→equalWidth→sep
+/// （语义序：栏数/栏距/等宽位/分隔线位——XML 属性序无 schema 语义，
+/// 本面钉定稳定序）；布尔值 0/1（ST_OnOff 规范形——读面
+/// [`parse_on_off`] true/1/false/0 四形兼容）。子表在场 = 开形元素
+/// （`w:col` 自闭合，文档序），否则自闭合。
+fn cols_element_xml(spec: &ColumnsSpec) -> String {
+    let mut s = String::from("<w:cols");
+    if let Some(n) = spec.num {
+        s.push_str(&format!(" w:num=\"{n}\""));
+    }
+    if let Some(sp) = spec.space {
+        s.push_str(&format!(" w:space=\"{sp}\""));
+    }
+    if let Some(ew) = spec.equal_width {
+        s.push_str(&format!(" w:equalWidth=\"{}\"", u8::from(ew)));
+    }
+    if let Some(sep) = spec.separator {
+        s.push_str(&format!(" w:sep=\"{}\"", u8::from(sep)));
+    }
+    if spec.columns.is_empty() {
+        s.push_str(" />");
+    } else {
+        s.push('>');
+        for c in &spec.columns {
+            s.push_str("<w:col");
+            if let Some(w) = c.width {
+                s.push_str(&format!(" w:w=\"{w}\""));
+            }
+            if let Some(csp) = c.space {
+                s.push_str(&format!(" w:space=\"{csp}\""));
+            }
+            s.push_str(" />");
+        }
+        s.push_str("</w:cols>");
+    }
+    s
+}
+
+/// #423（N-4 同构）：docx 字节 → 逐节 sectPr 增补（`w:cols` 置换 +
+/// `w:type` 插入）。
+///
+/// **为什么 zip 后处理而非 docx-rs 面发射**：
+/// - `w:cols`：`SectionProperty` 仅 `columns`/`space` 两 `usize`
+///   （equalWidth/sep/`w:col` 子表零表达），且 `Section` 的
+///   delegate 宏未暴露 setter——中段节连 num/space 都无通道；
+/// - `w:type`：`Section.property` `pub(crate)`——中段节无通道
+///   （末节经 `document.section_property` 直赋原生发射，不入本面）。
+/// 版本钉死不可升（P2-2 serde derive 锁 0.4.22）。
+///
+/// 锚点（引擎写面发射形态实证钉定）：每 sectPr 恒含自闭合
+/// `<w:cols w:space="…" w:num="…" />`（`SectionProperty::default`
+/// space 425/columns 1 恒发射）；sectPr 无嵌套（写面不发射
+/// sectPrChange）；节序 = `<w:sectPr` 出现序（中段节按
+/// [`DocxWriter::section_break`] 调用序，末节恒居尾——`sections`
+/// 索引与账本逐节对齐，账本外节 = 透传）。`w:type` 插入位 =
+/// `<w:titlePg` 前（docx-rs 自身发射序 type 恒在 titlePg 前），
+/// 无 titlePg 则 sectPr 闭合前。`word/document.xml` 不在场 =
+/// fail-closed 拒；非目标部件 raw_copy 原样保留（匿名化后处理同构）。
+fn apply_section_extras(
+    bytes: &[u8],
+    sections: &[SectionSectExtras],
+) -> Result<Vec<u8>, DocxError> {
+    use std::io::Write as _;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| DocxError::Io(format!("open zip: {e}")))?;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let mut has_document = false;
+    for i in 0..archive.len() {
+        let name = {
+            let entry = archive
+                .by_index_raw(i)
+                .map_err(|e| DocxError::Io(format!("zip index: {e}")))?;
+            entry.name().to_string()
+        };
+        if name == "word/document.xml" {
+            has_document = true;
+            let mut xml = String::new();
+            archive
+                .by_name(&name)
+                .map_err(|e| DocxError::Io(format!("document open: {e}")))?
+                .read_to_string(&mut xml)
+                .map_err(|e| DocxError::Io(format!("document read: {e}")))?;
+            let marked = inject_section_extras(&xml, sections)?;
+            writer
+                .start_file(name.clone(), zip::write::SimpleFileOptions::default())
+                .map_err(|e| DocxError::Io(format!("zip start: {e}")))?;
+            writer
+                .write_all(marked.as_bytes())
+                .map_err(|e| DocxError::Io(format!("zip write: {e}")))?;
+        } else {
+            let entry = archive
+                .by_index_raw(i)
+                .map_err(|e| DocxError::Io(format!("zip copy: {e}")))?;
+            writer
+                .raw_copy_file(entry)
+                .map_err(|e| DocxError::Io(format!("zip copy: {e}")))?;
+        }
+    }
+    if !has_document {
+        return Err(DocxError::Io(
+            "sectPr 增补注入：word/document.xml 不在场（非 docx 伪产物——fail-closed 拒绝）".into(),
+        ));
+    }
+    let out = writer
+        .finish()
+        .map_err(|e| DocxError::Io(format!("zip finish: {e}")))?;
+    Ok(out.into_inner())
+}
+
+/// document.xml 锚定注入：第 `sections[i]` 节的 sectPr 块内置换
+/// `w:cols` / 插入 `w:type`（`None,None` 节 = 原样透传——字节级零
+/// 变化）。节序 = `<w:sectPr` 出现序；块界 = 至 `</w:sectPr>`
+/// （无嵌套——锚点假设见 [`apply_section_extras`] 文档）。
+fn inject_section_extras(xml: &str, sections: &[SectionSectExtras]) -> Result<String, DocxError> {
+    let mut out = String::with_capacity(xml.len() + sections.len() * 64);
+    let mut rest = xml;
+    let mut sect_idx = 0usize;
+    while let Some(pos) = rest.find("<w:sectPr") {
+        let after_tag = pos + "<w:sectPr".len();
+        // `<w:sectPr>` / `<w:sectPr 属性…>`（引擎发射恒无属性——属性
+        // 形防御面）；`<w:sectPrChange` 前缀误配 = fail-closed（写面
+        // 不发射修订面，出现即非本面产物）。
+        let next = rest.as_bytes().get(after_tag).copied();
+        if next != Some(b'>') && next != Some(b' ') {
+            return Err(DocxError::Io(
+                "sectPr 增补注入：<w:sectPr 后随既非 > 也非空白（非节属性开标签——fail-closed 拒）"
+                    .into(),
+            ));
+        }
+        let tag_close = match rest[after_tag..].find('>') {
+            Some(off) => after_tag + off,
+            None => {
+                return Err(DocxError::Io(
+                    "sectPr 增补注入：<w:sectPr 开标签无闭合（畸形 XML——fail-closed 拒绝）".into(),
+                ));
+            }
+        };
+        // 块闭合（无嵌套锚点——写面不发射 sectPrChange）。
+        let block_end = match rest[tag_close + 1..].find("</w:sectPr>") {
+            Some(off) => tag_close + 1 + off + "</w:sectPr>".len(),
+            None => {
+                return Err(DocxError::Io(
+                    "sectPr 增补注入：sectPr 块无闭合（畸形 XML——fail-closed 拒绝）".into(),
+                ));
+            }
+        };
+        let extras = sections.get(sect_idx);
+        match extras {
+            None => {
+                // 账本外节（sections 覆盖全部节——防御面透传）。
+                out.push_str(&rest[..block_end]);
+            }
+            Some(e) if e.section_type.is_none() && e.columns.is_none() => {
+                // 无增补节 = 原样透传（字节级零变化纪律）。
+                out.push_str(&rest[..block_end]);
+            }
+            Some(e) => {
+                let block = rest[..block_end].to_string();
+                out.push_str(&inject_one_sect_pr(&block, e)?);
+            }
+        }
+        rest = &rest[block_end..];
+        sect_idx += 1;
+    }
+    if sect_idx < sections.len() {
+        return Err(DocxError::Io(format!(
+            "sectPr 增补注入：账本 {} 节但产物仅 {sect_idx} 节（发射/记账失衡——fail-closed 拒）",
+            sections.len()
+        )));
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// 单 sectPr 块手术：`w:cols` 置换（引擎恒发射的缺省自闭合形态 →
+/// spec 精确形态）+ `w:type` 插入（`<w:titlePg` 前，无则块闭合前
+/// ——docx-rs 自身发射序同位）。两手术独立锚定，cols 先行（type
+/// 锚点在其后不受影响）。
+fn inject_one_sect_pr(block: &str, e: &SectionSectExtras) -> Result<String, DocxError> {
+    let mut nb = block.to_string();
+    if let Some(spec) = &e.columns {
+        let start = nb.find("<w:cols").ok_or_else(|| {
+            DocxError::Io("sectPr 增补注入：块内无 <w:cols（锚点假设破坏——fail-closed 拒）".into())
+        })?;
+        // 后随字符防误配（w:cols 无同前缀元素——防御面）。
+        let after = start + "<w:cols".len();
+        let next = nb.as_bytes().get(after).copied();
+        if next != Some(b' ') && next != Some(b'>') && next != Some(b'/') {
+            return Err(DocxError::Io(
+                "sectPr 增补注入：<w:cols 后随非法（畸形——fail-closed 拒）".into(),
+            ));
+        }
+        let close = nb[start..].find("/>").ok_or_else(|| {
+            DocxError::Io(
+                "sectPr 增补注入：<w:cols 非自闭合（引擎发射形态破坏——fail-closed 拒）".into(),
+            )
+        })? + start;
+        // 被置换段必须为纯属性自闭合形态（段内无子元素——引擎发射
+        // 形态实证；开形/带子防御面 fail-closed）。
+        if nb[start + "<w:cols".len()..close].contains('<') {
+            return Err(DocxError::Io(
+                "sectPr 增补注入：<w:cols 含子元素（引擎发射形态破坏——fail-closed 拒）".into(),
+            ));
+        }
+        nb.replace_range(start..close + 2, &cols_element_xml(spec));
+    }
+    if let Some(kind) = e.section_type {
+        let tag = format!("<w:type w:val=\"{}\" />", section_kind_wire(kind));
+        let insert_at = match nb.find("<w:titlePg") {
+            Some(p) => p,
+            None => nb.len() - "</w:sectPr>".len(),
+        };
+        nb.insert_str(insert_at, &tag);
+    }
+    Ok(nb)
 }
 
 /// 读 docx 指定部件原始字节（匿名化配套验证面——workbench 导出验证
