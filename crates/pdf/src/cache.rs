@@ -18,7 +18,13 @@
 //!   自逐（驱逐循环自尾收敛的均匀语义）——预算不变量保持成立；
 //!   **零成本条目**（cost = 0）不占预算，零预算缓存仍可存零成本条目；
 //! - **观测面**：`len`/`bytes`/`entries`（LRU→MRU 驱逐候选序）/
-//!   `contains`（不提权）/ `clear`（全量复位，值即刻释放）。
+//!   `contains`（不提权）/ `clear`（全量复位，值即刻释放）；
+//! - **失效面**（#305 方案 B——flush 后旧位图不得继续服役）：
+//!   `invalidate`（单键精准摘除，返回值供调用方作废关联资源）+
+//!   `invalidate_matching`（谓词批量摘除，返回被摘除键集，序 = LRU→MRU
+//!   与 `put` 驱逐键集同款载荷面）。失效不等于 `clear`：条目级摘除
+//!   保住未受影响条目的命中（页面视图翻页性能不因单页失效全量冷启动）；
+//!   `PageCache<RenderKey, V>` 的 PDF 感知失效粒度见 [`crate::render`]。
 //!
 //! 键约束 `Copy + Eq + Hash`：驱逐键集以值返回（调用方作废关联资源
 //! 需要键的拷贝）；值为任意 `V`（阅读面 = [`crate::render::RenderedPage`]，
@@ -186,6 +192,65 @@ where
             idx = self.slots[idx as usize].prev;
         }
         out
+    }
+
+    // ------------------------------------------------------------------
+    // 失效面（#305 方案 B）
+    // ------------------------------------------------------------------
+
+    /// 单键精准摘除：摘链 + 移除映射 + 退成本 + 槽入空闲栈，返回被摘除
+    /// 条目的**值**（调用方据此作废关联资源——GPU 纹理/宿主位图句柄；
+    /// 返回即所有权移交，本缓存不再持有）。键不在位 → `None`（幂等：
+    /// 重复失效不报错）。
+    ///
+    /// 与 `clear` 的分工：`clear` 是全量复位（会话级重开），本方法是
+    /// 条目级失效（标注/内容变更后的精准作废——未受影响条目的命中
+    /// 不受扰动）。
+    pub fn invalidate(&mut self, key: &K) -> Option<V> {
+        let idx = *self.map.get(key)?;
+        let cell = self.remove_slot(idx)?;
+        cell.value
+    }
+
+    /// 谓词批量摘除：摘除所有键满足 `pred` 的条目，返回被摘除键集
+    /// （**LRU→MRU 序**——与 `put` 驱逐键集同款载荷面，调用方可按序
+    /// 作废关联资源）。不满足谓词的条目原序保持在位（命中率保护——
+    /// 失效粒度是本方法存在的意义）。
+    ///
+    /// 典型消费方：`PageCache<RenderKey, V>` 的 PDF 感知失效
+    /// （`invalidate_page` / `invalidate_stale_revisions` /
+    /// `invalidate_all`——见 [`crate::render`]）。
+    pub fn invalidate_matching(&mut self, pred: impl Fn(&K) -> bool) -> Vec<K> {
+        // 第一趟（只读）：沿链表自尾（LRU）向头（MRU）收集命中槽位——
+        // 遍历序即返回序（确定性，与 entries()/put 驱逐序同源）。
+        let mut hit_slots: Vec<u32> = Vec::new();
+        let mut idx = self.slots[0].prev;
+        while idx != 0 {
+            if let Some(cell) = self.slots[idx as usize].entry.as_ref() {
+                if pred(&cell.key) {
+                    hit_slots.push(idx);
+                }
+            }
+            idx = self.slots[idx as usize].prev;
+        }
+        // 第二趟（可变）：逐槽摘除（各槽独立——unlink 对既有指针成立，
+        // 先后摘除互不依赖）。
+        hit_slots
+            .into_iter()
+            .filter_map(|idx| self.remove_slot(idx).map(|cell| cell.key))
+            .collect()
+    }
+
+    /// 摘除槽位（内部原语）：摘链 + 移除映射 + 退成本 + 槽入空闲栈。
+    /// 返回被摘除的条目单元（槽上无条目 = 防御分支 → None，正常路径
+    /// 不可达——map 命中槽必有条目，与 evict 的同步不变量同源）。
+    fn remove_slot(&mut self, idx: u32) -> Option<EntryCell<K, V>> {
+        let cell = self.slots[idx as usize].entry.take()?;
+        self.unlink(idx);
+        self.map.remove(&cell.key);
+        self.bytes = self.bytes.saturating_sub(cell.cost);
+        self.free.push(idx);
+        Some(cell)
     }
 
     // ------------------------------------------------------------------

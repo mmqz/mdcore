@@ -9,8 +9,9 @@
 //! 职责分层：
 //! - **PDF-b 骨架**：页/大纲/标注三层模型 + 命令边界 + 安全策略 +
 //!   协议草案 + 语义锁（零引擎依赖——默认构建不变，跨环境可构建）；
-//! - **PDF-c 阅读面**（本轮）：[`cache`]（字节预算 LRU 页缓存）、
-//!   [`render`]（光栅化抽象 + 引擎无关 mock 面）、[`worker`]（专用
+//! - **PDF-c 阅读面**（本轮）：[`cache`]（字节预算 LRU 页缓存 + #305
+//!   条目级失效面）、[`render`]（光栅化抽象 + 引擎无关 mock 面 +
+//!   [`render::RenderKey`] 渲染缓存键/标注修订号键控）、[`worker`]（专用
 //!   渲染线程 + panic 隔离）、[`document::PdfSession::attach_engine`]
 //!   （引擎数据源：文本/搜索/大纲/几何实数据）+ [`engine_pdfium`]
 //!   （pdfium 实装，feature `engine-pdfium`——库定位序/线程纪律/零
@@ -146,7 +147,7 @@ pub use document::{AttachEngineError, DocumentMeta, OpenError, PdfDocumentId, Pd
 pub use ocr::{ocr_available, ocr_page, OcrEnv};
 #[cfg(feature = "engine-lopdf")]
 pub use organize::{OrganizeReport, PageSize, PdfOrganizer};
-pub use render::{Rasterizer, RenderRequest, RenderedPage};
+pub use render::{Rasterizer, RenderKey, RenderRequest, RenderedPage};
 pub use security::{DangerousFamily, DangerousHit, FormField, FormProbe, Limits, OpenAssessment};
 pub use worker::{RenderWorker, WorkerReply};
 pub use writer::{AnnotationWriter, IncrementalSave, MockWriter};

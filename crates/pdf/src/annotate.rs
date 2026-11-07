@@ -504,6 +504,9 @@ pub struct PdfAnnotator {
     external: BTreeMap<AnnotId, (PageIndex, ObjectId)>,
     /// 待删除集（save 时统一摘除——外部对象号或 staged 对象号）。
     pending_removals: Vec<(PageIndex, ObjectId)>,
+    /// 标注修订号（#305：与 [`crate::document::PdfSession::annotation_rev`]
+    /// 同款合同——save 成功且实际追加字节时 +1；渲染缓存键控源头）。
+    rev: u64,
     /// 页数缓存（open 定位遍历时取——页界校验权威面）。
     page_count_hint: u32,
     read_report: ReadReport,
@@ -535,9 +538,16 @@ impl PdfAnnotator {
             next_id,
             external,
             pending_removals: Vec::new(),
+            rev: 0,
             page_count_hint: page_count,
             read_report,
         })
+    }
+
+    /// 标注修订号（#305：save 推进——与 PdfSession 同款语义合同，
+    /// rev 相同 ⟺ 产物字节相同；渲染缓存以此键控）。
+    pub fn annotation_rev(&self) -> u64 {
+        self.rev
     }
 
     /// 读取报告（打开时外部标注解析面）。
@@ -600,12 +610,18 @@ impl PdfAnnotator {
     }
 
     /// 增量保存（新增/编辑写入 + 删除摘除；前缀逐位保持语义锁沿用）。
+    /// save 成功且实际追加字节时标注修订号 +1（#305——产物变了 rev
+    /// 才变；零追加幂等 save 不 bump）。
     pub fn save(&mut self) -> Result<crate::writer::IncrementalSave, CommandError> {
         // 删除摘除（页 /Annots 数组过滤 + 对象 null 重定义）。
         for (page, obj) in std::mem::take(&mut self.pending_removals) {
             self.writer.remove_annotation(page, obj)?;
         }
-        self.writer.save_incremental()
+        let stats = self.writer.save_incremental()?;
+        if stats.bytes_appended > 0 {
+            self.rev = self.rev.saturating_add(1);
+        }
+        Ok(stats)
     }
 
     /// 产物字节（前缀 + 既往修订——宿主取回面）。
