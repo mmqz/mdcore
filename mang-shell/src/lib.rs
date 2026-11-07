@@ -16,6 +16,14 @@ pub mod canvas_view;
 #[path = "doc_events.rs"]
 pub mod doc_events;
 
+/// 文档打开分派 + 编辑器构造（open/open_editor——#427 折叠持久化
+/// 读侧接线在 open_editor 的 EditableText 分支）。进 lib 树的理由：
+/// CI 的 mang-shell job 只跑 `--lib`/`--tests`（bin 单测不执行），
+/// 该模块的单测挂在 bin 目标 = 永不运行（假绿）；依赖面
+///（canvas_view/editor/perf/settings）本就全在 lib 树。
+#[path = "document.rs"]
+pub mod document;
+
 #[path = "editor/mod.rs"]
 pub mod editor;
 
