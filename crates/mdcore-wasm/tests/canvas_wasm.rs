@@ -3,7 +3,7 @@
 //! 双会话 LWW 收敛/快照恢复/事件 base64 转发/时钟注入确定性。
 
 use mdc_canvas::{CanvasSession, SessionOptions};
-use mdcore_wasm::canvas::{event_json, object_json, parse_cmd_core, receipt_json};
+use mdcore_wasm::canvas::{event_json, object_json, parse_cmd_core, parse_cmds_core, receipt_json};
 
 fn session(tag: u64) -> CanvasSession {
     CanvasSession::open(SessionOptions {
@@ -351,10 +351,103 @@ fn stroke_error_codes_reuse_existing_variants() {
                 r##"{"t":"set_stroke_style","id":"nope","color":"#000","width":1,"tool":"pen"}"##,
             )
             .unwrap(),
+
+// ── 批量面（#352）────────────────────────────────────────────────
+
+#[test]
+fn parse_cmds_core_shapes() {
+    // 合法批（两命令）。
+    let cmds = parse_cmds_core(
+        r#"[{"t":"add_node","id":"n1","x":1,"y":2,"w":3,"h":4},{"t":"move_node","id":"n1","x":5,"y":6}]"#,
+    )
+    .unwrap();
+    assert_eq!(cmds.len(), 2);
+    assert!(matches!(
+        cmds[0],
+        mdc_canvas::CanvasCommand::AddNode { ref id, .. } if id.as_deref() == Some("n1")
+    ));
+    // 空批 / 非数组 / 批内坏命令。
+    let e = parse_cmds_core("[]").err().unwrap();
+    assert_eq!(e.code, "cv_bad_json");
+    let e = parse_cmds_core(r#"{"t":"add_node"}"#).err().unwrap();
+    assert_eq!(e.code, "cv_bad_json");
+    let e = parse_cmds_core(r#"[{"t":"bogus"}]"#).err().unwrap();
+    assert_eq!(e.code, "cv_bad_json");
+    let e = parse_cmds_core("not json").err().unwrap();
+    assert_eq!(e.code, "cv_bad_json");
+}
+
+#[test]
+fn execute_batch_end_to_end_and_receipt_json() {
+    use mdcore_wasm::canvas::batch_receipt_json;
+    let mut s = session(1);
+    add_node(&mut s, "a", 0.0, 0.0);
+    let receipt = s
+        .execute_batch(
+            mdc_canvas::Actor::Ai,
+            vec![
+                mdc_canvas::CanvasCommand::AddNode {
+                    id: Some("n1".into()),
+                    x: 10.0,
+                    y: 10.0,
+                    w: 5.0,
+                    h: 5.0,
+                    props: Default::default(),
+                },
+                mdc_canvas::CanvasCommand::MoveNode {
+                    id: "n1".into(),
+                    x: 20.0,
+                    y: 20.0,
+                },
+            ],
+        )
+        .unwrap();
+    let rj = batch_receipt_json(&receipt);
+    assert!(
+        rj.contains(
+            r#""outcomes":[{"outcome":"node_added","id":"n1"},{"outcome":"node_moved","id":"n1"}]"#
+        ),
+        "{rj}"
+    );
+    // 撤销栈按 origin 分栈：基线 add_node 是 Human 栈；批是 Ai 栈
+    // （整批一单元）→ Ai 深度 = 1。
+    assert!(rj.contains(r#""undo_depth":1"#), "{rj}");
+    assert!(rj.contains(r#""undo_cleared":false"#), "{rj}");
+    // 批效果读回（依赖序列可见）。
+    assert_eq!(s.find_object("n1").unwrap().x, 20.0);
+    // 一次 undo 全撤。
+    assert!(s.undo(mdc_canvas::Actor::Ai));
+    assert!(s.find_object("n1").is_none());
+    // 失败批：错误码映射 + 零落地。
+    let e = s
+        .execute_batch(
+            mdc_canvas::Actor::Ai,
+            vec![
+                mdc_canvas::CanvasCommand::AddNode {
+                    id: Some("bad1".into()),
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                    props: Default::default(),
+                },
+                mdc_canvas::CanvasCommand::MoveNode {
+                    id: "ghost".into(),
+                    x: 0.0,
+                    y: 0.0,
+                },
+            ],
         )
         .unwrap_err();
     let e: mdcore_wasm::canvas::CvError = e.into();
     assert_eq!(e.code, "cv_object_not_found");
+
+
+    assert!(s.find_object("bad1").is_none(), "失败批零落地");
+    // 空批。
+    let e = s.execute_batch(mdc_canvas::Actor::Ai, vec![]).unwrap_err();
+    let e: mdcore_wasm::canvas::CvError = e.into();
+    assert_eq!(e.code, "cv_invalid_input");
 }
 
 /// #402：reorder 命令 JSON 解析（四 op + 错误面）+ z_index 入读模型
