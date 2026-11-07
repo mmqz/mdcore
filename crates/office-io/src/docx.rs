@@ -1937,6 +1937,22 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     io::verify_gates(&mut za, strict, &mut warnings)?;
     drop(za);
 
+    // #344（#318 D1）：MCE 选择面——mc:AlternateContent 多 Choice 全
+    // 展开 = 内容重复缺陷（docx-rs 未知容器透明下降）。ZIP 字节级
+    // 读前重写（先例 docx_panic_guard）：首个 Choice 选中 / 无 Choice
+    // 兜底 Fallback，其余分支剥除。**单视图不变量**——下方 OPC 关系
+    // 层、document_xml 原始串（VML 文本框第二趟 / 脚注引用扫描）、
+    // panic guard 与 docx-rs 引擎字节消费同一过滤后视图（防
+    // Choice/Fallback 双取与第二趟索引错位——#318 附带发现）。
+    let mce_owned: Vec<u8>;
+    let bytes: &[u8] = match crate::docx_mce::select_mce(bytes, &mut warnings)? {
+        std::borrow::Cow::Borrowed(b) => b,
+        std::borrow::Cow::Owned(v) => {
+            mce_owned = v;
+            mce_owned.as_slice()
+        }
+    };
+
     // OPC 关系层 + 内容类型 + 媒体清单（同一门后字节——零门绕过）。
     let (bundle, images, document_xml, footnotes_xml, endnotes_xml, numbering_xml) = {
         let cursor = std::io::Cursor::new(bytes);
