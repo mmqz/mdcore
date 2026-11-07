@@ -633,11 +633,7 @@ fn session_open_with_scanned_assessment_end_to_end() {
             page_count: PageCount(1),
         },
         assessment,
-        vec![PageGeometry {
-            width_pt: 612.0,
-            height_pt: 792.0,
-            rotation: Rotation::Deg0,
-        }],
+        vec![PageGeometry::simple(612.0, 792.0, Rotation::Deg0)],
         OutlineTree::new(),
     )
     .expect("S2.4：检测告警不阻断打开（用户自行决定去留）");

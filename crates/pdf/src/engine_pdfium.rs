@@ -67,7 +67,7 @@ use pdfium_render::prelude::*;
 use crate::command::CommandError;
 use crate::engine::DocumentEngine;
 use crate::outline::{OutlineNode, OutlineTarget, OutlineTree};
-use crate::page::{PageGeometry, PageIndex, PageSpan, Rotation};
+use crate::page::{PageBox, PageGeometry, PageIndex, PageSpan, Rotation};
 use crate::render::{Rasterizer, RenderRequest, RenderedPage};
 use crate::security::{LimitBehavior, Limits, REASON_DECODE_OUTPUT};
 use crate::table::PositionedChar;
@@ -235,6 +235,12 @@ impl DocumentEngine for PdfiumEngine {
     /// 单页几何：原始 MediaBox（`FPDFPage_GetMediaBox`）+ `/Rotate`
     /// （`FPDFPage_GetRotation`）——`/Rotate` 归一化取
     /// [`PageGeometry::effective_width`] 消费（消费方不自行处理旋转）。
+    ///
+    /// #304 起 `media_box`/`crop_box` 同步产出（pdfium
+    /// `FPDFPage_GetMediaBox`/`GetCropBox`；无 `/CropBox` 时 pdfium
+    /// 返回 MediaBox 形态——如实按 `None` 归档，与 spec 7.7.3.3 缺省
+    /// 语义一致，变换层兜底）。设备↔用户空间变换 =
+    /// [`crate::transform::PageTransform::from_geometry`]。
     fn page_geometry(&self, idx: PageIndex) -> Result<PageGeometry, CommandError> {
         let page = self.page(idx)?;
         let media = page
@@ -242,6 +248,36 @@ impl DocumentEngine for PdfiumEngine {
             .media()
             .map_err(CommandError::engine)?
             .bounds;
+        let (ml, mb, mr, mt) = (
+            media.left().value,
+            media.bottom().value,
+            media.right().value,
+            media.top().value,
+        );
+        // CropBox：读失败按「页无 /CropBox」处理（None——pdfium 对无
+        // /CropBox 页通常回落 MediaBox，两形态等价，不区别报错）。
+        let crop = page
+            .boundaries()
+            .crop()
+            .ok()
+            .map(|b| {
+                let cb = b.bounds;
+                PageBox {
+                    x0: cb.left().value,
+                    y0: cb.bottom().value,
+                    x1: cb.right().value,
+                    y1: cb.top().value,
+                }
+            })
+            .filter(|c| {
+                // pdfium 回落形态（crop ≡ media，容差 0.5pt）归 None——
+                // 「真裁剪」与「缺省」在变换层同路（crop=media 兜底），
+                // 归档保持语义干净。
+                (c.x0 - ml).abs() > 0.5
+                    || (c.y0 - mb).abs() > 0.5
+                    || (c.x1 - mr).abs() > 0.5
+                    || (c.y1 - mt).abs() > 0.5
+            });
         let rotation = match page.rotation().map_err(CommandError::engine)? {
             PdfPageRenderRotation::None => Rotation::Deg0,
             PdfPageRenderRotation::Degrees90 => Rotation::Deg90,
@@ -252,6 +288,13 @@ impl DocumentEngine for PdfiumEngine {
             width_pt: media.width().value,
             height_pt: media.height().value,
             rotation,
+            media_box: PageBox {
+                x0: ml,
+                y0: mb,
+                x1: mr,
+                y1: mt,
+            },
+            crop_box: crop,
         })
     }
 

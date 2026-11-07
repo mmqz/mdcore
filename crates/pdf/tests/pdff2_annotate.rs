@@ -471,21 +471,9 @@ fn session_command_new_kinds_flush() {
         page_count: PageCount(3),
     };
     let pages = vec![
-        PageGeometry {
-            width_pt: 612.0,
-            height_pt: 792.0,
-            rotation: Rotation::Deg0,
-        },
-        PageGeometry {
-            width_pt: 612.0,
-            height_pt: 792.0,
-            rotation: Rotation::Deg0,
-        },
-        PageGeometry {
-            width_pt: 612.0,
-            height_pt: 792.0,
-            rotation: Rotation::Deg0,
-        },
+        PageGeometry::simple(612.0, 792.0, Rotation::Deg0),
+        PageGeometry::simple(612.0, 792.0, Rotation::Deg0),
+        PageGeometry::simple(612.0, 792.0, Rotation::Deg0),
     ];
     let writer = LopdfWriter::from_bytes(src.clone()).unwrap();
     let assessment = writer.assessment().clone();

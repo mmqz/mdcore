@@ -49,11 +49,7 @@ use mdc_pdf::writer::{
 // ---------------------------------------------------------------------------
 
 fn geometry() -> PageGeometry {
-    PageGeometry {
-        width_pt: 612.0,
-        height_pt: 792.0,
-        rotation: Rotation::Deg0,
-    }
+    PageGeometry::simple(612.0, 792.0, Rotation::Deg0)
 }
 
 /// 装配会话（page_count 页；时钟注入使时间戳确定）。

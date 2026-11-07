@@ -66,16 +66,73 @@ impl Rotation {
     }
 }
 
+/// 页框（用户空间轴对齐矩形：`(x0, y0)` = 左下角，`(x1, y1)` = 右上角）。
+///
+/// **原样照录语义**：引擎报什么就存什么——畸形档（非有限值/退化框/
+/// CropBox ⊄ MediaBox）不在本层纠偏，纠偏是 [`crate::transform::
+/// PageTransform`] 构造期的显式校验职责（typed 错误，见 #304）。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct PageBox {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+impl PageBox {
+    /// 宽（`x1 - x0`；退化/畸形原样返回，不在此层报错）。
+    pub fn width(&self) -> f32 {
+        self.x1 - self.x0
+    }
+
+    /// 高（`y1 - y0`）。
+    pub fn height(&self) -> f32 {
+        self.y1 - self.y0
+    }
+}
+
 /// 页几何（PDF 用户空间，单位 pt = 1/72 inch；`width`/`height` = 原始
 /// MediaBox 尺寸，不含旋转）。
+///
+/// #304 起：`media_box`/`crop_box` 同步暴露（此前只有 MediaBox 宽高——
+/// 裁剪页上的标注落点无从计算，审计 P2-4）。渲染显示域 = `crop_box`
+/// （`None` = 页无 `/CropBox`，显示域取 MediaBox）；设备↔用户空间
+/// 变换见 [`crate::transform::PageTransform`]。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PageGeometry {
     pub width_pt: f32,
     pub height_pt: f32,
     pub rotation: Rotation,
+    /// MediaBox 全矩形（含原点——非零原点档如裁切/出血流在宽高之外
+    /// 还需要偏移基线）。等于 `(0,0,width_pt,height_pt)` 当且仅当
+    /// MediaBox 原点为 (0,0)。
+    #[serde(default)]
+    pub media_box: PageBox,
+    /// CropBox（用户空间）。`None` = 页无 `/CropBox` 条目 → 渲染显示域
+    /// = MediaBox。
+    #[serde(default)]
+    pub crop_box: Option<PageBox>,
 }
 
 impl PageGeometry {
+    /// 简单页构造（无裁剪、原点 (0,0)）：`media_box = (0, 0, w, h)`、
+    /// `crop_box = None`（显示域 = MediaBox）。测试与合成几何的便捷
+    /// 出口——真实档几何走引擎（`engine_pdfium::page_geometry`）。
+    pub fn simple(width_pt: f32, height_pt: f32, rotation: Rotation) -> Self {
+        Self {
+            width_pt,
+            height_pt,
+            rotation,
+            media_box: PageBox {
+                x0: 0.0,
+                y0: 0.0,
+                x1: width_pt,
+                y1: height_pt,
+            },
+            crop_box: None,
+        }
+    }
+
     /// 归一化视口宽（含旋转）：90/270° 交换宽高。渲染与命中测试的
     /// **唯一**取宽出口（语义锁背书）。
     pub fn effective_width(&self) -> f32 {

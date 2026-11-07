@@ -99,6 +99,10 @@ pub mod security_scan;
 // 列序 + 包围盒（行列可重建）。算法层纯函数零引擎依赖（位置层 =
 // engine_pdfium::positioned_chars，feature 门内）。
 pub mod table;
+// #304（审计 P2-4）：设备↔用户空间变换——标注落点的坐标基座。
+// CropBox 偏移/旋转/Y 翻转/DPI 缩放四合一纯函数，默认构建零引擎
+// 依赖（几何来源 = PageGeometry，引擎产；接 UI 前置——#302 阶段2）。
+pub mod transform;
 pub mod worker;
 pub mod writer;
 #[cfg(feature = "engine-lopdf")]

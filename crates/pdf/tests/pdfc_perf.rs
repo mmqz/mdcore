@@ -427,11 +427,7 @@ fn perf_session_e2e_smoke() {
     // 逐页收集）——阅读面打开后的首次文本化成本（宿主首屏可用的上界）。
     let engine = open_large();
     let count = engine.page_count();
-    let placeholder = mdc_pdf::page::PageGeometry {
-        width_pt: 0.0,
-        height_pt: 0.0,
-        rotation: mdc_pdf::page::Rotation::Deg0,
-    };
+    let placeholder = mdc_pdf::page::PageGeometry::simple(0.0, 0.0, mdc_pdf::page::Rotation::Deg0);
     let mut session = PdfSession::open(
         DocumentMeta {
             id: PdfDocumentId(7),
