@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # AppImage 运行时入口（R24-c；appimagetool 约定：AppDir 根的 AppRun）
-# 方言：AppImage Type 2 运行时规范。宿主壳 = tao+wry+GTK3（ADR-H1），
-# 运行时库由 linuxdeploy 插件携带；此处只做环境整形。
+# 方言：AppImage Type 2 运行时规范。宿主壳 = mang-shell（GPUI/wgpu 自绘，
+# #68 主线；无 GTK/WebView 运行时依赖）；直链系统库由 linuxdeploy 收敛
+# 携带（usr/lib），pdfium 由 #320 捆绑在 usr/bin（定位序第 2 层）。
+# 此处只做环境整形。
+#
+# #319（2026-11-07）：移除旧壳（mdshell-native，tao+wry+GTK3）时代的
+# GTK/WebKit 环境面——GIO_MODULE_DIR / WEBKIT_DISABLE_COMPOSITING_MODE
+# 对 GPUI 壳为零消费死代码；XDG_DATA_DIRS 保留（工作台 bundle 与图标
+# 解析仍需 AppDir 内路径优先）。
 set -euo pipefail
 
 HERE="$(dirname "$(readlink -f "${APPIMAGE:-$0}")")"
 
-# GTK/WebKit 资源路径（linuxdeploy-gtk-plugin 布局）
+# 资源路径：AppDir 内 share 优先（图标/desktop 查询、工作台 bundle）。
 export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-export GIO_MODULE_DIR="${HERE}/usr/lib/gio/modules:${GIO_MODULE_DIR:-}"
-
-# 部分 WM/驱动组合下 WebKit 合成模式崩溃（wry 已知问题面）——
-# 先保守开启，R24-d 实测后按需收敛（packaging/README 运行时依赖节）。
-export WEBKIT_DISABLE_COMPOSITING_MODE=1
 
 # 工作台 bundle 路径（Q3-3 实测缺陷修复——壳的三候选解析序
 # --dist / MDCORE_DIST / /usr/share/mdcore/dist / ./web/dist 中，绝对
