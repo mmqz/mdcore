@@ -2533,7 +2533,10 @@ mod tests {
     );
 
     /// W-1 验收主用例：`toc` enabled → document.xml **首段** = TOC 域
-    /// 五连（fldChar begin dirty=true + instrText `TOC \o "lo-hi"` +
+    /// 五连（fldChar begin[dirty=false——#338（#309③）域缓存写入：
+    /// 打开即显缓存零弹窗，F9 重算生成真目录；此前 dirty=true 的
+    /// 「打开提示更新域」语义已翻转，见 office-io 侧
+    /// tests/docx_field_cache.rs 同源锁] + instrText `TOC \o "lo-hi"` +
     /// separate + 提示文本 + end——缺省层级 1/3），且居全部内容块
     /// 之前（Word 惯例——目录在正文前）；正文内容零损（加性首段）。
     #[test]
@@ -2544,9 +2547,19 @@ mod tests {
         let doc = zip_stored_part(&bytes, "word/document.xml");
         // 五连结构（instrText 引号在 XML 面 = &quot; 转义——字符串面
         // 直断言与既有 XML 面测试同纪律）。
+        //
+        // #361（断言随 #338 翻转同步——陈旧断言跟齐现行语义，非放宽）：
+        // 断言口径与 office-io 侧 #338 同源测试（docx_field_cache.rs /
+        // g1_t1、t8b 翻转）一致——dirty="true" 零出现（无任何域请求
+        // 打开时更新）+ dirty="false" 显式在场（docx-rs 恒写）。
+        assert_eq!(
+            doc.matches(r#"w:dirty="true""#).count(),
+            0,
+            "#338：TOC 域 begin 非 dirty（缓存直显无弹窗）"
+        );
         assert!(
-            doc.contains(r#"<w:fldChar w:fldCharType="begin" w:dirty="true" />"#),
-            "fldChar begin dirty=true 在场（打开提示更新域）"
+            doc.contains(r#"w:dirty="false""#),
+            "dirty=false 显式在场（docx-rs 恒写——打开不更新域）"
         );
         assert_eq!(
             doc.matches(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#)
