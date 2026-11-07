@@ -21,12 +21,15 @@ mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin" \
 
 install -m 0755 "$BIN" "$STAGE/usr/bin/mdcore"
 
-# #331（2026-11-07）：出包 strip——staged 副本剥 debug section
-# （mang-shell [profile.release] debug="limited" → 裸产物 ~306MB，
-# #270 验收 deb Installed-Size 314MB 即此）。--strip-debug 保留
-# 符号表（panic 回溯仍有函数名；构建产物原件不动，开发调试能力
-# 不受影响）。Installed-Size 在 strip 后由下方 du 实测注入，非手抄。
-strip --strip-debug "$STAGE/usr/bin/mdcore"
+# #331（2026-11-07）：出包 strip——staged 副本剥 debug section 与符号表
+# （mang-shell [profile.release] debug="limited" → 裸产物实测 306-430MB，
+# #270 验收 deb Installed-Size 314MB 即此；本机实测 LTO=thin 口径 306MB
+# / 无 LTO 430MB，strip 后 41-54MB 量级）。--strip-all 而非
+# --strip-debug：后者保留的符号表 +13MB，deb 安装面会冲破 50MB 验收门
+# 且本项目无符号化/崩溃上报基础设施，保留函数名收益有限；构建产物
+# 原件不动（开发调试能力不受影响）。Installed-Size 在 strip 后由下方
+# du 实测注入，非手抄。
+strip --strip-all "$STAGE/usr/bin/mdcore"
 
 # #320（2026-11-07）：pdfium 引擎库捆绑（与 Windows NSIS 的 pdfium.dll
 # 傍 exe 对称）。取件位 = 仓根 bin/lib/libpdfium.so（#224 定位序第 3 层

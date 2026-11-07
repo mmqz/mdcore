@@ -32,11 +32,12 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/i
 
 install -m 0755 "$BIN" "$APPDIR/usr/bin/mdcore"
 
-# #331（2026-11-07）：出包 strip——staged 副本剥 debug section
-# （mang-shell [profile.release] debug="limited" → 裸产物 ~306MB）。
-# --strip-debug 保留符号表（panic 回溯仍有函数名；构建产物原件不动）。
+# #331（2026-11-07）：出包 strip——staged 副本剥 debug section 与符号表
+# （mang-shell [profile.release] debug="limited" → 裸产物 306MB+）。
+# --strip-all（非 --strip-debug：符号表 +13MB 会冲破 50MB 验收门，且
+# 无符号化基础设施时保留函数名收益有限）；构建产物原件不动。
 # 与 build-deb.sh 同段同款（#331 验收门：deb/AppImage 安装面 < 50MB）。
-strip --strip-debug "$APPDIR/usr/bin/mdcore"
+strip --strip-all "$APPDIR/usr/bin/mdcore"
 
 # #320（2026-11-07）：pdfium 引擎库捆绑（与 Windows NSIS 的 pdfium.dll
 # 傍 exe 对称；与 deb 同取件位/同定位序层——见 build-deb.sh 注释）。

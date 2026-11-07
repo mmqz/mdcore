@@ -17,10 +17,10 @@
 > `web/dist|MDCORE_DIST|mdapp` 无命中）——出包不再前置
 > `build-wasm.sh + build-pdf-wasm.sh + npm run build`，包体不再携带
 > `/usr/share/mdcore/dist` 死重（NSIS 侧本就不捆，两侧产品定义归一）；
-> ② **出包 strip**：staged 二进制副本 `strip --strip-debug`（保留符号表，
-> panic 回溯仍有函数名；构建产物原件不动）——#270 验收实测未 strip 的
-> `debug = "limited"` 产物 ~306MB、deb Installed-Size 314MB，strip 后
-> 安装面回到 <50MB 量级（实测见 #331 PR）。§1/§2 历史命令行中的
+> ② **出包 strip**：staged 二进制副本 `strip --strip-all`（构建产物原件
+> 不动）——#270 验收实测未 strip 的 `debug = "limited"` 产物 ~306MB、
+> deb Installed-Size 314MB；本机实测 strip 后二进制 41-54MB 量级、
+> deb 安装面 <50MB（实测见 #331 PR）。§1/§2 历史命令行中的
 > wasm/web dist 前置步骤自此不再需要。
 
 > **2026-11-07 更新（#320）**：deb / AppImage 构建新增**前置取件步骤**
