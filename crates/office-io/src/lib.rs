@@ -113,6 +113,9 @@
 
 pub mod docx;
 pub mod docx_edit;
+// #344（#318 D1）：MCE 选择面（mc:AlternateContent 多分支全展开 = 内容
+// 重复缺陷的读前重写——私有 seam，docx 读面内部消费）。
+mod docx_mce;
 // #226 R2：docx-rs 读层 panic 预检防御（私有 seam——docx 读面内部消费，
 // 模块文档含位点清单与修复策略）。
 mod docx_panic_guard;
