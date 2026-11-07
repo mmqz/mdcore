@@ -966,7 +966,6 @@ fn full_corpus_structural_parity() {
     let mut violations: Vec<String> = Vec::new();
     // 已知损失可见性聚合（不静默——汇总打印）。
     let (mut sdt_loss, mut txbx_tc_fixed, mut group_txbx_fixed, mut odd_ref_fixed) =
-
         (0usize, 0usize, 0usize, 0usize);
     let (mut ac_flatten_files, mut strict_fixed) = (0usize, 0usize);
     let (
