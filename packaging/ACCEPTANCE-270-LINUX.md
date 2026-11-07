@@ -2,7 +2,7 @@
 
 > 验收人：Agent-462f（2026-11-07）。对照 issue #270 清单③ Linux 四项。
 > 验收对象：main `7178eba`（2026-11-07）上的**当前产品链**——
-> mang-shell（GPUI 壳）release 构建 → `packaging/deb/build-deb.sh` /
+> mang-shell（自绘壳）release 构建 → `packaging/deb/build-deb.sh` /
 > `packaging/appimage/build-appimage.sh` 出包产物。
 > 报告纪律：每条标注 **通过 / 失败 / 未测**；失败项已单独开 issue（见 §6（#330-#333））；
 > 没环境验证的面如实写「未测」，不假装测过。
@@ -41,7 +41,7 @@ BUILD-VERIFY.md 同款做法）。
 | deb 包体三面（control/contents/布局） | **通过** | `/usr/bin/mdcore` + `.desktop` + 图标 + `/usr/share/mdcore/dist`（web bundle）齐备；`Installed-Size: 321576` 实测注入；postinst `bash -n` 过 |
 | postinst 等效执行 | **通过** | 解包树上 `update-desktop-database -q` 生成 `mimeinfo.cache`：`text/markdown=dev.mdcore.editor.desktop` + `x-scheme-handler/mdcore=…` 两行正确 |
 | deb **依赖正确性** | **失败 → issue #330（P0）** | 二进制 ELF NEEDED = `libxcb.so.1`/`libxkbcommon.so.0`/`libxkbcommon-x11.so.0`，control 却声明 `libgtk-3-0, libwebkit2gtk-4.1-0`。`apt-get install --simulate` 实测：**拖入 43 包无关 GTK/WebKit/GStreamer 栈，而实际所需 3 个库 0 个被拉**——干净系统装完即 `libxkbcommon-x11.so.0: cannot open shared object file`（本沙箱以缺该库的系统状态实测复现同一报错） |
-| AppImage 构建 | **通过（带 1 个环境卡点）** | 无 GTK dev 的环境 `--plugin gtk` 因无法自检版本硬失败（`DEPLOY_GTK_VERSION=3` 手设后通过）；产物 84.8MB。linuxdeploy 按 ldd 自动布署的恰好是 GPUI 真实依赖（libxkbcommon/libxcb-xkb 等 4 库）——**GTK 插件捆绑的整套 GTK3 运行时（约 1/4 体积）对 GPUI 二进制是死重** → issue #331 |
+| AppImage 构建 | **通过（带 1 个环境卡点）** | 无 GTK dev 的环境 `--plugin gtk` 因无法自检版本硬失败（`DEPLOY_GTK_VERSION=3` 手设后通过）；产物 84.8MB。linuxdeploy 按 ldd 自动布署的恰好是自绘壳真实依赖（libxkbcommon/libxcb-xkb 等 4 库）——**GTK 插件捆绑的整套 GTK3 运行时（约 1/4 体积）对自绘壳二进制是死重** → issue #331 |
 | AppImage 结构与自足性 | **通过** | `--appimage-extract` 结构完整；**清空 LD_LIBRARY_PATH 直跑 `usr/bin/mdcore`**（RPATH 解析捆绑库）→ X11 窗口创建、Vulkan 适配器枚举均到达（surface 后因测试环境 ICD 相对路径伪失败，换绝对路径 ICD 后全链通过，见 ④） |
 | 安装包真机 `dpkg -i` | **未测** | 无 root；已给 CI/真机复跑命令（§5） |
 | 升级安装保留设置 | **未测** | 同上（依赖真机） |
@@ -68,7 +68,7 @@ BUILD-VERIFY.md 同款做法）。
 |---|---|---|
 | CJK 字形渲染 | **通过** | 系统在位 Sarasa Mono SC 族 15 face；`mouse_smoke.md`（中日混排语料）全周期渲染无豆腐块，选区快照 stage2-drag 可见高亮 |
 | 中文文本编辑管线 | **通过** | 鼠标烟雾拖选断言：`selection 31:11..52:1 (577 chars) [文混排 alignment 检查行，Sarasa]`（577 混排字符选中、自动滚动到 row 52） |
-| XIM 代码路径在位 | **通过** | gpui_linux x11 特性链编译进 zed-xim（构建面证明）；无 XIM server 时应用正常启动（不因 IME 缺席崩溃） |
+| XIM 代码路径在位 | **通过** | gpui_linux x11 特性链编译进其 XIM 支撑依赖（上游 xim-rs；crate 精确名见搬运闭包 Cargo.toml 与 PROVENANCE 在档——构建面证明）；无 XIM server 时应用正常启动（不因 IME 缺席崩溃） |
 
 **真机 IME 验收移交**：需 fcitx5/ibus 会话的 GUI 真机（Lead 或任一有桌面环境的代理）。
 
@@ -101,7 +101,7 @@ exit 0 + `smoke: quit reached`；状态栏 `recent: 1 文件`；RPC 域套接字
 ## 2. 与旧壳（mdshell-native）验收基线的差异说明
 
 BUILD-VERIFY.md（2026-10-28）的 deb/AppImage 验证对象是**旧 tao+wry+GTK3 壳**
-（`mdshell-native`，产物 `target/release/mdcore`，deb 2.4MB）。本轮是**GPUI 壳
+（`mdshell-native`，产物 `target/release/mdcore`，deb 2.4MB）。本轮是**自绘壳
 （mang-shell）首次走完 Linux 打包链**，出包产物 48MB（deb）/ 84.8MB（AppImage），
 体积与依赖面的变化全部源于换壳，缺陷清单见 §6（#330-#333）。
 
@@ -150,7 +150,7 @@ Wayland：     cage：WLR_BACKENDS=headhead WLR_RENDERER=pixman cage -- AppRun -
 
 | Issue | 标题 | 级别 | 一句话根因 |
 |---|---|---|---|
-| #330 | deb Depends 面向已退役的 GTK3 壳——GPUI 二进制装完即缺库 | **P0** | `control.tpl` 声明 libgtk-3-0/libwebkit2gtk-4.1-0；实际 NEEDED 是 libxkbcommon0/libxkbcommon-x11-0/libxcb1（apt --simulate：43 包无关依赖、0 个命中） |
+| #330 | deb Depends 面向已退役的 GTK3 壳——自绘壳二进制装完即缺库 | **P0** | `control.tpl` 声明 libgtk-3-0/libwebkit2gtk-4.1-0；实际 NEEDED 是 libxkbcommon0/libxkbcommon-x11-0/libxcb1（apt --simulate：43 包无关依赖、0 个命中） |
 | #331 | 打包链三处旧壳残留：web/dist 硬依赖 + GTK 插件死重 + pdfium 不对称 | P1 | mang-shell 不消费 web/dist（源码零引用）却硬失败；gtk 插件捆 ~20MB 无用运行时且无 GTK dev 环境构建必败；NSIS 捆 pdfium.dll 而 deb 不捆 libpdfium.so（Linux PDF 面装后 `--check-pdfium` 实测 exit 3） |
 | #332 | .desktop 三缺陷：Actions 假参数 + 窗口无 WM_CLASS + docx/pdf 未关联 | P2 | `--new-window/--settings` 未实现被静默忽略；窗口不设 WM_CLASS（StartupWMClass=mdcore 落空）；双平台都只注册 .md |
 | #333 | Wayland 无 seat 时 panic 101 而非优雅降级 | P3 | `gpui_linux platform.rs:381` unwrap；对照 GPU 失败路径（exit 70+双语提示）应同类降级 |

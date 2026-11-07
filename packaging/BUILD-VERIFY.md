@@ -41,9 +41,9 @@
 
 ## 1. Linux deb ✅（构建 + 包体检验 + GUI 启动全过）
 
-> **2026-11-07 更新（#319）**：Depends 已切 mang-shell（GPUI/wgpu）直链集
+> **2026-11-07 更新（#319）**：Depends 已切 mang-shell（wgpu 自绘）直链集
 > `libxcb1, libxkbcommon0, libxkbcommon-x11-0, libgcc-s1, libc6 (>= 2.34)`
-> （readelf DT_NEEDED 实测）；Description 同步 GPUI 壳口径。下表 Q3-3 历史记录
+> （readelf DT_NEEDED 实测）；Description 同步自绘壳口径。下表 Q3-3 历史记录
 > 的 GTK3/WebKit2GTK 行对应旧壳 mdshell-native 载荷，仅作历史在档。新载荷面
 > 验收证据：`test-artifacts/platform-acceptance/linux-2026-11-07/`（#270）。
 > 渲染后端（Vulkan/GL）与 Wayland 为运行时 dlopen，是否进 Depends 待 Lead 裁定。
@@ -90,7 +90,7 @@ contents / stage 解包运行）；建议 CI 或任一有 docker 的环境补跑
 
 > **2026-11-07 更新（#319）**：`--plugin gtk` 已移除（旧壳 mdshell-native
 > 时代引入；mang-shell 零 GTK 引用，插件无法自动检测版本首跑必红，须
-> `DEPLOY_GTK_VERSION=3` 强制，且捆绑的 GTK 运行时对 GPUI 壳全为死重）。
+> `DEPLOY_GTK_VERSION=3` 强制，且捆绑的 GTK 运行时对自绘壳全为死重）。
 > 去掉后仅收敛直链集：mang-shell 载荷出包 36.9 MB（旧壳全 GTK 形态
 > 100.5 MB）。下文 Q3-3 历史命令中的 linuxdeploy-plugin-gtk 下载步不再需要。
 
