@@ -357,7 +357,6 @@ fn stroke_error_codes_reuse_existing_variants() {
     assert_eq!(e.code, "cv_notfound");
 }
 
-
 // ── 批量面（#352）────────────────────────────────────────────────
 
 #[test]
@@ -447,7 +446,6 @@ fn execute_batch_end_to_end_and_receipt_json() {
         .unwrap_err();
     let e: mdcore_wasm::canvas::CvError = e.into();
     assert_eq!(e.code, "cv_object_not_found");
-
 
     assert!(s.find_object("bad1").is_none(), "失败批零落地");
     // 空批。
