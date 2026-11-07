@@ -10,6 +10,10 @@
 //! 交叉验证：证书主体/签发者/序列号已用 pypdf + asn1crypto 独立读出并比对
 //! （见 PR 记录）：subject CN=投标人签字人, O=某建设工程有限公司, C=CN,
 //! serial=0x1234567890abcdef, ByteRange=[0, 14228, 18720, 608]。
+//!
+//! #308 摘要一致性（验签第②层）：夹具的 messageDigest 基线已用 Python
+//! 独立复算比对（sha256 两段拼接 == CMS signedAttrs 基线，见 PR 记录）
+//! ——Rust 侧 Some(true) 与独立实现互证。
 
 use std::path::PathBuf;
 
@@ -96,6 +100,122 @@ fn signature_algorithm_is_reported() {
     assert!(!alg.is_empty(), "应报出签名算法");
     // pyhanko PAdES + RSA => sha256_rsa 或 rsassa 系
     assert!(alg.contains("sha") || alg.contains("rsa"), "算法名：{alg}");
+}
+
+// ---------------------------------------------------------------- #308 摘要一致性
+
+/// 验收 1：未改动的已签名 PDF → digest_matches = Some(true)。
+/// 同时锁 serde 往返（新字段 #[serde(default)] 的 wire 向后兼容面）。
+#[test]
+fn digest_matches_on_pristine_signed_pdf() {
+    let sigs = read_signatures(&signed_pdf()).unwrap();
+    let s = &sigs[0];
+    assert_eq!(
+        s.digest_matches,
+        Some(true),
+        "未改动的签名文件：签名覆盖字节与签时基线一致（issue 验收 1）"
+    );
+    assert!(
+        s.digest_issue.is_none(),
+        "匹配时不应有诊断：{:?}",
+        s.digest_issue
+    );
+
+    // serde 往返：新增字段不破坏既有 wire 面（旧 JSON 反序列化 → None 默认）。
+    let json = serde_json::to_string(s).unwrap();
+    let back: mdc_pdf::signature::SignatureInfo = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.digest_matches, Some(true), "serde 往返保持摘要判定");
+    // 旧形态 JSON（无新字段）可反序列化（#[serde(default)] 兼容面）。
+    let legacy = serde_json::json!({
+        "field_name": "Signature1",
+        "signer_name": null,
+        "sign_time": null,
+        "reason": null,
+        "location": null,
+        "sub_filter": "ETSI.CAdES.detached",
+        "byte_range": [0, 14228, 18720, 608],
+        "structurally_valid": true,
+        "structural_issue": null,
+        "certificates": [],
+        "digest_algorithm": "sha256",
+        "signature_algorithm": null
+    });
+    let legacy: mdc_pdf::signature::SignatureInfo =
+        serde_json::from_value(legacy).expect("旧 wire 形态应可反序列化（serde(default)）");
+    assert_eq!(legacy.digest_matches, None, "无字段的旧形态 → None 默认");
+}
+
+/// 验收 2 + 4：改动后的已签名 PDF → digest_matches = Some(false)。
+///
+/// 篡改点选 range 1 内的**字段名字符串值**（`(project_name)` 的字符，
+/// 偏移 ~3167）：PDF 结构保持可解析（lopdf 正常装载，structural_valid
+/// 仍为 true）但摘要必变——这正是本层要抓的「结构完好但字节已改」
+/// 隐蔽形态（全量重写式篡改连结构检查都骗不过，字符串值篡改骗得过）。
+#[test]
+fn digest_mismatch_detected_after_tampering() {
+    let pristine = signed_pdf();
+    let sigs = read_signatures(&pristine).unwrap();
+    let br = sigs[0].byte_range.clone();
+    assert_eq!(br.len(), 4);
+
+    // 篡改：range 1 内的字段名字符串（project_name → project_namX）。
+    let needle = b"(project_name)";
+    let pos = pristine
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("夹具 range 1 内应有字段名字符串");
+    assert!(
+        pos + needle.len() <= br[0] + br[1],
+        "篡改点必须在签名覆盖段内（pos {pos} vs range1 终点 {}）",
+        br[0] + br[1]
+    );
+    let mut tampered = pristine.clone();
+    // 字符串值内翻转（'e' → 'E'，仍在合法 PDF 字符串字符集内）。
+    tampered[pos + needle.len() - 2] = b'E';
+    assert_ne!(tampered, pristine, "篡改必须真的改了字节");
+
+    let sigs = read_signatures(&tampered).unwrap();
+    let s = &sigs[0];
+    // 结构仍完整（结构层抓不住这种篡改——第①层的盲区即第②层的存在意义）。
+    assert!(
+        s.structurally_valid,
+        "字符串值篡改不破坏结构（结构面的盲区）：{:?}",
+        s.structural_issue
+    );
+    // 摘要必不匹配（验签第②层的主力断言）。
+    assert_eq!(
+        s.digest_matches,
+        Some(false),
+        "签名覆盖字节已改 → 摘要不匹配（issue 验收 2）"
+    );
+    let issue = s.digest_issue.as_deref().unwrap_or("");
+    assert!(issue.contains("改动"), "诊断应说明字节被改：{issue}");
+}
+
+/// 摘要覆盖域诚实面：签名只盖 ByteRange 盖住的字节——范围外的追加
+/// （如增量修订）不位判定为篡改。篡改点选在文件末尾**之后**追加一个
+/// 字节（模拟增量修订追加形态），digest 仍 Some(true)。
+#[test]
+fn digest_covers_only_byte_range() {
+    let pristine = signed_pdf();
+    let sigs = read_signatures(&pristine).unwrap();
+    let br = sigs[0].byte_range.clone();
+    let covered_end = br[2] + br[3];
+    assert_eq!(
+        covered_end,
+        pristine.len(),
+        "前置钉定：夹具 range 2 盖到文件末尾（追加才在覆盖域外）"
+    );
+
+    // 覆盖域外追加（增量修订形态：旧签名对其 ByteRange 仍有效）。
+    let mut appended = pristine.clone();
+    appended.extend_from_slice(b"\n%appended-after-signature\n");
+    let sigs = read_signatures(&appended).unwrap();
+    assert_eq!(
+        sigs[0].digest_matches,
+        Some(true),
+        "覆盖域外的追加不影响旧签名（PAdES 增量语义——签名只盖自己的 ByteRange）"
+    );
 }
 
 // ---------------------------------------------------------------- 无签名文档

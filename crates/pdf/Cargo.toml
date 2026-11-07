@@ -25,6 +25,11 @@ pdfium-render = { version = "=0.9.4", optional = true, default-features = false,
     "thread_safe",
 ] }
 lopdf = { version = "=0.45.0", optional = true, default-features = false }
+# #308 签名摘要验证（sha256/384/512）：sha2 = 0.11 **锁内既有**（mdcore
+# chunk_id 同版本在用）——零新增 crate，仅新增依赖边；随 engine-lopdf
+# 门引入（signature.rs 同门——默认构建零依赖纪律保持）。sha1/md5 等旧
+# 算法不支持 → digest_matches = None（诚实不猜，见 signature.rs 边界）。
+sha2 = { version = "0.11", optional = true }
 
 [features]
 default = []
@@ -35,4 +40,5 @@ engine-pdfium = ["dep:pdfium-render"]
 # lopdf 标注增量写实装（writer_lopdf 模块 + 标注面测试面）。增量语义
 # （原字节前缀逐位保持）与标准 Annot 对象纪律见 writer_lopdf.rs；
 # 测试环境需 fixtures（spike 取件位，同 engine-pdfium 面）。
-engine-lopdf = ["dep:lopdf"]
+# sha2 = 签名摘要验证（#308，signature.rs 验签第②层）。
+engine-lopdf = ["dep:lopdf", "dep:sha2"]
