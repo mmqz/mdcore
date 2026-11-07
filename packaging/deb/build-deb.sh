@@ -21,6 +21,25 @@ mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin" \
 
 install -m 0755 "$BIN" "$STAGE/usr/bin/mdcore"
 
+# #320（2026-11-07）：pdfium 引擎库捆绑（与 Windows NSIS 的 pdfium.dll
+# 傍 exe 对称）。取件位 = 仓根 bin/lib/libpdfium.so（#224 定位序第 3 层
+# 「产品仓 bin/lib 开发取件位」——nsis build-installer.py --pdfium /
+# windows-test.yml 同源纪律）；安装位 = /usr/bin/libpdfium.so（定位序
+# 第 2 层「exe 同目录（产品部署位）」——零应用代码改动，干净系统上
+# --check-pdfium 免环境变量即绑定）。缺件硬失败：不捆 = 装机 PDF 面
+# 静默降级（#270 验收 F2 实证）。
+PDFIUM_LIB="${PDFIUM_LIB:-$ROOT/bin/lib/libpdfium.so}"
+if [ ! -f "$PDFIUM_LIB" ]; then
+  echo "[deb] FATAL: bin/lib/libpdfium.so 不存在（PDF 引擎库，装包必需）" >&2
+  echo "  取件（与 CI chromium/8086 钉扎同轨）：" >&2
+  echo "  curl -sSfL -o /tmp/pdfium-linux-x64.tgz \\\\" >&2
+  echo "    https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8086/pdfium-linux-x64.tgz" >&2
+  echo "  # SHA256 588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935" >&2
+  echo "  mkdir -p bin/lib && tar xzf /tmp/pdfium-linux-x64.tgz -C bin/lib --strip-components=1 lib/libpdfium.so" >&2
+  exit 1
+fi
+install -m 0755 "$PDFIUM_LIB" "$STAGE/usr/bin/libpdfium.so"
+
 # s5a-env：工作台 bundle 捆绑（壳的 mdapp:// 服务根 = usr/share/mdcore/dist，
 # bin 的 dist 解析序第三位消费）。无 bundle = 坏包，硬失败（先
 # build-wasm.sh + build-pdf-wasm.sh + npm run build）。
