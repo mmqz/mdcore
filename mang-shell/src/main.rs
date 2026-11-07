@@ -245,6 +245,11 @@ fn main() {
         .and_then(|v| v.parse().ok());
     // 批 2：鼠标烟雾脚本（需与 --smoke-sec + FILE 组合）。
     let smoke_mouse = args.iter().any(|a| a == "--smoke-mouse");
+    // #321：--settings（desktop 条目 open-settings 动作合同）——启动
+    // 即开设置弹窗。与菜单栏/左条设置钮同走 ShellApp::open_settings
+    // 链（shell.rs）——同一分派语义，无第二实现。无值 flag：不进
+    // flag_value_positions（后续位置参数仍按文件路径解析）。
+    let settings_at_start = args.iter().any(|a| a == "--settings");
     // G5：语法高亮烟雾（--smoke-syntax-hl——与启动 FILE 组合：3.5s 经
     // 真实渲染分派路径探针取证；断言 syntax-hl: 证据行——围栏语言态
     // [rust] + kw/str 命中 span + script done）。
@@ -406,6 +411,15 @@ fn main() {
             #[cfg(not(unix))]
             {
                 let _ = (&rpc_sock, rpc_disabled);
+            }
+
+            // #321：--settings——开窗后立即打开设置弹窗（desktop 条目
+            // open-settings 动作：`Exec=mdcore --settings` 的 CLI 合同）。
+            // 同步调用（非烟雾定时）：启动即呈现，与「双击动作即开设置」
+            // 的用户预期一致；证据行供自动化验收（Xvfb 截图对照）。
+            if settings_at_start {
+                let _ = window_handle.update(cx, |shell, _window, cx| shell.open_settings(cx));
+                println!("settings: opened (--settings)");
             }
 
             // 批 2：鼠标烟雾脚本（Editor 日志开启 + 合成事件序列驱动）。
