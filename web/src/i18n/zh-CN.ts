@@ -281,6 +281,8 @@ export const zhCN: Dict = {
   'cv.addNode': '添加节点',
   'cv.addNodeTitle': '在默认位置添加节点',
   'cv.edgeMode': '连线模式',
+  'cv.brush': '画笔',
+  'cv.brushTitle': '拖动绘制平滑笔迹',
   'cv.edgeModeTitle': '点击两个节点连线',
   'cv.group': '成组',
   'cv.groupTitle': '将选中对象成组（2 个以上）',

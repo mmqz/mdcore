@@ -224,6 +224,7 @@ OR 选项之一，不构成额外义务；v1.4 新族——两项均由分类账
 | npm | @lezer/lr | 1.4.11 | https://www.npmjs.com/package/@lezer/lr |
 | npm | @marijn/find-cluster-break | 1.0.4 | https://code.haverbeke.berlin/marijn/find-cluster-break |
 | npm | crelt | 1.0.7 | https://code.haverbeke.berlin/marijn/crelt |
+| npm | perfect-freehand | 1.2.3 | https://www.npmjs.com/package/perfect-freehand |
 | npm | style-mod | 4.1.4 | https://code.haverbeke.berlin/marijn/style-mod |
 | npm | w3c-keyname | 2.2.8 | https://github.com/marijnh/w3c-keyname#readme |
 
