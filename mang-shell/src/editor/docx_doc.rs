@@ -805,9 +805,17 @@ impl ConvertCtx<'_> {
             match num.kind {
                 Some(ListKind::Bullet) => marker.push_str("• "),
                 Some(ListKind::Ordered) => {
-                    let c = self.ordered.entry((num.num_id, num.ilvl)).or_insert(0);
-                    *c += 1;
-                    marker.push_str(&format!("{}. ", c));
+                    // #266：引擎解析序号优先（Word 语义全链——start/
+                    // lvlRestart/numFmt/lvlText，中文序号「一、」原生
+                    // 呈现）；解析不可达时退回本地简单计数（1. 2. 3.）。
+                    if let Some(resolved) = &p.resolved_number {
+                        marker.push_str(resolved);
+                        marker.push(' ');
+                    } else {
+                        let c = self.ordered.entry((num.num_id, num.ilvl)).or_insert(0);
+                        *c += 1;
+                        marker.push_str(&format!("{}. ", c));
+                    }
                 }
                 // 解析链不可达（num 桥悬空/抽象层级缺定义）——中性标记。
                 None => marker.push_str("· "),
@@ -997,7 +1005,11 @@ impl ConvertCtx<'_> {
                     self.fallback.insert(para, text);
                 } else {
                     let text = row.get(ci).cloned().unwrap_or_default();
-                    self.push_line(text.replace('\n', " "), Vec::new(), LineBlock::Locked(ReadOnlyLine::TableRow));
+                    self.push_line(
+                        text.replace('\n', " "),
+                        Vec::new(),
+                        LineBlock::Locked(ReadOnlyLine::TableRow),
+                    );
                 }
             }
         }

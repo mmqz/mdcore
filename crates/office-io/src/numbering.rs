@@ -395,6 +395,12 @@ fn format_counter(value: i64, num_fmt: &str) -> String {
         "lowerRoman" => to_roman(v, false),
         "upperLetter" => to_letters(v, true),
         "lowerLetter" => to_letters(v, false),
+        // #266：中文序号（标书正文「一、/（一）/①」多级骨架的主于）。
+        // chineseCounting 与 chineseCountingThousand 在 1-9999 区间渲染
+        // 恒同（差异是千位以上古法——列表序号不可达）；
+        // chineseLegalSimplified = 大写数字（合同/财务惯例）。
+        "chineseCounting" | "chineseCountingThousand" => to_chinese_number(v, false),
+        "chineseLegalSimplified" => to_chinese_number(v, true),
         "ordinal" => {
             let n = v % 100;
             let suffix = if (11..=13).contains(&n) {
@@ -412,6 +418,56 @@ fn format_counter(value: i64, num_fmt: &str) -> String {
         // decimal 及其余（locale 系 russianLower 等）：降级 decimal。
         _ => format!("{v}"),
     }
+}
+
+/// 中文序号渲染（1-9999——列表序号实际域；超域降级阿拉伯数字可诊断）。
+///
+/// - 小写：零一二三四五六七八九 + 十百千；大写（legal）：零壹贰叁肆
+///   伍陆柒捌玖 + 拾佰仟。
+/// - 11-19：十X（非「一十X」——Word 同行为）；零位压缩：连续零位
+///   只出一个零（1001 → 一千零一）；末尾零不发射（110 → 一百一十）。
+fn to_chinese_number(v: i64, legal: bool) -> String {
+    const DIGITS: [[&str; 10]; 2] = [
+        ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"],
+        ["零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"],
+    ];
+    const UNITS: [[&str; 4]; 2] = [["", "十", "百", "千"], ["", "拾", "佰", "仟"]];
+    let table = if legal { 1 } else { 0 };
+    if v <= 0 {
+        return DIGITS[table][0].to_string();
+    }
+    if v >= 10000 {
+        return format!("{v}");
+    }
+    let digits = &DIGITS[table];
+    let units = &UNITS[table];
+    let mut ds = [0usize; 4];
+    let mut rest = v as usize;
+    let mut len = 0usize;
+    while rest > 0 {
+        ds[len] = rest % 10;
+        rest /= 10;
+        len += 1;
+    }
+    let mut out = String::new();
+    let mut pending_zero = false;
+    for pos in (0..len).rev() {
+        let d = ds[pos];
+        if d == 0 {
+            pending_zero = true;
+            continue;
+        }
+        if pending_zero {
+            out.push_str(digits[0]);
+            pending_zero = false;
+        }
+        let leading_ten = pos == 1 && len == 2 && d == 1;
+        if !leading_ten {
+            out.push_str(digits[d]);
+        }
+        out.push_str(units[pos]);
+    }
+    out
 }
 
 fn to_roman(value: i64, upper: bool) -> String {
@@ -441,11 +497,7 @@ fn to_roman(value: i64, upper: bool) -> String {
             rest -= n;
         }
     }
-    if upper {
-        out
-    } else {
-        out.to_lowercase()
-    }
+    if upper { out } else { out.to_lowercase() }
 }
 
 fn to_letters(value: i64, upper: bool) -> String {
@@ -461,11 +513,7 @@ fn to_letters(value: i64, upper: bool) -> String {
         v = (v - 1) / 26;
     }
     let s: String = rev.iter().rev().map(|&b| b as char).collect();
-    if upper {
-        s
-    } else {
-        s.to_lowercase()
-    }
+    if upper { s } else { s.to_lowercase() }
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +602,7 @@ fn absorb_ind(e: &quick_xml::events::BytesStart<'_>) -> Option<ParagraphIndent> 
 }
 
 /// 解析 `word/numbering.xml`（门 3 已验良构——本层语义提取）。
-fn parse_numbering_part(
+pub(crate) fn parse_numbering_part(
     data: &[u8],
     part: &str,
     strict: bool,
@@ -798,7 +846,7 @@ pub fn read_docx_numbering_from_bytes_with_options(
     bytes: &[u8],
     opts: &crate::io::ReadOptions,
 ) -> Result<NumberingBundle, DocxNumberingError> {
-    use crate::docx::{build_rels_bundle, normalize_part_path, RelsBundle};
+    use crate::docx::{RelsBundle, build_rels_bundle, normalize_part_path};
     let strict = !opts.compat;
     if bytes.len() as u64 > crate::io::LIMIT_INPUT_BYTES_DOCX {
         return Err(DocxNumberingError::Container(
@@ -943,7 +991,7 @@ impl LevelSpec {
 
 /// numFmt 白名单（写面——`ST_NumberFormat` 常用子集；读面渲染降级
 /// decimal 的格式同样以 decimal 入白名单[恒渲染等价]）。
-pub const NUM_FMT_WHITELIST: [&str; 10] = [
+pub const NUM_FMT_WHITELIST: [&str; 13] = [
     "decimal",
     "zeroDecimal",
     "upperRoman",
@@ -956,6 +1004,11 @@ pub const NUM_FMT_WHITELIST: [&str; 10] = [
     // decimalFullWidth 等显示宽变体：与 decimal 渲染等价（Word 全角
     // 数字显示——模型级降级 decimal 入白名单）。
     "decimalFullWidth",
+    // #266：中文序号系（读面渲染 format_counter 同名分支——写面定义
+    // 与读面渲染对齐，往返闭环）。
+    "chineseCounting",
+    "chineseCountingThousand",
+    "chineseLegalSimplified",
 ];
 
 /// 写侧多级编号定义（`w:abstractNum` + `w:num` 桥同 id——与
@@ -1214,6 +1267,217 @@ mod tests {
         .to_string()
     }
 
+    /// #266：中文序号渲染（chineseCounting 系）——Word 行为对照。
+    #[test]
+    fn chinese_counting_rendering() {
+        // 1-9 基数。
+        for (v, expect) in [(1, "\u{4e00}"), (2, "\u{4e8c}"), (9, "\u{4e5d}")] {
+            assert_eq!(to_chinese_number(v, false), expect);
+        }
+        // 10-19：十X（一十 → 十）。
+        assert_eq!(to_chinese_number(10, false), "\u{5341}");
+        assert_eq!(to_chinese_number(11, false), "\u{5341}\u{4e00}");
+        assert_eq!(to_chinese_number(19, false), "\u{5341}\u{4e5d}");
+        // 20-99：二十X。
+        assert_eq!(to_chinese_number(20, false), "\u{4e8c}\u{5341}");
+        assert_eq!(to_chinese_number(21, false), "\u{4e8c}\u{5341}\u{4e00}");
+        assert_eq!(to_chinese_number(99, false), "\u{4e5d}\u{5341}\u{4e5d}");
+        // 百/千 + 零位压缩（1001 → 一千零一；110 → 一百一十）。
+        assert_eq!(to_chinese_number(100, false), "\u{4e00}\u{767e}");
+        assert_eq!(
+            to_chinese_number(110, false),
+            "\u{4e00}\u{767e}\u{4e00}\u{5341}"
+        );
+        assert_eq!(
+            to_chinese_number(101, false),
+            "\u{4e00}\u{767e}\u{96f6}\u{4e00}"
+        );
+        assert_eq!(
+            to_chinese_number(1001, false),
+            "\u{4e00}\u{5343}\u{96f6}\u{4e00}"
+        );
+        assert_eq!(
+            to_chinese_number(1111, false),
+            "\u{4e00}\u{5343}\u{4e00}\u{767e}\u{4e00}\u{5341}\u{4e00}"
+        );
+        // 大写（chineseLegalSimplified）。
+        assert_eq!(to_chinese_number(11, true), "\u{62fe}\u{58f9}");
+        assert_eq!(to_chinese_number(21, true), "\u{8d30}\u{62fe}\u{58f9}");
+        // 0 = 跳级首项面（零）；超域降级阿拉伯。
+        assert_eq!(to_chinese_number(0, false), "\u{96f6}");
+        assert_eq!(to_chinese_number(10000, false), "10000");
+    }
+
+    /// #266：format_counter 分派——chineseCounting/Thousand 同渲染、
+    /// LegalSimplified 大写、其余不变。
+    #[test]
+    fn format_counter_chinese_dispatch() {
+        assert_eq!(format_counter(3, "chineseCounting"), "\u{4e09}");
+        assert_eq!(
+            format_counter(13, "chineseCountingThousand"),
+            "\u{5341}\u{4e09}"
+        );
+        assert_eq!(format_counter(3, "chineseLegalSimplified"), "\u{53c1}");
+        // 既有集不回归。
+        assert_eq!(format_counter(3, "decimal"), "3");
+        assert_eq!(format_counter(3, "upperRoman"), "III");
+        assert_eq!(format_counter(3, "lowerLetter"), "c");
+    }
+
+    /// #266：tracker 端到端——中文多级（一、/（一）/1.）的 lvlText
+    /// 渲染 + 级联重置（三层层级推进）。
+    #[test]
+    fn tracker_chinese_multilevel_feed() {
+        let mut table = NumberingTable::default();
+        table.add_abstract(AbstractDef {
+            id: 7,
+            levels: vec![
+                LevelDef {
+                    ilvl: 0,
+                    start: 1,
+                    num_fmt: "chineseCounting".into(),
+                    lvl_text: "%1\u{3001}".into(),
+                    lvl_restart: None,
+                    is_lgl: false,
+                    suffix: SuffixKind::Nothing,
+                    pstyle: None,
+                    indent: None,
+                },
+                LevelDef {
+                    ilvl: 1,
+                    start: 1,
+                    num_fmt: "chineseCounting".into(),
+                    lvl_text: "\u{FF08}%2\u{FF09}".into(),
+                    lvl_restart: None,
+                    is_lgl: false,
+                    suffix: SuffixKind::Nothing,
+                    pstyle: None,
+                    indent: None,
+                },
+                LevelDef {
+                    ilvl: 2,
+                    start: 1,
+                    num_fmt: "decimal".into(),
+                    lvl_text: "%3.".into(),
+                    lvl_restart: None,
+                    is_lgl: false,
+                    suffix: SuffixKind::Nothing,
+                    pstyle: None,
+                    indent: None,
+                },
+            ],
+            multi_level_type: None,
+            style_link: None,
+            num_style_link: None,
+        });
+        table.add_num(NumDef {
+            num_id: 3,
+            abstract_id: 7,
+            overrides: vec![],
+        });
+        let mut t = NumberingTracker::new(&table);
+        // 一、 → （一） → 1. → 2. → （二） → 1. → 二、
+        assert_eq!(t.feed(3, 0).unwrap().text, "\u{4e00}\u{3001}");
+        assert_eq!(t.feed(3, 1).unwrap().text, "\u{FF08}\u{4e00}\u{FF09}");
+        assert_eq!(t.feed(3, 2).unwrap().text, "1.");
+        assert_eq!(t.feed(3, 2).unwrap().text, "2.");
+        assert_eq!(t.feed(3, 1).unwrap().text, "\u{FF08}\u{4e8c}\u{FF09}");
+        // 二级新项 → 紧邻三级重置（再进三级从 1 起）。
+        assert_eq!(t.feed(3, 2).unwrap().text, "1.");
+        // 一级新项：二级重置（ECMA-376 直接触发语义——lvlRestart
+        // 缺省 1 = 紧邻上级新项时重置；非传递式全重置，引擎语义锁）。
+        assert_eq!(t.feed(3, 0).unwrap().text, "\u{4e8c}\u{3001}");
+        // 一级新项后直接进三级：三级的重置触发级是二级（未出现）
+        // → 延续计数（3.）——引擎既有语义，与 #266 正文「下级全部
+        // 重置」的简化表述有差，PR 内向 Lead 标注裁定。
+        assert_eq!(t.feed(3, 2).unwrap().text, "2.");
+        // 再进二级（新一项）→ 三级随之重置。
+        assert_eq!(t.feed(3, 1).unwrap().text, "\u{FF08}\u{4e00}\u{FF09}");
+        assert_eq!(t.feed(3, 2).unwrap().text, "1.");
+    }
+
+    /// #266：中文序号写→读全链往返（define_numbering(chinese)
+    /// → numbered_list_item → read_docx →
+    /// resolved_number——新建列表编号保持的中文面验收）。
+    #[test]
+    fn write_read_roundtrip_chinese_resolved() {
+        use crate::docx::DocxWriter;
+        let mut w = DocxWriter::new();
+        w.define_numbering(NumberingDef {
+            id: 301,
+            levels: vec![
+                LevelSpec {
+                    ilvl: 0,
+                    num_fmt: "chineseCounting".into(),
+                    lvl_text: "%1\u{3001}".into(),
+                    start: 1,
+                    lvl_restart: None,
+                    is_lgl: false,
+                    suffix: SuffixKind::Nothing,
+                },
+                LevelSpec {
+                    ilvl: 1,
+                    num_fmt: "chineseLegalSimplified".into(),
+                    lvl_text: "\u{FF08}%2\u{FF09}".into(),
+                    start: 1,
+                    lvl_restart: None,
+                    is_lgl: false,
+                    suffix: SuffixKind::Nothing,
+                },
+                LevelSpec {
+                    ilvl: 2,
+                    num_fmt: "decimal".into(),
+                    lvl_text: "%3.".into(),
+                    start: 1,
+                    lvl_restart: None,
+                    is_lgl: false,
+                    suffix: SuffixKind::Nothing,
+                },
+            ],
+        })
+        .unwrap();
+        // 文档序：一、（一）1. 2. （二）1. 二、——多级 + 级联重置。
+        w.numbered_list_item(&[crate::docx::RunSpec::text("总则")], 301, 0)
+            .unwrap();
+        w.numbered_list_item(&[crate::docx::RunSpec::text("范围")], 301, 1)
+            .unwrap();
+        w.numbered_list_item(&[crate::docx::RunSpec::text("项一")], 301, 2)
+            .unwrap();
+        w.numbered_list_item(&[crate::docx::RunSpec::text("项二")], 301, 2)
+            .unwrap();
+        w.numbered_list_item(&[crate::docx::RunSpec::text("定义")], 301, 1)
+            .unwrap();
+        w.numbered_list_item(&[crate::docx::RunSpec::text("项")], 301, 2)
+            .unwrap();
+        w.numbered_list_item(&[crate::docx::RunSpec::text("术语")], 301, 0)
+            .unwrap();
+        let bytes = w.save_to_vec().unwrap();
+
+        // 读回（产品全链——read_docx 而非仅定义面）。
+        let doc = crate::docx::read_docx_from_bytes(&bytes).unwrap();
+        let seq: Vec<String> = doc
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                crate::docx::Block::Paragraph(p) => p.resolved_number.clone(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            seq,
+            vec![
+                "\u{4e00}\u{3001}".to_string(),         // 一、
+                "\u{FF08}\u{58f9}\u{FF09}".to_string(), // （壹）——legal 大写
+                "1.".to_string(),
+                "2.".to_string(),
+                "\u{FF08}\u{8d30}\u{FF09}".to_string(), // （贰）
+                "1.".to_string(),
+                "\u{4e8c}\u{3001}".to_string(), // 二、
+            ],
+            "中文多级序号全链往返（写面定义 \u{2192} 读面 resolved_number）"
+        );
+    }
+
     #[test]
     fn parse_numbering_full_face() {
         let bytes = build_test_docx(&three_level_xml());
@@ -1253,7 +1517,7 @@ mod tests {
         assert_eq!(eff3[2].start, 9);
         assert_eq!(eff3[2].suffix, SuffixKind::Space);
         assert!(!eff3[2].is_lgl); // 整级替换后 isLgl 位来自替换级
-                                  // numId=4 无 override → 原样。
+        // numId=4 无 override → 原样。
         let eff4 = b.table.effective_levels(4).unwrap();
         assert_eq!(eff4[2].num_fmt, "lowerRoman");
         assert_eq!(eff4[2].start, 2);
@@ -1274,8 +1538,8 @@ mod tests {
         assert_eq!(tr.feed(3, 1).unwrap().text, "2.f.");
         assert_eq!(tr.feed(3, 2).unwrap().text, "[2-f-IX]"); // 替换级 upperRoman：start 9 → IX
         assert_eq!(tr.feed(3, 0).unwrap().text, "3."); // 上级新项
-                                                       // lvlRestart 缺省 1：lvl1 重置回 start 5 → e；lvl2 替换级无
-                                                       // lvlRestart 元素（缺省 1）→ 重置回 9 → ix。
+        // lvlRestart 缺省 1：lvl1 重置回 start 5 → e；lvl2 替换级无
+        // lvlRestart 元素（缺省 1）→ 重置回 9 → ix。
         assert_eq!(tr.feed(3, 1).unwrap().text, "3.e.");
         assert_eq!(tr.feed(3, 2).unwrap().text, "[3-e-IX]");
         // numId=4（原始定义）：lvl1 lowerLetter 从 1=a；lvl2 lowerRoman
@@ -1358,7 +1622,7 @@ mod tests {
         assert_eq!(tr.feed(1, 5).unwrap().text, ""); // none → 空
         assert_eq!(tr.feed(1, 6).unwrap().text, "1."); // russianLower 降级 decimal
         assert_eq!(tr.feed(1, 7).unwrap().text, "•"); // bullet 字面
-                                                      // 值钉定：lowerRoman 4=iv；upperLetter 27=AA；ordinal 11/12/13。
+        // 值钉定：lowerRoman 4=iv；upperLetter 27=AA；ordinal 11/12/13。
         let mut tr2 = NumberingTracker::new(&b.table);
         for _ in 0..3 {
             let _ = tr2.feed(1, 0);

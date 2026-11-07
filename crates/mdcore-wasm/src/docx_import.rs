@@ -121,8 +121,8 @@
 //! 先例）；wasm 壳由 wasm32 check + web 三件套门禁背书。
 
 use mdc_office_io::docx::{
-    read_docx_from_bytes_with_options, Block, DocxDocument, DocxError, HeaderFooterData,
-    HeaderFooterVariant, HyperlinkTarget, ListKind, ParagraphNumbering, RunData, TableData,
+    Block, DocxDocument, DocxError, HeaderFooterData, HeaderFooterVariant, HyperlinkTarget,
+    ListKind, ParagraphNumbering, RunData, TableData, read_docx_from_bytes_with_options,
 };
 use mdc_office_io::io::{ReadError, ReadOptions};
 use wasm_bindgen::prelude::*;
@@ -443,6 +443,7 @@ enum ListMapping {
 /// 解析为空 ListItem——结构保真）。
 fn list_marker_line(
     numbering: &ParagraphNumbering,
+    resolved_number: Option<&str>,
     text: &str,
     counters: &mut ListCounters,
 ) -> ListMapping {
@@ -457,13 +458,19 @@ fn list_marker_line(
     let (marker, marker_normalized) = match kind {
         ListKind::Bullet => ("-".to_string(), false),
         ListKind::Ordered => {
-            // 原生 numFmt ∉ {decimal}（lowerLetter/upperRoman/…）→ 序号
-            // 标准化 decimal（可诊断：`list_markers_normalized` 计数）。
+            // #266：引擎解析序号可用且为 decimal 形态（`N.`——mdcore
+            // markdown 行模型的有序 marker 约束）时直接采用——修正
+            // start≠1/lvlRestart 语义（本地简单计数的两处失真）。
+            // 非 decimal 形态（一、/（一）/i.）无法入 marker 位——保持
+            // decimal 标准化（`list_markers_normalized` 计数可诊断；
+            // 原生序号经 mang-shell 渲染面消费，本面标记形态受限）。
             let normalized = numbering.format.as_deref().is_some_and(|f| f != "decimal");
-            (
-                format!("{}.", counters.next_ordered(numbering.num_id, ilvl)),
-                normalized,
-            )
+            let local = counters.next_ordered(numbering.num_id, ilvl);
+            let marker = match resolved_number.and_then(parse_decimal_marker) {
+                Some(n) => format!("{n}."),
+                None => format!("{local}."),
+            };
+            (marker, normalized)
         }
     };
     ListMapping::Line {
@@ -471,6 +478,17 @@ fn list_marker_line(
         depth_clamped,
         marker_normalized,
     }
+}
+
+/// #266：解析 decimal 形态序号（`"3."` → `Some(3)`；非 decimal 形态
+/// 如「一、」/「i.」→ None）。mdcore markdown 行模型有序 marker 位
+/// 只收 `{n}.`——引擎解析序号的 decimal 子集直通，其余走本地计数。
+fn parse_decimal_marker(resolved: &str) -> Option<u64> {
+    let digits = resolved.strip_suffix('.')?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// 块映射器（#22 P2-1：正文/页眉/页脚同一映射机制——单一真源，
@@ -546,7 +564,12 @@ impl BlockMapper {
                         continue;
                     }
                     if let Some(numbering) = &p.numbering {
-                        match list_marker_line(numbering, &text, &mut self.counters) {
+                        match list_marker_line(
+                            numbering,
+                            p.resolved_number.as_deref(),
+                            &text,
+                            &mut self.counters,
+                        ) {
                             ListMapping::Line {
                                 line,
                                 depth_clamped,
@@ -872,10 +895,13 @@ mod tests {
             // 语义零变化：该 helper 的既有断言全部面向 style/runs）。
             // #19：footnote_refs 默认空（helper 断言不涉脚注位）。
             // P2-1：source 默认 Body（helper 构造正文形态块）。
+            // #316：未列字段经 `..Default::default()` 承接（新增
+            // resolved_number 等——加字段不再逐处同步）。
             numbering: None,
             indent: None,
             footnote_refs: Vec::new(),
             source: BlockSource::Body,
+            ..Default::default()
         })
     }
 
@@ -920,6 +946,8 @@ mod tests {
             }),
             indent: None,
             footnote_refs: Vec::new(),
+            // #316：未列字段（resolved_number 等）经缺省承接。
+            ..Default::default()
         })
     }
 
@@ -1342,6 +1370,8 @@ mod tests {
                 }),
                 indent: None,
                 footnote_refs: Vec::new(),
+                // #316：未列字段（resolved_number 等）经缺省承接。
+                ..Default::default()
             }),
             numbered_para(
                 2,

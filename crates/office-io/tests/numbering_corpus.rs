@@ -19,9 +19,9 @@
 //! - `poi-docx/NumberingWOverrides.docx`：编号全形态样本（ordinal
 //!   lvl0 + `%1` 无点 lvlText——原 poi__ 同件同形，路径迁移）。
 
-use mdc_office_io::docx::{read_docx_from_bytes, Block, RunSpec};
+use mdc_office_io::docx::{Block, RunSpec, read_docx_from_bytes};
 use mdc_office_io::numbering::{
-    read_docx_numbering_from_bytes, LevelSpec, NumberingDef, NumberingTracker, SuffixKind,
+    LevelSpec, NumberingDef, NumberingTracker, SuffixKind, read_docx_numbering_from_bytes,
 };
 
 fn corpus_dir() -> std::path::PathBuf {
@@ -193,8 +193,8 @@ fn real_corpus_numbering_stats_and_pinned() {
     // 多级实档——原 lo__2129393649 锚点的 #262 迁移）。
     let s1 = seq_649.expect("bug65649.docx not in corpus");
     let want1: Vec<String> = [
-        "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "1.", "2.", "3.", "3.1.",
-        "3.1.1.", "3.1.2.",
+        "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "1.", "2.", "3.", "3.1.", "3.1.1.",
+        "3.1.2.",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -204,8 +204,7 @@ fn real_corpus_numbering_stats_and_pinned() {
     //（原 lo__cjklist30 锚点的 #262 迁移；无补零）。
     let s2 = seq_058.expect("bug59058.docx not in corpus");
     let want2: Vec<String> = [
-        "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.",
-        "13.", "14.",
+        "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.", "13.", "14.",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -301,4 +300,149 @@ fn libreoffice_opens_define_numbering_output() {
     let meta = std::fs::metadata(&pdf).expect("pdf output missing");
     assert!(meta.len() > 500, "pdf suspiciously small: {}", meta.len());
     let _ = std::fs::remove_dir_all(&dir);
+}
+// ---------------------------------------------------------------------------
+// #266：产品接线端到端——read_docx 直出 resolved_number（非手工驱动
+// tracker；正文/页眉页脚 wiring + 中文/多级/重置全链实档验证）。
+// ---------------------------------------------------------------------------
+
+/// 递归统计有序段/已解析段（正文 + 文本框内块序）。
+fn count_ordered_resolved(blocks: &[Block], ordered: &mut usize, resolved: &mut usize) {
+    for blk in blocks {
+        match blk {
+            Block::Paragraph(pd) => {
+                if let Some(num) = &pd.numbering {
+                    if num.kind == Some(mdc_office_io::docx::ListKind::Ordered) {
+                        *ordered += 1;
+                        if pd.resolved_number.is_some() {
+                            *resolved += 1;
+                        }
+                    }
+                }
+            }
+            Block::TextBox(tb) => count_ordered_resolved(&tb.blocks, ordered, resolved),
+            Block::Table(_) => {}
+        }
+    }
+}
+
+/// 正文块序里的有序段 resolved_number 序列（跳过 bullet/悬空/none）。
+fn resolved_sequence(doc: &mdc_office_io::docx::DocxDocument) -> Vec<String> {
+    let mut seq = Vec::new();
+    for blk in &doc.blocks {
+        if let Block::Paragraph(pd) = blk {
+            if let Some(rn) = &pd.resolved_number {
+                seq.push(rn.clone());
+            }
+        }
+    }
+    seq
+}
+
+#[test]
+fn read_docx_resolved_numbers_pinned_corpus() {
+    let files = corpus_files();
+    if files.is_empty() {
+        assert!(
+            !corpus_dir().is_dir(),
+            "corpus dir 在场但 0 件 .docx（{}）",
+            corpus_dir().display()
+        );
+        eprintln!("[numbering-corpus] corpus dir absent — skipping #266 wiring gate");
+        return;
+    }
+    let by_name = |want: &str| -> Option<Vec<u8>> {
+        files
+            .iter()
+            .find(|p| p.file_name().map(|n| n == want).unwrap_or(false))
+            .and_then(|p| std::fs::read(p).ok())
+    };
+
+    // ① bug65649（docx4j）——手工驱动序列的镜像（同一文档序经产品
+    //    wiring 出同序：前 8 连续 + 新列表 1.2.3. + 多级 3.1.→3.1.1.→3.1.2.）。
+    if let Some(bytes) = by_name("bug65649.docx") {
+        let doc = read_docx_from_bytes(&bytes).expect("read bug65649");
+        let seq = resolved_sequence(&doc);
+        let want: Vec<String> = [
+            "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "1.", "2.", "3.", "3.1.", "3.1.1.",
+            "3.1.2.",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(
+            !seq.is_empty(),
+            "bug65649：产品接线零 resolved_number——wiring 断链"
+        );
+        assert_eq!(
+            &seq[..14.min(seq.len())],
+            &want[..],
+            "bug65649 产品序号序列"
+        );
+    } else {
+        eprintln!("[numbering-corpus] bug65649.docx 缺席——钉定①跳过");
+    }
+
+    // ② bug59058（docx4j）——79 项长序列前 14 连续 decimal。
+    if let Some(bytes) = by_name("bug59058.docx") {
+        let doc = read_docx_from_bytes(&bytes).expect("read bug59058");
+        let seq = resolved_sequence(&doc);
+        let want: Vec<String> = [
+            "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.", "13.", "14.",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(
+            !seq.is_empty(),
+            "bug59058：产品接线零 resolved_number——wiring 断链"
+        );
+        assert_eq!(
+            &seq[..14.min(seq.len())],
+            &want[..],
+            "bug59058 产品序号序列"
+        );
+    } else {
+        eprintln!("[numbering-corpus] bug59058.docx 缺席——钉定②跳过");
+    }
+
+    // ③ ≥5 件带编号定义的真实语料扫面：每个 kind=Ordered 段要么有
+    //    resolved_number、要么 numbering 定义链断（kind 解析面已滤
+    //    悬空——feed 返回 None 的只剩超域 ilvl，允许少数）；统计
+    //    resolved 覆盖率 ≥ 90%（实况钉定：语料 137 件带编号，绝大多数
+    //    全可达）。bullet 段恒无 resolved_number（ListKind 面）。
+    let mut numbered_docs = 0usize;
+    let mut ordered_paras = 0usize;
+    let mut resolved_paras = 0usize;
+    for p in &files {
+        let bytes = match std::fs::read(p) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let doc = match read_docx_from_bytes(&bytes) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let (mut o, mut r) = (0usize, 0usize);
+        count_ordered_resolved(&doc.blocks, &mut o, &mut r);
+        for hf in doc.headers.iter().chain(doc.footers.iter()) {
+            count_ordered_resolved(&hf.blocks, &mut o, &mut r);
+        }
+        if o > 0 {
+            numbered_docs += 1;
+        }
+        ordered_paras += o;
+        resolved_paras += r;
+    }
+    println!(
+        "[numbering-corpus #266 wiring] 带有序列表段的真实语料 {numbered_docs} 件 / \
+ordered 段 {ordered_paras} / resolved {resolved_paras}"
+    );
+    assert!(numbered_docs >= 5, "带编号语料不足 5 件（{numbered_docs}）");
+    assert!(
+        resolved_paras * 10 >= ordered_paras * 9,
+        "resolved 覆盖率 {}/{} < 90%——定义链大面积断？",
+        resolved_paras,
+        ordered_paras
+    );
 }
