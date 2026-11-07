@@ -70,6 +70,12 @@ pub mod native_dialog;
 #[path = "perf.rs"]
 pub mod perf;
 
+/// #302 阶段 2·④：PDF 标注写会话（右键拖框高亮 → #304 坐标变换 →
+/// PdfSession 命令面 → 增量 flush 落盘）。零 GPUI 依赖（纯 Rust +
+/// mdc-pdf engine-lopdf 面）——写路径全量可无 GUI 测试。
+#[path = "pdf_annotate.rs"]
+pub mod pdf_annotate;
+
 /// #289-④：PDF 页面位图视图（pdfium 光栅化 → uniform_list 竖排；
 /// 纯函数面（宽量子化/槽高/位图转换）进 lib 树供单测——CI 无
 /// libpdfium 同样真跑）。

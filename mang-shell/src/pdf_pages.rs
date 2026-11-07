@@ -16,7 +16,8 @@
 //! ```text
 //! PdfPagesView（本模块——页面位图，主显示面）
 //!      │  engine-pdfium 光栅化（RenderWorker 专用线程 + 看门狗换代）
-//!      │  PageCache（(页, 宽) → RenderImage，LRU 字节预算）
+//!      │  PageCache（RenderKey 键控 → RenderImage，LRU 字节预算）
+//!      │  右键拖框高亮（#302④：PdfAnnotateController 增量写面）
 //!      └─ Editor（既有 pdf 文本模型——查找/书签锚/属性面板/字数）
 //! ```
 //!
@@ -30,18 +31,34 @@
 //!   `Done` → `PageCache::put` + `cx.notify()`（下一帧换上真图），
 //!   待办清空即退出循环（空闲零开销）；
 //! - **宽度量子化**：缓存键的宽取 64px 倍数（窗口拖动时连续 resize
-//!   不至于页页重光栅）。
+//!   不至于页页重光栅）；
+//! - **#305 RenderKey 键控**：缓存键含 `annotation_rev`——批注
+//!   flush（#302④）后旧位图自然 miss，重渲染即见新批注；旧 rev
+//!   条目经 `invalidate_stale_revisions` 即刻回收预算。
+//!
+//! ## 批注交互（#302 阶段 2·④）
+//!
+//! **右键拖框 = 高亮**（右键不占列表滚动）：按下记录页内起点 →
+//! 松开由 [`PdfAnnotateController`] 走完整写路径（#304 坐标变换 →
+//! `AnnotateAdd` → 增量 flush）→ 本视图 `reload_after_flush`（换字节
+//! 快照 + 重建渲染工人 + 缓存失效）→ 下一帧重光栅即见高亮。
+//! 控制器首次使用时懒初始化（open_scan + 写器门一次性成本）。
 //!
 //! ## 已知边界（v1 登记）
 //!
 //! - **页尺寸不均的档**：uniform_list 等高槽——异形页按首页纵横比
 //!   定槽高，真图内接呈现（`ObjectFit::Contain` 缺省），不裁不拉；
+//!   异形页上的右键拖框坐标按等比槽近似（拖框落点在异形页上有
+//!   letterbox 偏移——与「异形页内接呈现」同源边界，登记待后续轮）；
 //! - **页面视图下无文本查找**：Ctrl+F 自动切文本视图（提示横幅说明）
 //!   ——跨视图查找/选区属后续轮；
 //! - **无缩放**：适宽单档（Ctrl+= 字号缩放对 pdf 页不适用——页面
 //!   缩放属后续轮）；
 //! - 扫描件（无文本层）在页面视图下**正是正确呈现**（位图就是内容）
-//!   ——文本视图的「OCR 不支持」提示不再挡路。
+//!   ——文本视图的「OCR 不支持」提示不再挡路；
+//! - **沙箱无 GUI**：右键拖框交互层只有编译面验证（本机 cargo check），
+//!   手势体验待真机；写路径逻辑面（坐标变换/命令/flush/落盘/签名
+//!   保持）在 `tests/pdf_annotate_e2e.rs` 全量真跑（无 GUI 依赖）。
 //!
 //! ## 引擎绑定纪律
 //!
@@ -57,17 +74,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, Context, FocusHandle, Focusable, ImageSource, Pixels, UniformListScrollHandle,
-    Window, px,
+    AnyElement, App, Context, DispatchPhase, FocusHandle, Focusable, ImageSource, MouseButton,
+    MouseDownEvent, MouseUpEvent, Pixels, UniformListScrollHandle, Window, px,
 };
 use image::{Frame, ImageBuffer};
 use mdc_pdf::engine::DocumentEngine;
 use mdc_pdf::engine_pdfium::PdfiumEngine;
 use mdc_pdf::page::PageIndex;
-use mdc_pdf::render::{RenderRequest, RenderedPage};
+use mdc_pdf::render::{RenderKey, RenderRequest, RenderedPage};
 use mdc_pdf::worker::{RenderWorker, WorkerReply};
 use smallvec::SmallVec;
 use ui::prelude::*;
+
+use crate::pdf_annotate::PdfAnnotateController;
 
 /// 光栅宽量子化步长（px）——缓存键稳定性 vs 重光栅频率的折中。
 pub const WIDTH_QUANTUM: u32 = 64;
@@ -85,7 +104,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(16);
 /// 页左右留白（px）——页面与视口缘的呼吸。
 const PAGE_MARGIN_X: Pixels = px(12.);
 
-/// 缓存键：（0 基页号, 量子化光栅宽）。
+/// 预渲染身份键：（0 基页号, 量子化光栅宽）——渲染前不知引擎侧
+/// 实际高（页各自纵横比），缓存全键（[`RenderKey`]）待回执落地后
+/// 才能组装（高度由引擎报告）。
 type PageKey = (u32, u32);
 
 /// PDF 页面位图视图实体（每 pdf 标签一份，由 ShellApp 持有/切换）。
@@ -98,12 +119,25 @@ pub struct PdfPagesView {
     aspect: f32,
     /// 渲染工人（专用线程 + 看门狗换代；error 态为 None）。
     worker: Option<RenderWorker<PdfiumEngine>>,
-    /// 页面缓存（LRU 字节预算）。
-    cache: mdc_pdf::cache::PageCache<PageKey, Arc<gpui::RenderImage>>,
+    /// 页面缓存（RenderKey 键控——含 annotation_rev；LRU 字节预算）。
+    cache: mdc_pdf::cache::PageCache<RenderKey, Arc<gpui::RenderImage>>,
     /// 在途作业：job_id → 缓存键（回执对账 + 失败不再无限重提）。
     pending: HashMap<u64, PageKey>,
     /// 失败页（Done(Err)/Timeout 一次性登记——不无限重试敌意页）。
     failed: HashSet<PageKey>,
+    /// 引擎侧实际光栅高（页各自纵横比）：(页, 宽) → 高——RenderKey
+    /// 组装素材（渲染前未知，回执落地后记录；同键重复渲染零成本）。
+    rendered_heights: HashMap<PageKey, u32>,
+    /// #302④：标注写会话（首次右键拖框时懒初始化——open_scan +
+    /// 写器门的一次性成本不落在纯阅读路径上）。
+    annotate: Option<PdfAnnotateController>,
+    /// 标注修订号镜像（控制器 flush 后同步——RenderKey 键控源；
+    /// 0 = 无批注会话/从未 flush）。
+    annotate_rev: u64,
+    /// 右键拖框会话（按下时的页号 + 页内像素起点；None = 非拖框中）。
+    drag_start: Option<(u32, f32, f32)>,
+    /// 批注路径错误（最近一次——面板明示，不静默丢；用户可重试）。
+    annotate_error: Option<String>,
     /// 回执轮询循环进行中（防重复起循环）。
     polling: bool,
     /// 虚拟列表滚动句柄（scroll_to_page / 可见区间推算共用）。
@@ -168,6 +202,11 @@ impl PdfPagesView {
             cache: mdc_pdf::cache::PageCache::new(CACHE_BUDGET_BYTES),
             pending: HashMap::new(),
             failed: HashSet::new(),
+            rendered_heights: HashMap::new(),
+            annotate: None,
+            annotate_rev: 0,
+            drag_start: None,
+            annotate_error: None,
             polling: false,
             scroll: UniformListScrollHandle::new(),
             focus_handle,
@@ -187,6 +226,11 @@ impl PdfPagesView {
             cache: mdc_pdf::cache::PageCache::new(CACHE_BUDGET_BYTES),
             pending: HashMap::new(),
             failed: HashSet::new(),
+            rendered_heights: HashMap::new(),
+            annotate: None,
+            annotate_rev: 0,
+            drag_start: None,
+            annotate_error: None,
             polling: false,
             scroll: UniformListScrollHandle::new(),
             focus_handle,
@@ -243,7 +287,9 @@ impl PdfPagesView {
         let mut submitted = false;
         for page in first..last {
             let key = (page, fit_w);
-            if self.cache.contains(&key)
+            if self
+                .render_key(&key)
+                .is_some_and(|k| self.cache.contains(&k))
                 || self.failed.contains(&key)
                 || self.pending.values().any(|k| *k == key)
             {
@@ -260,6 +306,14 @@ impl PdfPagesView {
             self.polling = true;
             Self::spawn_poll_loop(cx);
         }
+    }
+
+    /// 预渲染键 → 缓存全键（#305 RenderKey）：高度取引擎侧实测
+    /// （`rendered_heights`——首次渲染前无记录 → None = 必 miss，
+    /// 渲染回执落地后同键即命中）。rev = 标注修订号（flush 推进）。
+    fn render_key(&self, key: &PageKey) -> Option<RenderKey> {
+        let height = *self.rendered_heights.get(key)?;
+        Some(RenderKey::new(key.0, key.1, height, self.annotate_rev))
     }
 
     /// 回执轮询循环（16ms 定时 try_recv——待办清空退出；实体释放自然止）。
@@ -298,7 +352,12 @@ impl PdfPagesView {
                         Ok(page) => {
                             if let Some(image) = rendered_page_to_image(&page) {
                                 let cost = page.bgra.len();
-                                let _evicted = self.cache.put(key, Arc::new(image), cost);
+                                // #305：全键落地（引擎侧实测高 + 当前 rev）
+                                // + 高度记录（后续帧组装键的素材）。
+                                self.rendered_heights.insert(key, page.height_px);
+                                let full =
+                                    RenderKey::new(key.0, key.1, page.height_px, self.annotate_rev);
+                                let _evicted = self.cache.put(full, Arc::new(image), cost);
                                 cx.notify();
                             } else {
                                 self.failed.insert(key);
@@ -322,7 +381,9 @@ impl PdfPagesView {
     }
 
     /// 可见页元素（uniform_list 回调——读缓存出位图，未就绪出占位框：
-    /// 渲染中 / 失败两态）。
+    /// 渲染中 / 失败两态）。#302④：页面槽上叠透明 canvas——paint 期
+    /// 注册右键拖框观察器（窗口级 on_mouse_event + 自身 bounds 过滤，
+    /// 与 shell 面板拖拽收尾钩同模式；无命中区不挡滚动）。
     fn render_page_slot(&mut self, idx: usize, cx: &App) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let (vw, _) = self.viewport_size;
@@ -334,7 +395,9 @@ impl PdfPagesView {
         let key = (idx as u32, fit_w);
         let slot_h = Self::slot_height(fit_w, self.aspect);
         let page_no = idx + 1;
-        let image = self.cache.get(&key).cloned();
+        let image = self
+            .render_key(&key)
+            .and_then(|k| self.cache.get(&k).cloned());
         match image {
             Some(image) => gpui::img(ImageSource::Render(image))
                 .id(gpui::ElementId::NamedInteger("pdf-page".into(), idx as u64))
@@ -369,6 +432,92 @@ impl PdfPagesView {
                     )
                     .into_any_element()
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // #302 阶段 2·④：右键拖框高亮 → 增量写 → 渲染刷新
+    // ------------------------------------------------------------------
+
+    /// 右键拖框收尾：页内拖框（跨页/退化单击丢弃）→ 控制器完整写路径
+    /// → flush 后视图刷新。错误不静默丢（面板明示，用户可重试）。
+    fn finish_drag_highlight(&mut self, page: u32, x: f32, y: f32, cx: &mut Context<Self>) {
+        let Some((drag_page, x0, y0)) = self.drag_start.take() else {
+            return; // 非拖框中（右键单击无起点——忽略）。
+        };
+        if drag_page != page {
+            return; // 跨页拖框（v1 页内语义——丢弃不猜）。
+        }
+        if (x - x0).abs() < 3.0 && (y - y0).abs() < 3.0 {
+            return; // 退化单击（无框选意图——不当零面积高亮）。
+        }
+        match self.commit_highlight(page, x0, y0, x, y) {
+            Ok(()) => self.annotate_error = None,
+            Err(e) => self.annotate_error = Some(e.to_string()),
+        }
+        cx.notify();
+    }
+
+    /// 提交高亮：懒初始化控制器 → #304 坐标变换（屏幕拖框→QuadPoints）
+    /// → AnnotateAdd → 增量 flush → [`Self::reload_after_flush`]。
+    fn commit_highlight(
+        &mut self,
+        page: u32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+    ) -> Result<(), crate::pdf_annotate::AnnotateError> {
+        if self.annotate.is_none() {
+            let controller = PdfAnnotateController::open((*self.bytes).clone())?;
+            self.annotate = Some(controller);
+        }
+        let controller = self.annotate.as_mut().expect("刚初始化");
+        // DPI：位图 px / 显示域 pt × 72（等比槽近似——异形页 letterbox
+        // 边界见模块文档 v1 登记）。
+        let transform = controller.page_transform(page)?;
+        let display_w = transform.display_size().width.max(1.0);
+        let (vw, _) = self.viewport_size;
+        let fit_w = if vw > 0. {
+            Self::fit_width(vw)
+        } else {
+            WIDTH_MIN
+        };
+        let dpi = fit_w as f32 / display_w * 72.0;
+        controller.add_highlight_from_screen(page, x0, y0, x1, y1, dpi, "mang-shell 用户")?;
+        let (bytes, _stats) = controller.flush()?;
+        self.reload_after_flush(bytes);
+        Ok(())
+    }
+
+    /// flush 后刷新：换字节快照 + 重建渲染工人（引擎重开见追加修订）
+    /// + 旧 rev 缓存即刻回收（#305）+ rev 镜像同步（RenderKey 键控）。
+    /// 几何未变（批注不改页树）——`rendered_heights` 保留，同键新 rev
+    /// 重光栅后即命中。
+    fn reload_after_flush(&mut self, bytes: Vec<u8>) {
+        self.bytes = Arc::new(bytes);
+        self.annotate_rev = self
+            .annotate
+            .as_ref()
+            .map(|c| c.annotation_rev())
+            .unwrap_or(0);
+        // 在途/失败清零：旧工人即将退役，其回执不再落地（换代竞态的
+        // 机械丢弃路径）；新工人重提时这些键不在位即会重派。
+        self.pending.clear();
+        self.failed.clear();
+        // #305：旧 rev 条目即刻回收（不等 LRU 驱逐——预算即时归位）。
+        let _evicted = self.cache.invalidate_stale_revisions(self.annotate_rev);
+        // 重建工人：工厂持新字节快照（原字节前缀 + 追加修订——增量
+        // 产物结构有效，与打开路径同构）。
+        if self.worker.is_some() {
+            let factory_bytes = self.bytes.clone();
+            self.worker = Some(RenderWorker::watchdog(
+                move || {
+                    PdfiumEngine::open((*factory_bytes).clone())
+                        .expect("pdfium 看门狗工厂：批注后字节快照重开失败（增量产物结构有效）")
+                },
+                RENDER_WATCHDOG,
+            ));
         }
     }
 }
@@ -406,6 +555,7 @@ impl Render for PdfPagesView {
         let page_count = self.page_count;
         let fit_w_hint = Self::fit_width(self.viewport_size.0.max(320.));
         let _slot_h = Self::slot_height(fit_w_hint, self.aspect);
+        let annotate_error = self.annotate_error.clone();
         let list = gpui::uniform_list(
             "pdf-pages",
             page_count,
@@ -413,15 +563,37 @@ impl Render for PdfPagesView {
                 visible
                     .clone()
                     .filter_map(|idx| {
-                        entity
+                        let slot = entity
                             .update(cx, |view, cx| view.render_page_slot(idx, cx))
-                            .ok()
+                            .ok()?;
+                        Some(annotate_overlay(slot, idx, entity.clone()))
                     })
                     .collect::<Vec<AnyElement>>()
             },
         )
         .track_scroll(&self.scroll)
         .h_full();
+        // #302④：批注路径错误横幅（最近一次——不静默丢，用户可重试）。
+        let error_banner = annotate_error.map(|message| {
+            div()
+                .id("pdf-annotate-error")
+                .absolute()
+                .top_4()
+                .left_12()
+                .right_12()
+                .opacity(0.95)
+                .rounded_md()
+                .border_1()
+                .border_color(colors.border)
+                .bg(colors.panel_background)
+                .px_3()
+                .py_2()
+                .child(
+                    ui::Label::new(format!("批注失败：{message}"))
+                        .size(ui::LabelSize::Small)
+                        .color(ui::Color::Warning),
+                )
+        });
         div()
             .id("pdf-pages-root")
             .relative()
@@ -432,6 +604,8 @@ impl Render for PdfPagesView {
             .flex_col()
             .items_center()
             .child(list)
+            // #302④：批注错误横幅（在位时叠加顶部）。
+            .children(error_banner)
             // 覆盖 canvas：透明、绝对铺满——paint 期回写视口尺寸（Cell
             // 共享，零实体更新零重入；不注册命中区，不挡列表滚轮）。
             .child(
@@ -469,6 +643,92 @@ fn rendered_page_to_image(page: &RenderedPage) -> Option<gpui::RenderImage> {
         Frame::new(buffer),
         1,
     )))
+}
+
+// ---------------------------------------------------------------------------
+// #302④：右键拖框观察器（页槽叠加透明 canvas——paint 期窗口级注册）
+// ---------------------------------------------------------------------------
+
+/// 页槽包装：叠加透明 canvas，paint 期注册右键按下/松开观察器
+/// （窗口级 `on_mouse_event` + 自身 bounds 过滤——与 shell 面板拖拽
+/// 收尾钩同模式：每帧重注册，事件只落在自己 bounds 内才动作；
+/// 无命中区不挡列表滚轮，右键不占左键交互）。
+fn annotate_overlay(
+    slot: AnyElement,
+    idx: usize,
+    entity: gpui::WeakEntity<PdfPagesView>,
+) -> AnyElement {
+    let page = idx as u32;
+    div()
+        .id(gpui::SharedString::from(format!("pdf-annot-overlay-{idx}")))
+        .relative()
+        .flex_none()
+        .child(slot)
+        .child(
+            div()
+                .id(gpui::SharedString::from(format!("pdf-annot-canvas-{idx}")))
+                .absolute()
+                .size_full()
+                .child(gpui::canvas(
+                    move |bounds, _window, _cx| bounds,
+                    move |bounds: gpui::Bounds<gpui::Pixels>,
+                          _t,
+                          window: &mut Window,
+                          _cx: &mut App| {
+                        // 右键按下：记录页内像素起点。
+                        let ent_down = entity.clone();
+                        window.on_mouse_event(
+                            move |event: &MouseDownEvent,
+                                  phase: DispatchPhase,
+                                  _w: &mut Window,
+                                  cx: &mut App| {
+                                if phase != DispatchPhase::Bubble
+                                    || event.button != MouseButton::Right
+                                {
+                                    return;
+                                }
+                                let Some((x, y)) = local_point(event.position, bounds) else {
+                                    return;
+                                };
+                                let _ = ent_down.update(cx, |view, _cx| {
+                                    view.drag_start = Some((page, x, y));
+                                });
+                            },
+                        );
+                        // 右键松开：拖框收尾（跨页/退化单击在收尾面丢弃）。
+                        let ent_up = entity.clone();
+                        window.on_mouse_event(
+                            move |event: &MouseUpEvent,
+                                  phase: DispatchPhase,
+                                  _w: &mut Window,
+                                  cx: &mut App| {
+                                if phase != DispatchPhase::Bubble
+                                    || event.button != MouseButton::Right
+                                {
+                                    return;
+                                }
+                                let Some((x, y)) = local_point(event.position, bounds) else {
+                                    return;
+                                };
+                                let _ = ent_up.update(cx, |view, cx| {
+                                    view.finish_drag_highlight(page, x, y, cx);
+                                });
+                            },
+                        );
+                    },
+                )),
+        )
+        .into_any_element()
+}
+
+/// 窗口坐标 → 元素内局部像素（bounds 外 → None）。
+fn local_point(position: gpui::Point<Pixels>, bounds: gpui::Bounds<Pixels>) -> Option<(f32, f32)> {
+    let in_x = position.x >= bounds.origin.x && position.x <= bounds.origin.x + bounds.size.width;
+    let in_y = position.y >= bounds.origin.y && position.y <= bounds.origin.y + bounds.size.height;
+    (in_x && in_y).then_some((
+        f32::from(position.x - bounds.origin.x),
+        f32::from(position.y - bounds.origin.y),
+    ))
 }
 
 /// 光栅宽量子化 + 域钳制（纯函数——单测锚点）。
