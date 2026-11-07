@@ -507,7 +507,7 @@
     "fixed_point": 481,
     "mean_recall": 1.0,
     "ok": 481,
-    "roundtrip_exact": 386,
+    "roundtrip_exact": 388,
     "structure_ok": 481
   },
   "hc_poi_docx": {
@@ -579,8 +579,8 @@
       "bib-chernigovka.netdo.ru_download_docs_17459.docx": "ok",
       "bookmarks.docx": "ok",
       "bug-paragraph-alignment.docx": "ok",
-      "bug53475-password-is-pass.docx": "err:container_corrupt",
-      "bug53475-password-is-solrcell.docx": "err:container_corrupt",
+      "bug53475-password-is-pass.docx": "err:docx_legacy_format",
+      "bug53475-password-is-solrcell.docx": "err:docx_legacy_format",
       "bug56075-changeTracking_off.docx": "ok",
       "bug56075-changeTracking_on.docx": "ok",
       "bug56076.docx": "ok",

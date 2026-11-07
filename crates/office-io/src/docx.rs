@@ -4859,6 +4859,11 @@ pub const MAX_QUOTE_DEPTH: usize = 8;
 /// [`DocxWriter::list_item_lines`] 模块文档）。
 pub const LIST_HANGING_INDENT: i32 = 360;
 
+/// 有序列表实例上限（#365：实例 numId 域 102..=100+本值；越界回落
+/// 共享 [`ORDERED_NUM_ID`] = 修复前连续语义——**降级不拒绝**，导出
+/// 总能成功）。写面契约公开：消费方 XML 断言可依赖。
+pub const MAX_ORDERED_LIST_INSTANCES: usize = 1000;
+
 /// 列表类型（t20 列表面——numbering 定义面二选一）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListKind {
@@ -5284,6 +5289,11 @@ pub struct DocxWriter {
     /// 注入 ordered/bullet 两抽象 + num 桥——无列表文档的 numbering.xml
     /// 保持引擎内建形态；`save_to_vec` 后随基态重置）。
     numbering_registered: bool,
+    /// #365：有序列表实例已分配数（[`Self::alloc_ordered_num_id`] 计数
+    /// ——实例 1 = 100[预设桥]，k≥2 = 102, 103, … 共享 ordered 抽象
+    /// 100 的 num 桥；越 [`MAX_ORDERED_LIST_INSTANCES`] 回落 100）。
+    /// `save_to_vec` 重建基态时随 `Self::new()` 归零。
+    ordered_list_instances: usize,
     /// G2：文档级格式面登记（V9 域校验数据源——几何/排版越界
     /// save 漏斗粘性拒绝）。
     page_geometry: Option<PageGeometry>,
@@ -5378,6 +5388,7 @@ impl DocxWriter {
         Self {
             docx,
             numbering_registered: false,
+            ordered_list_instances: 0,
             page_geometry: None,
             typography: None,
             paragraphs: 0,
@@ -6429,6 +6440,122 @@ impl DocxWriter {
             ListKind::Ordered => ORDERED_NUM_ID,
             ListKind::Bullet => BULLET_NUM_ID,
         };
+        let p = spec_lines_to_paragraph(line_runs)
+            .numbering(
+                docx_rs::NumberingId::new(num_id),
+                docx_rs::IndentLevel::new(ilvl),
+            )
+            .indent(
+                Some(QUOTE_INDENT_STEP * (ilvl as i32 + 1)),
+                Some(docx_rs::SpecialIndentType::Hanging(LIST_HANGING_INDENT)),
+                None,
+                None,
+            );
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.paragraphs += 1;
+        for line in line_runs {
+            self.runs += line.len() as u64;
+            for r in line {
+                if r.footnote.is_some() {
+                    self.paragraphs += 1;
+                    self.runs += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 实例 numId 校验（#365）：`100`（预设桥，未分配也合法——单列表
+    /// 兼容面）或 `alloc_ordered_num_id` 已分配的 `102..=100+k`。
+    /// bullet `101`/内建 `1`/未分配 id → typed 拒绝（写面自洽）。
+    fn validate_ordered_instance_id(&self, num_id: usize) -> Result<(), DocxError> {
+        let max = ORDERED_NUM_ID + self.ordered_list_instances;
+        if num_id == ORDERED_NUM_ID || (num_id > BULLET_NUM_ID && num_id <= max) {
+            Ok(())
+        } else {
+            Err(DocxError::InvalidInput(format!(
+                "ordered list instance id {num_id} is not allocated \
+                 (alloc_ordered_num_id first; valid: {ORDERED_NUM_ID} or 102..={max})"
+            )))
+        }
+    }
+
+    /// 分配一个**有序列表实例**的 numId（#365：每列表独立计数器）。
+    ///
+    /// 背景：t20 预置 [`Self::list_item`] 的 Ordered 形恒用
+    /// [`ORDERED_NUM_ID`]（100）——同文档多个有序列表**共享计数器**，
+    /// 第二列表编号连续（Word 语义：编号实例按 numId 贯穿文档——
+    /// [#266] 读面 resolved_number 直出后即 md 往返可见，#365 D5 回退
+    /// 根因）。本分配器给每个列表独立 numId——num 桥**共享同一
+    /// ordered 抽象 100**（定义面零重复），读面按 numId 独立计数
+    /// → 每列表从 1. 重启。
+    ///
+    /// - 第 1 实例 = `100`（**单列表档字节级零变化**——兼容面）；
+    /// - 第 k≥2 实例 = `100+k`（102, 103, …——避开 bullet `101` 与
+    ///   引擎内建 `1`）；
+    /// - 已分配 ≥ [`MAX_ORDERED_LIST_INSTANCES`] → 恒返回 `100`
+    ///   （回落共享计数器 = 修复前语义，**降级不拒绝**）。
+    ///
+    /// 基态语义同 `numbering_registered`：`save_to_vec` 重建基态后
+    /// 从第 1 实例重新计。
+    pub fn alloc_ordered_num_id(&mut self) -> usize {
+        self.ensure_numberings();
+        if self.ordered_list_instances >= MAX_ORDERED_LIST_INSTANCES {
+            return ORDERED_NUM_ID;
+        }
+        self.ordered_list_instances += 1;
+        if self.ordered_list_instances == 1 {
+            return ORDERED_NUM_ID;
+        }
+        let num_id = ORDERED_NUM_ID + self.ordered_list_instances;
+        let docx = std::mem::take(&mut self.docx);
+        self.docx = docx.add_numbering(docx_rs::Numbering::new(num_id, ORDERED_NUM_ID));
+        num_id
+    }
+
+    /// 引用实例 numId 的**有序**列表段（#365；单行——镜像
+    /// [`Self::list_item`] Ordered 形：无显式 ind[字节级兼容面]）。
+    /// `num_id` 须为 [`Self::alloc_ordered_num_id`] 返回值（或预设
+    /// `100`）——bullet/内建/未分配 id typed 拒绝；ilvl 域验证同
+    /// [`Self::list_item`]。run 序全位同 [`Self::paragraph`]。
+    pub fn ordered_list_item(
+        &mut self,
+        runs: &[RunSpec],
+        ilvl: usize,
+        num_id: usize,
+    ) -> Result<(), DocxError> {
+        if ilvl > MAX_LIST_LEVEL {
+            return Err(DocxError::Parse(format!(
+                "list ilvl must be 0-{MAX_LIST_LEVEL}, got {ilvl}"
+            )));
+        }
+        self.validate_ordered_instance_id(num_id)?;
+        self.ensure_numberings();
+        let p = specs_to_paragraph(runs).numbering(
+            docx_rs::NumberingId::new(num_id),
+            docx_rs::IndentLevel::new(ilvl),
+        );
+        self.docx = std::mem::take(&mut self.docx).add_paragraph(p);
+        self.count_specs(1, runs);
+        Ok(())
+    }
+
+    /// 引用实例 numId 的**有序**多行列表段（#365；一个列表项 = 一个
+    /// OOXML 段落——几何/软换行/run 序全位镜像
+    /// [`Self::list_item_lines`]，仅 numId 来源不同）。
+    pub fn ordered_list_item_lines(
+        &mut self,
+        line_runs: &[Vec<RunSpec>],
+        ilvl: usize,
+        num_id: usize,
+    ) -> Result<(), DocxError> {
+        if ilvl > MAX_LIST_LEVEL {
+            return Err(DocxError::Parse(format!(
+                "list ilvl must be 0-{MAX_LIST_LEVEL}, got {ilvl}"
+            )));
+        }
+        self.validate_ordered_instance_id(num_id)?;
+        self.ensure_numberings();
         let p = spec_lines_to_paragraph(line_runs)
             .numbering(
                 docx_rs::NumberingId::new(num_id),
@@ -7541,6 +7668,105 @@ mod tests {
             }
         }
         assert_eq!(seq, vec!["t:head", "t:b", "br", "br", "t:tail"]);
+    }
+
+    /// #365：有序列表实例编号——分配序（100 → 102, 103，避开 bullet
+    /// 101）/ 校验面（预设合法、bullet/内建/未分配 typed 拒、ilvl 域）
+    /// / 上限降级（越 [`MAX_ORDERED_LIST_INSTANCES`] 恒回落 100——
+    /// 降级不拒绝）。
+    #[test]
+    fn ordered_list_instance_allocation_and_validation() {
+        let mut w = DocxWriter::new();
+        assert_eq!(
+            w.alloc_ordered_num_id(),
+            ORDERED_NUM_ID,
+            "第 1 实例 = 预设 100（兼容面）"
+        );
+        assert_eq!(
+            w.alloc_ordered_num_id(),
+            102,
+            "第 2 实例 = 102（避开 bullet 101）"
+        );
+        assert_eq!(w.alloc_ordered_num_id(), 103, "第 3 实例 = 103");
+        // 预设 100 未分配也合法（单列表档直用面）。
+        assert!(w
+            .ordered_list_item(&[RunSpec::text("a")], 0, ORDERED_NUM_ID)
+            .is_ok());
+        assert!(w.ordered_list_item(&[RunSpec::text("b")], 1, 102).is_ok());
+        // bullet 101 / 内建 1 / 未分配 104 → typed 拒。
+        for bad in [BULLET_NUM_ID, 1, 104] {
+            assert!(
+                matches!(
+                    w.ordered_list_item(&[RunSpec::text("x")], 0, bad),
+                    Err(DocxError::InvalidInput(m)) if m.contains("not allocated")
+                ),
+                "numId {bad} 应拒"
+            );
+        }
+        // ilvl 域验证与 list_item 同族。
+        assert!(matches!(
+            w.ordered_list_item(&[RunSpec::text("x")], MAX_LIST_LEVEL + 1, 102),
+            Err(DocxError::Parse(m)) if m.contains("ilvl")
+        ));
+        assert!(matches!(
+            w.ordered_list_item_lines(&[vec![RunSpec::text("x")]], MAX_LIST_LEVEL + 1, 102),
+            Err(DocxError::Parse(m)) if m.contains("ilvl")
+        ));
+        // 多行实例段：numPr numId + 段落级 ind（与 list_item_lines 同几何）。
+        w.ordered_list_item_lines(
+            &[vec![RunSpec::text("h")], vec![RunSpec::text("t")]],
+            0,
+            102,
+        )
+        .unwrap();
+        let docx_rs::DocumentChild::Paragraph(p) = &w.docx.document.children.last().unwrap() else {
+            panic!("应为段落");
+        };
+        let np = p.property.numbering_property.as_ref().expect("numPr");
+        assert_eq!(np.id.as_ref().map(|i| i.id), Some(102), "实例 numId");
+        assert!(
+            p.property.indent.is_some(),
+            "多行实例段带段落级 ind（t22 几何）"
+        );
+        // 上限降级：越过 MAX_ORDERED_LIST_INSTANCES 后恒 100。
+        let mut w2 = DocxWriter::new();
+        for _ in 0..MAX_ORDERED_LIST_INSTANCES {
+            w2.alloc_ordered_num_id();
+        }
+        assert_eq!(
+            w2.alloc_ordered_num_id(),
+            ORDERED_NUM_ID,
+            "越界回落共享 100 = 修复前语义（降级不拒绝）"
+        );
+    }
+
+    /// #365：实例编号写读全环——两个实例的 `resolved_number` 双双
+    /// 从「1.」重启（修复前共享 numId 100 → 第二列表 2., 3. 连续
+    /// ——Word 编号实例按 numId 贯穿文档语义的正确读面解读）。
+    #[test]
+    fn ordered_instance_restart_read_back() {
+        let mut w = DocxWriter::new();
+        let n1 = w.alloc_ordered_num_id();
+        w.ordered_list_item(&[RunSpec::text("a1")], 0, n1).unwrap();
+        w.ordered_list_item(&[RunSpec::text("a2")], 0, n1).unwrap();
+        let n2 = w.alloc_ordered_num_id();
+        w.ordered_list_item(&[RunSpec::text("b1")], 0, n2).unwrap();
+        w.ordered_list_item(&[RunSpec::text("b2")], 0, n2).unwrap();
+        let bytes = w.save_to_vec().expect("save");
+        let doc = read_docx_from_bytes(&bytes).expect("read back");
+        let numbers: Vec<String> = doc
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.resolved_number.clone(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            numbers,
+            vec!["1.", "2.", "1.", "2."],
+            "两实例独立计数器——双双从 1. 重启"
+        );
     }
 
     /// t20：specs_to_paragraph 三新位引擎接线（模型级——rFonts/strike/
