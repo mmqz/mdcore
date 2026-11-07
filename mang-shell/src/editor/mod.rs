@@ -5386,7 +5386,10 @@ mod tests {
         assert_eq!(rev2, rev0 + 1, "缓存键跟进新 revision（恰 +1）");
         // char_label 行为面（状态栏消费口径）。
         let label = cx.update(|cx| ed.read(cx).char_label());
-        assert!(label.contains(&format!("{n2} 字符")), "标签含最新计数：{label}");
+        assert!(
+            label.contains(&format!("{n2} 字符")),
+            "标签含最新计数：{label}"
+        );
     }
 
     /// #169 2.1 全量执行：遍历 `Cmd::ALL`，每条在真实编辑器上执行一遍

@@ -68,10 +68,7 @@ pub enum MenuItem {
     /// 分隔线。
     Separator,
     /// 子菜单（点开后横向飞出；本批只做一层）。
-    Submenu {
-        label: String,
-        items: Vec<MenuItem>,
-    },
+    Submenu { label: String, items: Vec<MenuItem> },
 }
 
 impl MenuItem {
@@ -159,7 +156,11 @@ pub fn menu_size(items: &[MenuItem]) -> (f32, f32) {
                 // 标签 + 间隔 + 快捷键 + 左右内边距
                 let sc = shortcut.as_deref().unwrap_or("");
                 estimate_width(label)
-                    + if sc.is_empty() { 0. } else { 32. + estimate_width(sc) }
+                    + if sc.is_empty() {
+                        0.
+                    } else {
+                        32. + estimate_width(sc)
+                    }
                     + MENU_PADDING_X * 2.
                     + 24.
             }
@@ -204,12 +205,7 @@ pub fn place_menu(anchor: Point, size: (f32, f32), screen: Rect) -> Point {
 /// 子菜单飞出方向：默认右飞；右侧放不下则左飞。
 ///
 /// 返回子菜单左上角。`parent` = 父菜单矩形（已摆放好）。
-pub fn place_submenu(
-    parent: Rect,
-    row_y: f32,
-    size: (f32, f32),
-    screen: Rect,
-) -> Point {
+pub fn place_submenu(parent: Rect, row_y: f32, size: (f32, f32), screen: Rect) -> Point {
     let (w, h) = size;
     // 与父项左/上边对齐，再向右飞一个菜单宽。
     let mut x = parent.right();
@@ -320,8 +316,7 @@ mod tests {
     #[test]
     fn menu_width_fits_cjk_labels() {
         // 中文标签不能被按拉丁字符宽估成 160 最小宽就完事。
-        let items = vec![MenuItem::action("x", "在资源管理器中显示")
-            .with_shortcut("Ctrl+Shift+E")];
+        let items = vec![MenuItem::action("x", "在资源管理器中显示").with_shortcut("Ctrl+Shift+E")];
         let (w, _) = menu_size(&items);
         assert!(w > MENU_MIN_WIDTH + 40., "CJK 长标签应把菜单撑宽，实际 {w}");
     }
@@ -381,7 +376,9 @@ mod tests {
         let items = editor_menu(true, true);
         for id in ["ed-cut", "ed-paste", "ed-replace"] {
             let enabled = items.iter().find_map(|i| match i {
-                MenuItem::Action { id: got, enabled, .. } if *got == id => Some(*enabled),
+                MenuItem::Action {
+                    id: got, enabled, ..
+                } if *got == id => Some(*enabled),
                 _ => None,
             });
             assert_eq!(enabled, Some(false), "只读态 {id} 应灰显");
@@ -393,7 +390,9 @@ mod tests {
         let items = editor_menu(true, true);
         for id in ["ed-copy", "ed-select-all", "ed-find", "ed-goto"] {
             let enabled = items.iter().find_map(|i| match i {
-                MenuItem::Action { id: got, enabled, .. } if *got == id => Some(*enabled),
+                MenuItem::Action {
+                    id: got, enabled, ..
+                } if *got == id => Some(*enabled),
                 _ => None,
             });
             assert_eq!(enabled, Some(true), "只读态 {id} 仍应可用");

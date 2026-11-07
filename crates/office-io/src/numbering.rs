@@ -497,7 +497,11 @@ fn to_roman(value: i64, upper: bool) -> String {
             rest -= n;
         }
     }
-    if upper { out } else { out.to_lowercase() }
+    if upper {
+        out
+    } else {
+        out.to_lowercase()
+    }
 }
 
 fn to_letters(value: i64, upper: bool) -> String {
@@ -513,7 +517,11 @@ fn to_letters(value: i64, upper: bool) -> String {
         v = (v - 1) / 26;
     }
     let s: String = rev.iter().rev().map(|&b| b as char).collect();
-    if upper { s } else { s.to_lowercase() }
+    if upper {
+        s
+    } else {
+        s.to_lowercase()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -846,7 +854,7 @@ pub fn read_docx_numbering_from_bytes_with_options(
     bytes: &[u8],
     opts: &crate::io::ReadOptions,
 ) -> Result<NumberingBundle, DocxNumberingError> {
-    use crate::docx::{RelsBundle, build_rels_bundle, normalize_part_path};
+    use crate::docx::{build_rels_bundle, normalize_part_path, RelsBundle};
     let strict = !opts.compat;
     if bytes.len() as u64 > crate::io::LIMIT_INPUT_BYTES_DOCX {
         return Err(DocxNumberingError::Container(
@@ -1517,7 +1525,7 @@ mod tests {
         assert_eq!(eff3[2].start, 9);
         assert_eq!(eff3[2].suffix, SuffixKind::Space);
         assert!(!eff3[2].is_lgl); // 整级替换后 isLgl 位来自替换级
-        // numId=4 无 override → 原样。
+                                  // numId=4 无 override → 原样。
         let eff4 = b.table.effective_levels(4).unwrap();
         assert_eq!(eff4[2].num_fmt, "lowerRoman");
         assert_eq!(eff4[2].start, 2);
@@ -1538,8 +1546,8 @@ mod tests {
         assert_eq!(tr.feed(3, 1).unwrap().text, "2.f.");
         assert_eq!(tr.feed(3, 2).unwrap().text, "[2-f-IX]"); // 替换级 upperRoman：start 9 → IX
         assert_eq!(tr.feed(3, 0).unwrap().text, "3."); // 上级新项
-        // lvlRestart 缺省 1：lvl1 重置回 start 5 → e；lvl2 替换级无
-        // lvlRestart 元素（缺省 1）→ 重置回 9 → ix。
+                                                       // lvlRestart 缺省 1：lvl1 重置回 start 5 → e；lvl2 替换级无
+                                                       // lvlRestart 元素（缺省 1）→ 重置回 9 → ix。
         assert_eq!(tr.feed(3, 1).unwrap().text, "3.e.");
         assert_eq!(tr.feed(3, 2).unwrap().text, "[3-e-IX]");
         // numId=4（原始定义）：lvl1 lowerLetter 从 1=a；lvl2 lowerRoman
@@ -1622,7 +1630,7 @@ mod tests {
         assert_eq!(tr.feed(1, 5).unwrap().text, ""); // none → 空
         assert_eq!(tr.feed(1, 6).unwrap().text, "1."); // russianLower 降级 decimal
         assert_eq!(tr.feed(1, 7).unwrap().text, "•"); // bullet 字面
-        // 值钉定：lowerRoman 4=iv；upperLetter 27=AA；ordinal 11/12/13。
+                                                      // 值钉定：lowerRoman 4=iv；upperLetter 27=AA；ordinal 11/12/13。
         let mut tr2 = NumberingTracker::new(&b.table);
         for _ in 0..3 {
             let _ = tr2.feed(1, 0);

@@ -571,11 +571,11 @@ impl DocxBridge {
 
     /// 段落号是否落在某个表格单元格里。
     pub fn is_cell_paragraph(&self, paragraph: usize) -> bool {
-        self.cells.binary_search(&paragraph).is_ok() || self.tables.iter().any(|t| {
-            t.cells
+        self.cells.binary_search(&paragraph).is_ok()
+            || self
+                .tables
                 .iter()
-                .any(|r| r.iter().any(|p| *p == paragraph))
-        })
+                .any(|t| t.cells.iter().any(|r| r.iter().any(|p| *p == paragraph)))
     }
 
     /// 登记「回写兜底投影」（段内行去掉列表标记/缩进后的正文文本）。
@@ -1364,7 +1364,17 @@ mod tests {
 
     #[test]
     fn empty_cell_can_be_filled() {
-        let rows = [(para(0, 0), "正文"), (LineBlock::Cell { table: 0, row: 0, col: 0 }, "")];
+        let rows = [
+            (para(0, 0), "正文"),
+            (
+                LineBlock::Cell {
+                    table: 0,
+                    row: 0,
+                    col: 0,
+                },
+                "",
+            ),
+        ];
         let mut b = bridge(&rows, vec!["正文", ""]);
         b.note_tables(vec![TableRef {
             index: 0,
@@ -1378,7 +1388,11 @@ mod tests {
     fn editing_a_cell_never_touches_neighbouring_body_paragraph() {
         let b = table_bridge();
         let wb = b.compute(&texts(&["正文", "A1", "B1改", "A2", "B2"]));
-        assert_eq!(wb.sets, vec![(2, "B1改".to_string())], "只改格子，正文段零接触");
+        assert_eq!(
+            wb.sets,
+            vec![(2, "B1改".to_string())],
+            "只改格子，正文段零接触"
+        );
         assert!(
             !wb.sets.iter().any(|(p, _)| *p == 0),
             "正文段不得被牵连：{:?}",
@@ -1390,7 +1404,10 @@ mod tests {
     fn cell_rows_refuse_edits_via_locked_only_not_cell() {
         // 单元格行是**可编辑**的（不是 Locked）；只读表格形态用 TableRow。
         let mut b = bridge(
-            &[(para(0, 0), "正文"), (locked(ReadOnlyLine::TableRow), "a | b")],
+            &[
+                (para(0, 0), "正文"),
+                (locked(ReadOnlyLine::TableRow), "a | b"),
+            ],
             vec!["正文"],
         );
         let err = b.before_edit(Coalesce {
@@ -1427,7 +1444,17 @@ mod tests {
     fn cell_without_side_table_is_dropped_not_written() {
         // 侧表缺席（引擎没给栅格）→ 该 Cell 行无权威坐标，计入 dropped，
         // **绝不**猜一个段落号去写。
-        let b = bridge(&[(LineBlock::Cell { table: 0, row: 0, col: 0 }, "X")], vec!["X"]);
+        let b = bridge(
+            &[(
+                LineBlock::Cell {
+                    table: 0,
+                    row: 0,
+                    col: 0,
+                },
+                "X",
+            )],
+            vec!["X"],
+        );
         let wb = b.compute(&texts(&["X改"]));
         assert!(wb.sets.is_empty(), "无侧表 → 不写：{:?}", wb.sets);
         assert_eq!(wb.dropped, 1);
@@ -1436,7 +1463,14 @@ mod tests {
     #[test]
     fn cell_is_boundary_for_user_row_join() {
         // 在表格行之后敲出的用户行不得被并进上方正文段落。
-        let mut rows = vec![para(0, 0), LineBlock::Cell { table: 0, row: 0, col: 0 }];
+        let mut rows = vec![
+            para(0, 0),
+            LineBlock::Cell {
+                table: 0,
+                row: 0,
+                col: 0,
+            },
+        ];
         remap_after_edit(&mut rows, (2, 0), (2, 0), 1, false);
         assert_eq!(rows.len(), 3);
         assert!(

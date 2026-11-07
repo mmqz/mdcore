@@ -180,8 +180,7 @@ fn real_corpus_style_stats_and_pinned() {
     //（w:themeColor 解析链锚点——accent1 4472C4 是 Word 2016+ 默认
     // 主题）+ 433 样式大样式表（读面吞吐——#262 迁移：原 lo__ 两
     // 锚点 ThemeDocument→主题色、NumberedList→大表，实值承接）。
-    let td = pinned_theme
-        .expect("bib-chernigovka.netdo.ru_download_docs_17459.docx not in corpus");
+    let td = pinned_theme.expect("bib-chernigovka.netdo.ru_download_docs_17459.docx not in corpus");
     assert_eq!(td.theme.len(), 12);
     assert_eq!(td.theme.lookup("accent1").as_deref(), Some("4472C4"));
     assert_eq!(td.theme.lookup("accent5").as_deref(), Some("5B9BD5"));

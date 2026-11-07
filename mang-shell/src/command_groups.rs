@@ -172,10 +172,7 @@ pub fn build_sections(results: &[Cmd], recent: &RecentRing) -> Vec<Section> {
         for (i, e) in entries.iter_mut().enumerate() {
             e.index = base + i;
         }
-        sections.push(Section {
-            group: *g,
-            entries,
-        });
+        sections.push(Section { group: *g, entries });
     }
 
     // 查询为空 → 最近使用段插到最前（它自身也算一种「结果」）。

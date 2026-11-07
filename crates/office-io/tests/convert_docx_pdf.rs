@@ -11,7 +11,7 @@
 //! 深度质量面（PDF 文本抽取对照源文档）在 mang-shell 侧集成测试
 //! （那边同时依赖 office-io 与 mdc-pdf，才是产品真实消费链）。
 
-use mdc_office_io::convert::{ExportPdfError, detect_libreoffice, docx_to_pdf};
+use mdc_office_io::convert::{detect_libreoffice, docx_to_pdf, ExportPdfError};
 
 fn text_cell(text: &str) -> docx_rs::TableCell {
     docx_rs::TableCell::new()

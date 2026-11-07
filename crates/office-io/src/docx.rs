@@ -6782,8 +6782,8 @@ const ANON_PEOPLE_XML: &str = concat!(
 /// comments.xml 批注作者面匿名化（w:author/w:initials → 空串、
 /// w:date → epoch——quick-xml 事件流属性级改写，文本内容零触碰）。
 fn anonymize_comments_xml(xml: &str) -> Result<String, DocxError> {
-    use quick_xml::Reader;
     use quick_xml::events::Event;
+    use quick_xml::Reader;
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut writer = quick_xml::Writer::new(Vec::new());
@@ -7351,14 +7351,12 @@ mod tests {
     #[test]
     fn list_item_ilvl_validation() {
         let mut w = DocxWriter::new();
-        assert!(
-            w.list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
-                .is_ok()
-        );
-        assert!(
-            w.list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
-                .is_ok()
-        );
+        assert!(w
+            .list_item(&[RunSpec::text("a")], ListKind::Ordered, MAX_LIST_LEVEL)
+            .is_ok());
+        assert!(w
+            .list_item(&[RunSpec::text("a")], ListKind::Bullet, 0)
+            .is_ok());
         assert!(matches!(
             w.list_item(&[RunSpec::text("a")], ListKind::Bullet, MAX_LIST_LEVEL + 1),
             Err(DocxError::Parse(m)) if m.contains("ilvl")
@@ -7620,11 +7618,9 @@ mod tests {
         let mut w = Vec::new();
         let ct = parse_content_types(xml, false, &mut w).unwrap();
         assert_eq!(ct.content_type_of("a.png").as_deref(), Some("image/png"));
-        assert!(
-            w.iter().any(
-                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
-            )
-        );
+        assert!(w
+            .iter()
+            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
     }
 
     /// [Content_Types].xml 缺属性条目 + 重复条目：严格拒 / 兼容跳过
@@ -7711,11 +7707,9 @@ mod tests {
             .unwrap()
             .expect("兼容容忍");
         assert!(t.get("rId1").is_some(), "合法条目保留");
-        assert!(
-            w.iter().any(
-                |x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")
-            )
-        );
+        assert!(w
+            .iter()
+            .any(|x| x.kind == WarningKind::MalformedXml && x.detail.contains("unknown element")));
     }
 
     /// .rels 根元素名错误：严格拒 / 兼容警告 + 条目照常解析
@@ -8006,8 +8000,8 @@ mod tests {
             240,
         )
         .unwrap(); // 1p + 1r
-        // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
-        // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
+                   // 14 段：heading 1 + paragraph 2（含脚注内容段）+ table 3 +
+                   // header/footer/code/hr/quote/list_item/list_item_lines/image 各 1。
         assert_eq!(w.paragraphs, 14);
         // 17 run：heading 1 + paragraph 4（3 run + 脚注 1）+ table 3 +
         // header 1 + footer 1 + code 1 + hr 0 + quote 1 + list_item 1 +
