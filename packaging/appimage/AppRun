@@ -7,20 +7,16 @@
 #
 # #319（2026-11-07）：移除旧壳（mdshell-native，tao+wry+GTK3）时代的
 # GTK/WebKit 环境面——GIO_MODULE_DIR / WEBKIT_DISABLE_COMPOSITING_MODE
-# 对 GPUI 壳为零消费死代码；XDG_DATA_DIRS 保留（工作台 bundle 与图标
-# 解析仍需 AppDir 内路径优先）。
+# 对 GPUI 壳为零消费死代码；XDG_DATA_DIRS 保留（图标/desktop 查询
+# 仍需 AppDir 内路径优先）。
+# #331（2026-11-07）：MDCORE_DIST 导出移除——消费方是旧壳的 web/dist
+# bundle 解析序（mang-shell 全树零引用，见 build-appimage.sh 同段注释）。
 set -euo pipefail
 
 HERE="$(dirname "$(readlink -f "${APPIMAGE:-$0}")")"
 
-# 资源路径：AppDir 内 share 优先（图标/desktop 查询、工作台 bundle）。
+# 资源路径：AppDir 内 share 优先（图标/desktop 查询）。
 export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-
-# 工作台 bundle 路径（Q3-3 实测缺陷修复——壳的三候选解析序
-# --dist / MDCORE_DIST / /usr/share/mdcore/dist / ./web/dist 中，绝对
-# 系统路径与 CWD 相对路径在 AppImage 挂载布局下均不可达；AppDir 内
-# 镜像 deb 布局的 usr/share/mdcore/dist 经此变量投递）。
-export MDCORE_DIST="${HERE}/usr/share/mdcore/dist"
 
 # AppImage 单实例：--appimage-extract-and-run 场景下 %F 参数直传
 exec "${HERE}/usr/bin/{{APP_EXEC}}" "$@"
