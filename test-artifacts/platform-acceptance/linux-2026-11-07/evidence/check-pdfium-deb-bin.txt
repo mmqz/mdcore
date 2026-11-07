@@ -1,0 +1,33 @@
+mang-shell pdfium 部署自检
+平台: linux / x86_64；库文件名: libpdfium.so
+进程: /home/z/optroot/deb-test/root/usr/bin/mdcore
+
+定位序逐层探针（与实际绑定序一致）:
+[1] 环境变量 MDC_PDFIUM_LIB
+    值: 未设置（本层跳过）
+    绑定: 未尝试（本层无路径）
+[2] exe 同目录（产品部署位）
+    期望: /home/z/optroot/deb-test/root/usr/bin/libpdfium.so
+    文件: 不存在
+    绑定: 失败（库加载失败：/home/z/optroot/deb-test/root/usr/bin/libpdfium.so: cannot open shared object file: No such file or directory）
+[3] 产品仓 bin/lib（开发取件位）
+    期望: /home/z/my-project/mdcore/crates/pdf/../../bin/lib/libpdfium.so
+    文件: 不存在
+    绑定: 失败（库加载失败：/home/z/my-project/mdcore/crates/pdf/../../bin/lib/libpdfium.so: cannot open shared object file: No such file or directory）
+[4] 分析仓 spike（门禁取件位）
+    期望: /home/z/my-project/mdcore/crates/pdf/../../../cleanroom-analysis/md-line/pdf-a/spike/bin/lib/libpdfium.so
+    文件: 不存在
+    绑定: 失败（库加载失败：/home/z/my-project/mdcore/crates/pdf/../../../cleanroom-analysis/md-line/pdf-a/spike/bin/lib/libpdfium.so: cannot open shared object file: No such file or directory）
+[5] crate 本地 bin/lib
+    期望: /home/z/my-project/mdcore/crates/pdf/bin/lib/libpdfium.so
+    文件: 不存在
+    绑定: 失败（库加载失败：/home/z/my-project/mdcore/crates/pdf/bin/lib/libpdfium.so: cannot open shared object file: No such file or directory）
+[6] 系统装载（dlopen/LoadLibrary 搜索序）
+    期望: libpdfium.so（装载器搜索序，无固定路径）
+    提示: Linux 为 LD_LIBRARY_PATH / ldconfig 缓存 / 默认目录；Windows 为 exe 目录 / 系统目录 / PATH
+    绑定: 成功 ← 本层胜出
+
+绑定结果: 已绑定
+  来源: 系统装载（dlopen/LoadLibrary 搜索序）（无显式路径——装载器解析）
+  验证: 库加载 + 全符号表解析 + FPDF_InitLibrary 初始化调用通过
+退出码: 0（已绑定）

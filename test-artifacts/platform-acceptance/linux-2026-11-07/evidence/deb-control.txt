@@ -1,0 +1,18 @@
+ new Debian package, version 2.0.
+ size 15224884 bytes: control archive=944 bytes.
+     592 bytes,    14 lines      control
+     589 bytes,    17 lines   *  postinst             #!/bin/sh
+ Package: mdcore
+ Version: 0.1.0
+ Section: text
+ Priority: optional
+ Architecture: amd64
+ Maintainer: mdcore project <noreply@mdcore.invalid>
+ Depends: libgtk-3-0 (>= 3.24), libwebkit2gtk-4.1-0, libc6 (>= 2.34)
+ Description: Modular Markdown editing core with native shell
+  Markdown editor built on a headless editing core (block tree + op log +
+  undo history) with a native shell (tao+wry+GTK3). Opens .md files,
+  supports progressive loading for large documents, session restore,
+  and per-document identity for external-change reconciliation.
+ Homepage: https://mdcore.invalid
+ Installed-Size: 64152

@@ -1,0 +1,58 @@
+[appimage] version(single-source)=0.1.0
+linuxdeploy version 1-alpha (git commit ID 07333c6), GitHub actions build 373 built on 2026-11-01 21:00:06 UTC
+
+-- Creating basic AppDir structure -- 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/bin/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/lib/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/applications/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/icons/hicolor/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/pixmaps/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/icons/hicolor/16x16/apps/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/icons/hicolor/32x32/apps/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/icons/hicolor/64x64/apps/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/icons/hicolor/128x128/apps/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/icons/hicolor/256x256/apps/ 
+Creating directory /home/z/my-project/mdcore/build/AppDir/usr/share/icons/hicolor/scalable/apps/ 
+
+-- Deploying dependencies for existing files in AppDir -- 
+Deploying dependencies for ELF file /home/z/my-project/mdcore/build/AppDir/usr/bin/mdcore 
+Skipping deployment of blacklisted library /lib/x86_64-linux-gnu/libxcb.so.1 
+Deploying shared library /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxkbcommon.so.0
+WARNING: Could not find copyright files for file /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxkbcommon.so.0 using dpkg-query 
+Deploying shared library /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxkbcommon-x11.so.0
+WARNING: Could not find copyright files for file /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxkbcommon-x11.so.0 using dpkg-query 
+Skipping deployment of blacklisted library /lib/x86_64-linux-gnu/libgcc_s.so.1 
+Skipping deployment of blacklisted library /lib/x86_64-linux-gnu/libm.so.6 
+Skipping deployment of blacklisted library /lib/x86_64-linux-gnu/libc.so.6 
+Deploying shared library /lib/x86_64-linux-gnu/libXau.so.6
+Deploying copyright files for file /lib/x86_64-linux-gnu/libXau.so.6 
+Deploying shared library /lib/x86_64-linux-gnu/libXdmcp.so.6
+Deploying copyright files for file /lib/x86_64-linux-gnu/libXdmcp.so.6 
+Deploying shared library /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxcb-xkb.so.1
+WARNING: Could not find copyright files for file /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxcb-xkb.so.1 using dpkg-query 
+
+-- Copying files into AppDir -- 
+Copying file /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxcb-xkb.so.1 to /home/z/my-project/mdcore/build/AppDir/usr/lib/libxcb-xkb.so.1 
+Copying file /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxkbcommon-x11.so.0 to /home/z/my-project/mdcore/build/AppDir/usr/lib/libxkbcommon-x11.so.0 
+Copying file /home/z/optroot/sysroot/usr/lib/x86_64-linux-gnu/libxkbcommon.so.0 to /home/z/my-project/mdcore/build/AppDir/usr/lib/libxkbcommon.so.0 
+Copying file /lib/x86_64-linux-gnu/libXau.so.6 to /home/z/my-project/mdcore/build/AppDir/usr/lib/libXau.so.6 
+Copying file /lib/x86_64-linux-gnu/libXdmcp.so.6 to /home/z/my-project/mdcore/build/AppDir/usr/lib/libXdmcp.so.6 
+Copying file /usr/share/doc/libxau6/copyright to /home/z/my-project/mdcore/build/AppDir/usr/share/doc/libxau6/copyright 
+Copying file /usr/share/doc/libxdmcp6/copyright to /home/z/my-project/mdcore/build/AppDir/usr/share/doc/libxdmcp6/copyright 
+Calling strip on library /home/z/my-project/mdcore/build/AppDir/usr/lib/libXau.so.6 
+Calling strip on library /home/z/my-project/mdcore/build/AppDir/usr/lib/libXdmcp.so.6 
+Calling strip on library /home/z/my-project/mdcore/build/AppDir/usr/lib/libxcb-xkb.so.1 
+Calling strip on library /home/z/my-project/mdcore/build/AppDir/usr/lib/libxkbcommon-x11.so.0 
+Calling strip on library /home/z/my-project/mdcore/build/AppDir/usr/lib/libxkbcommon.so.0 
+Setting rpath in ELF file /home/z/my-project/mdcore/build/AppDir/usr/bin/mdcore to $ORIGIN/../lib 
+Setting rpath in ELF file /home/z/my-project/mdcore/build/AppDir/usr/lib/libXau.so.6 to $ORIGIN 
+Setting rpath in ELF file /home/z/my-project/mdcore/build/AppDir/usr/lib/libXdmcp.so.6 to $ORIGIN 
+Setting rpath in ELF file /home/z/my-project/mdcore/build/AppDir/usr/lib/libxcb-xkb.so.1 to $ORIGIN 
+Setting rpath in ELF file /home/z/my-project/mdcore/build/AppDir/usr/lib/libxkbcommon-x11.so.0 to $ORIGIN 
+Setting rpath in ELF file /home/z/my-project/mdcore/build/AppDir/usr/lib/libxkbcommon.so.0 to $ORIGIN 
+
+-- Running input plugin: gtk -- 
+[gtk/stdout] Determining which GTK version to deploy
+[gtk/stdout] /home/z/my-project/mdcore/build/_tools/linuxdeploy-plugin-gtk: failed to auto-detect GTK version.
+[gtk/stdout] Please set DEPLOY_GTK_VERSION to {2, 3, 4}.
+ERROR: Failed to run plugin: gtk (exit code: 1) 
