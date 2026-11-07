@@ -9,18 +9,27 @@
 
 1. **mang-shell 已在 ui crate 上，但只用了「底层原语层」**——`Label` /
    `LabelSize` / `Color` / `IconName` / `IconButton`（全仓 208 处引用）。
-   迁移的真实任务是「原语层 → 交互组件层」（Button 族 / 菜单族 /
-   Modal / List / TabBar），不是从零开始。
-2. **闭包内没有文本输入组件**——issue 建议的「find_bar.rs → ui::InputField」
+   迁移的真实任务是「原语层 → 交互组件层」（菜单族 / Modal / List /
+   TabBar），不是从零开始。
+2. **手写按钮族是文档化的刻意自绘，不是无主技术债**（本盘点的重要
+   修正——初稿曾把它们列为批 1 迁移目标）：`activity_bar.rs` 模块文档
+   明确记载自绘依据（IconButton 尺寸由 IconSize 的 rem 机器推导，
+   **无法钉定 Lead 硬规格 36×36**——ButtonSize 仅 Large=32px 档，
+   无任意固定尺寸 API，icon_button.rs:218/button_like.rs:455 实证）；
+   `settings_panel.rs` 的 choice_button/step_button 注明「bar_button
+   同款视觉语系」——迁移会破坏规格与视觉一致性。**按钮族维持自绘**，
+   迁移重心转向菜单族/Modal/TabBar/List。
+3. **闭包内没有文本输入组件**——issue 建议的「find_bar.rs → ui::InputField」
    映射**不成立**：zed 的输入面在其 `editor` crate（闭包外），ui crate
    及全部 34 个闭包 crate 内零 TextInput 实现（rg 实证）。文本输入的
    迁移是「闭包扩张」级决策，需 Lead 单独裁定（见 §五）。
-3. **AI 五组件删除建议与搬运闭包纪律冲突**——`third_party/zed` 是
+4. **AI 五组件删除建议与搬运闭包纪律冲突**——`third_party/zed` 是
    「源码零修改口径」的在档搬运（PROVENANCE.md）。删除 = 破坏升级
    可比性。三条处置路线供 Lead 裁定（见 §四，本文推荐 C：暂不删，
-   走 `#[allow]` 消极面）。
-4. **可立即迁移的高价值面**：Button 族（title_bar 菜单钮 / 各面板
-   按钮）与 TabBar——目标 API 在闭包内在场、手写面小、交互可测。
+   走不适用清单隔离）。
+5. **可立即迁移的高价值面**：`context_menu`（443+146 行，自研
+   Point/Rect/height_units 几何与 ui::ContextMenu 职责重叠——真去重）
+   与 `tab_bar` / `settings_modal` 外壳——目标 API 在闭包内在场。
 
 ## 二、zed ui crate 组件面盘点（闭包内在场 = 43 组件文件）
 
@@ -73,34 +82,41 @@
 | # | mang-shell 现状（行数） | zed ui 对应 | 难度 | 优先级 | 批次建议 | 备注 |
 |---|---|---|---|---|---|---|
 | 1 | `title_bar.rs`（123）窗口控制 | **已迁移**（`ui::IconButton` 在用——#289 已做） | — | — | — | 剩余：菜单钮位视觉打磨 |
-| 2 | 各面板按钮（panels/git_panel/settings_panel/pdf 工具条的 `div().on_click`） | `ui::Button`（ButtonStyle 四态） | 低 | P0 | **批 1** | 建立迁移模式的样板批 |
-| 3 | `activity_bar.rs`（139）视图切换钮 | `ui::IconButton` + `.selected_style` | 低 | P0 | 批 1 | 已用 IconName，只差组件化 |
-| 4 | `right_dock.rs`（52 恒在 dock 条） | `ui::IconButton` | 低 | P1 | 批 1 | |
+| 2 | 各面板按钮（panels/git_panel/settings_panel/pdf 工具条的 `div().on_click`） | **维持自绘**（见结论 2：视觉语系一致性 + 精确几何控制；IconButton 无固定尺寸 API） | — | — | 不迁 | 零件级 ui::Tooltip 已在用；后续若 Lead 弃 36×36 规格再评估 |
+| 3 | `activity_bar.rs`（139）视图切换钮 | **维持自绘**（模块文档在案：IconButton rem 推导无法钉 36×36 Lead 硬规格） | — | — | 不迁 | 自绘单元同时掌控 hover/selected 主题色 |
+| 4 | `right_dock.rs`（52 恒在 dock 条） | **维持自绘**（复用 bar_button 单元——左右两条同语系） | — | — | 不迁 | 同上 |
 | 5 | `tab_bar.rs`（218 手写 tab） | `ui::TabBar` + `ui::Tab` | 中 | P1 | **批 2** | 溢出横滚已用 gpui 原生；Tab 组件带关闭钮/激活态语义 |
-| 6 | `context_menu.rs`（443）+ `context_menu_view.rs`（146） | `ui::ContextMenu` + `ContextMenuEntry` | 中 | P0 | **批 3** | 手写含锚点翻转/键盘导航——ContextMenu 自带；`Point/Rect/height_units` 自研几何可退役 |
+| 6 | `context_menu.rs`（443）+ `context_menu_view.rs`（146） | `ui::ContextMenu` + `ContextMenuEntry` | 中 | **P0** | **批 1（修正后首批）** | 手写含锚点翻转/键盘导航——ContextMenu 自带；`Point/Rect/height_units` 自研几何可退役（真去重面） |
 | 7 | `menu_bar.rs`（1318）+ `menu_bar_view.rs`（344） | `ui::DropdownMenu`/`PopoverMenu` 组合 | **高** | P1 | 批 4+ | 顶栏菜单 + 键盘导航 + `estimate_anchor_x` 自研锚定——需重构；#289 已修贴左 |
 | 8 | `find_bar.rs`（1218，editor/） | **无对应件**（B4 缺件） | 高 | P2 | 待裁定 | 维持手写或闭包扩张（§五） |
-| 9 | `settings_panel.rs`（378 模态弹窗） | `ui::Modal` + `ModalHeader`/`ModalRow` | 中 | P1 | 批 5 | #289 已改模态语义——外壳换 Modal 组件 |
-| 10 | `palette_view.rs`（104 命令面板） | `ui::Popover`/`Modal` 组合 | 中 | P2 | 批 5+ | |
-| 11 | `file_tree.rs`（659） | `ui::List` + `TreeViewItem` | 高 | P2 | 批 6 | 自研虚拟化/多选/右键——迁移面大 |
-| 12 | `panels.rs`（528 大纲/属性） | `ui::List` + `ListItem` | 中 | P2 | 批 6 | |
-| 13 | `git_panel.rs`（560） | `ui::List` + `Chip`/`CountBadge` | 中 | P3 | 批 6+ | |
+| 9 | `settings_panel.rs`（378 模态弹窗） | `ui::Modal` + `ModalHeader`/`ModalRow` | 中 | P1 | 批 3 | #289 已改模态语义——外壳换 Modal 组件 |
+| 10 | `palette_view.rs`（104 命令面板） | `ui::Popover`/`Modal` 组合 | 中 | P2 | 批 3+ | |
+| 11 | `file_tree.rs`（659） | `ui::List` + `TreeViewItem` | 高 | P2 | 批 5 | 自研虚拟化/多选/右键——迁移面大 |
+| 12 | `panels.rs`（528 大纲/属性） | `ui::List` + `ListItem` | 中 | P2 | 批 5 | |
+| 13 | `git_panel.rs`（560） | `ui::List` + `Chip`/`CountBadge` | 中 | P3 | 批 5+ | |
 | 14 | `status_bar.rs`（235 标签条） | `ui::Label` 已在用 | — | — | — | 标签面无需组件化 |
 | 15 | `pdf_pages.rs`/`xlsx_grid_view.rs`（自研虚拟化视图） | 无直接对应（DataTable 远期） | — | P3 | 远期 | 自研面更贴合（#289/#389 已建回归门） |
 | 16 | `assets.rs` 图标（手工表 + SHELL_ICON_SET 回归门） | icons crate 枚举单源（已在用） | 低 | P1 | **批 2 并行** | #289 已补 4 枚 + 回归门；剩余风险 = 手工表漂移（门已锁）——维持现状可接受 |
 
 ### 分批 PR 顺序（阶段 2 执行版——每批一 PR + 截图对比 + 交互测试）
 
+> 修正记录：初稿曾把「面板/图标条按钮 → ui::Button/IconButton」列为
+> 批 1（低风险样板）——实最核实后撤回：按钮族是文档化刻意自绘
+> （结论 2：36×36 硬规格 + 视觉语系一致性，IconButton 无固定尺寸
+> API）。批序重排如下。
+
 ```
-批 1（低风险样板）：panels/git_panel/settings_panel 按钮 → ui::Button
-                    + activity_bar/right_dock → ui::IconButton
+批 1（真去重样板）：context_menu → ui::ContextMenu（自研 Point/Rect/height_units
+                     几何退役——443+146 行与 ui 组件职责重叠的真去重面）
 批 2：tab_bar → ui::TabBar/Tab
-批 3：context_menu → ui::ContextMenu（自研 Point/Rect 几何退役）
+批 3：settings_panel 外壳 → ui::Modal；palette → Popover 组合
 批 4：menu_bar → DropdownMenu/PopoverMenu 组合（键盘导航重构——最重）
-批 5：settings_panel 外壳 → ui::Modal；palette → Popover 组合
-批 6：panels/file_tree/git_panel → ui::List 族（虚拟化/多选桥接）
+批 5：panels/file_tree/git_panel → ui::List 族（虚拟化/多选桥接）
+批 6+：Tooltip 统一化 / Chip / CountBadge 等细节件按需
 每批验收：既有单测全绿 + 新增交互测试（不是只测函数返回值）+ 截图对比
 （迁移前/后——沙箱无 GUI 时登记待真机，AGENTS 诚实边界纪律）
+不迁清单：按钮族（bar_button/choice_button/step_button 语系）、
+          find_bar（缺件——§五）、pdf_pages/xlsx_grid 自研虚拟化视图
 ```
 
 ## 四、AI 五组件处置建议（Lead 裁定点）
