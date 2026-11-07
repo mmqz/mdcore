@@ -31,6 +31,7 @@
 //! 解码（8-bit RGB/RGBA/灰度 + 非隔行），JPEG 直接原样嵌入（PDF 的
 //! DCTDecode 就是 JPEG，连解码都不用——比转码更忠实）。
 
+use crate::security::Limits;
 use lopdf::{dictionary, Document, Object, Stream};
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,16 @@ pub enum StampError {
     BadRect,
     /// 文档装载/保存失败。
     Io(String),
+    /// 不支持的加密文档（#277 / 审计 P1-11：S5 纪律——加密写拒，与
+    /// [`crate::forms`] / [`crate::writer_lopdf`] 同门哲学，判定取
+    /// 后者强形态 `is_encrypted() || was_encrypted()`——文件本体是
+    /// 加密档即拒（v0 S5 = 加密档零写）。此前对加密档盖章会静默
+    /// 损坏：仍加密态 lopdf 以未解密形态装载、对象图不解析，保存
+    /// 出的产物既非合法修订也非原档语义；曾加密态（空口令自动
+    /// 解密）则静默剥离加密层——安全降级不可默许。
+    Encrypted,
+    /// 输入超过 S3-L7 上限（open 家族入口统一——先于一切解析）。
+    TooLarge,
 }
 
 impl std::fmt::Display for StampError {
@@ -57,6 +68,8 @@ impl std::fmt::Display for StampError {
             StampError::BadPage(p) => write!(f, "页号 {p} 越界"),
             StampError::BadRect => write!(f, "盖章矩形非法（零面积或非有限坐标）"),
             StampError::Io(e) => write!(f, "文档操作失败：{e}"),
+            StampError::Encrypted => write!(f, "文档已加密（盖章被拒——S5 纪律：加密档零写）"),
+            StampError::TooLarge => write!(f, "输入字节超过 S3-L7 上限（盖章被拒）"),
         }
     }
 }
@@ -720,6 +733,9 @@ impl Default for StampOptions {
 ///
 /// `rect` = `[x0, y0, x1, y1]`（PDF 用户坐标，左下原点）。
 /// 图片按 rect 拉伸铺满（调用方自行保证宽高比；公章是正方形，通常无损）。
+///
+/// 安全门（#277 / 审计 P1-11，open 家族统一）：S3-L7 输入字节 →
+/// S5 加密双拒（仍加密 || 曾加密）——详见 [`stamp_image_with_limits`]。
 pub fn stamp_image(
     pdf: Vec<u8>,
     page: u32,
@@ -727,6 +743,30 @@ pub fn stamp_image(
     image: &[u8],
     opts: StampOptions,
 ) -> Result<Vec<u8>, StampError> {
+    stamp_image_with_limits(pdf, page, rect, image, opts, Limits::default())
+}
+
+/// 带限额盖章（[`stamp_image`] 的注入面——限额面确定性测试用，与
+/// [`crate::forms::PdfForm::read_with_limits`] 同款双入口纪律）。
+///
+/// 门序（open 家族入口统一——与 [`crate::security_scan::open_scan`] /
+/// [`crate::writer_lopdf::LopdfWriter::from_bytes`] 同序）：
+/// 1. **S3-L7 输入字节**❶——先于一切解析；
+/// 2. 参数校验（透明度/矩形——纯参数面零解析，不耗预算）；
+/// 3. lopdf 装载 → **S5 加密双拒**（仍加密 || 曾加密——加密档零写）；
+/// 4. 页面定位与写面。
+pub fn stamp_image_with_limits(
+    pdf: Vec<u8>,
+    page: u32,
+    rect: [f32; 4],
+    image: &[u8],
+    opts: StampOptions,
+    limits: Limits,
+) -> Result<Vec<u8>, StampError> {
+    // S3-L7 输入门（先于装载——open 家族入口统一检查）。
+    limits
+        .check_open_input_bytes(pdf.len() as u64)
+        .map_err(|_| StampError::TooLarge)?;
     if !(0.0..=1.0).contains(&opts.opacity) || opts.opacity <= 0.0 {
         return Err(StampError::BadImage(format!(
             "透明度 {} 越界（应在 (0, 1]）",
@@ -740,6 +780,14 @@ pub fn stamp_image(
     }
 
     let mut doc = Document::load_mem(&pdf).map_err(|e| StampError::Io(format!("装载失败：{e}")))?;
+    // S5 加密写拒（双拒——与 writer_lopdf 同判定，#277 / 审计 P1-11）：
+    // - **仍加密**：lopdf 未解密装载、对象图不解析——盖章保存出的产物
+    //   既非合法修订也非原档语义（静默损坏，本 issue 的原始形态）；
+    // - **曾加密**（空口令自动解密）：对象图可用，但保存 = 静默剥离
+    //   加密层（安全降级）——文件本体是加密档即拒（v0 S5）。
+    if doc.is_encrypted() || doc.was_encrypted() {
+        return Err(StampError::Encrypted);
+    }
     let pages = doc.get_pages();
     let page_id = *pages.get(&(page + 1)).ok_or(StampError::BadPage(page))?;
 

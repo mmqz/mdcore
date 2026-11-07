@@ -32,6 +32,8 @@
 use std::path::{Path, PathBuf};
 
 use mang_shell::editor::pdf_doc;
+// 敌意夹具现场构造（④号测试——dev-dep lopdf，同 pdfe_security 惯例）。
+use lopdf::{Object, dictionary};
 
 /// 最小 CJK 占比（乱码近似 0，真实中文 0.4+——只抓「明显坏」）。
 const MIN_CJK_RATIO: f64 = 0.25;
@@ -435,6 +437,105 @@ fn tail_truncated_pdf_does_not_panic() {
             !e.is_empty(),
             "尾部截断件的 Err 空消息（fail-loud 破坏）：{e:?}"
         ),
+    }
+    // TempDirGuard Drop 清理。
+}
+
+// ---------------------------------------------------------------------------
+// ④ S2/S6 打开扫描接线 e2e（#277 / 审计 P1-11 桌面接线——引擎门控）
+// ---------------------------------------------------------------------------
+
+/// 危险对象 PDF（catalog 挂 `/OpenAction`）打开 → 行模型首行落
+/// 【安全提示】告警行（S2.4 只读告警——**不阻断打开**：页表照常建立）。
+///
+/// 夹具现场构造（lopdf dev-dep——pdfe_security 同款惯例，零仓外依赖）：
+/// smoke.pdf 是良性件（零告警——①号测试已锁），敌意件不进仓（黄金例
+/// 纪律只收良性基线，敌意载荷按需现场造）。
+///
+/// 引擎门控（同 ①号 Phase B 口径）：无 libpdfium SKIP 横幅 + return；
+/// 敌意件本身合法可开，引擎在场则全量真跑。
+#[test]
+fn dangerous_pdf_opens_with_security_notice_when_engine_available() {
+    // 现场构造：最小单页（无文本层）+ catalog /OpenAction（S2 族）。
+    let mut doc = lopdf::Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let page_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Page".to_vec()),
+        "Parent" => Object::Reference(pages_id),
+        "MediaBox" => vec![
+            Object::Integer(0), Object::Integer(0),
+            Object::Integer(612), Object::Integer(792),
+        ],
+    }));
+    doc.set_object(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => Object::Integer(1),
+        }),
+    );
+    let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Catalog".to_vec()),
+        "Pages" => Object::Reference(pages_id),
+        "OpenAction" => dictionary! { "S" => Object::Name(b"GoTo".to_vec()) },
+    }));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("敌意夹具序列化");
+    // Phase A 独立对账（不依赖引擎）：源里确有 /OpenAction（防构造漂移
+    // 把 S2 锁退化成「良性件零告警」恒真锁）。
+    assert!(
+        bytes_contain(&bytes, b"/OpenAction"),
+        "夹具漂移：敌意件缺 /OpenAction（S2 检测面失锚）"
+    );
+
+    let dir = TempDirGuard::new("s2-notice");
+    let path = dir.path("openaction.pdf");
+    std::fs::write(&path, &bytes).unwrap_or_else(|e| panic!("写敌意件：{e}"));
+
+    match pdf_doc::load(&path) {
+        Ok(payload) => {
+            let lines: Vec<&str> = payload.text.split('\n').collect();
+            // S2 告警行落行模型最首（先于扫描件提示——安全语义优先）。
+            let first = lines[0];
+            assert!(
+                first.contains("【安全提示】"),
+                "S2 命中必须落首行告警（S2.4 只读告警），实际首行：{first:?}"
+            );
+            assert!(
+                first.contains("打开动作") || first.contains("/OpenAction"),
+                "告警应指认族名（OpenAction）：{first:?}"
+            );
+            assert!(
+                first.contains("只读不执行"),
+                "告警应声明只读语义（不阻断 + 零执行面）：{first:?}"
+            );
+            // 无 /AcroForm → S6 不误报（误报 = 告警面失效）。
+            assert!(
+                !payload.text.contains("【表单提示】"),
+                "本夹具无 /AcroForm——S6 不应误报"
+            );
+            // 不阻断打开：页表照常建立；页锚点行 = 页分隔行（提示行之后）。
+            assert_eq!(payload.props.pages, 1, "告警不阻断打开（页数照常）");
+            let anchor = payload.pages[0].first_line;
+            assert!(anchor > 0, "页锚点应在提示行区之后：{anchor}");
+            assert!(
+                lines[anchor].starts_with("── 第 1 / 1 页 ──"),
+                "页锚点行应为页分隔行，实际：{:?}",
+                lines[anchor]
+            );
+        }
+        Err(e) if e.contains("libpdfium") => {
+            eprintln!(
+                "\n══════ SKIP（环境缺件，不伪装通过）══════\n  \
+                 本机无 libpdfium——S2 告警接线 e2e 未真跑。\n  \
+                 引擎错误：{e}\n  \
+                 有 libpdfium 的环境（./smoke.sh 5 tests/fixtures/smoke.pdf）全量执行。\n\
+                 ══════════════════════════════════════\n"
+            );
+        }
+        Err(e) => panic!("敌意件打开失败（非引擎缺件——接线缺陷）：{e:?}"),
     }
     // TempDirGuard Drop 清理。
 }

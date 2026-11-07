@@ -19,7 +19,9 @@
 | #234 | .doc 旧格式识别 | [gates/234.md](gates/234.md) | ✅ |
 | #257 | office-io 多节分节符读写面 | [gates/257.md](gates/257.md) | ✅ |
 | #267 | DOCX 样式继承树 typed 解析面 | [gates/267.md](gates/267.md) | 🔄 PR 中 |
+| #277 | stamp 写面安全门 + 桌面 S2/S6 接线 | [gates/277.md](gates/277.md) | 🔄 PR 中 |
 | #279 | pdf worker 换代上限 | [gates/279.md](gates/279.md) | 🔄 PR 中 |
+
 | #280 | wasm 桥双税（备份分档 + 轮询守卫） | [gates/280.md](gates/280.md) | ✅ |
 | #281 | 状态栏 I/O 缓存 + 字数守卫（R-e/R-f 首批） | [gates/281.md](gates/281.md) | 🔄 PR 中 |
 | #283 | XLSX 消费倒挂——XlsxEditor 接产品导出路径 | [gates/283.md](gates/283.md) | 🔄 PR 中 |

@@ -26,6 +26,19 @@
 //! - 引擎层：mdc-pdf `Limits` S3-L7 1GiB（`PdfiumEngine::open` 入口
 //!   统一执行）——两层独立，应用层更严。
 //!
+//! ## 打开时安全扫描（S2/S6，#277 / 审计 P1-11 桌面接线）
+//!
+//! `load_from_bytes` 在引擎打开前跑 mdc-pdf `open_scan`（此前桌面读
+//! 路径零扫描命中——web 面有、桌面没有的双标）：
+//! - **S2.4 只读告警语义**：S2 危险族命中/S6 表单探针转全局提示行落
+//!   行模型首行区（与扫描件提示同通道），**不阻断打开**——本视图
+//!   只读、零执行面，用户自行决定去留；
+//! - **扫描失败不阻断**：lopdf 与 pdfium 是独立解析器，lopdf 不可解析
+//!   不代表 pdfium 打不开——装载判定权在引擎；
+//! - **仍加密态诊断前置**：扫描见加密旗 + 引擎打开失败 → 错误面附
+//!   加密提示（比泛化引擎错误对用户更可行动）；S5 写拒不在此面
+//!   （本视图零写面，写拒在 stamp/forms/writer_lopdf 各自入口）。
+//!
 //! ## 已知边界（批 4 登记，后续批补）
 //!
 //! - 表格行检测（同 y 坐标多文本块聚合）未实现——`extract_text` 公开面
@@ -53,6 +66,8 @@ use mdc_pdf::engine::DocumentEngine;
 use mdc_pdf::engine_pdfium::PdfiumEngine;
 use mdc_pdf::outline::OutlineTarget;
 use mdc_pdf::page::{PageIndex, PageSpan};
+use mdc_pdf::security::{DangerousFamily, Limits, OpenAssessment};
+use mdc_pdf::security_scan::open_scan;
 
 use super::docx_doc::HeadingEntry;
 use super::highlight::TokenKind;
@@ -115,6 +130,10 @@ pub struct PdfRaw {
     pub pages: Vec<PdfTextPage>,
     /// 书签树（扁平文档序；page 为 0 基页号）。
     pub outline: Vec<PdfOutlineEntry>,
+    /// 打开时安全评估提示行（S2 危险族/S6 表单探针——
+    /// `load_from_bytes` 经 `open_scan` 产出、convert 落行模型首行区；
+    /// 默认空 = 无评估路径行为不变）。
+    pub security_notices: Vec<String>,
 }
 
 /// 单页文本层。
@@ -157,14 +176,85 @@ pub fn load(path: &Path) -> Result<PdfPayload, String> {
 }
 
 /// 字节入口（夹具读回自校验共用）。
+///
+/// 门序（#277 / 审计 P1-11 桌面接线）：S2/S6 `open_scan`（只读评估，
+/// 失败不阻断——lopdf 与 pdfium 是独立解析器，装载判定权在引擎）→
+/// 引擎打开（S3-L7/L4 在引擎入口）→ 评估转提示行落行模型首行区
+/// （S2.4 只读告警语义——不阻断打开）。
 pub fn load_from_bytes(bytes: Vec<u8>) -> Result<PdfPayload, String> {
-    let engine = PdfiumEngine::open(bytes)
-        .map_err(|e| format!("pdf 引擎打开失败（libpdfium 定位/装载）：{e:?}"))?;
-    extract_with(&engine)
+    // S2/S6 扫描（只读评估——不阻断打开；失败 = 无评估，引擎判定照旧）。
+    let assessment = open_scan(&bytes, &Limits::default()).ok();
+    let engine = match PdfiumEngine::open(bytes) {
+        Ok(engine) => engine,
+        Err(e) => {
+            let mut msg = format!("pdf 引擎打开失败（libpdfium 定位/装载）：{e:?}");
+            // 仍加密态诊断前置：扫描已见加密旗（口令不可得）——引擎
+            // 失败大概率源于加密；诚实对冲：绑定失败也可能独立存在。
+            if assessment.as_ref().is_some_and(|a| a.encrypted) {
+                msg.push_str(
+                    "\n提示：安全扫描显示文档处于加密态（口令不可得）——\
+                     加密文档的只读打开需要口令，当前版本不支持。",
+                );
+            }
+            return Err(msg);
+        }
+    };
+    let notices = assessment
+        .as_ref()
+        .map(security_notice_lines)
+        .unwrap_or_default();
+    extract_with(&engine, notices)
+}
+
+/// S2/S6 打开评估 → 行模型全局提示行（S2.4 只读告警——用户可见
+/// 即可见，打开不阻断；桌面视图零执行面，告警语义到此为止）。
+fn security_notice_lines(assessment: &OpenAssessment) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !assessment.warnings.is_empty() {
+        // 族名去重呈现（同族多命中一行；细节对象号不进提示行——
+        // 面向用户可读性优先，结构化细节保留在 assessment 内）。
+        let mut families: Vec<String> = Vec::new();
+        for hit in &assessment.warnings {
+            let label = family_label(hit.family);
+            if !families.contains(&label) {
+                families.push(label);
+            }
+        }
+        lines.push(format!(
+            "【安全提示】检出 {} 处潜在危险对象（{}）——本视图只读不执行任何动作，请自行确认文件来源可信。",
+            assessment.warnings.len(),
+            families.join("、")
+        ));
+    }
+    if let Some(probe) = &assessment.form_probe {
+        lines.push(format!(
+            "【表单提示】文档含交互式表单（{} 个字段）——只读视图仅呈现文本层，不初始化表单交互。",
+            probe.field_count
+        ));
+    }
+    lines
+}
+
+/// S2 危险族 → 用户可读名（serde 协议名不作展示串——代码语义与
+/// 用户文案分离，与 docx_doc 面板文案同口径）。
+fn family_label(family: DangerousFamily) -> String {
+    match family {
+        DangerousFamily::OpenAction => "打开动作 /OpenAction".into(),
+        DangerousFamily::AdditionalActions => "附加动作 /AA".into(),
+        DangerousFamily::LaunchAction => "外部程序启动 /Launch".into(),
+        DangerousFamily::UriAction => "外链动作 /URI".into(),
+        DangerousFamily::EmbeddedFiles => "嵌入文件 /EmbeddedFiles".into(),
+        DangerousFamily::RichMedia => "富媒体 /RichMedia".into(),
+        DangerousFamily::JavaScript => "JavaScript 动作".into(),
+        DangerousFamily::NamesJavaScript => "文档级 JavaScript".into(),
+    }
 }
 
 /// 引擎抽取 + 转换（`PdfiumEngine` 具体类型——不引入 dyn 面）。
-fn extract_with(engine: &PdfiumEngine) -> Result<PdfPayload, String> {
+fn extract_with(
+    engine: &PdfiumEngine,
+    security_notices: Vec<String>,
+) -> Result<PdfPayload, String> {
     let count = engine.page_count();
     if count == 0 {
         return Err("pdf 无页面（空文档）".into());
@@ -195,6 +285,7 @@ fn extract_with(engine: &PdfiumEngine) -> Result<PdfPayload, String> {
                 },
             })
             .collect(),
+        security_notices,
     };
     Ok(convert(&raw))
 }
@@ -215,6 +306,11 @@ pub fn convert(raw: &PdfRaw) -> PdfPayload {
     props.scanned = total > 0 && !raw.pages.iter().any(|p| page_has_text(&p.text));
 
     let mut ctx = Ctx::default();
+    // 安全评估提示行区（行模型最首——先于扫描件提示：安全语义优先于
+    // 可用性提示；S2.4 只读告警——可见但不阻断打开）。
+    for notice in &raw.security_notices {
+        ctx.push(notice.clone(), Some(TokenKind::Quote));
+    }
     // 扫描件全局提示行（行模型首行——明确提示而非白屏）。
     if props.scanned {
         let notice = "【提示】全文无文本层（疑似扫描件）——渲染需要 OCR，当前版本暂不支持。";
@@ -398,6 +494,7 @@ mod tests {
                     page: 1,
                 },
             ],
+            security_notices: vec![],
         }
     }
 
@@ -520,6 +617,7 @@ mod tests {
                 },
             ],
             outline: vec![],
+            security_notices: vec![],
         };
         let out = convert(&raw);
         let lines: Vec<&str> = out.text.split('\n').collect();
@@ -549,6 +647,7 @@ mod tests {
                 },
             ],
             outline: vec![],
+            security_notices: vec![],
         };
         let out = convert(&raw);
         assert!(out.props.scanned);
@@ -575,6 +674,7 @@ mod tests {
                 text: "甲\u{0}乙\r\n丙  \r丁\n\n".into(),
             }],
             outline: vec![],
+            security_notices: vec![],
         };
         let out = convert(&raw);
         let lines: Vec<&str> = out.text.split('\n').collect();
@@ -597,6 +697,88 @@ mod tests {
     fn load_rejects_invalid_bytes() {
         let out = load_from_bytes(b"not a pdf".to_vec());
         assert!(out.is_err(), "非 pdf 字节必须 Err（引擎装载失败面）");
+    }
+
+    // -------------------------------------------------------------------------
+    // S2/S6 打开扫描接线（#277 / 审计 P1-11 桌面接线——纯函数面）
+    // -------------------------------------------------------------------------
+
+    /// 评估 → 提示行格式化：S2 命中数 + 族名去重 + S6 表单计数。
+    #[test]
+    fn security_notice_lines_format_and_dedup() {
+        use mdc_pdf::security::{DangerousHit, FormProbe};
+        let hit = |family: DangerousFamily, detail: &str| DangerousHit {
+            family,
+            detail: detail.into(),
+        };
+        let assessment = OpenAssessment {
+            encrypted: false,
+            warnings: vec![
+                hit(DangerousFamily::OpenAction, "obj 5 0: /OpenAction"),
+                // 同族第二命中（去重锁：族名一行一次，计数仍累计）。
+                hit(DangerousFamily::OpenAction, "obj 9 0: /OpenAction"),
+                hit(DangerousFamily::JavaScript, "obj 7 0: /JavaScript 动作"),
+            ],
+            form_probe: Some(FormProbe {
+                field_count: 3,
+                fields: vec![],
+            }),
+        };
+        let lines = security_notice_lines(&assessment);
+        assert_eq!(lines.len(), 2, "S2 一行 + S6 一行：{lines:?}");
+        assert!(
+            lines[0].contains("3 处"),
+            "命中计数含同族多命中：{}",
+            lines[0]
+        );
+        assert!(
+            lines[0].contains("打开动作") && lines[0].contains("JavaScript"),
+            "族名呈现：{}",
+            lines[0]
+        );
+        // 族名去重：同族不重复出现。
+        assert_eq!(
+            lines[0].matches("打开动作").count(),
+            1,
+            "同族去重（一处一行）：{}",
+            lines[0]
+        );
+        assert!(lines[1].contains("3 个字段"), "表单计数：{}", lines[1]);
+
+        // 零命中零表单 → 零行（良性文档无提示——误报 = 告警面失效）。
+        let clean = security_notice_lines(&OpenAssessment::default());
+        assert!(clean.is_empty(), "良性档零提示行：{clean:?}");
+    }
+
+    /// 提示行落位：安全区最首（先于扫描件提示）+ 页表/书签行号整体
+    /// 平移不漂（PageEntry/HeadingEntry 锚点仍指向正确行）。
+    #[test]
+    fn security_notices_land_first_and_shift_anchors() {
+        let mut raw = raw_two_pages();
+        raw.security_notices = vec![
+            "【安全提示】测试告警甲。".into(),
+            "【表单提示】测试表单乙。".into(),
+        ];
+        let out = convert(&raw);
+        let lines: Vec<&str> = out.text.split('\n').collect();
+        assert_eq!(lines[0], "【安全提示】测试告警甲。", "安全行 0");
+        assert_eq!(lines[1], "【表单提示】测试表单乙。", "安全行 1");
+        assert_eq!(lines[2], "── 第 1 / 2 页 ──", "页分隔行平移到 2");
+        // 页表锚点随平移（first_line 0 → 2；整表 +2）。
+        assert_eq!(out.pages[0].first_line, 2, "首页锚点 = 0 + 提示行数");
+        assert_eq!(out.pages[1].first_line, 8, "次页锚点同平移");
+        // 书签锚点仍指向对应页分隔行。
+        let heading = out
+            .headings
+            .iter()
+            .find(|h| h.text == "第二章 技术方案")
+            .unwrap();
+        assert_eq!(heading.line, out.pages[1].first_line, "书签锚点与页表一致");
+        // 提示行 Quote 整行 span（与页分隔行同视觉面）。
+        assert_eq!(
+            out.spans[0],
+            vec![(0..lines[0].chars().count(), TokenKind::Quote)]
+        );
     }
 
     // -------------------------------------------------------------------------
