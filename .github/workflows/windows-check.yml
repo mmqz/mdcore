@@ -43,6 +43,23 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: fmt gate (main workspace)
+        # #341：fmt 纪律前置到 CI（此前零 fmt 步骤，纯靠代理自觉，main 曾漂移
+        # 1291 行/23 文件）。工具链由 rust-toolchain.toml 钉 1.99.0——rustfmt
+        # 同版（1.10.0）跨环境可复现（rustup 按 toolchain 文件自动补装
+        # components 里声明的 rustfmt）；升级工具链 = 显式改该文件并全仓复跑。
+        run: |
+          cargo fmt --version
+          cargo fmt --all -- --check
+
+      - name: fmt gate (mang-shell independent workspace)
+        # #341：mang-shell 自带独立 [workspace] 表——主 workspace 的 --all
+        # 不触达该目录，需第二遍在子目录跑（修复建议原文）。
+        working-directory: mang-shell
+        run: |
+          cargo fmt --version
+          cargo fmt --all -- --check
+
       - name: cargo check (workspace, excluding GTK-only shell)
         # mdshell-native 依赖 GTK3/WebKitGTK，Windows 上无实体 -> 排除。
         # 其余全部 crate 必须能编译：这是 Windows 平台的编译契约。
