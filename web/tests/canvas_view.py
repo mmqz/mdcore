@@ -99,6 +99,12 @@ def main() -> int:
                 aiSvg: !!document.getElementById('canvas-ai-svg'),
                 aiAdd2: !!document.getElementById('canvas-ai-add-btn2'),
                 status: !!document.getElementById('canvas-status'),
+                zoomOut: !!document.getElementById('canvas-zoom-out-btn'),
+                zoomLabel: !!document.getElementById('canvas-zoom'),
+                zoomIn: !!document.getElementById('canvas-zoom-in-btn'),
+                fit: !!document.getElementById('canvas-fit-btn'),
+                camReset: !!document.getElementById('canvas-cam-reset-btn'),
+                camera: !!document.getElementById('cv-camera'),
                 panelHidden: getComputedStyle(document.getElementById('canvas-panel')).display === 'none',
                 state: window.__canvasState(),
             })""")
@@ -109,9 +115,12 @@ def main() -> int:
                   and boot["undo"] and boot["redo"] and boot["aiAdd"] and boot["save"]
                   and boot["restore"] and boot["clear"] and boot["scroll"] and boot["svg"]
                   and boot["aiPanel"] and boot["aiSvg"] and boot["aiAdd2"] and boot["status"]
+                  and boot["zoomOut"] and boot["zoomLabel"] and boot["zoomIn"]
+                  and boot["fit"] and boot["camReset"] and boot["camera"]
                   and boot["panelHidden"]
                   and st["objects"] == 0 and st["nodes"] == 0 and st["edges"] == 0
-                  and st["groups"] == 0 and st["undoDepth"] == 0 and st["redoDepth"] == 0,
+                  and st["groups"] == 0 and st["undoDepth"] == 0 and st["redoDepth"] == 0
+                  and st["camera"] == {"x": 0, "y": 0, "z": 1},
                   json.dumps(boot, ensure_ascii=False))
 
             # 切到 canvas 面（后续用例的公共前置）
@@ -303,11 +312,12 @@ def main() -> int:
                        and after["domGroup"] is True)
                 gid = after["groups"][0]["id"] if after["groups"] else None
                 # 组内空区点击 → 选组 → ungroup
-                pt = page.evaluate("""([x, y]) => {
-                    const sc = document.getElementById('canvas-scroll');
-                    const r = sc.getBoundingClientRect();
-                    return { x: r.left + x - sc.scrollLeft, y: r.top + y - sc.scrollTop };
-                }""", [100, 294])  # bbox(68,288) 内、节点上方
+                # #367：相机模型下滚动退役——组内空区点击位改由组包围盒
+                # 元素自身推导（屏幕坐标直用，不再手算 scroll 偏移）。
+                grp_box = page.locator(
+                    f'#cv-l-groups > g.group[data-id="{gid}"]').bounding_box() if gid else None
+                pt = ({"x": grp_box["x"] + 32, "y": grp_box["y"] + 6}
+                      if grp_box else {"x": 0, "y": 0})  # 组框上缘内侧（避开节点）
                 page.mouse.click(pt["x"], pt["y"])
                 gsel = page.evaluate(
                     """id => document.querySelector(`#cv-l-groups > g.group[data-id="${id}"]`)
@@ -543,6 +553,149 @@ def main() -> int:
                       elapsed < 2.0 and st15["converged"] is True,
                       json.dumps({"elapsed_s": round(elapsed, 3), "sync": st15},
                                  ensure_ascii=False))
+
+            # ---- 16-21. 相机面（#367——视图层独立，无 wasm 也全跑）----
+            # 16. 初始态：{0,0,1} + 相机层 transform 恒等 + 指示 100%。
+            cam0 = page.evaluate("""() => ({
+                cam: window.__canvasCamera(),
+                tf: document.getElementById('cv-camera').getAttribute('transform'),
+                label: document.getElementById('canvas-zoom').textContent,
+            })""")
+            check("camera_initial",
+                  cam0["cam"]["x"] == 0 and cam0["cam"]["y"] == 0 and cam0["cam"]["z"] == 1
+                  and cam0["cam"]["camSeq"] >= 0 and cam0["cam"]["renderSeq"] >= 0
+                  and (cam0["tf"] is None or cam0["tf"] == "translate(0,0) scale(1)")
+                  and cam0["label"] == "100%",
+                  json.dumps(cam0, ensure_ascii=False))
+
+            # 17. 滚轮缩放 ×6：z 增 + camSeq 每轮递增 + renderSeq 恒定
+            #     （卸载命题：相机变更零对象渲染）。注：CDP 滚轮事件坐标
+            #     为整数（512.578 → 512）——鼠标位与断言公式统一取整，
+            #     否则 0.5px 舍入差被锚点公式放大成假漂移。
+            svg_box = page.locator("#canvas-svg").bounding_box()
+            cx = round(svg_box["x"] + svg_box["width"] / 2)
+            cy = round(svg_box["y"] + svg_box["height"] / 2)
+            page.mouse.move(cx, cy)
+            seq0 = page.evaluate("window.__canvasCamera()")
+            for _ in range(6):
+                page.mouse.wheel(0, -100)
+                page.wait_for_timeout(30)
+            seq1 = page.evaluate("window.__canvasCamera()")
+            zoom_txt = page.locator("#canvas-zoom").text_content()
+            check("camera_wheel_zoom_zero_rerender",
+                  seq1["z"] > seq0["z"] and seq1["camSeq"] == seq0["camSeq"] + 6
+                  and seq1["renderSeq"] == seq0["renderSeq"]
+                  and zoom_txt == f"{round(seq1['z'] * 100)}%",
+                  json.dumps({"before": seq0, "after": seq1, "label": zoom_txt}))
+
+            # 18. 锚点保持：缩放前后光标下世界坐标不动（缩放跟随光标）。
+            anchor = page.evaluate("""([cx, cy]) => {
+                const r = document.getElementById('canvas-svg').getBoundingClientRect();
+                const c = window.__canvasCamera();
+                return { wx: (cx - r.left - c.x) / c.z, wy: (cy - r.top - c.y) / c.z };
+            }""", [cx, cy])
+            page.mouse.wheel(0, -100)
+            page.wait_for_timeout(30)
+            anchor2 = page.evaluate("""([cx, cy]) => {
+                const r = document.getElementById('canvas-svg').getBoundingClientRect();
+                const c = window.__canvasCamera();
+                return { wx: (cx - r.left - c.x) / c.z, wy: (cy - r.top - c.y) / c.z };
+            }""", [cx, cy])
+            check("camera_wheel_anchor_stable",
+                  abs(anchor2["wx"] - anchor["wx"]) < 1e-6 and abs(anchor2["wy"] - anchor["wy"]) < 1e-6,
+                  json.dumps({"before": anchor, "after": anchor2}))
+
+            # 19. 中键平移（任意处可平移——确定性，不受节点命中影响）：
+            #     cam.x/y 变 + renderSeq 恒定；缩小回落 z 降。
+            seq2 = page.evaluate("window.__canvasCamera()")
+            page.mouse.move(cx + 40, cy + 40)
+            page.mouse.down(button="middle")
+            page.mouse.move(cx + 200, cy + 120, steps=5)
+            page.mouse.up(button="middle")
+            seq3 = page.evaluate("window.__canvasCamera()")
+            page.mouse.move(cx, cy)
+            page.mouse.wheel(0, 120)  # 缩小
+            page.wait_for_timeout(30)
+            seq4 = page.evaluate("window.__canvasCamera()")
+            check("camera_pan_zero_rerender",
+                  abs(seq3["x"] - seq2["x"] - 160) < 1e-6 and abs(seq3["y"] - seq2["y"] - 80) < 1e-6
+                  and seq3["renderSeq"] == seq2["renderSeq"]
+                  and seq4["z"] < seq3["z"],
+                  json.dumps({"before": seq2, "after_pan": seq3, "after_zoomout": seq4}))
+
+            # 20. 按钮组：复位 {0,0,1} → 放大 z=1.1 且**视口中心世界点
+            #     保持**（中心锚定——pan 随 z 移动是正确行为，非 0）→
+            #     两次缩小 z=1/1.1。
+            page.click("#canvas-cam-reset-btn")
+            r0 = page.evaluate("window.__canvasCamera()")
+            c0 = page.evaluate("""() => {
+                const r = document.getElementById('canvas-svg').getBoundingClientRect();
+                const c = window.__canvasCamera();
+                return { vw: r.width, vh: r.height,
+                         wx: (r.width / 2 - c.x) / c.z, wy: (r.height / 2 - c.y) / c.z };
+            }""")
+            page.click("#canvas-zoom-in-btn")
+            r1 = page.evaluate("window.__canvasCamera()")
+            c1 = page.evaluate("""() => {
+                const r = document.getElementById('canvas-svg').getBoundingClientRect();
+                const c = window.__canvasCamera();
+                return { wx: (r.width / 2 - c.x) / c.z, wy: (r.height / 2 - c.y) / c.z };
+            }""")
+            page.click("#canvas-zoom-out-btn")
+            page.click("#canvas-zoom-out-btn")
+            r2 = page.evaluate("window.__canvasCamera()")
+            check("camera_buttons_step_and_reset",
+                  r0["x"] == 0 and r0["y"] == 0 and r0["z"] == 1
+                  and abs(r1["z"] - 1.1) < 1e-9
+                  and abs(c1["wx"] - c0["wx"]) < 1e-6 and abs(c1["wy"] - c0["wy"]) < 1e-6
+                  and abs(r2["z"] - 1 / 1.1) < 1e-9,
+                  json.dumps({"reset": r0, "in": r1, "center_before": c0,
+                              "center_after": c1, "out2": r2}))
+
+            # 21. DOM 身份 + 适配（需节点——wasm 门；bridge_absent 时 SKIP）。
+            if not has_wasm:
+                check("camera_dom_identity_and_fit", True,
+                      "pending wasm (nodes needed — skip until mdc-canvas wasm rebuild)",
+                      skip=True)
+            else:
+                # 标记既有节点元素 → 一轮缩放/平移后同一元素引用（保留模式证明）。
+                tagged = page.evaluate("""() => {
+                    const el = document.querySelector('#cv-l-nodes > g.node');
+                    if (!el) return null;
+                    el.__camTag = 'identity-marker';
+                    return el.dataset.id;
+                }""")
+                seq5 = page.evaluate("window.__canvasCamera()")
+                page.mouse.move(cx, cy)
+                for _ in range(3):
+                    page.mouse.wheel(0, -80)
+                    page.wait_for_timeout(20)
+                page.mouse.move(cx + 60, cy + 60)
+                page.mouse.down(button="middle")
+                page.mouse.move(cx + 180, cy + 90, steps=3)
+                page.mouse.up(button="middle")
+                seq6 = page.evaluate("window.__canvasCamera()")
+                identity = page.evaluate("""() => {
+                    const el = document.querySelector('#cv-l-nodes > g.node');
+                    return el && el.__camTag === 'identity-marker' ? el.dataset.id : null;
+                }""")
+                # 适配：对象包围盒入视口（z > 0 且 pan 有界——视口宽高内）。
+                page.click("#canvas-fit-btn")
+                fitst = page.evaluate("""() => {
+                    const c = window.__canvasCamera();
+                    const svg = document.getElementById('canvas-svg');
+                    const r = svg.getBoundingClientRect();
+                    return { ...c, vw: r.width, vh: r.height };
+                }""")
+                fit_ok = (fitst["z"] > 0 and -fitst["vw"] < fitst["x"] < fitst["vw"]
+                          and -fitst["vh"] < fitst["y"] < fitst["vh"])
+                check("camera_dom_identity_and_fit",
+                      tagged is not None and identity == tagged
+                      and seq6["camSeq"] > seq5["camSeq"]
+                      and seq6["renderSeq"] == seq5["renderSeq"]
+                      and fit_ok,
+                      json.dumps({"tagged": tagged, "identity": identity,
+                                  "before": seq5, "after": seq6, "fit": fitst}))
 
             browser.close()
         srv.shutdown()
