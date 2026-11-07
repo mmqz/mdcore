@@ -537,10 +537,8 @@ fn props_protocol_overrides_defaults() {
         y: 20.0,
         w: 30.0,
         h: 15.0,
-        from: None,
-        to: None,
-        members: vec![],
         props,
+        ..Default::default()
     };
     let (shape, tf) = shape_from_object(&obj, &[]).expect("应能转成图元");
     match shape {
@@ -559,14 +557,8 @@ fn group_object_itself_is_not_drawn() {
     let obj = CanvasObject {
         id: "g".into(),
         kind: ObjectKind::Group,
-        x: 0.0,
-        y: 0.0,
-        w: 0.0,
-        h: 0.0,
-        from: None,
-        to: None,
         members: vec!["a".into()],
-        props: BTreeMap::new(),
+        ..Default::default()
     };
     assert!(shape_from_object(&obj, &[]).is_none(), "分组不直接画");
 }
@@ -577,14 +569,9 @@ fn dangling_edge_is_skipped_not_panicked() {
     let obj = CanvasObject {
         id: "e".into(),
         kind: ObjectKind::Edge,
-        x: 0.0,
-        y: 0.0,
-        w: 0.0,
-        h: 0.0,
         from: Some("gone-1".into()),
         to: Some("gone-2".into()),
-        members: vec![],
-        props: BTreeMap::new(),
+        ..Default::default()
     };
     assert!(shape_from_object(&obj, &[]).is_none(), "悬空边应跳过");
 }
@@ -605,10 +592,8 @@ fn bad_props_fall_back_to_defaults() {
         y: 0.0,
         w: 10.0,
         h: 10.0,
-        from: None,
-        to: None,
-        members: vec![],
         props,
+        ..Default::default()
     };
     let (shape, tf) = shape_from_object(&obj, &[]).expect("非法属性也应回退缺省并出图元");
     assert!(matches!(shape, Shape::Rect { .. }), "未知 shape 值回退矩形");

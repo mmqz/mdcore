@@ -31,7 +31,7 @@ use wasm_bindgen::prelude::*;
 
 use mdc_canvas::{
     Actor, CanvasCommand, CanvasError, CanvasObject, CanvasSession, CommandOutcome, ObjectKind,
-    SessionOptions,
+    SessionOptions, StrokeTool,
 };
 
 // ---------------------------------------------------------------------------
@@ -213,9 +213,59 @@ pub fn parse_cmd_core(json: &str) -> Result<CanvasCommand, CvError> {
         "ungroup" => Ok(CanvasCommand::Ungroup {
             group_id: s("group_id")?,
         }),
+        "add_stroke" => {
+            // 扁平点列 [x0,y0,x1,y1,...]：偶长且 ≥2 点（4 元素）。
+            let pts = match v.get("points") {
+                Some(serde_json::Value::Array(a)) => a,
+                _ => {
+                    return Err(bad_json(
+                        "command",
+                        "missing/invalid `points` (flat [x0,y0,...])".into(),
+                    ))
+                }
+            };
+            if pts.len() % 2 != 0 || pts.len() < 4 {
+                return Err(bad_json(
+                    "command",
+                    format!(
+                        "`points` must be flat [x0,y0,...] with >= 2 pairs (even length), got {} entries",
+                        pts.len()
+                    ),
+                ));
+            }
+            let mut points = Vec::with_capacity(pts.len() / 2);
+            for pair in pts.chunks(2) {
+                let x = pair[0].as_f64().ok_or_else(|| {
+                    bad_json("command", "`points` entries must be numbers".into())
+                })?;
+                let y = pair[1].as_f64().ok_or_else(|| {
+                    bad_json("command", "`points` entries must be numbers".into())
+                })?;
+                points.push((x, y));
+            }
+            let tool_s = s("tool")?;
+            let tool = StrokeTool::from_wire(&tool_s).ok_or_else(|| {
+                bad_json(
+                    "command",
+                    format!("unknown `tool` `{tool_s}` (pen|highlighter|eraser)"),
+                )
+            })?;
+            Ok(CanvasCommand::AddStroke {
+                id: opt_id()?,
+                points,
+                width: f("width")?,
+                color: s("color")?,
+                tool,
+            })
+        }
+        "set_stroke_style" => Ok(CanvasCommand::SetStrokeStyle {
+            id: s("id")?,
+            width: f("width")?,
+            color: s("color")?,
+        }),
         other => Err(bad_json(
             "command",
-            format!("unknown command `{other}` (8 commands: add_node/move_node/resize_node/add_edge/set_props/remove_object/group_objects/ungroup)"),
+            format!("unknown command `{other}` (10 commands: add_node/move_node/resize_node/add_edge/set_props/remove_object/group_objects/ungroup/add_stroke/set_stroke_style)"),
         )),
     }
 }
@@ -225,10 +275,16 @@ fn kind_wire(k: ObjectKind) -> &'static str {
         ObjectKind::Node => "node",
         ObjectKind::Edge => "edge",
         ObjectKind::Group => "group",
+        ObjectKind::Stroke => "stroke",
     }
 }
 
 /// 读模型对象 → JSON（字段面与公开结构 1:1）。
+///
+/// 笔迹载荷（#351）：`"stroke": {"points":[x,y,...],"width":W,
+/// "color":"#RRGGBB","tool":"pen"|"highlighter"|"eraser"}`，非笔迹
+/// 对象为 `null`。敌意远端载荷含非有限值时整载荷降为 `null`（JSON 无
+/// NaN 字面量——保证输出永远可 parse；原生面 `objects()` 仍可读原始值）。
 pub fn object_json(o: &CanvasObject) -> String {
     let props: Vec<String> = o
         .props
@@ -246,8 +302,34 @@ pub fn object_json(o: &CanvasObject) -> String {
         .iter()
         .map(|m| serde_json::to_string(m).unwrap())
         .collect();
+    let stroke = match &o.stroke {
+        Some(sp) => {
+            let finite = sp.width.is_finite()
+                && sp
+                    .points
+                    .iter()
+                    .all(|(x, y)| x.is_finite() && y.is_finite());
+            if finite {
+                let pts: Vec<String> = sp
+                    .points
+                    .iter()
+                    .flat_map(|(x, y)| [x.to_string(), y.to_string()])
+                    .collect();
+                format!(
+                    "{{\"points\":[{}],\"width\":{},\"color\":{},\"tool\":\"{}\"}}",
+                    pts.join(","),
+                    sp.width,
+                    serde_json::to_string(&sp.color).unwrap(),
+                    sp.tool.wire()
+                )
+            } else {
+                "null".to_string()
+            }
+        }
+        None => "null".to_string(),
+    };
     format!(
-        "{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"from\":{},\"to\":{},\"members\":[{}],\"props\":{{{}}}}}",
+        "{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"from\":{},\"to\":{},\"members\":[{}],\"props\":{{{}}},\"stroke\":{}}}",
         serde_json::to_string(&o.id).unwrap(),
         kind_wire(o.kind),
         o.x,
@@ -264,6 +346,7 @@ pub fn object_json(o: &CanvasObject) -> String {
         },
         members.join(","),
         props.join(","),
+        stroke,
     )
 }
 
@@ -278,6 +361,8 @@ pub fn receipt_json(outcome: &CommandOutcome, undo_depth: usize, undo_cleared: b
         CommandOutcome::ObjectRemoved { id } => ("object_removed", "id", id.clone()),
         CommandOutcome::Grouped { group_id } => ("grouped", "group_id", group_id.clone()),
         CommandOutcome::Ungrouped { group_id } => ("ungrouped", "group_id", group_id.clone()),
+        CommandOutcome::StrokeAdded { id } => ("stroke_added", "id", id.clone()),
+        CommandOutcome::StrokeStyled { id } => ("stroke_styled", "id", id.clone()),
     };
     format!(
         "{{\"outcome\":\"{kind}\",\"{key}\":{},\"undo_depth\":{undo_depth},\"undo_cleared\":{undo_cleared}}}",

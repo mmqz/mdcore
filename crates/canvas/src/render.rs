@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::{CanvasError, CanvasObject, CanvasSession, ObjectKind};
+use crate::{CanvasError, CanvasObject, CanvasSession, ObjectKind, StrokeTool};
 
 // 常量
 const MAX_CURVE_SEGMENTS: usize = 64;
@@ -1058,10 +1058,68 @@ pub fn shape_from_object(o: &CanvasObject, all: &[CanvasObject]) -> Option<(Shap
             ObjectKind::Node => "rect",
             ObjectKind::Edge => "line",
             ObjectKind::Group => "none",
+            // 笔迹不走 props shape 协议（折线恒定）；此值仅为缺省标记，
+            // 主 match 的 (Stroke, _) 臂在其前命中——仅 "none" 可隐藏笔迹。
+            ObjectKind::Stroke => "polyline",
         });
 
     let (shape, pivot) = match (o.kind, kind) {
         (ObjectKind::Group, _) | (_, "none") => return None,
+        // 笔迹（#351/#44 步1）：折线图元 + 圆端帽圆拐角；props 的 shape
+        // 协议不适用于笔迹（笔迹永远画折线）。敌意/陈旧载荷自守：
+        // <2 点跳过、非法宽度/颜色回退缺省（渲染面永不 panic 纪律）。
+        (ObjectKind::Stroke, _) => {
+            let spec = o.stroke.as_ref()?;
+            if spec.points.len() < 2 {
+                return None;
+            }
+            let width = if spec.width.is_finite() && spec.width > 0.0 {
+                spec.width
+            } else {
+                1.0
+            };
+            let color = parse_color(&spec.color).unwrap_or(Color::BLACK);
+            // 工具语义：荧光笔半透明叠印；橡皮擦虚线灰（区分预览态）。
+            let (alpha, color, dash) = match spec.tool {
+                StrokeTool::Pen => (1.0, color, StrokeDash::SOLID),
+                StrokeTool::Highlighter => (0.45, color, StrokeDash::SOLID),
+                StrokeTool::Eraser => (0.8, Color::rgb(0x9a, 0x9a, 0x9a), StrokeDash::new(6, 4)),
+            };
+            let style = StrokeStyle {
+                color: Color {
+                    a: scale_alpha(color, alpha),
+                    ..color
+                },
+                width,
+                cap: LineCap::Round,
+                join: LineJoin::Round,
+                dash,
+            };
+            let mut cmds = Vec::with_capacity(spec.points.len());
+            cmds.push(PathCmd::MoveTo(Point::new(
+                spec.points[0].0,
+                spec.points[0].1,
+            )));
+            for (x, y) in &spec.points[1..] {
+                cmds.push(PathCmd::LineTo(Point::new(*x, *y)));
+            }
+            let pts: Vec<Point> = spec
+                .points
+                .iter()
+                .map(|(x, y)| Point::new(*x, *y))
+                .collect();
+            let pivot = centroid(&pts);
+            (
+                Shape::Path {
+                    cmds,
+                    style: ShapeStyle {
+                        fill: None,
+                        stroke: Some(style),
+                    },
+                },
+                pivot,
+            )
+        }
         (ObjectKind::Edge, _) => {
             let center_of = |id: &str| -> Option<Point> {
                 all.iter()

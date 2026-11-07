@@ -34,6 +34,17 @@ const F_FROM: &str = "from";
 const F_TO: &str = "to";
 const F_MEMBERS: &str = "members";
 const F_PROPS: &str = "props";
+/// Stroke 笔迹载荷字段（#351/#44 步1）。
+const F_PTS: &str = "pts";
+const F_WIDTH: &str = "width";
+const F_COLOR: &str = "color";
+const F_TOOL: &str = "tool";
+
+/// 笔迹点数域（敌意输入上界：120Hz 采样 10s ≈ 1200 点；8192 为安全上界）。
+const STROKE_MAX_POINTS: usize = 8192;
+/// 笔迹宽度域（开区间下界 0，闭区间上界 64——画布坐标域无 PDF pt 语义，
+/// 取宽松上界防敌意巨值）。
+const STROKE_WIDTH_MAX: f64 = 64.0;
 
 /// 画布对象种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +52,9 @@ pub enum ObjectKind {
     Node,
     Edge,
     Group,
+    /// 笔迹（#351/#44 步1）：原始采样点列 + 样式；几何字段恒 0
+    /// （包络由读方从点列现算——不存派生数据）。
+    Stroke,
 }
 
 impl ObjectKind {
@@ -49,6 +63,7 @@ impl ObjectKind {
             ObjectKind::Node => "node",
             ObjectKind::Edge => "edge",
             ObjectKind::Group => "group",
+            ObjectKind::Stroke => "stroke",
         }
     }
 
@@ -57,9 +72,54 @@ impl ObjectKind {
             "node" => Some(ObjectKind::Node),
             "edge" => Some(ObjectKind::Edge),
             "group" => Some(ObjectKind::Group),
+            "stroke" => Some(ObjectKind::Stroke),
             _ => None,
         }
     }
+}
+
+/// 笔迹工具（#44 §三数据模型：Pen | Highlighter | Eraser）。
+/// 引擎只存枚举值；橡皮擦两段式交互语义归前端（#44 步4）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StrokeTool {
+    Pen,
+    Highlighter,
+    Eraser,
+}
+
+impl StrokeTool {
+    pub fn wire(self) -> &'static str {
+        match self {
+            StrokeTool::Pen => "pen",
+            StrokeTool::Highlighter => "highlighter",
+            StrokeTool::Eraser => "eraser",
+        }
+    }
+
+    /// 反序列化面（wasm 桥/远端读）：未知值 → None（调用方决定拒收）。
+    pub fn from_wire(s: &str) -> Option<StrokeTool> {
+        match s {
+            "pen" => Some(StrokeTool::Pen),
+            "highlighter" => Some(StrokeTool::Highlighter),
+            "eraser" => Some(StrokeTool::Eraser),
+            _ => None,
+        }
+    }
+}
+
+/// 笔迹载荷（读模型面；#44 §三：存原始采样点，不存 outline——
+/// 改粗细/换平滑算法不用迁移数据，outline 体积是点列 5-10 倍）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrokeSpec {
+    /// 原始采样点（扁平 (x, y) 对；本地命令面保证 ≥2 点且全部有限；
+    /// 敌意远端载荷可能不满足——渲染/消费侧须自守，不 panic）。
+    pub points: Vec<(f64, f64)>,
+    /// 线宽（命令面域 (0, 64]；敌意远端可能越域——消费侧回退缺省）。
+    pub width: f64,
+    /// 颜色（命令面严格 `#RRGGBB`；渲染面回退黑）。
+    pub color: String,
+    /// 工具（创建后不可改——`SetStrokeStyle` 仅动 width/color）。
+    pub tool: StrokeTool,
 }
 
 /// 画布对象读模型（快照式视图）。
@@ -79,6 +139,29 @@ pub struct CanvasObject {
     pub members: Vec<String>,
     /// 开放属性（label/color/…；字符串值面）。
     pub props: BTreeMap<String, String>,
+    /// 笔迹载荷（#351：非 Stroke = None——与 from/to/members 同为
+    /// kind 专属字段模式）。
+    pub stroke: Option<StrokeSpec>,
+}
+
+impl Default for CanvasObject {
+    /// 0.0.5 方案 A（AGENTS.md）：缺省 = 空 Node 视图。给结构体加字段后
+    /// 调用方一律 `..Default::default()`——新增字段不再破全部字面量。
+    fn default() -> Self {
+        CanvasObject {
+            id: String::new(),
+            kind: ObjectKind::Node,
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            from: None,
+            to: None,
+            members: Vec::new(),
+            props: BTreeMap::new(),
+            stroke: None,
+        }
+    }
 }
 
 /// 画布域错误（公开面零 yrs 类型）。
@@ -248,6 +331,26 @@ pub enum CanvasCommand {
     Ungroup {
         group_id: String,
     },
+    /// 加一笔笔迹（#351/#44 步1）。点列一经提交不可改写——笔划编辑 =
+    /// 删旧加新（与 PDF Ink 同纪律，pdf/annotation.rs「Ink v0 无可变面」）。
+    AddStroke {
+        id: Option<String>,
+        /// 扁平采样点（(x, y) 对；域 2..=8192 点，坐标全部有限）。
+        points: Vec<(f64, f64)>,
+        /// 线宽（域 (0, 64]）。
+        width: f64,
+        /// 颜色（严格 `#RRGGBB`）。
+        color: String,
+        tool: StrokeTool,
+    },
+    /// 笔迹样式终态写（#44 步3 颜色/粗细选择器的引擎面）：width 与
+    /// color 两键一次性写入（与 SetProps 终态替换同纪律）；tool 创建后
+    /// 不可改；点列无命令面（编辑 = 删旧加新）。
+    SetStrokeStyle {
+        id: String,
+        width: f64,
+        color: String,
+    },
 }
 
 /// 命令回执。
@@ -268,6 +371,8 @@ pub enum CommandOutcome {
     ObjectRemoved { id: String },
     Grouped { group_id: String },
     Ungrouped { group_id: String },
+    StrokeAdded { id: String },
+    StrokeStyled { id: String },
 }
 
 /// Canvas 会话。
@@ -721,6 +826,20 @@ impl CanvasSession {
                 self.ungroup(actor, &group_id)?;
                 CommandOutcome::Ungrouped { group_id }
             }
+            CanvasCommand::AddStroke {
+                id,
+                points,
+                width,
+                color,
+                tool,
+            } => {
+                let oid = self.add_stroke(actor, id, &points, width, &color, tool)?;
+                CommandOutcome::StrokeAdded { id: oid }
+            }
+            CanvasCommand::SetStrokeStyle { id, width, color } => {
+                self.set_stroke_style(actor, &id, width, &color)?;
+                CommandOutcome::StrokeStyled { id }
+            }
         };
         Ok(CommandReceipt {
             outcome,
@@ -1050,6 +1169,171 @@ impl CanvasSession {
         }
         self.remove_object(actor, group_id)
     }
+
+    // ── 笔迹面（#351/#44 步1）─────────────────────────
+
+    /// 颜色严格 `#RRGGBB`（7 字符：'#' + 6 十六进制）——规范形，
+    /// 指纹/线格式稳定；宽色域（rgb()/调色板名）归渲染面回退，不入域。
+    fn validate_stroke_color(color: &str) -> Result<(), CanvasError> {
+        let hex = match color.strip_prefix('#') {
+            Some(h) if h.len() == 6 => h,
+            _ => {
+                return Err(CanvasError::InvalidInput(format!(
+                    "笔迹颜色 {color:?} 非严格 #RRGGBB 形"
+                )))
+            }
+        };
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(CanvasError::InvalidInput(format!(
+                "笔迹颜色 {color:?} 含非十六进制字符"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_stroke_width(width: f64) -> Result<(), CanvasError> {
+        if !width.is_finite() || width <= 0.0 || width > STROKE_WIDTH_MAX {
+            return Err(CanvasError::InvalidInput(format!(
+                "笔迹宽度 {width} 超出域 (0, {STROKE_WIDTH_MAX}]"
+            )));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)] // 命令域字段直传——同 add_node 纪律
+    fn add_stroke(
+        &mut self,
+        actor: Actor,
+        id: Option<String>,
+        points: &[(f64, f64)],
+        width: f64,
+        color: &str,
+        tool: StrokeTool,
+    ) -> Result<String, CanvasError> {
+        // 入向字节估算（点列 16B/点 + 样式面 + id + 余量）。
+        let inbound =
+            points.len() * 16 + color.len() + id.as_deref().map(|i| i.len()).unwrap_or(0) + 64;
+        self.check_inbound(inbound)?;
+        // 点数域（≥2 点成划；≤8192 敌意上界）。
+        if points.len() < 2 {
+            return Err(CanvasError::InvalidInput(format!(
+                "笔迹点数 {} 不足（≥2 点成划）",
+                points.len()
+            )));
+        }
+        if points.len() > STROKE_MAX_POINTS {
+            return Err(CanvasError::Limit {
+                size: points.len(),
+                limit: STROKE_MAX_POINTS,
+            });
+        }
+        // 非有限坐标统一按轴报（field 是 &'static str——不带动态索引；
+        // 错误信息已足够定位「哪一笔的哪个轴」修复面）。
+        for (x, y) in points {
+            if !x.is_finite() {
+                return Err(CanvasError::NonFiniteGeometry {
+                    field: "stroke_pts.x",
+                });
+            }
+            if !y.is_finite() {
+                return Err(CanvasError::NonFiniteGeometry {
+                    field: "stroke_pts.y",
+                });
+            }
+        }
+        Self::validate_stroke_width(width)?;
+        Self::validate_stroke_color(color)?;
+        let id = match id {
+            Some(given) => {
+                if given.is_empty() {
+                    return Err(CanvasError::InvalidInput("对象 ID 不可为空".into()));
+                }
+                self.ensure_absent(&given)?;
+                given
+            }
+            None => self.next_id(),
+        };
+        {
+            // 点列 = 不可变载荷（扁平 Any 数组——与 Group.members 同模式，
+            // 不建嵌套 YArray：无逐点并发编辑语义，编辑 = 删旧加新）。
+            let flat: Vec<Any> = points
+                .iter()
+                .flat_map(|(x, y)| {
+                    [
+                        Any::Number(Number::Float(*x)),
+                        Any::Number(Number::Float(*y)),
+                    ]
+                })
+                .collect();
+            let mut obj: MapPrelim = Vec::<(&'static str, In)>::new().into_iter().collect();
+            obj.insert(
+                F_KIND.into(),
+                In::Any(Any::String(ObjectKind::Stroke.wire().into())),
+            );
+            obj.insert(F_PTS.into(), In::Any(Any::Array(flat.into())));
+            obj.insert(F_WIDTH.into(), In::Any(Any::Number(Number::Float(width))));
+            obj.insert(F_COLOR.into(), In::Any(Any::String(color.into())));
+            obj.insert(F_TOOL.into(), In::Any(Any::String(tool.wire().into())));
+            obj.insert(F_PROPS.into(), In::Map(MapPrelim::default()));
+            let root = self.root();
+            let mut txn = self.doc.transact_mut_with(actor.wire());
+            root.insert(&mut txn, id.clone(), In::Map(obj));
+            txn.commit();
+        }
+        self.enforce_undo_limit(actor);
+        Ok(id)
+    }
+
+    fn set_stroke_style(
+        &mut self,
+        actor: Actor,
+        id: &str,
+        width: f64,
+        color: &str,
+    ) -> Result<(), CanvasError> {
+        self.check_inbound(id.len() + color.len() + 32)?;
+        Self::validate_stroke_width(width)?;
+        Self::validate_stroke_color(color)?;
+        let root = self.root();
+        // 存在校验 + kind 校验（样式面仅 Stroke；kind 缺失的敌意/腐损
+        // 载体同按 KindMismatch 拒——不静默写入）。
+        let m = {
+            let txn = self.doc.transact();
+            match root.get(&txn, id) {
+                Some(Out::YMap(m)) => {
+                    let kind_ok = matches!(
+                        m.get(&txn, F_KIND),
+                        Some(Out::Any(Any::String(k)))
+                            if k.as_ref() == ObjectKind::Stroke.wire()
+                    );
+                    if !kind_ok {
+                        return Err(CanvasError::KindMismatch {
+                            object_id: id.to_string(),
+                            op: "stroke_style",
+                        });
+                    }
+                    m
+                }
+                _ => {
+                    return Err(CanvasError::ObjectNotFound {
+                        object_id: id.to_string(),
+                    })
+                }
+            }
+        };
+        {
+            let mut txn = self.doc.transact_mut_with(actor.wire());
+            m.insert(
+                &mut txn,
+                F_WIDTH,
+                In::Any(Any::Number(Number::Float(width))),
+            );
+            m.insert(&mut txn, F_COLOR, In::Any(Any::String(color.into())));
+            txn.commit();
+        }
+        self.enforce_undo_limit(actor);
+        Ok(())
+    }
 }
 
 // ── 载体读取/指纹工具 ───────────────────────────────────────────
@@ -1094,6 +1378,45 @@ fn read_object(root: &yrs::MapRef, txn: &yrs::Transaction, id: &str) -> Option<C
             }
         }
     }
+    // 笔迹载荷（#351）：点列扁平数组 → (x, y) 对；致密敌意载荷容错——
+    // 非数元素/奇数尾长的对被丢弃（读模型不 panic；<2 点由渲染面跳过）。
+    let stroke = if kind == ObjectKind::Stroke {
+        let width = match m.get(txn, F_WIDTH) {
+            Some(Out::Any(Any::Number(Number::Float(f)))) => f,
+            Some(Out::Any(Any::Number(Number::Int(i)))) => i as f64,
+            _ => 0.0,
+        };
+        let color = str_field(F_COLOR).unwrap_or_default();
+        let tool = str_field(F_TOOL)
+            .as_deref()
+            .and_then(StrokeTool::from_wire)
+            .unwrap_or(StrokeTool::Pen);
+        let mut points: Vec<(f64, f64)> = Vec::new();
+        if let Some(Out::Any(Any::Array(arr))) = m.get(txn, F_PTS) {
+            let num = |a: &Any| -> Option<f64> {
+                match a {
+                    Any::Number(Number::Float(f)) => Some(*f),
+                    Any::Number(Number::Int(i)) => Some(*i as f64),
+                    _ => None,
+                }
+            };
+            for pair in arr.chunks(2) {
+                if pair.len() == 2 {
+                    if let (Some(x), Some(y)) = (num(&pair[0]), num(&pair[1])) {
+                        points.push((x, y));
+                    }
+                }
+            }
+        }
+        Some(StrokeSpec {
+            points,
+            width,
+            color,
+            tool,
+        })
+    } else {
+        None
+    };
     Some(CanvasObject {
         id: id.to_string(),
         kind,
@@ -1105,6 +1428,7 @@ fn read_object(root: &yrs::MapRef, txn: &yrs::Transaction, id: &str) -> Option<C
         to: str_field(F_TO),
         members,
         props,
+        stroke,
     })
 }
 
@@ -1114,8 +1438,8 @@ pub fn fingerprint_object(o: &CanvasObject) -> String {
     acc.push_str(o.kind.wire());
     acc.push('|');
     acc.push_str(&o.id);
-    if o.kind != ObjectKind::Edge {
-        // 几何语义面（Node/Group；Edge 无几何）。
+    if matches!(o.kind, ObjectKind::Node | ObjectKind::Group) {
+        // 几何语义面（Node/Group；Edge 无几何；Stroke 几何恒 0 不入指纹）。
         acc.push_str(&format!("|{:.4}|{:.4}|{:.4}|{:.4}", o.x, o.y, o.w, o.h));
     }
     if o.kind == ObjectKind::Edge {
@@ -1130,6 +1454,19 @@ pub fn fingerprint_object(o: &CanvasObject) -> String {
         ms.sort();
         acc.push('|');
         acc.push_str(&ms.join(","));
+    }
+    if o.kind == ObjectKind::Stroke {
+        // 笔迹语义面（#351）：点列 + 样式全字段——点列变化 = 语义变更
+        // = 证据 Stale（与「位置漂移即语义变更」同纪律）。
+        if let Some(s) = &o.stroke {
+            acc.push_str(&format!("|w:{:.4}", s.width));
+            acc.push_str(&format!("|c:{}", s.color));
+            acc.push_str(&format!("|t:{}", s.tool.wire()));
+            acc.push('|');
+            for (x, y) in &s.points {
+                acc.push_str(&format!("{:.4},{:.4};", x, y));
+            }
+        }
     }
     for (k, v) in &o.props {
         acc.push_str(&format!("|p:{k}={v}"));

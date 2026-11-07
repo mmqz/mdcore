@@ -210,3 +210,175 @@ fn fingerprint_semantics() {
     assert_ne!(fp1, fp2, "位置漂移 → 指纹变化");
     assert!(fp1.starts_with("fnv64:"));
 }
+
+// ── 笔迹面（#351）────────────────────────────────────────────────
+
+#[test]
+fn parse_add_stroke_and_set_stroke_style() {
+    // add_stroke 全字段。
+    let c = parse_cmd_core(
+        r##"{"t":"add_stroke","id":"s1","points":[10,20,30,40,50,60],"width":2.5,"color":"#1a73e8","tool":"pen"}"##,
+    )
+    .unwrap();
+    match c {
+        mdc_canvas::CanvasCommand::AddStroke {
+            id,
+            points,
+            width,
+            color,
+            tool,
+        } => {
+            assert_eq!(id.as_deref(), Some("s1"));
+            assert_eq!(points, vec![(10.0, 20.0), (30.0, 40.0), (50.0, 60.0)]);
+            assert_eq!(width, 2.5);
+            assert_eq!(color, "#1a73e8");
+            assert_eq!(tool, mdc_canvas::StrokeTool::Pen);
+        }
+        other => panic!("应为 AddStroke，实际 {other:?}"),
+    }
+    // id null（自动分配）+ highlighter。
+    let c = parse_cmd_core(
+        r##"{"t":"add_stroke","id":null,"points":[0,0,1,1],"width":8,"color":"#ffee00","tool":"highlighter"}"##,
+    )
+    .unwrap();
+    assert!(matches!(
+        c,
+        mdc_canvas::CanvasCommand::AddStroke {
+            tool: mdc_canvas::StrokeTool::Highlighter,
+            ..
+        }
+    ));
+    // set_stroke_style。
+    let c = parse_cmd_core(r##"{"t":"set_stroke_style","id":"s1","width":4,"color":"#ff0000"}"##)
+        .unwrap();
+    assert!(matches!(
+        c,
+        mdc_canvas::CanvasCommand::SetStrokeStyle { ref id, width, ref color }
+            if id == "s1" && width == 4.0 && color == "#ff0000"
+    ));
+    // 解析层错误面：奇数点列 / 单点 / 非数点 / 未知工具 / 缺字段。
+    for bad in [
+        r##"{"t":"add_stroke","id":null,"points":[1,2,3],"width":2,"color":"#000000","tool":"pen"}"##,
+        r##"{"t":"add_stroke","id":null,"points":[1,2],"width":2,"color":"#000000","tool":"pen"}"##,
+        r##"{"t":"add_stroke","id":null,"points":[1,"x",3,4],"width":2,"color":"#000000","tool":"pen"}"##,
+        r##"{"t":"add_stroke","id":null,"points":[1,2,3,4],"width":2,"color":"#000000","tool":"crayon"}"##,
+        r##"{"t":"add_stroke","id":null,"points":[1,2,3,4],"color":"#000000","tool":"pen"}"##,
+    ] {
+        let e = parse_cmd_core(bad).err().unwrap();
+        assert_eq!(e.code, "cv_bad_json", "{bad}");
+    }
+}
+
+#[test]
+fn stroke_objects_json_and_receipt_shapes() {
+    let mut s = session(1);
+    let receipt = s
+        .execute(
+            mdc_canvas::Actor::Human,
+            parse_cmd_core(
+                r##"{"t":"add_stroke","id":"s1","points":[10,20,30,40],"width":2.5,"color":"#1a73e8","tool":"pen"}"##,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let rj = receipt_json(&receipt.outcome, receipt.undo_depth, receipt.undo_cleared);
+    assert!(rj.contains(r#""outcome":"stroke_added""#), "{rj}");
+    assert!(rj.contains(r#""id":"s1""#), "{rj}");
+
+    // objects_json：笔迹载荷全字段 + kind=stroke + 非 stroke 对象 stroke=null。
+    // （objects() 按_ID 字典序："n1" < "s1"——按 id 查找，不靠下标。）
+    add_node(&mut s, "n1", 0.0, 0.0);
+    let objs = s.objects();
+    assert_eq!(objs.len(), 2);
+    let stroke_obj = objs.iter().find(|o| o.id == "s1").unwrap();
+    let node_obj = objs.iter().find(|o| o.id == "n1").unwrap();
+    let stroke_json = mdcore_wasm::canvas::object_json(stroke_obj);
+    for key in [
+        "\"kind\":\"stroke\"",
+        "\"stroke\":{\"points\":[10,20,30,40]",
+        "\"width\":2.5",
+        "\"color\":\"#1a73e8\"",
+        "\"tool\":\"pen\"",
+    ] {
+        assert!(stroke_json.contains(key), "{stroke_json} missing {key}");
+    }
+    // JSON 可 parse（字段面完整性——含 stroke:null 的非笔迹对象）。
+    let both: Vec<String> = objs.iter().map(mdcore_wasm::canvas::object_json).collect();
+    let arr = format!("[{}]", both.join(","));
+    let v: serde_json::Value = serde_json::from_str(&arr).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 2);
+    let stroke_entry = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "s1")
+        .unwrap();
+    assert!(stroke_entry["stroke"]["points"].is_array());
+    let node_entry = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"] == "n1")
+        .unwrap();
+    assert!(node_entry["stroke"].is_null());
+
+    // set_stroke_style 回执 + 读回。
+    let receipt = s
+        .execute(
+            mdc_canvas::Actor::Human,
+            parse_cmd_core(r##"{"t":"set_stroke_style","id":"s1","width":6,"color":"#00ff00"}"##)
+                .unwrap(),
+        )
+        .unwrap();
+    let rj = receipt_json(&receipt.outcome, receipt.undo_depth, receipt.undo_cleared);
+    assert!(rj.contains(r#""outcome":"stroke_styled""#), "{rj}");
+    let o = s.find_object("s1").unwrap();
+    assert_eq!(
+        o.stroke.as_ref().unwrap().color,
+        "#00ff00",
+        "样式终态写读回"
+    );
+}
+
+#[test]
+fn stroke_error_code_mapping() {
+    let mut s = session(1);
+    // 域校验（引擎层 InvalidInput → cv_invalid_input）。
+    let e = s
+        .execute(
+            mdc_canvas::Actor::Human,
+            parse_cmd_core(
+                r##"{"t":"add_stroke","id":null,"points":[1,2,3,4],"width":0,"color":"#000000","tool":"pen"}"##,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+    let e: mdcore_wasm::canvas::CvError = e.into();
+    assert_eq!(e.code, "cv_invalid_input");
+    let e = s
+        .execute(
+            mdc_canvas::Actor::Human,
+            parse_cmd_core(
+                r##"{"t":"add_stroke","id":null,"points":[1,2,3,4],"width":2,"color":"red","tool":"pen"}"##,
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+    let e: mdcore_wasm::canvas::CvError = e.into();
+    assert_eq!(e.code, "cv_invalid_input");
+    // kind 校验（对 node 做样式写 → cv_kind_mismatch）。
+    add_node(&mut s, "n1", 0.0, 0.0);
+    let e = s
+        .execute(
+            mdc_canvas::Actor::Human,
+            parse_cmd_core(r##"{"t":"set_stroke_style","id":"n1","width":2,"color":"#000000"}"##)
+                .unwrap(),
+        )
+        .unwrap_err();
+    let e: mdcore_wasm::canvas::CvError = e.into();
+    assert_eq!(e.code, "cv_kind_mismatch");
+    // 未知命令错误信息含新命令名。
+    let e = parse_cmd_core(r#"{"t":"bogus"}"#).err().unwrap();
+    assert!(e.message.contains("add_stroke"), "{}", e.message);
+    assert!(e.message.contains("set_stroke_style"), "{}", e.message);
+}
