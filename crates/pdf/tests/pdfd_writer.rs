@@ -174,14 +174,7 @@ fn session_with_writer(
             warnings: vec![],
             form_probe: None,
         },
-        vec![
-            PageGeometry {
-                width_pt: 612.0,
-                height_pt: 792.0,
-                rotation: Rotation::Deg0,
-            };
-            page_count as usize
-        ],
+        vec![PageGeometry::simple(612.0, 792.0, Rotation::Deg0); page_count as usize],
         OutlineTree::new(),
     )
     .expect("会话装配自洽");

@@ -260,11 +260,7 @@ fn outline_positive_tree_includes_first_top_level() {
 fn session_engine_data_source_end_to_end() {
     // 会话接线端到端：attach 后 ExtractText/Search 走引擎实数据——
     // 占位几何（全零）被旁路、搜索命中真实文本（命令面/载荷形状不变）。
-    let placeholder = PageGeometry {
-        width_pt: 0.0,
-        height_pt: 0.0,
-        rotation: Rotation::Deg0,
-    };
+    let placeholder = PageGeometry::simple(0.0, 0.0, Rotation::Deg0);
     let mut session = session_with_engine(open_small(), placeholder);
     assert!(session.engine_attached(), "引擎在位观测");
 
@@ -308,11 +304,7 @@ fn session_engine_data_source_end_to_end() {
 fn session_search_limit_semantics_unchanged() {
     // 限额语义单一出口：引擎路径 max_hits 钳制 → truncated 告知、空
     // query 硬拒绝——与注入路径（PDF-b 锁）逐字一致，两数据源不漂移。
-    let placeholder = PageGeometry {
-        width_pt: 612.0,
-        height_pt: 792.0,
-        rotation: Rotation::Deg0,
-    };
+    let placeholder = PageGeometry::simple(612.0, 792.0, Rotation::Deg0);
     let mut session = session_with_engine(open_small(), placeholder);
     let outcome = session
         .execute(Command::Search {

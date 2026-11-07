@@ -87,11 +87,7 @@ fn repo_root() -> &'static Path {
 
 /// Letter 页几何（0° 基准）。
 fn letter(rotation: Rotation) -> PageGeometry {
-    PageGeometry {
-        width_pt: 612.0,
-        height_pt: 792.0,
-        rotation,
-    }
+    PageGeometry::simple(612.0, 792.0, rotation)
 }
 
 /// 标准会话：n 页 Letter 0°、无大纲、无告警。

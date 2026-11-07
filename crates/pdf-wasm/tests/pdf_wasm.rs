@@ -109,11 +109,7 @@ fn meta_json() -> String {
 
 fn pages_json() -> String {
     let pages: Vec<PageGeometry> = (0..3)
-        .map(|_| PageGeometry {
-            width_pt: 612.0,
-            height_pt: 792.0,
-            rotation: Rotation::Deg0,
-        })
+        .map(|_| PageGeometry::simple(612.0, 792.0, Rotation::Deg0))
         .collect();
     serde_json::to_string(&pages).unwrap()
 }
