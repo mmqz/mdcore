@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # AppImage 构建（R24-c；实体验证留 R24-d——本脚本在开发环境执行）
 #
-# 输入：宿主壳 release 产物（shell-native，tao+wry+GTK3 链接）
+# 输入：宿主壳 release 产物（主线壳 mang-shell，GPUI/wgpu 自绘链）
 # 输出：mdcore-<VERSION>-x86_64.AppImage
 #
 # 用法：packaging/appimage/build-appimage.sh <path-to-shell-binary>
-# 前置：linuxdeploy + linuxdeploy-gtk-plugin + appimagetool（CI 缓存或
-#       下载到 build/_tools/；版本锁定见下 *_VER）。
+# 前置：linuxdeploy + appimagetool（CI 缓存或下载到 build/_tools/；
+#       版本锁定见下 *_VER）。
+# #319（2026-11-07）：去 --plugin gtk。旧壳 mdshell-native（tao+wry+GTK3）
+# 时代引入；mang-shell 零 GTK 引用 → 插件无法自动检测版本首跑必红
+# （DEPLOY_GTK_VERSION 强制才能出包，且捆绑的 GTK 运行时对 GPUI 壳
+# 全为死重）。去掉后 linuxdeploy 只收敛 DT_NEEDED 直链集（xcb/xkbcommon
+# 系），#270 验收实测出包 36.9MB 全链可跑。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -69,12 +74,12 @@ sed -e 's/{{APP_EXEC}}/mdcore/g' \
     "$ROOT/packaging/appimage/AppRun" > "$APPDIR/AppRun"
 chmod 0755 "$APPDIR/AppRun"
 
-# linuxdeploy 收敛运行时 + appimagetool 出包（--appdir 面向 GTK 插件）
+# linuxdeploy 收敛运行时 + appimagetool 出包（#319：mang-shell 为 GPUI
+# 自绘链，无 GTK 运行时依赖——不挂插件，只收敛直链集）
 "$ROOT/build/_tools/linuxdeploy-x86_64.AppImage" \
   --appdir "$APPDIR" \
   --desktop-file "$APPDIR/usr/share/applications/dev.mdcore.editor.desktop" \
   --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/mdcore.png" \
-  --plugin gtk \
   --output appimage
 
 mv -f "mdcore-x86_64.AppImage" "$ROOT/build/mdcore-${VERSION}-x86_64.AppImage"
