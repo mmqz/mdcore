@@ -27,6 +27,18 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/i
 
 install -m 0755 "$BIN" "$APPDIR/usr/bin/mdcore"
 
+# #320（2026-11-07）：pdfium 引擎库捆绑（与 Windows NSIS 的 pdfium.dll
+# 傍 exe 对称；与 deb 同取件位/同定位序层——见 build-deb.sh 注释）。
+# 安装位 = $APPDIR/usr/bin/libpdfium.so：AppRun.wrapped exec 的是
+# usr/bin/mdcore，定位序第 2 层「exe 同目录」即中——免 AppRun 改动。
+PDFIUM_LIB="${PDFIUM_LIB:-$ROOT/bin/lib/libpdfium.so}"
+if [ ! -f "$PDFIUM_LIB" ]; then
+  echo "[appimage] FATAL: bin/lib/libpdfium.so 不存在（PDF 引擎库，装包必需）" >&2
+  echo "  取件命令与 SHA256 钉扎见 packaging/deb/build-deb.sh 同段（chromium/8086 linux-x64）" >&2
+  exit 1
+fi
+install -m 0755 "$PDFIUM_LIB" "$APPDIR/usr/bin/libpdfium.so"
+
 # s5a-env 工作台 bundle（Q3-3 实测缺陷修复——原脚本完全不装 dist，壳的
 # 三候选路径（--dist / MDCORE_DIST / /usr/share/mdcore/dist / ./web/dist）
 # 在 AppImage 布局下全落空，启动即 exit 2；镜像 deb 布局 + AppRun 导出

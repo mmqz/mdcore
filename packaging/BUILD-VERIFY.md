@@ -10,6 +10,20 @@
 > 「阻塞登记」更新为「链路就位」（本节内含三断链处置与实机复核清单）；
 > macOS 构建路径由后续分支收口（issue #228 任务 4）。
 
+> **2026-11-07 更新（#320）**：deb / AppImage 构建新增**前置取件步骤**
+> （与 Windows §3 同纪律）：`bin/lib/libpdfium.so` 必须在位，缺件硬失败
+> （脚本打印取件命令）。安装位 = exe 同目录（`usr/bin/libpdfium.so`，
+> #224 定位序第 2 层「产品部署位」）——与 NSIS 的 `pdfium.dll` 傍
+> `mdcore.exe` 完全对称；干净系统装包后 `--check-pdfium` 免环境变量
+> 即绑定（#270 验收 F2 修复）。取件钉扎：
+>
+> ```bash
+> curl -sSfL -o /tmp/pdfium-linux-x64.tgz \
+>   https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8086/pdfium-linux-x64.tgz
+> # SHA256 588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935
+> mkdir -p bin/lib && tar xzf /tmp/pdfium-linux-x64.tgz -C bin/lib --strip-components=1 lib/libpdfium.so
+> ```
+
 ---
 
 ## 1. Linux deb ✅（构建 + 包体检验 + GUI 启动全过）
