@@ -371,7 +371,9 @@ impl FindState {
     pub fn set_query(&mut self, text: &str, buffer: &Buffer) {
         self.query = text.to_string();
         self.cursor_col = self.query.chars().count();
-        if self.history_idx.is_some() && self.history.get(self.history_idx.unwrap()) != Some(&self.query) {
+        if self.history_idx.is_some()
+            && self.history.get(self.history_idx.unwrap()) != Some(&self.query)
+        {
             // 输入被改过——浏览态下用户继续打字：退出浏览态但保留 draft。
             self.history_idx = None;
         }
@@ -1091,11 +1093,21 @@ mod find_history_tests {
         let b = Buffer::from_plain_text("x");
         let mut f = FindState::default();
         f.open(&b);
-        assert!(f.remember_query("foo"), "首次写入算新条目（历史有变 → 需落盘）");
+        assert!(
+            f.remember_query("foo"),
+            "首次写入算新条目（历史有变 → 需落盘）"
+        );
         assert!(f.remember_query("bar"), "新条目（历史有变）");
         // 「foo」此刻在**第二位**：重新记录会把它提到队首 → 顺序变了 → 仍需落盘。
-        assert!(f.remember_query("foo"), "非队首的重复项：置顶改变顺序 → true");
-        assert_eq!(f.history(), &["foo".to_string(), "bar".to_string()], "去重置顶");
+        assert!(
+            f.remember_query("foo"),
+            "非队首的重复项：置顶改变顺序 → true"
+        );
+        assert_eq!(
+            f.history(),
+            &["foo".to_string(), "bar".to_string()],
+            "去重置顶"
+        );
         // 已是队首的重复项：历史未变 → false（免写盘）
         assert!(!f.remember_query("foo"), "队首重复 = 历史未变 → false");
         assert!(!f.remember_query("   "), "纯空白不记");
@@ -1124,7 +1136,11 @@ mod find_history_tests {
         type_text(&mut f, &b, "\\d+");
         assert_eq!(f.matches().len(), 2, "正则命中两处数字区间");
         let ranges = f.match_ranges();
-        assert_eq!(ranges, vec![(p(0, 8), p(0, 9)), (p(1, 8), p(1, 10))], "真实区间");
+        assert_eq!(
+            ranges,
+            vec![(p(0, 8), p(0, 9)), (p(1, 8), p(1, 10))],
+            "真实区间"
+        );
         // 切回普通模式：\\d+ 当字面量 → 零结果
         f.handle_key(&b, &mods("r", true, true, false));
         assert!(!f.is_regex());
@@ -1144,7 +1160,10 @@ mod find_history_tests {
         type_text(&mut f, &b, "(");
         let err = f.regex_error().expect("非法正则必须给出原因");
         assert!(err.contains("正则无效"), "错误消息可读：{err}");
-        assert!(f.matches().is_empty(), "错误时清空匹配（不沿用旧结果误导用户）");
+        assert!(
+            f.matches().is_empty(),
+            "错误时清空匹配（不沿用旧结果误导用户）"
+        );
         assert_eq!(f.match_label(), "0 结果");
         // 修正后错误清除
         f.set_query("abc", &b);

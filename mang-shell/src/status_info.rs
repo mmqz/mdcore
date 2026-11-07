@@ -406,15 +406,24 @@ mod tests {
 
     #[test]
     fn encoding_utf16_boms() {
-        assert_eq!(detect_encoding(&[0xFF, 0xFE, 0x41, 0x00]), Some(Encoding::Utf16Le));
-        assert_eq!(detect_encoding(&[0xFE, 0xFF, 0x00, 0x41]), Some(Encoding::Utf16Be));
+        assert_eq!(
+            detect_encoding(&[0xFF, 0xFE, 0x41, 0x00]),
+            Some(Encoding::Utf16Le)
+        );
+        assert_eq!(
+            detect_encoding(&[0xFE, 0xFF, 0x00, 0x41]),
+            Some(Encoding::Utf16Be)
+        );
     }
 
     #[test]
     fn encoding_gbk_detected_when_not_utf8() {
         // "中文" 的 GBK 编码：D6 D0 CE C4 —— 不是合法 UTF-8。
         let gbk = [0xD6u8, 0xD0, 0xCE, 0xC4];
-        assert!(std::str::from_utf8(&gbk).is_err(), "前提：这串不是合法 UTF-8");
+        assert!(
+            std::str::from_utf8(&gbk).is_err(),
+            "前提：这串不是合法 UTF-8"
+        );
         assert_eq!(detect_encoding(&gbk), Some(Encoding::Gbk));
     }
 
@@ -477,7 +486,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mdc-git-det-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".git")).unwrap();
-        std::fs::write(dir.join(".git/HEAD"), "0123456789abcdef0123456789abcdef01234567\n").unwrap();
+        std::fs::write(
+            dir.join(".git/HEAD"),
+            "0123456789abcdef0123456789abcdef01234567\n",
+        )
+        .unwrap();
         assert_eq!(git_branch_at(&dir).as_deref(), Some("(detached)"));
         let _ = std::fs::remove_dir_all(&dir);
     }

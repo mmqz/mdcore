@@ -81,10 +81,7 @@ fn sweep(name: &str, text: &str) -> (usize, usize, usize) {
                 BracketMatch::Unmatched { pos } => {
                     hit += 1;
                     unmatched += 1;
-                    assert!(
-                        pos.0 < lines.len(),
-                        "{name}: 孤立括号行号越界 {pos:?}"
-                    );
+                    assert!(pos.0 < lines.len(), "{name}: 孤立括号行号越界 {pos:?}");
                     let line_len = lines[pos.0].chars().count();
                     assert!(
                         pos.1 < line_len,
@@ -96,10 +93,7 @@ fn sweep(name: &str, text: &str) -> (usize, usize, usize) {
                     matched += 1;
                     let oc = lines[open.0].chars().nth(open.1).unwrap_or('?');
                     let cc = lines[close.0].chars().nth(close.1).unwrap_or('?');
-                    assert!(
-                        is_open(oc),
-                        "{name}: open 端不是开括号 {oc:?} @ {open:?}"
-                    );
+                    assert!(is_open(oc), "{name}: open 端不是开括号 {oc:?} @ {open:?}");
                     assert!(
                         !is_open(cc) && kind_of(cc).is_some(),
                         "{name}: close 端不是闭括号 {cc:?} @ {close:?}"
@@ -109,10 +103,7 @@ fn sweep(name: &str, text: &str) -> (usize, usize, usize) {
                         kind_of(cc),
                         "{name}: 两端种类不一致 {oc:?} @ {open:?} vs {cc:?} @ {close:?}"
                     );
-                    assert!(
-                        open <= close,
-                        "{name}: 开端在闭端之后 {open:?} > {close:?}"
-                    );
+                    assert!(open <= close, "{name}: 开端在闭端之后 {open:?} > {close:?}");
                 }
             }
         }
@@ -139,7 +130,11 @@ fn real_rust_corpus_full_sweep() {
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let (hit, matched, unmatched) = sweep(&name, &text);
         total_hit += hit;
         total_matched += matched;
@@ -171,14 +166,29 @@ fn real_rust_file_string_and_comment_are_ignored() {
     let rust = Some(highlight::CodeLang::Rust);
     assert_eq!(
         brackets::find_match_lang(text, (0, 11), rust),
-        BracketMatch::Matched { open: (0, 10), close: (4, 0) }
+        BracketMatch::Matched {
+            open: (0, 10),
+            close: (4, 0)
+        }
     );
     // 字符串内的 '(' ——光标贴其右侧（col 14）与左侧（col 13）都不算括号。
-    assert_eq!(brackets::find_match_lang(text, (1, 14), rust), BracketMatch::None);
-    assert_eq!(brackets::find_match_lang(text, (1, 13), rust), BracketMatch::None);
+    assert_eq!(
+        brackets::find_match_lang(text, (1, 14), rust),
+        BracketMatch::None
+    );
+    assert_eq!(
+        brackets::find_match_lang(text, (1, 13), rust),
+        BracketMatch::None
+    );
     // 注释内的 '(' / ']' 同理。
-    assert_eq!(brackets::find_match_lang(text, (2, 8), rust), BracketMatch::None);
-    assert_eq!(brackets::find_match_lang(text, (2, 9), rust), BracketMatch::None);
+    assert_eq!(
+        brackets::find_match_lang(text, (2, 8), rust),
+        BracketMatch::None
+    );
+    assert_eq!(
+        brackets::find_match_lang(text, (2, 9), rust),
+        BracketMatch::None
+    );
     // 对照：不给语言（md 语义）时字符串不排除——登记的设计差异。
     assert_eq!(
         brackets::find_match(text, (1, 14)),
@@ -199,6 +209,9 @@ fn corpus_survives_pathological_input() {
     let m = brackets::find_match(&text, (0, 1));
     assert_eq!(
         m,
-        BracketMatch::Matched { open: (0, 0), close: (0, 2 * n - 1) }
+        BracketMatch::Matched {
+            open: (0, 0),
+            close: (0, 2 * n - 1)
+        }
     );
 }

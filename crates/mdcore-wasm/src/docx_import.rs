@@ -121,8 +121,8 @@
 //! 先例）；wasm 壳由 wasm32 check + web 三件套门禁背书。
 
 use mdc_office_io::docx::{
-    Block, DocxDocument, DocxError, HeaderFooterData, HeaderFooterVariant, HyperlinkTarget,
-    ListKind, ParagraphNumbering, RunData, TableData, read_docx_from_bytes_with_options,
+    read_docx_from_bytes_with_options, Block, DocxDocument, DocxError, HeaderFooterData,
+    HeaderFooterVariant, HyperlinkTarget, ListKind, ParagraphNumbering, RunData, TableData,
 };
 use mdc_office_io::io::{ReadError, ReadOptions};
 use wasm_bindgen::prelude::*;

@@ -9,7 +9,7 @@
 use gpui::{App, SharedString, px};
 use ui::prelude::*;
 
-use crate::command_groups::{build_sections, flatten, Entry, Group, RecentRing, Section};
+use crate::command_groups::{Entry, Group, RecentRing, Section, build_sections, flatten};
 use crate::editor::commands::{self, Cmd};
 
 /// 最近使用容量（面板顶部固定区长度）。
@@ -36,11 +36,7 @@ pub fn palette_list(
     cx: &App,
 ) -> impl IntoElement {
     let colors = cx.theme().colors().clone();
-    let mut col = div()
-        .id("palette-sections")
-        .flex()
-        .flex_col()
-        .gap_1();
+    let mut col = div().id("palette-sections").flex().flex_col().gap_1();
 
     let mut drawn = 0usize;
     for section in sections {

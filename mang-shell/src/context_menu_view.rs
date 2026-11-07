@@ -10,7 +10,7 @@
 use gpui::{App, Context, SharedString, px};
 use ui::prelude::*;
 
-use crate::context_menu::{ContextMenu, MenuItem, Rect as MenuRect, ITEM_HEIGHT, MENU_PADDING_Y};
+use crate::context_menu::{ContextMenu, ITEM_HEIGHT, MENU_PADDING_Y, MenuItem, Rect as MenuRect};
 use crate::shell::ShellApp;
 
 /// 右键菜单浮层（返回 (遮罩, 菜单) 两件——遮罩先渲染）。
@@ -96,11 +96,7 @@ pub fn context_menu_overlay(
                 } else {
                     colors.text_muted
                 };
-                row = row.child(
-                    div()
-                        .text_color(text_color)
-                        .child(label.clone()),
-                );
+                row = row.child(div().text_color(text_color).child(label.clone()));
                 row = row.child(
                     div()
                         .text_size(px(11.))

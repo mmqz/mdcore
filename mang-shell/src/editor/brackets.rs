@@ -33,13 +33,15 @@ use super::highlight::{self, FenceState, TokenKind};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BracketMatch {
     /// 找到匹配：`open` = 开括号 (行, 列)，`close` = 闭括号 (行, 列)。
-    Matched { open: (usize, usize), close: (usize, usize) },
+    Matched {
+        open: (usize, usize),
+        close: (usize, usize),
+    },
     /// 只有一个（不匹配——渲染层标红）。
     Unmatched { pos: (usize, usize) },
     /// 光标不在括号上。
     None,
 }
-
 
 /// 括号方向。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,7 +106,10 @@ struct FenceWalker {
 
 impl FenceWalker {
     fn new() -> Self {
-        Self { fence: false, lang: None }
+        Self {
+            fence: false,
+            lang: None,
+        }
     }
 
     /// 本行行首的高亮态。
@@ -229,7 +234,11 @@ impl Doc {
             let Some(row) = self.lines.get(li) else {
                 continue;
             };
-            let end = if li == line { col.min(row.len()) } else { row.len() };
+            let end = if li == line {
+                col.min(row.len())
+            } else {
+                row.len()
+            };
             for ci in (0..end).rev() {
                 let (c, ok) = row[ci];
                 if !ok {
@@ -342,8 +351,14 @@ pub fn find_match_lang(
     };
     match (found, dir) {
         (None, _) => BracketMatch::Unmatched { pos: target },
-        (Some(p), Dir::Open) => BracketMatch::Matched { open: target, close: p },
-        (Some(p), Dir::Close) => BracketMatch::Matched { open: p, close: target },
+        (Some(p), Dir::Open) => BracketMatch::Matched {
+            open: target,
+            close: p,
+        },
+        (Some(p), Dir::Close) => BracketMatch::Matched {
+            open: p,
+            close: target,
+        },
     }
 }
 
@@ -369,7 +384,11 @@ pub fn highlight_cols_lang(
     match find_match_lang(text, cursor, whole_lang) {
         BracketMatch::None => Vec::new(),
         BracketMatch::Unmatched { pos } => {
-            if pos.0 == line { vec![pos.1] } else { Vec::new() }
+            if pos.0 == line {
+                vec![pos.1]
+            } else {
+                Vec::new()
+            }
         }
         BracketMatch::Matched { open, close } => {
             let mut v = Vec::new();
@@ -568,7 +587,10 @@ mod tests {
     fn match_variants_are_distinguishable() {
         assert_eq!(
             find_match("f(a)", (0, 2)),
-            BracketMatch::Matched { open: (0, 1), close: (0, 3) }
+            BracketMatch::Matched {
+                open: (0, 1),
+                close: (0, 3)
+            }
         );
         assert_eq!(
             find_match("f(a", (0, 2)),
@@ -616,7 +638,10 @@ mod tests {
         let t2 = "fn main() {\n    f(a);\n}";
         assert_eq!(
             find_match_lang(t2, (1, 6), rust),
-            BracketMatch::Matched { open: (1, 5), close: (1, 7) }
+            BracketMatch::Matched {
+                open: (1, 5),
+                close: (1, 7)
+            }
         );
     }
 
@@ -630,7 +655,10 @@ mod tests {
         assert_eq!(find_match_lang(t, (1, 14), rust), BracketMatch::None);
         assert_eq!(
             find_match_lang(t, (0, 11), rust),
-            BracketMatch::Matched { open: (0, 10), close: (2, 0) }
+            BracketMatch::Matched {
+                open: (0, 10),
+                close: (2, 0)
+            }
         );
     }
 
@@ -649,7 +677,10 @@ mod tests {
         assert_eq!(find_match_lang(t, (2, 9), rust), BracketMatch::None);
         assert_eq!(
             find_match_lang(t, (4, 9), rust),
-            BracketMatch::Matched { open: (4, 8), close: (4, 10) }
+            BracketMatch::Matched {
+                open: (4, 8),
+                close: (4, 10)
+            }
         );
     }
 

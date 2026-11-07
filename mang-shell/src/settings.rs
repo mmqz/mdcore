@@ -543,7 +543,11 @@ mod tests {
         save_folds_in(&dir, "/ws/b.md", &[1]);
         assert_eq!(load_folds_in(&dir, "/ws/a.md"), vec![0, 3, 7], "排序去重");
         assert_eq!(load_folds_in(&dir, "/ws/b.md"), vec![1], "按文件隔离");
-        assert_eq!(load_folds_in(&dir, "/ws/c.md"), Vec::<usize>::new(), "未知文件空");
+        assert_eq!(
+            load_folds_in(&dir, "/ws/c.md"),
+            Vec::<usize>::new(),
+            "未知文件空"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -554,7 +558,11 @@ mod tests {
         remember_workspace_in(&dir, Path::new("/ws"));
         let entries: Vec<String> = vec!["\\bfn\\s+\\w+".into(), "foo".into(), "中文".into()];
         save_find_history_in(&dir, &entries);
-        assert_eq!(load_find_history_in(&dir), entries, "历史往返（含正则/中文）");
+        assert_eq!(
+            load_find_history_in(&dir),
+            entries,
+            "历史往返（含正则/中文）"
+        );
 
         // 覆盖写：新历史替换旧历史
         save_find_history_in(&dir, &["bar".to_string()]);
@@ -564,7 +572,7 @@ mod tests {
         let value = load_from(&dir);
         assert_eq!(value["workspace"].as_str(), Some("/ws"), "既有键保留");
         let _ = std::fs::remove_dir_all(&dir);
-        }
+    }
 
     /// #132：正则开关键往返 + 缺省 false + 与既有键共存。
     #[test]
@@ -593,10 +601,7 @@ mod tests {
         assert_eq!(load_folds_in(&dir, "/ws/a.md"), Vec::<usize>::new());
         let value = load_from(&dir);
         assert!(
-            value
-                .get("folds")
-                .and_then(|f| f.get("/ws/a.md"))
-                .is_none(),
+            value.get("folds").and_then(|f| f.get("/ws/a.md")).is_none(),
             "空列表应删除键：{value}"
         );
         let _ = std::fs::remove_dir_all(&dir);

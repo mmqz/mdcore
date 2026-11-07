@@ -79,10 +79,7 @@ fn files(dir: &Path) -> Vec<PathBuf> {
 /// 宽面 `TableData::rows` 是栅格展开形（`gridSpan`/`vMerge` 覆盖列重复
 /// 补列），格数 ≠ 引擎 `w:p` 数——拿展开格数去对账就是设计文档 §1 说的
 /// 「两个扫描器对第 N 段的定义不同」。`tables == None` 时退回宽面计数。
-fn width_paragraph_count(
-    doc: &DocxDocument,
-    tables: Option<&[Vec<Vec<usize>>]>,
-) -> usize {
+fn width_paragraph_count(doc: &DocxDocument, tables: Option<&[Vec<Vec<usize>>]>) -> usize {
     fn walk(
         blocks: &[mdc_office_io::docx::Block],
         tables: Option<&[Vec<Vec<usize>>]>,

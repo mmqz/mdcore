@@ -212,10 +212,7 @@ fn real_xlsx_structural_corpus_lock() {
         if *cat != "num_formats" {
             continue;
         }
-        assert!(
-            !rep.styles.custom_fmts.is_empty(),
-            "{f} 应含自定义 numFmt"
-        );
+        assert!(!rep.styles.custom_fmts.is_empty(), "{f} 应含自定义 numFmt");
         custom_fmt_total += rep.styles.custom_fmts.len();
         // effective 链上 builtin 命中（48962 的 m/d/yyyy 日期段）。
         for i in 0..rep.styles.cell_xfs.len() {

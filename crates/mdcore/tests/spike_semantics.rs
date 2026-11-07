@@ -885,11 +885,7 @@ fn md_depth_guard_blocks_hostile_nesting() {
     //    ——与 html 侧超深子树跳过同语义）。
     let one_line = format!("{} x\n", ">".repeat(10_000));
     let tree = markdown_to_tree(&one_line);
-    assert_eq!(
-        tree_max_depth(&tree),
-        0,
-        "单行超深跳过：零节点零内容"
-    );
+    assert_eq!(tree_max_depth(&tree), 0, "单行超深跳过：零节点零内容");
 
     // ③ 缩进列表逐层递进（300 层）：同门（缩进层号即嵌套层编号）。
     let list_hostile: String = (1..=300)

@@ -171,8 +171,8 @@ fn attr<'a>(e: &'a quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<Str
 /// 读 xlsx 结构面（字节入口）。容器坏 → typed 错误；部件面容错。
 pub fn read_structural_from_bytes(bytes: &[u8]) -> Result<StructuralReport, ReadError> {
     let cursor = std::io::Cursor::new(bytes);
-    let mut za = zip::ZipArchive::new(cursor)
-        .map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
+    let mut za =
+        zip::ZipArchive::new(cursor).map_err(|e| ReadError::ContainerCorrupt(format!("{e}")))?;
     let mut report = StructuralReport::default();
 
     // ① workbook.xml：sheet 名 + r:id（部件映射在 rels）。
@@ -388,9 +388,8 @@ fn parse_hidden(xml: &str) -> (Vec<u32>, Vec<String>) {
                         b"col" => {
                             let min: u32 =
                                 attr(&e, b"min").and_then(|v| v.parse().ok()).unwrap_or(1);
-                            let max: u32 = attr(&e, b"max")
-                                .and_then(|v| v.parse().ok())
-                                .unwrap_or(min);
+                            let max: u32 =
+                                attr(&e, b"max").and_then(|v| v.parse().ok()).unwrap_or(min);
                             // 范围展开 + 钳制（防 min/max 反转洪水——
                             // max-min > 16384 展开面直接钳到 Excel 列上限）。
                             let hi = max.min(min.saturating_add(16384));
@@ -536,7 +535,10 @@ mod tests {
         let rep = read_structural_from_bytes(&bytes).unwrap();
         let s = rep.sheet("S1").expect("sheet S1");
         assert_eq!(s.hidden_rows, vec![2, 5]);
-        assert_eq!(s.hidden_cols, vec!["C".to_string(), "D".to_string(), "E".to_string()]);
+        assert_eq!(
+            s.hidden_cols,
+            vec!["C".to_string(), "D".to_string(), "E".to_string()]
+        );
     }
 
     #[test]
@@ -558,15 +560,20 @@ mod tests {
                 zw.start_file(f.name().to_string(), opt).unwrap();
                 std::io::copy(&mut f, &mut zw).unwrap();
             }
-            zw.start_file("xl/externalLinks/externalLink1.xml", opt).unwrap();
+            zw.start_file("xl/externalLinks/externalLink1.xml", opt)
+                .unwrap();
             zw.write_all(br#"<?xml version="1.0"?><externalLink xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>"#).unwrap();
-            zw.start_file("xl/externalLinks/_rels/externalLink1.xml.rels", opt).unwrap();
+            zw.start_file("xl/externalLinks/_rels/externalLink1.xml.rels", opt)
+                .unwrap();
             zw.write_all(br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath" Target="file:///C:/quotes/source.xlsx" TargetMode="External"/></Relationships>"#).unwrap();
             zw.finish().unwrap();
         }
         let rep = read_structural_from_bytes(&buf).unwrap();
         assert_eq!(rep.external_links.len(), 1);
-        assert_eq!(rep.external_links[0].target, "file:///C:/quotes/source.xlsx");
+        assert_eq!(
+            rep.external_links[0].target,
+            "file:///C:/quotes/source.xlsx"
+        );
         assert_eq!(rep.external_links[0].r_id, "rId1");
     }
 

@@ -34,8 +34,7 @@ fn corpus_root() -> PathBuf {
         .unwrap_or_else(|_| {
             // 2 级上溯 = 仓根（crates/pdf → 仓库）——external_corpus
             // 先例同构。
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../test-artifacts/pdf-corpus")
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-artifacts/pdf-corpus")
         })
 }
 
@@ -220,7 +219,10 @@ fn real_pdf_corpus_behavior_lock() {
     ] {
         let got = ok_by_cat.get(cat).copied().unwrap_or(0);
         let total = per_cat.get(cat).copied().unwrap_or(0);
-        assert_eq!(got, total, "category {cat}: {got}/{total} 件可开（真实件应全开）");
+        assert_eq!(
+            got, total,
+            "category {cat}: {got}/{total} 件可开（真实件应全开）"
+        );
     }
     // bookmarks 4 件中 1 件零页 Engine 拒（spec 7.7.4）——OK ≥ 3。
     assert!(

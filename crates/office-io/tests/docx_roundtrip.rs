@@ -414,7 +414,12 @@ fn hyperlink_unsafe_scheme_sanitized_on_read() {
         .iter()
         .filter(|w| w.kind == WarningKind::UnsafeLink)
         .collect();
-    assert_eq!(unsafe_links.len(), 1, "恰一条 UnsafeLink：{:?}", doc.warnings);
+    assert_eq!(
+        unsafe_links.len(),
+        1,
+        "恰一条 UnsafeLink：{:?}",
+        doc.warnings
+    );
     assert!(
         unsafe_links[0].detail.contains("javascript"),
         "警告含拒绝原因：{}",
@@ -427,7 +432,10 @@ fn hyperlink_unsafe_scheme_sanitized_on_read() {
             // 敌意链接降级 Unresolved（下游 link_destination 返回
             // None——渲染降级纯文本）。
             assert!(
-                matches!(&pd.runs[1].hyperlink, Some(HyperlinkTarget::Unresolved { .. })),
+                matches!(
+                    &pd.runs[1].hyperlink,
+                    Some(HyperlinkTarget::Unresolved { .. })
+                ),
                 "javascript: 降级 Unresolved：{:?}",
                 pd.runs[1].hyperlink
             );

@@ -19,9 +19,9 @@
 //! - `poi-docx/NumberingWOverrides.docx`：编号全形态样本（ordinal
 //!   lvl0 + `%1` 无点 lvlText——原 poi__ 同件同形，路径迁移）。
 
-use mdc_office_io::docx::{Block, RunSpec, read_docx_from_bytes};
+use mdc_office_io::docx::{read_docx_from_bytes, Block, RunSpec};
 use mdc_office_io::numbering::{
-    LevelSpec, NumberingDef, NumberingTracker, SuffixKind, read_docx_numbering_from_bytes,
+    read_docx_numbering_from_bytes, LevelSpec, NumberingDef, NumberingTracker, SuffixKind,
 };
 
 fn corpus_dir() -> std::path::PathBuf {
