@@ -351,6 +351,12 @@ fn stroke_error_codes_reuse_existing_variants() {
                 r##"{"t":"set_stroke_style","id":"nope","color":"#000","width":1,"tool":"pen"}"##,
             )
             .unwrap(),
+        )
+        .unwrap_err();
+    let e: mdcore_wasm::canvas::CvError = e.into();
+    assert_eq!(e.code, "cv_notfound");
+}
+
 
 // ── 批量面（#352）────────────────────────────────────────────────
 

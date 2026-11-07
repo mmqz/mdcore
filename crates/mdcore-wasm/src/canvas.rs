@@ -331,6 +331,9 @@ pub fn batch_receipt_json(r: &mdc_canvas::BatchReceipt) -> String {
                 CommandOutcome::Ungrouped { group_id } => {
                     ("ungrouped", "group_id", group_id.clone())
                 }
+                // #350 笔迹面：与单命令 receipt_json 同构
+                CommandOutcome::StrokeAdded { id } => ("stroke_added", "id", id.clone()),
+                CommandOutcome::StrokeStyled { id } => ("stroke_styled", "id", id.clone()),
             };
             format!(
                 "{{\"outcome\":\"{kind}\",\"{key}\":{}}}",
