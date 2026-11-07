@@ -1643,8 +1643,18 @@ impl Editor {
 
     /// 折叠当前光标行（可折叠时）；返回是否发生折叠。
     ///
-    /// 光标在折叠**内部**时先跳到折叠头（语义：折叠内部无可见行，
-    /// 用户按「折叠当前」应指向整个块）。
+    /// 语义（#428 补齐——与围栏的块内判定对称）：
+    /// - 光标在**已折叠**区间内部 → 幂等 true（折叠内部无可见行，
+    ///   「折叠当前」指向整个块）；
+    /// - 光标行本身是标题起点 / 围栏块内行 → 折该块；
+    /// - 光标在**未折叠标题小节的正文行** → 向上回溯最近的包含光标
+    ///   行的标题块折它（围栏早有此能力：`fence_span_at` 覆盖块内行；
+    ///   标题此前没有——不对称已消，取**最内层**小节）；
+    /// - 之上没有任何包含光标行的标题块（纯正文/无结构） → false
+    ///   （不假装支持）。
+    ///
+    /// 不移动光标（与折叠内部路径口径一致——display 层把内部行映射
+    /// 到折叠头行显示）。
     pub fn fold_current(&mut self) -> bool {
         let line = self.buffer.cursor().line;
         if let Some(f) = self.display_map.fold_containing(line) {
@@ -1654,12 +1664,30 @@ impl Editor {
         if self.display_map.fold_head_at(line).is_some() {
             return true; // 已折叠
         }
-        let Some((s, e)) = self.foldable_span_at(line) else {
-            return false;
-        };
-        self.display_map
-            .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0))
-            .is_some()
+        // ① 光标行本身可折（标题起点 / 围栏块内行）→ 直接折。
+        if let Some((s, e)) = self.foldable_span_at(line) {
+            return self
+                .display_map
+                .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0))
+                .is_some();
+        }
+        // ② #428：正文行 → 向上回溯最近的包含光标行的标题块（取最
+        //    内层：从光标行向上第一处标题，其区间覆盖光标行者即所属
+        //    小节）。只回溯标题——围栏在 ① 已由 fence_span_at 覆盖。
+        for head in (0..line).rev() {
+            if heading_level_of(&self.buffer.line(head)).is_none() {
+                continue;
+            }
+            if let Some((s, e)) = self.foldable_span_at(head) {
+                if s <= line && line < e {
+                    return self
+                        .display_map
+                        .fold(&self.buffer, Point::new(s, 0)..Point::new(e, 0))
+                        .is_some();
+                }
+            }
+        }
+        false
     }
 
     /// 展开当前光标所在/所属的折叠；返回是否发生展开。
@@ -5323,6 +5351,167 @@ mod tests {
             fold_persist_key(Some(std::path::Path::new("/w/notes.md"))),
             "/w/notes.md"
         );
+    }
+
+    // ---------------- #132-3：折叠 Editor 级行为面（#416 草稿抢救移植） ----------------
+    // 来源：根目录草稿 `_foldtests.txt`（#132/#134 折叠轮 rebase 散佚件，
+    // 见 #416 抢救判定）——原稿基于未落地的 `tests_support::make_editor`
+    // 设施，此处按仓内 gpui::TestAppContext 习惯重写装载面；断言与
+    // 语义照原稿。原稿第 10 条（docx 无折叠语义）需要真实 docx 编辑器
+    // 夹具，属 docx 编辑器测试面，不在本次移植范围（见 #416 PR 说明）。
+
+    /// 构造一个 md 编辑器，供折叠行为测试驱动（直接调方法面——不经
+    /// 命令分发，不触发 persist_folds 落盘）。
+    fn md_editor(cx: &mut gpui::TestAppContext, text: &str) -> gpui::Entity<Editor> {
+        cx.update(|cx| cx.new(|cx| Editor::new(Some("notes.md".into()), text.to_string(), cx)))
+    }
+
+    #[gpui::test]
+    fn fold_current_collapses_heading_block(cx: &mut gpui::TestAppContext) {
+        let ed = md_editor(cx, "# A\npara1\npara2\n# B\nafter");
+        ed.update(cx, |e, _| {
+            // 光标在标题行本身 → 折叠整个小节。
+            e.buffer.set_cursor(p(0, 0));
+            assert!(e.fold_current(), "光标在标题行应折叠该小节");
+            assert_eq!(e.display_map.fold_heads(), vec![0], "折叠头 = 标题行 0");
+            assert_eq!(
+                e.display_map.fold_ranges(),
+                vec![(0, 3)],
+                "区间到下一个同级标题前（#B 行 3 可见）"
+            );
+            // #428：光标在小节正文行 → 回溯折所属小节（原稿语义；
+            // 断言随 fix/428 从「现行为钉死 false」翻转为正）。
+            e.unfold_all();
+            e.buffer.set_cursor(p(1, 0));
+            assert!(e.fold_current(), "光标在小节内应折叠该小节（跳到折叠头）");
+            assert_eq!(e.display_map.fold_heads(), vec![0], "折叠头 = 标题行 0");
+            assert_eq!(e.display_map.fold_ranges(), vec![(0, 3)]);
+        });
+    }
+
+    #[gpui::test]
+    fn fold_current_walkup_takes_innermost_section(cx: &mut gpui::TestAppContext) {
+        // #428：嵌套小节正文行回溯取最内层（### C 而非 # A）。
+        let ed = md_editor(cx, "# A\n## B\nb-body\n### C\nc-body\n# D");
+        ed.update(cx, |e, _| {
+            e.buffer.set_cursor(p(4, 0)); // c-body（### C 小节内）
+            assert!(e.fold_current());
+            assert_eq!(e.display_map.fold_ranges(), vec![(3, 5)], "折最内层 ### C");
+        });
+    }
+
+    #[gpui::test]
+    fn fold_current_walkup_refuses_text_above_first_heading(cx: &mut gpui::TestAppContext) {
+        // #428：首个标题之前的正文——之上没有覆盖它的标题块 → false
+        //（尾部正文会被末节区间覆盖到文末，故负例取头部）。
+        let ed = md_editor(cx, "前言\n# A\nbody");
+        ed.update(cx, |e, _| {
+            e.buffer.set_cursor(p(0, 0));
+            assert!(!e.fold_current(), "之上无标题块 → 不假装支持");
+        });
+    }
+
+    #[gpui::test]
+    fn fold_current_collapses_fenced_code_block(cx: &mut gpui::TestAppContext) {
+        let ed = md_editor(cx, "intro\n```rust\nlet a = 1;\nlet b = 2;\n```\ntail");
+        ed.update(cx, |e, _| {
+            e.buffer.set_cursor(p(2, 0)); // 代码块内部
+            assert!(e.fold_current());
+            assert_eq!(e.display_map.fold_ranges(), vec![(1, 5)], "含开闭 ``` 行");
+        });
+    }
+
+    #[gpui::test]
+    fn fold_current_refuses_plain_paragraph(cx: &mut gpui::TestAppContext) {
+        let ed = md_editor(cx, "普通正文\n第二行\n\n第三段");
+        ed.update(cx, |e, _| {
+            e.buffer.set_cursor(p(0, 0));
+            assert!(!e.fold_current(), "非标题非围栏 → 不可折叠（不假装支持）");
+            assert!(e.display_map.fold_heads().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn unfold_current_restores_rows(cx: &mut gpui::TestAppContext) {
+        let ed = md_editor(cx, "# A\npara1\npara2\n# B");
+        ed.update(cx, |e, _| {
+            e.buffer.set_cursor(p(0, 0));
+            assert!(e.fold_current());
+            assert_eq!(e.display_map.fold_ranges().len(), 1);
+            assert!(e.unfold_current(), "展开当前");
+            assert!(e.display_map.fold_ranges().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn fold_all_collapses_top_level_only(cx: &mut gpui::TestAppContext) {
+        // A 小节含子标题 B：顶层只有 A（B 已含在 A 区间内）。
+        let ed = md_editor(cx, "# A\n## B\nb-body\n# C\nc-body");
+        ed.update(cx, |e, _| {
+            let n = e.fold_all();
+            assert_eq!(n, 2, "顶层两块：[A...]、[C...]");
+            assert_eq!(e.display_map.fold_ranges(), vec![(0, 3), (3, 5)]);
+        });
+    }
+
+    #[gpui::test]
+    fn unfold_all_clears_every_fold(cx: &mut gpui::TestAppContext) {
+        let ed = md_editor(cx, "# A\nbody\n# B\nbody2");
+        ed.update(cx, |e, _| {
+            e.fold_all();
+            assert_eq!(e.display_map.fold_ranges().len(), 2);
+            assert!(e.unfold_all(), "全部展开返回 true");
+            assert!(e.display_map.fold_ranges().is_empty());
+            assert!(!e.unfold_all(), "已无折叠 → false（幂等）");
+        });
+    }
+
+    #[gpui::test]
+    fn fold_then_restore_by_head_lines(cx: &mut gpui::TestAppContext) {
+        // 持久化语义：存头行号 → 按当前文本重算区间尾（restore_folds 的
+        // 单步切片——整链落盘/读回在 settings.rs folds_roundtrip_per_file）。
+        let ed = md_editor(cx, "# A\nbody\n# B\nbody2");
+        let heads = ed.update(cx, |e, _| {
+            e.fold_all();
+            e.display_map.fold_heads()
+        });
+        assert_eq!(heads, vec![0, 2]);
+        // 模拟「重启」：新编辑器载同一文本，按头行恢复。
+        let ed2 = md_editor(cx, "# A\nbody\n# B\nbody2");
+        ed2.update(cx, |e2, _| {
+            for h in &heads {
+                if let Some((s, en)) = e2.foldable_span_at(*h) {
+                    e2.display_map
+                        .fold(&e2.buffer, Point::new(s, 0)..Point::new(en, 0));
+                }
+            }
+        });
+        let (a, b) = (
+            ed.update(cx, |e, _| e.display_map.fold_ranges()),
+            ed2.update(cx, |e, _| e.display_map.fold_ranges()),
+        );
+        assert_eq!(b, a, "按头行恢复应得到相同折叠集");
+    }
+
+    #[gpui::test]
+    fn restore_drops_heads_that_no_longer_fold(cx: &mut gpui::TestAppContext) {
+        // 头行漂移/不再是标题 → 该条丢弃（宁缺毋错）。
+        let ed = md_editor(cx, "普通正文\n# 真标题\nbody");
+        ed.update(cx, |e, _| {
+            assert_eq!(e.foldable_span_at(0), None, "行 0 不是标题");
+            assert_eq!(e.foldable_span_at(1), Some((1, 3)));
+        });
+    }
+
+    #[gpui::test]
+    fn heading_fold_runs_to_document_end(cx: &mut gpui::TestAppContext) {
+        // 末尾标题折叠到文末。
+        let ed = md_editor(cx, "# A\nx\n# Z\nz1\nz2");
+        ed.update(cx, |e, _| {
+            e.buffer.set_cursor(p(2, 0));
+            assert!(e.fold_current());
+            assert_eq!(e.display_map.fold_ranges(), vec![(2, 5)], "到文末");
+        });
     }
 
     // ------------------------------------------------------------------

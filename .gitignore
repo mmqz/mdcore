@@ -37,3 +37,9 @@ mang-shell/mdc-tab-rel-*/
 # #210 pdfium 取件位（本地 fetch / CI 下载产物——二进制不入库；
 # 版本 pin 与 SHA256 校验见 windows-test.yml 下载步骤）
 bin/
+
+# #416：开发草稿/日志防再入（根目录下划线草稿曾是 #132/#134 rebase 散佚件
+# 唯一存世拷贝——已抢救移植后清出；防止再次误提交）
+/_*.txt
+/.t.log
+*.log
