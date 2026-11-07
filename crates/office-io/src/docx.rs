@@ -2061,6 +2061,8 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     let (mut headers, mut footers) = extract_headers_footers(
         &docx,
         &bundle,
+        // #349（#318 D7）：strict 恢复面的部件直读。
+        bytes,
         &numbering_index,
         &style_index,
         strict,
@@ -2079,8 +2081,10 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         &style_index,
         strict,
         &mut warnings,
-        &headers,
-        &footers,
+        // #347（#318 D5）：可变传播——build_sections 内 odd 引用挂接
+        // 追加的末节槽位同步进文档级 headers/footers（单一真源保持）。
+        &mut headers,
+        &mut footers,
         &document_xml,
         &column_break_blocks,
     )?;
@@ -4353,11 +4357,15 @@ fn slot_part_path(
 fn extract_headers_footers(
     docx: &docx_rs::Docx,
     bundle: &RelsBundle,
+    // #349（#318 D7）：strict 恢复面的部件直读（内容未联接分支——
+    // 见函数内 #349 注释）。
+    bytes: &[u8],
     index: &NumberingIndex,
     styles: &StyleIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
 ) -> Result<(Vec<HeaderFooterData>, Vec<HeaderFooterData>), io::ReadError> {
+    use docx_rs::FromXML;
     let sp = &docx.document.section_property;
     let mut headers = Vec::new();
     let mut footers = Vec::new();
@@ -4366,6 +4374,11 @@ fn extract_headers_footers(
     //（引擎挂接的）与引用槽位（sectPr 声明的）分离——引擎在引用在
     // 而挂接失败时静默跳过（CAPABILITY_NOTES §2），本层改为严格拒 /
     // 兼容警告。无引用 = 无槽位（不产生空槽）。
+    // #349（#318 D7）：**引用在而内容未联接**的分支此前只做悬空检查
+    // 后跳过——strict OOXML（purl 关系类型）恰落此分支（typed 引用
+    // 在场、docx-rs 联接面按过渡期 Type 锁定不联内容）→ 槽位丢。
+    // 现改为**部件直解析恢复**（mid_section_slots 同构：引用 → part
+    // path → 部件 XML 直解析；恢复可见性 Warning）。
     for (variant, reference, content) in [
         (
             HeaderFooterVariant::Default,
@@ -4383,11 +4396,64 @@ fn extract_headers_footers(
             &sp.even_header,
         ),
     ] {
-        let Some((rid, header)) = content else {
-            if let Some(r) = reference {
-                slot_part_path(&r.id, bundle, strict, warnings)?;
+        let recovered: docx_rs::Header;
+        let (rid, header): (&str, &docx_rs::Header) = match content {
+            Some((rid, h)) => (rid.as_str(), h),
+            None => {
+                let Some(r) = reference else { continue };
+                let Some(part) = slot_part_path(&r.id, bundle, strict, warnings)? else {
+                    // 悬空 rid：严格模式已 typed 拒；兼容模式
+                    // BrokenReference 警告已登记（slot_part_path 内置）。
+                    continue;
+                };
+                let part_xml = load_section_part_xml(bytes, &[part.clone()]);
+                let Some(xml) = part_xml.get(&part) else {
+                    let detail = format!("header part '{part}' unreadable (lossy decode or io)");
+                    if strict {
+                        return Err(io::ReadError::InvalidPart {
+                            part: part.clone(),
+                            detail,
+                        });
+                    }
+                    warnings.push(CompatibilityWarning {
+                        part: part.clone(),
+                        kind: WarningKind::MalformedXml,
+                        detail: format!("compat mode: {detail} (slot skipped)"),
+                    });
+                    continue;
+                };
+                match docx_rs::Header::from_xml(xml.as_bytes()) {
+                    Ok(h) => {
+                        warnings.push(CompatibilityWarning {
+                            part: "word/document.xml".to_string(),
+                            kind: WarningKind::MalformedXml,
+                            detail: format!(
+                                "compat note: headerReference (rid {}) content not linked \
+                                 by engine (strict OOXML purl relationship type) — \
+                                 part '{part}' 直解析恢复槽位（#349 D7）",
+                                r.id
+                            ),
+                        });
+                        recovered = h;
+                        (r.id.as_str(), &recovered)
+                    }
+                    Err(_) => {
+                        let detail = format!("header part '{part}' parse failed");
+                        if strict {
+                            return Err(io::ReadError::InvalidPart {
+                                part: part.clone(),
+                                detail,
+                            });
+                        }
+                        warnings.push(CompatibilityWarning {
+                            part: part.clone(),
+                            kind: WarningKind::MalformedXml,
+                            detail: format!("compat mode: {detail} (slot skipped)"),
+                        });
+                        continue;
+                    }
+                }
             }
-            continue;
         };
         let part = slot_part_path(rid, bundle, strict, warnings)?;
         let table = part.as_deref().and_then(|p| bundle.by_part.get(p));
@@ -4447,11 +4513,64 @@ fn extract_headers_footers(
             &sp.even_footer,
         ),
     ] {
-        let Some((rid, footer)) = content else {
-            if let Some(r) = reference {
-                slot_part_path(&r.id, bundle, strict, warnings)?;
+        // #349（#318 D7）：页脚同构——引用在而内容未联接的部件直解析
+        // 恢复（见上方页眉循环 #349 注释）。
+        let recovered: docx_rs::Footer;
+        let (rid, footer): (&str, &docx_rs::Footer) = match content {
+            Some((rid, f)) => (rid.as_str(), f),
+            None => {
+                let Some(r) = reference else { continue };
+                let Some(part) = slot_part_path(&r.id, bundle, strict, warnings)? else {
+                    continue;
+                };
+                let part_xml = load_section_part_xml(bytes, &[part.clone()]);
+                let Some(xml) = part_xml.get(&part) else {
+                    let detail = format!("footer part '{part}' unreadable (lossy decode or io)");
+                    if strict {
+                        return Err(io::ReadError::InvalidPart {
+                            part: part.clone(),
+                            detail,
+                        });
+                    }
+                    warnings.push(CompatibilityWarning {
+                        part: part.clone(),
+                        kind: WarningKind::MalformedXml,
+                        detail: format!("compat mode: {detail} (slot skipped)"),
+                    });
+                    continue;
+                };
+                match docx_rs::Footer::from_xml(xml.as_bytes()) {
+                    Ok(f) => {
+                        warnings.push(CompatibilityWarning {
+                            part: "word/document.xml".to_string(),
+                            kind: WarningKind::MalformedXml,
+                            detail: format!(
+                                "compat note: footerReference (rid {}) content not linked \
+                                 by engine (strict OOXML purl relationship type) — \
+                                 part '{part}' 直解析恢复槽位（#349 D7）",
+                                r.id
+                            ),
+                        });
+                        recovered = f;
+                        (r.id.as_str(), &recovered)
+                    }
+                    Err(_) => {
+                        let detail = format!("footer part '{part}' parse failed");
+                        if strict {
+                            return Err(io::ReadError::InvalidPart {
+                                part: part.clone(),
+                                detail,
+                            });
+                        }
+                        warnings.push(CompatibilityWarning {
+                            part: part.clone(),
+                            kind: WarningKind::MalformedXml,
+                            detail: format!("compat mode: {detail} (slot skipped)"),
+                        });
+                        continue;
+                    }
+                }
             }
-            continue;
         };
         let part = slot_part_path(rid, bundle, strict, warnings)?;
         let table = part.as_deref().and_then(|p| bundle.by_part.get(p));
@@ -4782,6 +4901,163 @@ fn mid_section_slots(
     Ok((headers, footers))
 }
 
+/// #347（#318 D5）+ #349（#318 D7）：sectPr 引用第二趟补挂
+/// （typed 模型未承载的引用——`build_sections` 中段节与末节两调用面）。
+///
+/// 承载判定与挂接规则（可见性恒登记——容错不静默）：
+/// · **typed 已承载**（合法类型 default/first/even 且 (变体, rid) 在
+///   typed 引用集内）→ **静默跳过**（过渡期文档的常态——第二趟只兜
+///   底，不与 typed 通道双挂）；
+/// · **D7 面**：strict OOXML（purl 命名空间）引用——legal 类型但
+///   (变体, rid) 不在 typed 集（docx-rs 引用解析按过渡期命名空间
+///   锁定，strict 引用不进 typed 模型）→ 槽位空缺则挂接 + Warning；
+/// · **D5 面**：旧值 **odd**（永不被 typed 承载——词汇表外）→ 按
+///   现代 Default 语义挂接（Word 容忍口径）+ Warning；
+/// · **槽位冲突**（目标变体已挂——legal 先占或前条已补）→ 跳过 +
+///   Warning（语义歧义面——以先挂值为准，不覆盖）；
+/// · 部件缺席/解析失败 → 严格拒 / 兼容警告跳过（与既有槽位降级
+///   同语义——mid_section_slots 口径）。
+#[allow(clippy::too_many_arguments)]
+fn attach_unresolved_refs(
+    headers: &mut Vec<HeaderFooterData>,
+    footers: &mut Vec<HeaderFooterData>,
+    refs: &[SectRawRef],
+    typed_pairs: &[(HeaderFooterVariant, String)],
+    part_xml: &HashMap<String, String>,
+    bundle: &RelsBundle,
+    index: &NumberingIndex,
+    styles: &StyleIndex,
+    strict: bool,
+    warnings: &mut Vec<CompatibilityWarning>,
+) -> Result<(), io::ReadError> {
+    use docx_rs::FromXML;
+    for r in refs {
+        let kind = if r.is_footer { "footer" } else { "header" };
+        let variant = match r.ty.as_str() {
+            "odd" | "default" => HeaderFooterVariant::Default,
+            "first" => HeaderFooterVariant::First,
+            "even" => HeaderFooterVariant::Even,
+            other => {
+                warnings.push(CompatibilityWarning {
+                    part: "word/document.xml".to_string(),
+                    kind: WarningKind::MalformedXml,
+                    detail: format!(
+                        "compat note: sectPr {kind}Reference w:type='{other}' (rid {}) \
+                         outside vocabulary (default/first/even/odd) — skipped",
+                        r.rid
+                    ),
+                });
+                continue;
+            }
+        };
+        // typed 承载判定：legal 类型 + (变体, rid) 在 typed 集内 =
+        // 过渡期文档的 typed 通道常态（第二趟不双挂——静默）。
+        // odd 永不 typed 承载（词汇表外）；strict 引用 (变体, rid)
+        // 必不在集内（typed 解析面锁定过渡期命名空间）。
+        let legal_ty = r.ty != "odd";
+        if legal_ty
+            && typed_pairs
+                .iter()
+                .any(|(v, rid)| *v == variant && rid == &r.rid)
+        {
+            continue;
+        }
+        let slot_taken = if r.is_footer {
+            footers.iter().any(|f| f.variant == variant)
+        } else {
+            headers.iter().any(|h| h.variant == variant)
+        };
+        if slot_taken {
+            warnings.push(CompatibilityWarning {
+                part: "word/document.xml".to_string(),
+                kind: WarningKind::MalformedXml,
+                detail: format!(
+                    "compat note: sectPr {kind}Reference (type={}, rid {}) skipped — \
+                     {variant:?} slot already present (以先挂值为准，不覆盖)",
+                    r.ty, r.rid
+                ),
+            });
+            continue;
+        }
+        let Some(part) = slot_part_path(&r.rid, bundle, strict, warnings)? else {
+            // 悬空 rid：严格模式 slot_part_path 已 typed 拒；兼容模式
+            // 已登记 BrokenReference 警告（该函数内置）。
+            continue;
+        };
+        let Some(xml) = part_xml.get(&part) else {
+            let detail = format!("{kind} part '{part}' unreadable (lossy decode or io)");
+            if strict {
+                return Err(io::ReadError::InvalidPart {
+                    part: part.clone(),
+                    detail,
+                });
+            }
+            warnings.push(CompatibilityWarning {
+                part: part.clone(),
+                kind: WarningKind::MalformedXml,
+                detail: format!("compat mode: {detail} (second-pass slot skipped)"),
+            });
+            continue;
+        };
+        // 部件内容解析（mid_section_slots 同构——docx-rs 部件面复用）。
+        // 双层 Result 展平：外层 = 部件 XML typed 解析（docx-rs），
+        // 内层 = 块提取（children_blocks 的 io typed 拒经 `?` 直传播
+        // ——严格模式语义与既有槽位一致）。
+        let parsed = if r.is_footer {
+            docx_rs::Footer::from_xml(xml.as_bytes())
+                .map(|f| footer_children_blocks(&f, bundle, &part, index, styles, strict, warnings))
+        } else {
+            docx_rs::Header::from_xml(xml.as_bytes())
+                .map(|h| header_children_blocks(&h, bundle, &part, index, styles, strict, warnings))
+        };
+        let blocks = match parsed {
+            Ok(inner) => inner?,
+            Err(_) => {
+                let detail = format!("{kind} part '{part}' parse failed");
+                if strict {
+                    return Err(io::ReadError::InvalidPart {
+                        part: part.clone(),
+                        detail,
+                    });
+                }
+                warnings.push(CompatibilityWarning {
+                    part: part.clone(),
+                    kind: WarningKind::MalformedXml,
+                    detail: format!("compat mode: {detail} (second-pass slot skipped)"),
+                });
+                continue;
+            }
+        };
+        // 可见性：挂接面 Warning（两损失面分述——D5 旧值语义 / D7
+        // strict 命名空间面；tr33/tr34 锚定子串）。
+        let reason = if r.ty == "odd" {
+            format!(
+                "legacy odd {kind}Reference (rid {}) attached as \
+                 default slot (Word 容忍口径：旧值 odd = 现代 default 语义)",
+                r.rid
+            )
+        } else {
+            format!(
+                "{kind}Reference (type={}, rid {}) not carried by typed model — \
+                 attached as {variant:?} slot (strict OOXML purl 命名空间面，#349 D7)",
+                r.ty, r.rid
+            )
+        };
+        warnings.push(CompatibilityWarning {
+            part: "word/document.xml".to_string(),
+            kind: WarningKind::MalformedXml,
+            detail: format!("compat note: {reason}"),
+        });
+        let data = HeaderFooterData { variant, blocks };
+        if r.is_footer {
+            footers.push(data);
+        } else {
+            headers.push(data);
+        }
+    }
+    Ok(())
+}
+
 /// #268：解析 document.xml 全部 `sectPr/w:cols`（文档序）。
 ///
 /// docx-rs 0.4.22 `SectionProperty` 只携 num/space（equalWidth/sep/
@@ -4912,12 +5188,116 @@ fn attr_local<'a>(a: &'a quick_xml::events::attributes::Attribute<'a>) -> &'a [u
     }
 }
 
+/// #347（#318 D5）+ #349（#318 D7）：解析 document.xml 全部 sectPr 内
+/// 页眉/页脚引用（文档序，每 sectPr 一条收集——**全类型**：legal
+/// default/first/even + 旧值 odd）。
+///
+/// 两损失面共用本第二趟（local-name 通道命名空间无关）：
+/// · **D5**：ECMA-376 合法值外旧值 **odd**（pre-97 语义：奇数页槽位
+///   = 现代 default 语义）——Word 容忍并挂接，docx-rs 0.4.22 typed
+///   词汇表外整体丢弃；
+/// · **D7**：**strict OOXML**（purl.oclc.org 命名空间）文档的引用
+///   ——docx-rs 引用解析按过渡期命名空间（schemas.openxmlformats.org）
+///   锁定，strict 引用不进 typed 模型。
+/// 两面的补挂规则见 [`attach_unresolved_refs`]（typed 承载判定 +
+/// 槽位冲突规则）。本函数为 office-io 自有 quick-xml 第二趟
+/// （#268 cols 趟同族技术；sectPr 序 = 节序，与 build_sections 的
+/// marks+末节序列对齐；`w:sectPrChange` 内嵌套旧节属性不计——修订
+/// 面非当前生效）。
+fn parse_sect_pr_refs(xml: &str) -> Vec<Vec<SectRawRef>> {
+    use quick_xml::events::Event;
+    let mut out: Vec<Vec<SectRawRef>> = Vec::new();
+    let mut in_sect_pr = false;
+    let mut in_sect_pr_change = false;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => match e.local_name().as_ref() {
+                b"sectPrChange" => in_sect_pr_change = true,
+                b"sectPr" if !in_sect_pr_change => {
+                    in_sect_pr = true;
+                    out.push(Vec::new());
+                }
+                b"headerReference" | b"footerReference" if in_sect_pr && !in_sect_pr_change => {
+                    if let Some(r) = sect_raw_ref_attr(&e) {
+                        out.last_mut().expect("sectPr 已置位").push(r);
+                    }
+                }
+                _ => {}
+            },
+            // 自闭 `<w:sectPr/>`：空属性区即时闭（无后续 End 事件）。
+            Ok(Event::Empty(e)) => match e.local_name().as_ref() {
+                b"sectPr" if !in_sect_pr_change => out.push(Vec::new()),
+                b"headerReference" | b"footerReference" if in_sect_pr && !in_sect_pr_change => {
+                    if let Some(r) = sect_raw_ref_attr(&e) {
+                        out.last_mut().expect("sectPr 已置位").push(r);
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"sectPrChange" => in_sect_pr_change = false,
+                b"sectPr" if !in_sect_pr_change => in_sect_pr = false,
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            Err(_) => break, // 门 2+3 已过结构校验（严格）；防御终止
+            Ok(_) => {}
+        }
+        buf.clear();
+    }
+    out
+}
+
+/// #347（D5）+ #349（D7）：sectPr 引用条目（全类型收集——typed
+/// 承载判定在挂接面 [`attach_unresolved_refs`]；r:id 缺席的畸形引用
+/// 返回 None——防御跳过）。
+#[derive(Debug, Clone)]
+struct SectRawRef {
+    is_footer: bool,
+    /// `w:type` 原始值（default/first/even/odd/其他）。
+    ty: String,
+    rid: String,
+}
+
+/// #347（D5）+ #349（D7）：引用元素的 w:type / r:id 属性读取（
+/// local-name 通道——命名空间无关，strict OOXML purl 天然兼容）。
+fn sect_raw_ref_attr(e: &quick_xml::events::BytesStart<'_>) -> Option<SectRawRef> {
+    let is_footer = e.local_name().as_ref() == b"footerReference";
+    let mut ty: Option<String> = None;
+    let mut rid: Option<String> = None;
+    for a in e.attributes() {
+        let Ok(a) = a else { continue };
+        match attr_local(&a) {
+            b"type" => {
+                ty = std::str::from_utf8(a.value.as_ref())
+                    .ok()
+                    .map(str::to_string)
+            }
+            b"id" => {
+                rid = std::str::from_utf8(a.value.as_ref())
+                    .ok()
+                    .map(str::to_string)
+            }
+            _ => {}
+        }
+    }
+    if let (Some(ty), Some(rid)) = (ty, rid) {
+        Some(SectRawRef { is_footer, ty, rid })
+    } else {
+        None
+    }
+}
+
 /// 文档节全量构建（#257 读面收口）：中段节标记（文档序）+ 末节 →
 /// `Vec<SectionData>`（恒 ≥1 条；块区间连续切分 blocks 全序）。
 ///
 /// `boundaries` 与 `marks` 等长（VML 插入后重映射的最终坐标系）；
-/// 末节 `headers`/`footers` 复用文档级提取结果（单一真源复制——
-/// 逐节统一访问面；中段节经 [`mid_section_slots`] 第二趟自解析）。
+/// 末节 `headers`/`footers` 复用文档级提取结果（单一真源——**可变
+/// 引用**：#347（#318 D5）odd 引用容错挂接在本函数内追加，末节槽
+/// 与文档级 `DocxDocument::headers`/`footers` 同源保持；中段节经
+/// [`mid_section_slots`] 第二趟自解析）。
 #[allow(clippy::too_many_arguments)]
 fn build_sections(
     docx: &docx_rs::Docx,
@@ -4930,8 +5310,8 @@ fn build_sections(
     styles: &StyleIndex,
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
-    final_headers: &[HeaderFooterData],
-    final_footers: &[HeaderFooterData],
+    final_headers: &mut Vec<HeaderFooterData>,
+    final_footers: &mut Vec<HeaderFooterData>,
     document_xml: &str,
     column_break_blocks: &[usize],
 ) -> Result<Vec<SectionData>, io::ReadError> {
@@ -4941,6 +5321,30 @@ fn build_sections(
         "section marks/boundaries lockstep"
     );
     // 中段节部件集（六槽位引用 → part path 全量解析，zip 单趟）。
+    // #347（D5）+ #349（D7）：typed 未承载引用部件一并装载（中段 +
+    // 末节——挂接面共用本 part_xml 缓存）。
+    let sect_refs_raw = parse_sect_pr_refs(document_xml);
+    let section_count = marks.len() + 1;
+    let empty_refs: Vec<SectRawRef> = Vec::new();
+    let sect_refs: Vec<&Vec<SectRawRef>> = if sect_refs_raw.len() == section_count {
+        sect_refs_raw.iter().collect()
+    } else {
+        // 计数分歧 = 解析面分歧（cols 趟同族降级）——第二趟挂接整体
+        // 放弃 + 兼容警告（宁缺毋错：错位挂接比丢弃更糟）。
+        if sect_refs_raw.iter().any(|v| !v.is_empty()) {
+            warnings.push(crate::io::CompatibilityWarning {
+                part: "word/document.xml".to_string(),
+                kind: WarningKind::MalformedXml,
+                detail: format!(
+                    "compat note: sectPr count mismatch (xml walk {} vs model {}); \
+                     second-pass references not attached",
+                    sect_refs_raw.len(),
+                    section_count
+                ),
+            });
+        }
+        vec![&empty_refs; section_count]
+    };
     let mut part_paths: Vec<String> = Vec::new();
     for (_, sp) in marks {
         // rid 统一收集（header/footer 引用类型不同——id 同域 String）。
@@ -4973,6 +5377,49 @@ fn build_sections(
             }
         }
     }
+    // #347（D5）+ #349（D7）：第二趟引用部件（全节——含末节；挂接面
+    // 消费——typed 已承载的部件已在前循环，去重不计）。
+    for refs in &sect_refs {
+        for r in refs.iter() {
+            if let Some(path) = slot_part_path(&r.rid, bundle, strict, warnings)? {
+                if !part_paths.contains(&path) {
+                    part_paths.push(path);
+                }
+            }
+        }
+    }
+    // typed 承载集（逐节）：marks 中段节 + 末节（docx-rs typed 模型
+    // 实际携带的 (变体, rid) 对——第二趟的承载判定基准）。
+    let typed_pairs_of = |sp: &docx_rs::SectionProperty| -> Vec<(HeaderFooterVariant, String)> {
+        let mut out = Vec::new();
+        for (variant, r) in [
+            (HeaderFooterVariant::Default, sp.header_reference.as_ref()),
+            (
+                HeaderFooterVariant::First,
+                sp.first_header_reference.as_ref(),
+            ),
+            (HeaderFooterVariant::Even, sp.even_header_reference.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(v, r)| r.map(|r| (v, r)))
+        {
+            out.push((variant, r.id.clone()));
+        }
+        for (variant, r) in [
+            (HeaderFooterVariant::Default, sp.footer_reference.as_ref()),
+            (
+                HeaderFooterVariant::First,
+                sp.first_footer_reference.as_ref(),
+            ),
+            (HeaderFooterVariant::Even, sp.even_footer_reference.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(v, r)| r.map(|r| (v, r)))
+        {
+            out.push((variant, r.id.clone()));
+        }
+        out
+    };
     let part_xml = load_section_part_xml(bytes, &part_paths);
 
     // #268：cols 全字段（自有 quick-xml 第二趟——文档序与 marks+末节
@@ -4980,7 +5427,6 @@ fn build_sections(
     // 的 num 基础面仍有效]，严格模式同降级[非容器损坏是内部一致性
     // 面向——typed 拒会误伤可读档]）。
     let cols_specs = parse_columns_specs(document_xml);
-    let section_count = marks.len() + 1;
     let cols_specs = if cols_specs.len() == section_count {
         cols_specs
     } else {
@@ -5019,8 +5465,25 @@ fn build_sections(
     let mut sections = Vec::with_capacity(marks.len() + 1);
     let mut start = 0usize;
     for (i, ((_, sp), end)) in marks.iter().zip(boundaries.iter()).enumerate() {
-        let (headers, footers) =
+        let (mut headers, mut footers) =
             mid_section_slots(sp, &part_xml, bundle, index, styles, strict, warnings)?;
+        // #347（D5）+ #349（D7）：中段节 typed 未承载引用补挂
+        // （odd → Default 语义 / strict purl 引用 → 原变体）。
+        if let Some(refs) = sect_refs.get(i) {
+            let typed_pairs = typed_pairs_of(sp);
+            attach_unresolved_refs(
+                &mut headers,
+                &mut footers,
+                refs,
+                &typed_pairs,
+                &part_xml,
+                bundle,
+                index,
+                styles,
+                strict,
+                warnings,
+            )?;
+        }
         sections.push(SectionData {
             index: i,
             source: SectionSource::Mid,
@@ -5037,10 +5500,27 @@ fn build_sections(
         });
         start = *end;
     }
-    // 末节（body 级 sectPr——docx-rs 模型恒在）。
+    // 末节（body 级 sectPr——docx-rs 模型恒在）。#347（D5）+#349（D7）：
+    // typed 未承载引用挂接**先于** SectionData 装配（可变引用追加——
+    // 末节槽与文档级 headers/footers 同源保持，见函数文档）。
     let sp = &docx.document.section_property;
     let final_index = sections.len();
     let final_start = start;
+    if let Some(refs) = sect_refs.get(final_index) {
+        let typed_pairs = typed_pairs_of(sp);
+        attach_unresolved_refs(
+            final_headers,
+            final_footers,
+            refs,
+            &typed_pairs,
+            &part_xml,
+            bundle,
+            index,
+            styles,
+            strict,
+            warnings,
+        )?;
+    }
     sections.push(SectionData {
         index: final_index,
         source: SectionSource::Final,
