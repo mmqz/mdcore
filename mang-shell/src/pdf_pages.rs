@@ -17,7 +17,8 @@
 //! PdfPagesView（本模块——页面位图，主显示面）
 //!      │  engine-pdfium 光栅化（RenderWorker 专用线程 + 看门狗换代）
 //!      │  PageCache（RenderKey 键控 → RenderImage，LRU 字节预算）
-//!      │  右键拖框高亮（#302④：PdfAnnotateController 增量写面）
+//!      │  右键拖框批注：高亮/下划线/便签三手势（#302④ 验收 1：
+//!      │    PdfAnnotateController 增量写面；退化单击 = 工具切换）
 //!      └─ Editor（既有 pdf 文本模型——查找/书签锚/属性面板/字数）
 //! ```
 //!
@@ -36,13 +37,19 @@
 //!   flush（#302④）后旧位图自然 miss，重渲染即见新批注；旧 rev
 //!   条目经 `invalidate_stale_revisions` 即刻回收预算。
 //!
-//! ## 批注交互（#302 阶段 2·④）
+//! ## 批注交互（#302 阶段 2·④——验收 1 三手势）
 //!
-//! **右键拖框 = 高亮**（右键不占列表滚动）：按下记录页内起点 →
-//! 松开由 [`PdfAnnotateController`] 走完整写路径（#304 坐标变换 →
-//! `AnnotateAdd` → 增量 flush）→ 本视图 `reload_after_flush`（换字节
-//! 快照 + 重建渲染工人 + 缓存失效）→ 下一帧重光栅即见高亮。
+//! **右键拖框 = 按当前工具提交批注**（右键不占列表滚动）：按下记录
+//! 页内起点 → 松开由 [`PdfAnnotateController`] 走完整写路径（#304
+//! 坐标变换 → `AnnotateAdd` → 增量 flush）→ 本视图 `reload_after_flush`
+//! （换字节快照 + 重建渲染工人 + 缓存失效）→ 下一帧重光栅即见批注。
 //! 控制器首次使用时懒初始化（open_scan + 写器门一次性成本）。
+//!
+//! **退化右键单击（无拖框意图）= 循环切换工具**：高亮 → 下划线 →
+//! 便签 → 高亮；底部横幅明示当前工具（下一次手势提交时清零——不
+//! 永久占屏）。三手势分别落 `/Highlight`、`/Underline`（QuadPoints 面）
+//! 与 `/Text`（锚定 Rect 面）——引擎写面同一条命令链，签名保持语义
+//! 同锁。
 //!
 //! ## 已知边界（v1 登记）
 //!
@@ -86,7 +93,7 @@ use mdc_pdf::worker::{RenderWorker, WorkerReply};
 use smallvec::SmallVec;
 use ui::prelude::*;
 
-use crate::pdf_annotate::PdfAnnotateController;
+use crate::pdf_annotate::{AnnotateTool, PdfAnnotateController};
 
 /// 光栅宽量子化步长（px）——缓存键稳定性 vs 重光栅频率的折中。
 pub const WIDTH_QUANTUM: u32 = 64;
@@ -136,8 +143,14 @@ pub struct PdfPagesView {
     annotate_rev: u64,
     /// 右键拖框会话（按下时的页号 + 页内像素起点；None = 非拖框中）。
     drag_start: Option<(u32, f32, f32)>,
+    /// #302 验收 1：当前批注工具（三手势——高亮/下划线/便签；退化
+    /// 右键单击循环切换，见 [`Self::finish_drag_annotation`]）。
+    annotate_tool: AnnotateTool,
     /// 批注路径错误（最近一次——面板明示，不静默丢；用户可重试）。
     annotate_error: Option<String>,
+    /// 工具切换提示（最近一次退化单击——底部横幅明示当前工具与切换
+    /// 手势；下一次手势提交时清零——不永久占屏）。
+    annotate_hint: Option<String>,
     /// 回执轮询循环进行中（防重复起循环）。
     polling: bool,
     /// 虚拟列表滚动句柄（scroll_to_page / 可见区间推算共用）。
@@ -206,7 +219,9 @@ impl PdfPagesView {
             annotate: None,
             annotate_rev: 0,
             drag_start: None,
+            annotate_tool: AnnotateTool::Highlight,
             annotate_error: None,
+            annotate_hint: None,
             polling: false,
             scroll: UniformListScrollHandle::new(),
             focus_handle,
@@ -230,7 +245,9 @@ impl PdfPagesView {
             annotate: None,
             annotate_rev: 0,
             drag_start: None,
+            annotate_tool: AnnotateTool::Highlight,
             annotate_error: None,
+            annotate_hint: None,
             polling: false,
             scroll: UniformListScrollHandle::new(),
             focus_handle,
@@ -436,31 +453,45 @@ impl PdfPagesView {
     }
 
     // ------------------------------------------------------------------
-    // #302 阶段 2·④：右键拖框高亮 → 增量写 → 渲染刷新
+    // #302 阶段 2·④：右键拖框批注（三手势）→ 增量写 → 渲染刷新
     // ------------------------------------------------------------------
 
-    /// 右键拖框收尾：页内拖框（跨页/退化单击丢弃）→ 控制器完整写路径
-    /// → flush 后视图刷新。错误不静默丢（面板明示，用户可重试）。
-    fn finish_drag_highlight(&mut self, page: u32, x: f32, y: f32, cx: &mut Context<Self>) {
+    /// 右键拖框收尾：页内拖框（跨页丢弃）→ 按当前工具提交完整写路径
+    /// → flush 后视图刷新。**退化单击 = 循环切换工具**（高亮→下划线
+    /// →便签→高亮——无拖框意图的单击不当零面积批注，改当工具选择；
+    /// 底部横幅明示当前工具，下一次手势提交时清零）。错误不静默丢
+    /// （面板明示，用户可重试）。
+    fn finish_drag_annotation(&mut self, page: u32, x: f32, y: f32, cx: &mut Context<Self>) {
         let Some((drag_page, x0, y0)) = self.drag_start.take() else {
-            return; // 非拖框中（右键单击无起点——忽略）。
+            return; // 非拖框会话（拖框起点不在本页——按下观察器未命中）。
         };
         if drag_page != page {
             return; // 跨页拖框（v1 页内语义——丢弃不猜）。
         }
         if (x - x0).abs() < 3.0 && (y - y0).abs() < 3.0 {
-            return; // 退化单击（无框选意图——不当零面积高亮）。
+            // 退化单击：无框选意图——循环切换批注工具并明示。
+            self.annotate_tool = self.annotate_tool.next();
+            self.annotate_hint = Some(format!(
+                "批注工具：{}（右键拖框使用；单击继续切换：高亮→下划线→便签）",
+                self.annotate_tool.label()
+            ));
+            cx.notify();
+            return;
         }
-        match self.commit_highlight(page, x0, y0, x, y) {
-            Ok(()) => self.annotate_error = None,
+        match self.commit_annotation(page, x0, y0, x, y) {
+            Ok(()) => {
+                self.annotate_error = None;
+                // 提交成功 → 工具提示使命完成（不永久占屏）。
+                self.annotate_hint = None;
+            }
             Err(e) => self.annotate_error = Some(e.to_string()),
         }
         cx.notify();
     }
 
-    /// 提交高亮：懒初始化控制器 → #304 坐标变换（屏幕拖框→QuadPoints）
-    /// → AnnotateAdd → 增量 flush → [`Self::reload_after_flush`]。
-    fn commit_highlight(
+    /// 提交批注（三手势派发）：懒初始化控制器 → #304 坐标变换（屏幕
+    /// 拖框→用户空间）→ AnnotateAdd → 增量 flush → [`Self::reload_after_flush`]。
+    fn commit_annotation(
         &mut self,
         page: u32,
         x0: f32,
@@ -484,7 +515,34 @@ impl PdfPagesView {
             WIDTH_MIN
         };
         let dpi = fit_w as f32 / display_w * 72.0;
-        controller.add_highlight_from_screen(page, x0, y0, x1, y1, dpi, "mang-shell 用户")?;
+        // 三手势派发（issue #302 验收 1：高亮/下划线/便签）。
+        match self.annotate_tool {
+            AnnotateTool::Highlight => {
+                controller.add_highlight_from_screen(
+                    page,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    dpi,
+                    "mang-shell 用户",
+                )?;
+            }
+            AnnotateTool::Underline => {
+                controller.add_underline_from_screen(
+                    page,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    dpi,
+                    "mang-shell 用户",
+                )?;
+            }
+            AnnotateTool::Note => {
+                controller.add_note_from_screen(page, x0, y0, x1, y1, dpi, "mang-shell 用户")?;
+            }
+        }
         let (bytes, _stats) = controller.flush()?;
         self.reload_after_flush(bytes);
         Ok(())
@@ -556,6 +614,7 @@ impl Render for PdfPagesView {
         let fit_w_hint = Self::fit_width(self.viewport_size.0.max(320.));
         let _slot_h = Self::slot_height(fit_w_hint, self.aspect);
         let annotate_error = self.annotate_error.clone();
+        let annotate_hint = self.annotate_hint.clone();
         let list = gpui::uniform_list(
             "pdf-pages",
             page_count,
@@ -594,6 +653,28 @@ impl Render for PdfPagesView {
                         .color(ui::Color::Warning),
                 )
         });
+        // #302 验收 1：工具提示横幅（退化右键单击后——当前工具明示；
+        // 底部与错误横幅分位，提交成功即清零）。
+        let hint_banner = annotate_hint.map(|message| {
+            div()
+                .id("pdf-annotate-tool-hint")
+                .absolute()
+                .bottom_4()
+                .left_12()
+                .right_12()
+                .opacity(0.95)
+                .rounded_md()
+                .border_1()
+                .border_color(colors.border)
+                .bg(colors.panel_background)
+                .px_3()
+                .py_2()
+                .child(
+                    ui::Label::new(message)
+                        .size(ui::LabelSize::Small)
+                        .color(ui::Color::Muted),
+                )
+        });
         div()
             .id("pdf-pages-root")
             .relative()
@@ -606,6 +687,8 @@ impl Render for PdfPagesView {
             .child(list)
             // #302④：批注错误横幅（在位时叠加顶部）。
             .children(error_banner)
+            // #302 验收 1：工具提示横幅（在位时叠加底部）。
+            .children(hint_banner)
             // 覆盖 canvas：透明、绝对铺满——paint 期回写视口尺寸（Cell
             // 共享，零实体更新零重入；不注册命中区，不挡列表滚轮）。
             .child(
@@ -711,7 +794,7 @@ fn annotate_overlay(
                                     return;
                                 };
                                 let _ = ent_up.update(cx, |view, cx| {
-                                    view.finish_drag_highlight(page, x, y, cx);
+                                    view.finish_drag_annotation(page, x, y, cx);
                                 });
                             },
                         );

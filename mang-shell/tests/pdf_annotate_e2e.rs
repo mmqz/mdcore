@@ -19,7 +19,18 @@
 //!    （手写夹具）：控制器 lopdf 几何解析（双盒 + /Rotate）+ 屏幕拖框
 //!    → QuadPoints 落点（#304 变换的桌面接线面——issue 验收 4）；
 //! 6. `list_and_page_bounds`——命令面观测（AnnotateList）+ 越界 typed
-//!    错误（页号防御）。
+//!    错误（页号防御）；
+//! 7. `underline_flush_roundtrips`——下划线（验收 1 第二手势）：
+//!    增量前缀 + 独立读回 `/Underline` kind + QuadPoints 逐点相等
+//!    + 落盘子型原子证据（lopdf 直读 /Subtype）；
+//! 8. `note_flush_roundtrips`——便签（验收 1 第三手势）：增量前缀
+//!    + 独立读回 `/Text` kind + 锚定 Rect 四边相等 + lopdf 直读
+//!    /Subtype /Text；
+//! 9. `three_kinds_coexist_after_save`——**验收 1 主锁**：高亮 +
+//!    下划线 + 便签同档混批 → 一次 save 落盘 → 三 kind 全量回读
+//!    （「桌面能加批注（高亮/下划线/便签）并保存」的端到端形态）；
+//! 10. `rotated_page_note_landing`——旋转页便签落点（Rect 面新变换
+//!    路径——与 QuadPoints 面互补的 #304 接线证据）。
 //!
 //! 夹具：`tests/fixtures/smoke.pdf`（既有）+ `../crates/pdf/fixtures/
 //! signed_sample.pdf`（跨 crate 仓内引用——#227/#303 的签名验证面同源）
@@ -27,11 +38,12 @@
 
 use std::path::{Path, PathBuf};
 
-use mang_shell::pdf_annotate::{AnnotateError, PdfAnnotateController};
+use mang_shell::pdf_annotate::{AnnotateError, PdfAnnotateController, UNDERLINE_COLOR};
 use mdc_pdf::annotate::read_annotations;
 use mdc_pdf::page::Rotation;
 use mdc_pdf::security::Limits;
 use mdc_pdf::signature::read_signatures;
+use mdc_pdf::writer_lopdf::lopdf;
 
 // ---------------------------------------------------------------------------
 // 夹具
@@ -321,4 +333,226 @@ fn list_and_page_bounds() {
         matches!(err, AnnotateError::PageOutOfRange { page: 2, count: 2 }),
         "{err:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 7-10：验收 1 三手势收口（tranche ②——下划线/便签/混合/旋转落点）
+// ---------------------------------------------------------------------------
+
+/// 落盘产物的批注子型原子证据（lopdf 直读——与引擎读面互为独立意见）。
+fn disk_subtypes(bytes: &[u8]) -> Vec<String> {
+    let doc = lopdf::Document::load_mem(bytes).expect("lopdf 装载");
+    let mut subs = Vec::new();
+    for (_no, page_id) in doc.get_pages() {
+        let dict = doc.get_dictionary(page_id).expect("页字典");
+        if let Ok(annots) = dict.get(b"Annots").and_then(|o| o.as_array()) {
+            for obj in annots {
+                if let Ok(id) = obj.as_reference() {
+                    if let Ok(adict) = doc.get_dictionary(id) {
+                        if let Ok(sub) = adict.get(b"Subtype").and_then(|o| o.as_name()) {
+                            subs.push(String::from_utf8_lossy(sub).into_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    subs
+}
+
+#[test]
+fn underline_flush_roundtrips() {
+    let original = fixture_bytes("smoke.pdf");
+    let mut controller = PdfAnnotateController::open(original.clone()).unwrap();
+
+    // 屏幕拖框（与高亮同坐标系——同页同区域便于对照）。
+    controller
+        .add_underline_from_screen(0, 120.0, 80.0, 520.0, 160.0, 96.0, "下划线者")
+        .expect("加下划线应成功");
+    let (product, stats) = controller.flush().unwrap();
+    assert!(stats.bytes_appended > 0, "有脏 flush 必追加（{stats:?}）");
+    assert!(
+        product.starts_with(&original),
+        "下划线同为增量前缀（验收 2 机制面对三手势一致）"
+    );
+
+    // 落盘 + 独立第二意见：引擎读面回读 Underline kind + QuadPoints。
+    let path = temp_path("underline");
+    controller.save(&path.0).unwrap();
+    let on_disk = std::fs::read(&path.0).unwrap();
+    let (annots, report) = read_annotations(on_disk.clone(), Limits::default()).unwrap();
+    assert_eq!(report.parsed, 1, "{report:?}");
+    let transform = controller.page_transform(0).unwrap();
+    let expected_quad = transform.screen_rect_to_quad(120.0, 80.0, 520.0, 160.0, 96.0);
+    match &annots[0].kind {
+        mdc_pdf::annotation::AnnotationKind::Underline { quads, color } => {
+            assert_eq!(quads.len(), 1, "单拖框 = 单 quad");
+            for (g, e) in quads[0].points.iter().zip(expected_quad.points.iter()) {
+                assert!(
+                    (g.x - e.x).abs() < 0.01 && (g.y - e.y).abs() < 0.01,
+                    "下划线四角往返（得 {g:?} 期望 {e:?}）"
+                );
+            }
+            assert_eq!(color, &UNDERLINE_COLOR, "缺省色往返（写面单源）");
+        }
+        other => panic!("应为下划线，得 {other:?}"),
+    }
+
+    // 子型原子证据：盘上 /Subtype /Underline（阅读器互通面——零私有扩展）。
+    let subs = disk_subtypes(&on_disk);
+    assert!(
+        subs.iter().any(|s| s == "Underline"),
+        "落盘子型应为 /Underline（得 {subs:?}）"
+    );
+}
+
+#[test]
+fn note_flush_roundtrips() {
+    let original = fixture_bytes("smoke.pdf");
+    let mut controller = PdfAnnotateController::open(original.clone()).unwrap();
+
+    controller
+        .add_note_from_screen(0, 200.0, 300.0, 420.0, 420.0, 96.0, "便签者")
+        .expect("加便签应成功");
+    let (product, stats) = controller.flush().unwrap();
+    assert!(stats.bytes_appended > 0, "{stats:?}");
+    assert!(
+        product.starts_with(&original),
+        "便签同为增量前缀（同一 flush 事务面）"
+    );
+
+    let path = temp_path("note");
+    controller.save(&path.0).unwrap();
+    let on_disk = std::fs::read(&path.0).unwrap();
+    let (annots, report) = read_annotations(on_disk.clone(), Limits::default()).unwrap();
+    assert_eq!(report.parsed, 1, "{report:?}");
+    assert_eq!(annots[0].author, "便签者", "作者往返");
+    assert_eq!(annots[0].page.0, 0, "页号往返");
+
+    // 锚定 Rect = 控制器同一变换算出的用户空间包络（两对角 min/max）。
+    let transform = controller.page_transform(0).unwrap();
+    let tl = transform.screen_to_user(200.0, 300.0, 96.0);
+    let br = transform.screen_to_user(420.0, 420.0, 96.0);
+    let (exp_x0, exp_x1) = (tl.x.min(br.x), tl.x.max(br.x));
+    let (exp_y0, exp_y1) = (tl.y.min(br.y), tl.y.max(br.y));
+    match &annots[0].kind {
+        mdc_pdf::annotation::AnnotationKind::Note { rect } => {
+            for (got, expect) in [
+                (rect.x0(), exp_x0),
+                (rect.y0(), exp_y0),
+                (rect.x1(), exp_x1),
+                (rect.y1(), exp_y1),
+            ] {
+                assert!(
+                    (got - expect).abs() < 0.01,
+                    "便签 Rect 边往返（得 {got} 期望 {expect}）"
+                );
+            }
+            assert!(
+                rect.width() > 0.0 && rect.height() > 0.0,
+                "便签锚框非退化（拖框区域即锚点）"
+            );
+        }
+        other => panic!("应为便签，得 {other:?}"),
+    }
+
+    // 子型原子证据：盘上 /Subtype /Text（PDF 便签标准子型）。
+    let subs = disk_subtypes(&on_disk);
+    assert!(
+        subs.iter().any(|s| s == "Text"),
+        "落盘子型应为 /Text（得 {subs:?}）"
+    );
+}
+
+#[test]
+fn three_kinds_coexist_after_save() {
+    // issue 验收 1 主锁：「桌面能对 PDF 加批注（高亮/下划线/便签）并
+    // 保存」——三手势同档混批，一次落盘，三 kind 全量回读。
+    let original = fixture_bytes("smoke.pdf");
+    let mut controller = PdfAnnotateController::open(original.clone()).unwrap();
+
+    controller
+        .add_highlight_from_screen(0, 120.0, 80.0, 520.0, 160.0, 96.0, "混批者")
+        .unwrap();
+    controller
+        .add_underline_from_screen(0, 120.0, 200.0, 520.0, 280.0, 96.0, "混批者")
+        .unwrap();
+    controller
+        .add_note_from_screen(1, 200.0, 300.0, 420.0, 420.0, 96.0, "混批者")
+        .unwrap();
+    let path = temp_path("mixed");
+    let stats = controller.save(&path.0).expect("三手势落盘");
+    assert!(stats.bytes_appended > 0, "{stats:?}");
+
+    let on_disk = std::fs::read(&path.0).unwrap();
+    assert!(
+        on_disk.starts_with(&original),
+        "三手势产物仍为增量前缀（验收 2 对混合批注一致）"
+    );
+
+    // 独立第二意见：三 kind 各一（页 0 两条 QuadPoints 系 + 页 1 一条）。
+    let (annots, report) = read_annotations(on_disk.clone(), Limits::default()).unwrap();
+    assert_eq!(report.parsed, 3, "{report:?}");
+    assert_eq!(report.skipped_malformed, 0, "无畸形跳过");
+    let mut kinds = std::collections::BTreeSet::new();
+    for a in &annots {
+        kinds.insert(format!("{:?}", a.kind.tag()));
+    }
+    assert_eq!(
+        kinds,
+        ["Highlight", "Note", "Underline"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<std::collections::BTreeSet<_>>(),
+        "三 kind 齐备（验收 1）"
+    );
+    // 页分布：页 0 高亮+下划线、页 1 便签。
+    assert_eq!(controller.list(Some(0)).unwrap().len(), 2, "页 0 两条");
+    assert_eq!(controller.list(Some(1)).unwrap().len(), 1, "页 1 一条");
+
+    // 子型原子证据：三个标准子型同档共存。
+    let subs = disk_subtypes(&on_disk);
+    assert!(subs.contains(&"Highlight".to_string()), "{subs:?}");
+    assert!(subs.contains(&"Underline".to_string()), "{subs:?}");
+    assert!(subs.contains(&"Text".to_string()), "{subs:?}");
+}
+
+#[test]
+fn rotated_page_note_landing() {
+    // 旋转页便签落点（#304 变换的 Rect 面——与 QuadPoints 面
+    // `rotated_page_geometry_and_landing` 互补）。
+    let bytes = rotated_crop_pdf();
+    let mut controller = PdfAnnotateController::open(bytes.clone()).unwrap();
+    assert_eq!(controller.page_count(), 1);
+
+    controller
+        .add_note_from_screen(0, 100.0, 60.0, 300.0, 180.0, 96.0, "旋转便签")
+        .expect("旋转页加便签应成功");
+    let (product, _) = controller.flush().unwrap();
+    assert!(product.starts_with(&bytes), "旋转页便签同为增量");
+
+    // 独立读回：Rect = 同变换两对角包络（旋转页上锚框仍轴对齐）。
+    let (annots, report) = read_annotations(product, Limits::default()).unwrap();
+    assert_eq!(report.parsed, 1, "{report:?}");
+    let transform = controller.page_transform(0).unwrap();
+    let tl = transform.screen_to_user(100.0, 60.0, 96.0);
+    let br = transform.screen_to_user(300.0, 180.0, 96.0);
+    let (exp_x0, exp_x1) = (tl.x.min(br.x), tl.x.max(br.x));
+    let (exp_y0, exp_y1) = (tl.y.min(br.y), tl.y.max(br.y));
+    match &annots[0].kind {
+        mdc_pdf::annotation::AnnotationKind::Note { rect } => {
+            for (got, expect) in [
+                (rect.x0(), exp_x0),
+                (rect.y0(), exp_y0),
+                (rect.x1(), exp_x1),
+                (rect.y1(), exp_y1),
+            ] {
+                assert!(
+                    (got - expect).abs() < 0.01,
+                    "旋转页便签 Rect 落点（得 {got} 期望 {expect}）"
+                );
+            }
+        }
+        other => panic!("应为便签，得 {other:?}"),
+    }
 }

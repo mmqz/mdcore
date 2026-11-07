@@ -3,8 +3,9 @@
 //! # 定位
 //!
 //! 页面视图（[`crate::pdf_pages::PdfPagesView`]）的**非 GUI 写面协调器**：
-//! 右键拖框高亮 → 屏幕矩形经 [`PageTransform`]（#304）转用户空间 →
-//! `PdfSession` 六命令面（`AnnotateAdd`）→ `flush_annotations` 增量保存
+//! 右键拖框按当前工具（[`AnnotateTool`]——高亮/下划线/便签三手势，
+//! issue #302 验收 1）→ 屏幕矩形经 [`PageTransform`]（#304）转用户空间
+//! → `PdfSession` 六命令面（`AnnotateAdd`）→ `flush_annotations` 增量保存
 //! （原字节前缀逐位保持——签名有效，#227 语义锁背书）→ 产物落盘。
 //! 渲染刷新（flush 后旧位图问题）由视图侧 RenderKey 键控（#305）承接。
 //!
@@ -38,7 +39,9 @@
 
 use std::path::Path;
 
-use mdc_pdf::annotation::{AnnotId, Annotation, AnnotationDraft, AnnotationKind, Origin, Rgb};
+use mdc_pdf::annotation::{
+    AnnotId, Annotation, AnnotationDraft, AnnotationKind, Origin, Rect, Rgb,
+};
 use mdc_pdf::command::{Command, CommandError, Outcome, Source};
 use mdc_pdf::document::{DocumentMeta, PdfDocumentId, PdfSession};
 use mdc_pdf::outline::OutlineTree;
@@ -55,6 +58,44 @@ pub const HIGHLIGHT_COLOR: Rgb = Rgb {
     g: 233,
     b: 90,
 };
+
+/// 下划线缺省色（#45 笔迹蓝同源——仓内既定缺省视觉，零新而异）。
+pub const UNDERLINE_COLOR: Rgb = Rgb {
+    r: 0x1a,
+    g: 0x73,
+    b: 0xe8,
+};
+
+/// 视图侧批注工具（issue #302 验收 1 三手势：高亮/下划线/便签）。
+///
+/// 手势→工具派发在 [`crate::pdf_pages`]；本枚举放在控制器模块
+/// 是为了让 e2e（无 GUI）与视图（有 GUI）共享同一枚举面。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnotateTool {
+    Highlight,
+    Underline,
+    Note,
+}
+
+impl AnnotateTool {
+    /// 用户可见名（提示横幅用）。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Highlight => "高亮",
+            Self::Underline => "下划线",
+            Self::Note => "便签",
+        }
+    }
+
+    /// 循环切换：高亮 → 下划线 → 便签 → 高亮（退化右键单击驱动）。
+    pub fn next(self) -> Self {
+        match self {
+            Self::Highlight => Self::Underline,
+            Self::Underline => Self::Note,
+            Self::Note => Self::Highlight,
+        }
+    }
+}
 
 /// 标注写会话错误（typed——不 panic 不字符串裸传）。
 #[derive(Debug)]
@@ -188,12 +229,6 @@ impl PdfAnnotateController {
         dpi: f32,
         author: &str,
     ) -> Result<AnnotId, AnnotateError> {
-        if page >= self.page_count {
-            return Err(AnnotateError::PageOutOfRange {
-                page,
-                count: self.page_count,
-            });
-        }
         let transform = self.page_transform(page)?;
         let quad = transform.screen_rect_to_quad(x0, y0, x1, y1, dpi);
         let draft = AnnotationDraft {
@@ -205,6 +240,83 @@ impl PdfAnnotateController {
             author: author.into(),
             origin: Origin::Human,
         };
+        self.commit_draft(draft)
+    }
+
+    /// 右键拖框下划线（#302 验收 1 第二手势）：与高亮同变换面
+    /// （`/Underline` 同样吃 QuadPoints），仅色缺省不同。
+    pub fn add_underline_from_screen(
+        &mut self,
+        page: u32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        dpi: f32,
+        author: &str,
+    ) -> Result<AnnotId, AnnotateError> {
+        let transform = self.page_transform(page)?;
+        let quad = transform.screen_rect_to_quad(x0, y0, x1, y1, dpi);
+        let draft = AnnotationDraft {
+            page: PageIndex(page),
+            kind: AnnotationKind::Underline {
+                quads: vec![quad],
+                color: UNDERLINE_COLOR,
+            },
+            author: author.into(),
+            origin: Origin::Human,
+        };
+        self.commit_draft(draft)
+    }
+
+    /// 右键拖框便签（#302 验收 1 第三手势）：屏幕矩形 → 用户空间
+    /// 锚定 [`Rect`]（四角 `screen_to_user` 后 min/max 轴对齐化——与
+    /// `screen_rect_to_quad` 同旋转鲁棒面；便签锚点即拖框区域）。
+    /// 弹出评语文本面 v0 不建模（引擎 `Note` 同语义——`/Contents` 面
+    /// 属 PDF-d 定稿，不在本 tranche）。
+    pub fn add_note_from_screen(
+        &mut self,
+        page: u32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        dpi: f32,
+        author: &str,
+    ) -> Result<AnnotId, AnnotateError> {
+        let transform = self.page_transform(page)?;
+        // 任意对角序归一化（与 screen_rect_to_quad 同输入契约）。
+        let (sx0, sx1) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
+        let (sy0, sy1) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
+        // 两对角 → 用户空间，min/max 轴对齐（90° 倍旋转下映射仍是
+        // 轴对齐矩形——取包络不引入歪斜）。
+        let tl = transform.screen_to_user(sx0, sy0, dpi);
+        let br = transform.screen_to_user(sx1, sy1, dpi);
+        let (min_x, max_x) = (tl.x.min(br.x), tl.x.max(br.x));
+        let (min_y, max_y) = (tl.y.min(br.y), tl.y.max(br.y));
+        let rect = Rect::new(min_x, min_y, max_x, max_y).map_err(|e| {
+            AnnotateError::Command(CommandError::engine(format!(
+                "便签矩形退化/非有限（{e:?}）"
+            )))
+        })?;
+        let draft = AnnotationDraft {
+            page: PageIndex(page),
+            kind: AnnotationKind::Note { rect },
+            author: author.into(),
+            origin: Origin::Human,
+        };
+        self.commit_draft(draft)
+    }
+
+    /// 草稿 → `AnnotateAdd`（三手势共享出口——页界检查 + 载荷形状
+    /// 断言单点化，防三处复制漂移）。
+    fn commit_draft(&mut self, draft: AnnotationDraft) -> Result<AnnotId, AnnotateError> {
+        if draft.page.0 >= self.page_count {
+            return Err(AnnotateError::PageOutOfRange {
+                page: draft.page.0,
+                count: self.page_count,
+            });
+        }
         let Outcome::AnnotAdded(added) = self.session.execute(Command::AnnotateAdd {
             draft,
             source: Source::View,
