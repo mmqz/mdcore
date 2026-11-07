@@ -81,3 +81,9 @@ pub mod pdf_annotate;
 /// libpdfium 同样真跑）。
 #[path = "pdf_pages.rs"]
 pub mod pdf_pages;
+
+/// #389 阶段 1：XLSX 网格视图（真网格渲染骨架——列头/行号槽固定 +
+/// 双向虚拟化 + 单元格点选；数据面/几何纯函数零 GPUI 依赖可测，
+/// GPUI 层编译面验证 + 真机登记——pdf_pages 同纪律）。
+#[path = "xlsx_grid_view.rs"]
+pub mod xlsx_grid_view;

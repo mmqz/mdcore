@@ -55,6 +55,7 @@ use crate::status_bar;
 use crate::tab_bar::{self, TabItem};
 use crate::theme_switch;
 use crate::title_bar;
+use crate::xlsx_grid_view::XlsxGridView;
 
 /// Ctrl+K 和弦窗口（第二键有效期；过期自动作废——惰性判定无需定时器）。
 const CHORD_WINDOW: Duration = Duration::from_secs(2);
@@ -151,6 +152,13 @@ pub struct ShellApp {
     /// #289-④：pdf 显示模式（true = 页面位图视图——缺省；false =
     /// 文本行模型。状态栏「页面/文本」钮切换；Ctrl+F 自动切文本）。
     pdf_view_mode: bool,
+    /// #389 阶段 1：xlsx 网格视图（当前 xlsx 标签的真网格渲染实体 +
+    /// 归属路径——生命周期与 pdf_pages 同模式：切标签重建/关标签丢弃）。
+    xlsx_grid: Option<(PathBuf, Entity<XlsxGridView>)>,
+    /// #389 阶段 1：xlsx 显示模式（true = 网格视图——缺省；false =
+    /// 文本行模型 fallback。状态栏「网格/文本」钮切换——pdf 页面/文本
+    /// 先例同构）。
+    xlsx_grid_view_mode: bool,
     /// #164 1c：首帧计时基点（ShellApp 构造时置 = perf::boot()，首个
     /// render 呈现时消费——`perf: first-frame` 证据行；MANG_PERF 未开
     /// 恒 None，零开销）。
@@ -373,6 +381,8 @@ impl ShellApp {
             settings_open: false,
             pdf_pages: None,
             pdf_view_mode: true,
+            xlsx_grid: None,
+            xlsx_grid_view_mode: true,
             perf_first_frame: crate::perf::on().then(crate::perf::boot),
             chord: None,
             confirm: None,
@@ -707,6 +717,56 @@ impl ShellApp {
                 .scroll_to_page(page_1based.saturating_sub(1));
             cx.notify();
         }
+    }
+
+    // ── #389 阶段 1：xlsx 网格视图（真网格渲染面） ──────────────
+
+    /// 当前活动标签是否 xlsx 态（网格视图的挂载判据）。
+    fn active_is_xlsx(&self, cx: &Context<Self>) -> bool {
+        self.editor()
+            .is_some_and(|ed| ed.read(cx).doc_kind() == "xlsx")
+    }
+
+    /// 确保当前 xlsx 标签的网格视图实体在场（生命周期与 ensure_pdf_pages
+    /// 同模式：非 xlsx 态 / 已在同路径实体上 = 无操作；切标签重建）。
+    fn ensure_xlsx_grid(&mut self, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        if tab.editor.read(cx).doc_kind() != "xlsx" {
+            return;
+        }
+        let path = tab.path.clone();
+        if let Some((owned, _)) = &self.xlsx_grid {
+            if *owned == path {
+                return;
+            }
+        }
+        // 网格模型装载（office-io 读面同源——xlsx_doc::load 同一入口；
+        // 失败 → error 态实体 + 提示，文本模型不受影响）。
+        let entity = match crate::xlsx_grid_view::XlsxGridModel::load(&path) {
+            Ok(model) => cx.new(|cx| XlsxGridView::new(model, cx)),
+            Err(err) => {
+                let message = format!("网格视图装载失败（{}）：{err}", path.display());
+                self.show_notice(message, cx);
+                cx.new(|cx| XlsxGridView::error_state(err, cx))
+            }
+        };
+        self.xlsx_grid = Some((path, entity));
+        cx.notify();
+    }
+
+    /// #389 阶段 1：切换 xlsx 显示模式（状态栏「网格/文本」钮——pdf
+    /// 页面/文本先例同构）。
+    pub fn toggle_xlsx_view_mode(&mut self, cx: &mut Context<Self>) {
+        if !self.active_is_xlsx(cx) {
+            return;
+        }
+        self.xlsx_grid_view_mode = !self.xlsx_grid_view_mode;
+        if self.xlsx_grid_view_mode {
+            self.ensure_xlsx_grid(cx);
+        }
+        cx.notify();
     }
 
     // ── #63 打磨：右键菜单 ─────────────────────────────────────
@@ -1098,6 +1158,8 @@ impl ShellApp {
                 }
                 // #289-④：pdf 标签 → 页视图落位（位图渲染主显示面）。
                 self.ensure_pdf_pages(cx);
+                // #389 阶段 1：xlsx 标签 → 网格视图落位（真网格主显示面）。
+                self.ensure_xlsx_grid(cx);
                 cx.notify();
                 Some(focus)
             }
@@ -1125,6 +1187,8 @@ impl ShellApp {
         self.active = idx;
         // #289-④：pdf 标签 → 页视图随标签落位（同路径复用，异路径重建）。
         self.ensure_pdf_pages(cx);
+        // #389 阶段 1：xlsx 标签 → 网格视图随标签落位（同路径复用，异路径重建）。
+        self.ensure_xlsx_grid(cx);
         let focus = tab.editor.read(cx).focus_handle().clone();
         cx.notify();
         Some(focus)
@@ -1176,6 +1240,12 @@ impl ShellApp {
                 self.pdf_pages = None;
             }
         }
+        // #389 阶段 1：网格视图同款生命周期（关标签丢弃）。
+        if let Some((owned, _)) = &self.xlsx_grid {
+            if *owned == closed_path {
+                self.xlsx_grid = None;
+            }
+        }
         self.tabs.remove(idx);
         self.active = if idx < self.active {
             self.active - 1
@@ -1191,6 +1261,8 @@ impl ShellApp {
         );
         // #289-④：新活动标签若是 pdf → 页视图随标签重建。
         self.ensure_pdf_pages(cx);
+        // #389 阶段 1：新活动标签若是 xlsx → 网格视图随标签重建。
+        self.ensure_xlsx_grid(cx);
         // 焦点跟到新活动标签（空态回退 shell 根域）。
         self.focus_active(window, cx);
         cx.notify();
@@ -2107,6 +2179,7 @@ impl Render for ShellApp {
                     .as_ref()
                     .map(|tree| tree.read(cx).root().to_path_buf()),
                 self.pdf_view_mode,
+                self.xlsx_grid_view_mode,
                 cx,
             ))
             // G4：面板拖拽收尾钩（窗口级 mouseup——canvas paint 期每帧
@@ -2312,11 +2385,19 @@ fn editor_area(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> impl IntoEle
         .filter(|ed| ed.read(cx).doc_kind() == "pdf")
         .and_then(|_| shell.pdf_view_mode.then(|| ()))
         .and_then(|_| shell.pdf_pages.as_ref().map(|(_, e)| e.clone()));
+    // #389 阶段 1：xlsx 标签的网格视图（真网格主显示面）——模式开且有
+    // 实体时替代文本行模型呈现（状态栏「网格/文本」钮切换回退）。
+    let xlsx_grid_entity = shell
+        .editor()
+        .filter(|ed| ed.read(cx).doc_kind() == "xlsx")
+        .and_then(|_| shell.xlsx_grid_view_mode.then(|| ()))
+        .and_then(|_| shell.xlsx_grid.as_ref().map(|(_, e)| e.clone()));
     let active_editor = shell.editor().cloned();
-    match (pdf_pages_entity, active_editor) {
-        (Some(pages), _) => pages.into_any_element(),
-        (None, Some(editor)) => editor.into_any_element(),
-        (None, None) => {
+    match (pdf_pages_entity, xlsx_grid_entity, active_editor) {
+        (Some(pages), _, _) => pages.into_any_element(),
+        (None, Some(grid), _) => grid.into_any_element(),
+        (None, None, Some(editor)) => editor.into_any_element(),
+        (None, None, None) => {
             // F5：最近列表数据（文件至多 8 / 工作区至多 3 展示面——
             // 记忆上限仍为 20/10，展示截断防长列表挤爆空态页）。
             let recent_files: Vec<PathBuf> = shell
