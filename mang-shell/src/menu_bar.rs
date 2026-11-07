@@ -83,6 +83,8 @@ pub struct MenuContext {
     pub left_open: bool,
     /// 左栏当前是 git 视图（侧栏子菜单勾选标记）。
     pub git_view: bool,
+    /// 活动标签是 DOCX（#307「导出为 PDF」门槛——仅 docx 形态提供）。
+    pub active_is_docx: bool,
     /// 最近打开的文件（路径序 = 子菜单条目序；`OpenRecent(usize)` 按此序回查）。
     pub recent_files: Vec<PathBuf>,
 }
@@ -106,6 +108,9 @@ pub enum MenuAction {
     OpenRecent(usize),
     /// 另存为（shell 既有 `prompt_save_as`——Ctrl+Shift+S 同链）。
     SaveAs,
+    /// #307 阶段①：导出为 PDF（shell `export_active_pdf`——DOCX 经
+    /// LibreOffice headless 转 PDF；仅 docx 标签启用）。
+    ExportPdf,
     /// 退出（与标题栏 × 钮同一条 `cx.quit` 既有路径）。
     Quit,
     /// 关于（既有提示横幅 `show_notice` 承载——层 3 可发现性验收项）。
@@ -269,6 +274,9 @@ pub fn build_menus(ctx: &MenuContext) -> Vec<TopMenu> {
                     .shortcut_for("prompt_save_as")
                     .act(MenuAction::SaveAs)
                     .with_enabled(doc),
+                MenuEntry::item("file-export-pdf", "导出为 PDF")
+                    .act(MenuAction::ExportPdf)
+                    .with_enabled(ctx.active_is_docx),
                 MenuEntry::Separator,
                 MenuEntry::submenu("最近打开", recent_entries(ctx)),
                 MenuEntry::Separator,
@@ -741,6 +749,7 @@ mod tests {
             theme_mode: THEME_LIGHT,
             left_open: true,
             git_view: false,
+            active_is_docx: true,
             recent_files: vec![
                 PathBuf::from("/tmp/m209-a.md"),
                 PathBuf::from("/tmp/不存在-b.md"),
@@ -758,6 +767,7 @@ mod tests {
             theme_mode: THEME_SYSTEM,
             left_open: true,
             git_view: false,
+            active_is_docx: false,
             recent_files: Vec::new(),
         }
     }
@@ -1130,22 +1140,23 @@ mod tests {
         let menus = build_menus(&full_ctx());
         let mut state = MenuBarState::default();
         state.open_menu(0, 0., &menus);
-        // 文件菜单条目：新建0 打开1 打开文件夹2 保存3 另存为4 |sep5| 最近打开6 |sep7| 退出8
+        // 文件菜单条目：新建0 打开1 打开文件夹2 保存3 另存为4 导出PDF5 |sep6| 最近打开7 |sep8| 退出9
         assert_eq!(state.selected, 0);
         state.move_vertical(&menus, true);
         assert_eq!(state.selected, 1);
-        // 步进到子菜单标题（6）再下一步是 8（跳过 7 分隔线）。
+        // 步进到子菜单标题（7）再下一步是 9（跳过 8 分隔线）。
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
-        assert_eq!(state.selected, 6, "停在「最近打开」");
         state.move_vertical(&menus, true);
-        assert_eq!(state.selected, 8, "跳过分隔线 7 到「退出」");
+        assert_eq!(state.selected, 7, "停在「最近打开」");
+        state.move_vertical(&menus, true);
+        assert_eq!(state.selected, 9, "跳过分隔线 8 到「退出」");
         state.move_vertical(&menus, true);
         assert_eq!(state.selected, 0, "wrap 回首项");
         state.move_vertical(&menus, false);
-        assert_eq!(state.selected, 8, "反向 wrap 回末项");
+        assert_eq!(state.selected, 9, "反向 wrap 回末项（退出）");
     }
 
     /// Enter 在子菜单标题上：展开子菜单；↓ 移动后再次 Enter 激活子菜单
@@ -1225,7 +1236,10 @@ mod tests {
         state.move_vertical(&menus, true);
         assert!(state.selected < menus[0].entries.len());
         assert_eq!(state.open_submenu, None, "越界子菜单序自愈清空");
-        // Enter：与 focused_item 的投射一致（选中项有效即激活并全关）。
+        // Enter：与 focused_item 的投射一致——钉在普通条目上测（自愈
+        // 落点随菜单结构漂移：「最近打开」子菜单标题的 Enter 语义是
+        // 展开子菜单而非关闭，不作为本断言的载体）。
+        state.selected = 1;
         let expect = state
             .focused_item(&menus)
             .filter(|s| s.enabled)
@@ -1275,11 +1289,11 @@ mod tests {
         let menus = build_menus(&full_ctx());
         let entries = &menus[0].entries;
         assert_eq!(row_y_offset(entries, 0), context_menu::MENU_PADDING_Y);
-        // idx 6（最近打开）之前有两条分隔线（5、7 中前者在 0..6 内）。
+        // idx 7（最近打开）之前有六项普通条目（0..5）+ 一条分隔线（6）。
         let expect = context_menu::MENU_PADDING_Y
-            + context_menu::ITEM_HEIGHT * 5.
+            + context_menu::ITEM_HEIGHT * 6.
             + context_menu::ITEM_HEIGHT * context_menu::SEPARATOR_UNITS;
-        assert_eq!(row_y_offset(entries, 6), expect);
+        assert_eq!(row_y_offset(entries, 7), expect);
     }
 
     /// 锚点估算随菜单序单调递增（下拉往右跟着标题走）。

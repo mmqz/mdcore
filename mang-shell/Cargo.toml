@@ -98,6 +98,10 @@ lopdf = { version = "=0.45.0", default-features = false }
 # 部件恒等 + B 段 document.xml 结构断言）。Cargo.lock 既有条目
 #（mdc-office-io 传递依赖同版本同 feature）——零新增三方，零 lock 变更。
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# #307 阶段①（tests/convert_quality.rs）：DOCX→PDF 转换质量门夹具
+# 构造（docx-rs builder——与 mdc-office-io 测试面同源同版本同 feature，
+# Cargo.lock 既有条目，零新增三方，零 lock 变更）。
+docx-rs = { version = "0.4", default-features = false }
 
 # 与 third_party/zed/Cargo.toml 保持同源（生效的 3 条）：gpui 的 async-task、
 # gpui_linux 的 calloop、wgpu-hal 传递的 khronos-egl 均被上游 patch 到自维护
