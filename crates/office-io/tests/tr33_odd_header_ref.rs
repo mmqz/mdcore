@@ -31,8 +31,11 @@ fn read_corpus_file(rel: &str) -> DocxDocument {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(CORPUS)
         .join(rel);
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("corpus fixture missing: {rel} ({e})——语料经 git 跟踪（#260 账本同源），缺席 = 检出异常"));
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "corpus fixture missing: {rel} ({e})——语料经 git 跟踪（#260 账本同源），缺席 = 检出异常"
+        )
+    });
     read_docx_from_bytes_with_options(&bytes, &ReadOptions { compat: true })
         .unwrap_or_else(|e| panic!("compat read of {rel}: {e}"))
 }
@@ -167,7 +170,7 @@ fn odd_reference_conflicting_with_legal_default_skipped() {
     assert_eq!(doc.headers[0].variant, HeaderFooterVariant::Default);
     assert!(
         doc.warnings.iter().any(
-            |w| w.detail.contains("legacy odd headerReference") && w.detail.contains("skipped")
+            |w| w.detail.contains("headerReference (type=odd") && w.detail.contains("skipped")
         ),
         "冲突跳过 Warning 在档"
     );

@@ -57,10 +57,15 @@
 //!    `w:pgMar`/`w:pgSz` 数值属性空串经 docx_panic_guard 读前归一化
 //!    为 `"0"`（Word 零值语义），sectPr 不再静默丢；GT 的
 //!    `sect_pr_dropped_attr` 扣除项已移除（cr065 7 节全量重钉）。
+//! 7. **strict OOXML 页眉页脚引用丢（已修 #349——#318 D7 闭项）**：
+//!    purl.oclc.org 命名空间文档的引用——typed 引用在场而 docx-rs
+//!    联接面按过渡期关系 Type 锁定不联内容 → 末节槽丢。
+//!    修复 = `extract_headers_footers` 引用-在-内容-未联接分支的
+//!    部件直解析恢复（mid_section_slots 同构）+ 第二趟防御纵深
+//!    （`attach_unresolved_refs`——typed 未承载引用兑底）。语料 1
+//!    件（strict-sample；可见性计数保留；平价公式已重钉：
+//!    `refs_strict_dropped` 计入挂接面，tests/tr34_strict_refs.rs 锚）。
 
-//! 7. **strict OOXML 页眉页脚引用丢**：purl.oclc.org 命名空间文档的
-//!    sectPr 引用引擎不解析（段落内容不受影响）。语料 1 件
-//!    （strict-sample）。
 //! 8. **修订面排除容器**（非损失——语义正确面）：`w:del` 内
 //!    delText 不提取（#17）；moveFrom/moveTo 容器内 ins 不标记
 //!    （Tika-792）。（历史：hyperlink 内嵌 `w:ins` 的 run 整体丢
@@ -924,11 +929,14 @@ fn parity_violations(file: &str, gt: &Gt, m: &Mc) -> Vec<String> {
         m.all_textbox,
     );
     chk("top_para", gt.p_direct + gt.p_in_ac, m.top_para);
-    // #347（#318 D5）：odd 引用已由第二趟容错挂接（Default 语义）
-    // ——`refs_odd` 计入挂接面（strict 件的 refs_resolved 归零面
-    // 不受影响：refs_odd 独立计数不归零，与挂接面 local-name 通道
-    // 命名空间无关的语义一致）。
-    chk("hf_slots", gt.refs_resolved + gt.refs_odd, m.section_slots);
+    // #347（D5）+ #349（D7）：odd / strict 两损失面均已修——计入
+    // 挂接面（strict 件的 refs_resolved 归零转记 refs_strict_dropped，
+    // 恢复面在 extract_headers_footers 的部件直解析分支）。
+    chk(
+        "hf_slots",
+        gt.refs_resolved + gt.refs_odd + gt.refs_strict_dropped,
+        m.section_slots,
+    );
     chk("footnote_entries", gt.footnote_entries, m.footnotes);
     chk("endnote_entries", gt.endnote_entries, m.endnotes);
     chk("comment_entries", gt.comment_entries, m.comments);
@@ -960,7 +968,7 @@ fn full_corpus_structural_parity() {
     let (mut sdt_loss, mut txbx_tc_fixed, mut group_txbx_fixed, mut odd_ref_fixed) =
 
         (0usize, 0usize, 0usize, 0usize);
-    let (mut ac_flatten_files, mut strict_files) = (0usize, 0usize);
+    let (mut ac_flatten_files, mut strict_fixed) = (0usize, 0usize);
     let (
         mut nested_files,
         mut txbx_files,
@@ -1045,7 +1053,7 @@ fn full_corpus_structural_parity() {
             ac_flatten_files += 1;
         }
         if gt.refs_strict_dropped > 0 {
-            strict_files += 1;
+            strict_fixed += 1;
         }
     }
 
@@ -1087,7 +1095,7 @@ fn full_corpus_structural_parity() {
     // ---- 可见性汇总（已知损失不静默——#260 账本面）----
     eprintln!("[structural-ledger] 630 件：ok {ok} / 容器拒绝 {reject_container} / 解析拒绝 {reject_parse} / panic 0");
     eprintln!("[structural-ledger] 五类覆盖：嵌套表 {nested_files} / 文本框 {txbx_files} / 修订 {ins_files} / 页眉页脚 {hf_files} / 脚注 {fn_files} / 批注 {cm_files} / 多节 {multi_sect}");
-    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / strict 引用丢 {strict_files} 件 / AC 扁平重复 {ac_flatten_files} 件；表内文本框已修（#345 D2——第二趟补提取）{txbx_tc_fixed} 件 / 组内文本框已修（#346 D4——第二趟补发射）{group_txbx_fixed} 件 / odd 型引用已修（#347 D5——Default 语义容错挂接）{odd_ref_fixed} 件");
+    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / AC 扁平重复 {ac_flatten_files} 件；表内文本框已修（#345 D2——第二趟补提取）{txbx_tc_fixed} 件 / 组内文本框已修（#346 D4——第二趟补发射）{group_txbx_fixed} 件 / odd 型引用已修（#347 D5——Default 语义容错挂接）{odd_ref_fixed} 件 / strict 引用已修（#349 D7——部件直解析恢复）{strict_fixed} 件");
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,10 +1237,14 @@ fn five_category_pinned_anchors() {
     let g = gt_one("docx4j/mc-fun_mc-block.docx");
     assert_eq!(g.p_direct, 2, "mc-block GT 直段");
     assert_eq!(g.p_in_ac, 11, "mc-block GT AC 内段");
-    // strict OOXML：段落照常（63），引用丢（slots=0）。
+    // strict OOXML：段落照常（63），引用恢复挂接（#349 D7 修复——
+    // slots=1：typed 引用在、内容未联接的部件直解析恢复）。
     let m = model_counts(&read_one("docx4j/strict_strict-sample-docx.docx"));
     assert_eq!(m.top_para, 63, "strict-sample 段数（内容不受影响）");
-    assert_eq!(m.section_slots, 0, "strict-sample 引用全丢（已知损失 #7）");
+    assert_eq!(
+        m.section_slots, 1,
+        "strict-sample 引用恢复挂接（D7 修复后：部件直解析恢复）"
+    );
     // 非常规主件名：HelloWordOnline（document22.xml 经 [Content_Types]
     // 解析）。
     let m = model_counts(&read_one("docx4j/HelloWordOnline.docx"));
