@@ -50,8 +50,12 @@
 //!    过滤器独立同构，保持第二意见性质），p_in_ac / txbx / ins /
 //!    脚注引用 / 节各面均只计选中分支。历史口径（全分支计入钉现行
 //!    为）已随修复收紧。
-//! 5. **`w:type="odd"` 引用丢**：ECMA-376 合法值 default/first/even，
-//!    Word 容忍旧值 odd；docx-rs 词汇表外丢弃。语料 1 件（60293）。
+//! 5. **`w:type="odd"` 引用丢（已修 #347——#318 D5 闭项）**：
+//!    ECMA-376 合法值 default/first/even，Word 容忍旧值 odd；
+//!    docx-rs 词汇表外丢弃 → 自有 sectPr 第二趟补挂
+//!    （`parse_legacy_odd_refs`——odd 按 default 语义挂接 + Warning
+//!    可见性）。语料 1 件（60293；可见性计数保留；平价公式已重钉：
+//!    `refs_odd` 计入挂接面，tests/tr33_odd_header_ref.rs 锚）。
 //! 6. **空串属性 sectPr 整体丢**：`w:pgMar w:top=""` 等零长度数值
 //!    （cr065 decimals 探针）→ docx-rs typed 解析失败丢弃整个节标记
 //!    （含其引用）。语料 1 件丢 2 节。
@@ -984,7 +988,11 @@ fn parity_violations(file: &str, gt: &Gt, m: &Mc) -> Vec<String> {
         m.all_textbox,
     );
     chk("top_para", gt.p_direct + gt.p_in_ac, m.top_para);
-    chk("hf_slots", gt.refs_resolved, m.section_slots);
+    // #347（#318 D5）：odd 引用已由第二趟容错挂接（Default 语义）
+    // ——`refs_odd` 计入挂接面（strict 件的 refs_resolved 归零面
+    // 不受影响：refs_odd 独立计数不归零，与挂接面 local-name 通道
+    // 命名空间无关的语义一致）。
+    chk("hf_slots", gt.refs_resolved + gt.refs_odd, m.section_slots);
     chk("footnote_entries", gt.footnote_entries, m.footnotes);
     chk("endnote_entries", gt.endnote_entries, m.endnotes);
     chk("comment_entries", gt.comment_entries, m.comments);
@@ -1013,7 +1021,7 @@ fn full_corpus_structural_parity() {
     let mut gt_fails: Vec<String> = Vec::new();
     let mut violations: Vec<String> = Vec::new();
     // 已知损失可见性聚合（不静默——汇总打印）。
-    let (mut sdt_loss, mut txbx_tc_fixed, mut group_txbx_fixed, mut odd_ref_files) =
+    let (mut sdt_loss, mut txbx_tc_fixed, mut group_txbx_fixed, mut odd_ref_fixed) =
         (0usize, 0usize, 0usize, 0usize);
     let (mut mce_selected_files, mut strict_files, mut attr_drop_files) = (0usize, 0usize, 0usize);
     let (
@@ -1094,7 +1102,7 @@ fn full_corpus_structural_parity() {
             group_txbx_fixed += 1;
         }
         if gt.refs_odd > 0 {
-            odd_ref_files += 1;
+            odd_ref_fixed += 1;
         }
         if gt.p_in_ac > 0 {
             mce_selected_files += 1;
@@ -1145,7 +1153,7 @@ fn full_corpus_structural_parity() {
     // ---- 可见性汇总（已知损失不静默——#260 账本面）----
     eprintln!("[structural-ledger] 630 件：ok {ok} / 容器拒绝 {reject_container} / 解析拒绝 {reject_parse} / panic 0");
     eprintln!("[structural-ledger] 五类覆盖：嵌套表 {nested_files} / 文本框 {txbx_files} / 修订 {ins_files} / 页眉页脚 {hf_files} / 脚注 {fn_files} / 批注 {cm_files} / 多节 {multi_sect}");
-    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / odd 型引用丢 {odd_ref_files} 件 / strict 引用丢 {strict_files} 件 / 空属性节丢 {attr_drop_files} 件；表内文本框已修（#345 D2——第二趟补提取）{txbx_tc_fixed} 件 / 组内文本框已修（#346 D4——第二趟补发射）{group_txbx_fixed} 件");
+    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / strict 引用丢 {strict_files} 件 / 空属性节丢 {attr_drop_files} 件；表内文本框已修（#345 D2——第二趟补提取）{txbx_tc_fixed} 件 / 组内文本框已修（#346 D4——第二趟补发射）{group_txbx_fixed} 件 / odd 型引用已修（#347 D5——Default 语义容错挂接）{odd_ref_fixed} 件");
     eprintln!("[structural-ledger] MCE 选择生效（#344 修复——选中分支单份，非重复）：{mce_selected_files} 件");
 }
 
@@ -1203,12 +1211,19 @@ fn five_category_pinned_anchors() {
     assert_eq!(g.txbx_outermost, 10, "GT 选中分支最外层框数");
     assert_eq!(g.txbx_in_tc, 1, "表内框计数（D2 已修——GT 计数保留对账面）");
 
-    // ④ 页眉页脚：60293（5 槽 = 6 引用 − 1 odd 型丢[已知损失 #5]）
-    //    + headers_footers_sections_multiple（多节 7 槽全挂）。
+    // ④ 页眉页脚：60293（6 槽 = 6 引用全挂——#347（#318 D5）修复后
+    //    odd 型引用补挂：5 → 6）+ headers_footers_sections_multiple
+    //    （多节 7 槽全挂）。
     let m = model_counts(&read_one("poi-docx/60293.docx"));
-    assert_eq!(m.section_slots, 5, "60293 挂接槽位数");
+    assert_eq!(
+        m.section_slots, 6,
+        "60293 挂接槽位数（D5 修复后含 odd 补挂）"
+    );
     let g = gt_one("poi-docx/60293.docx");
-    assert_eq!(g.refs_odd, 1, "60293 odd 型引用（已知损失可见性）");
+    assert_eq!(
+        g.refs_odd, 1,
+        "60293 odd 型引用（D5 已修——GT 计数保留对账面）"
+    );
     let m = model_counts(&read_one("docx4j/headers_footers_sections_multiple.docx"));
     assert_eq!(m.sections, 2, "多节件节数");
     assert_eq!(m.section_slots, 7, "多节件挂接槽位");
