@@ -420,15 +420,18 @@
      （主画布 + AI 端只读镜像），SVG 元素样式/选中态/工具条 ---- */
   #canvas-panel { display: none; max-width: 1128px; margin: 8px auto 0; padding: 0 16px;
                   height: calc(100vh - 170px); }
+  /* #426 修正：单行不换行 + 横向滚动（wrap 二行会溢出 32px 定高盒、
+     被 #canvas-body 覆盖拦截点击——加按钮即触发的布局缺陷）。
+     status 视觉截断（textContent 不断——探针断言不受影响）。 */
   #canvas-toolbar { display: flex; align-items: center; gap: 6px; font-size: 13px; height: 32px;
-                   flex-wrap: wrap; }
+                   flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
   .cv-btn { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid var(--border);
             border-radius: 6px; background: var(--panel); cursor: pointer; }
   .cv-btn:hover:not(:disabled) { background: var(--panel-hover); }
   .cv-btn:disabled { opacity: .45; cursor: default; }
   .cv-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   #canvas-status { margin-left: 8px; color: var(--fg-muted); font-size: 12px; min-height: 16px;
-                   word-break: break-all; }
+                   flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #canvas-status.cv-error { color: var(--danger); }
   #canvas-body { display: flex; gap: 10px; height: calc(100% - 64px); }
   /* #367 相机模型：svg 填充容器（无固定尺寸），滚动退役交相机
@@ -448,6 +451,9 @@
   #canvas-svg .node.dragging rect { fill: #ffe9b8; stroke: #b45309; }
   #canvas-svg .node.edge-source rect { stroke: #b45309; stroke-width: 3; stroke-dasharray: 4 3; }
   #canvas-svg .edge { stroke: #8895a7; stroke-width: 1.5; }
+  /* #426 笔迹：outline 填充 path（fill 属性逐对象内联——此处只管指针面） */
+  #canvas-svg .stroke { pointer-events: none; }
+  #canvas-svg .cv-brush-preview { pointer-events: none; }
   #canvas-svg .edge.dangling { stroke: #d97706; stroke-dasharray: 5 4; }
   #canvas-svg .group rect { fill: none; stroke: #9aa3af; stroke-dasharray: 6 4; }
   #canvas-svg .group.selected rect { stroke: #7c3aed; stroke-width: 2; }

@@ -54,6 +54,9 @@ type WasmModule = typeof import('../pkg/mdcore_wasm.js');
 import { wasmBoot } from './wasm_boot.js';
 import { mount_surface_guide } from './empty_state.js';
 import { t } from './i18n/index.js';
+// #426（#44 步 2）：perfect-freehand（MIT）——引擎存原始采样点不存
+// outline（#44 裁决），平滑/加粗消费侧重算：渲染与预览共用本库。
+import { getStroke } from 'perfect-freehand';
 
 /** WasmCanvas 方法面（wasm-bindgen web-target，方法名 snake_case）。 */
 interface WasmCanvasFace {
@@ -97,7 +100,7 @@ type WasmCanvasStatic = {
 /** objects_json 条目（session.rs CanvasObject 投影）。 */
 interface CanvasObjectJ {
   id: string;
-  kind: 'node' | 'edge' | 'group';
+  kind: 'node' | 'edge' | 'group' | 'stroke';
   x: number;
   y: number;
   w: number;
@@ -107,6 +110,14 @@ interface CanvasObjectJ {
   to: string | null;
   /** Group 成员（非 Group = []）。 */
   members: string[];
+  /** 笔迹采样点（[[x,y],…]——非 Stroke = []；perfect-freehand 消费形状）。 */
+  points: [number, number][];
+  /** 笔迹颜色（#RGB/#RRGGBB；非 Stroke = null）。 */
+  color: string | null;
+  /** 笔迹线宽（非 Stroke = null）。 */
+  width: number | null;
+  /** 笔迹工具（非 Stroke = null）。 */
+  tool: 'pen' | 'highlighter' | null;
   /** 开放属性（label/color/…；set_props 终态替换）。 */
   props: Record<string, string>;
 }
@@ -168,6 +179,41 @@ const EDGE_DX = 60;
 const EDGE_DY = 18;
 /** 分组包围盒外扩（px）。 */
 const GROUP_PAD = 12;
+/** #426 画笔默认（步 3 选择器的前置固定值——引擎域：#RRGGBB / width>0）。 */
+const BRUSH_COLOR = '#1f1f1f';
+const BRUSH_WIDTH = 4;
+/** 采样阈值（世界坐标——相邻点距低于此不入点列；微抖不入核，
+ * 与引擎「重复点无害」语义的输入侧配合）。 */
+const BRUSH_SAMPLE_DIST = 1.0;
+/** 笔迹渲染半透明（highlighter——引擎存不透明值，渲染态分离）。 */
+const STROKE_HL_OPACITY = 0.4;
+
+/** perfect-freehand 选项（工具分化：pen 速度变细，highlighter 恒宽）。 */
+function pfOptions(tool: 'pen' | 'highlighter', width: number): {
+  size: number; thinning: number; smoothing: number; streamline: number;
+} {
+  return {
+    size: width,
+    thinning: tool === 'pen' ? 0.5 : 0,
+    smoothing: 0.5,
+    streamline: 0.5,
+  };
+}
+
+/** 采样点列 → 平滑 outline 多边形 → SVG path d（perfect-freehand
+ * 官方口径：outline 是填充多边形，不是 stroke 折线）。空 outline
+ * → ''（SVG 空 d 不渲染——零长笔退化安全）。 */
+function strokePathD(points: readonly (readonly [number, number])[], tool: 'pen' | 'highlighter', width: number): string {
+  if (points.length === 0) return '';
+  const outline = getStroke(points as [number, number][], pfOptions(tool, width));
+  if (outline.length === 0) return '';
+  let d = `M ${outline[0][0].toFixed(2)} ${outline[0][1].toFixed(2)}`;
+  for (let i = 1; i < outline.length; i++) {
+    d += ` L ${outline[i][0].toFixed(2)} ${outline[i][1].toFixed(2)}`;
+  }
+  return `${d} Z`;
+}
+
 /** 撤销栈软上限（两实例同限——receipt undo_cleared 演示面）。 */
 const UNDO_LIMIT = 200;
 /** 双实例 client id（(0, 2^53) 域；restore 实例另起段避免 ID 撞车）。
@@ -345,6 +391,8 @@ export class CanvasViewUI {
   private layerGroups: SVGGElement | null = null;
   private layerEdges: SVGGElement | null = null;
   private layerNodes: SVGGElement | null = null;
+  /** #426 笔迹层（墨迹居顶层——pen 在节点上方可视）。 */
+  private layerStrokes: SVGGElement | null = null;
   private aiSvg: SVGSVGElement | null = null;
   private editInput: HTMLInputElement | null = null;
   private readonly buttons = new Map<string, HTMLButtonElement>();
@@ -355,6 +403,13 @@ export class CanvasViewUI {
   private drag: DragState | null = null;
   /** 行内编辑位关联对象（单编辑位）。 */
   private editingId: string | null = null;
+
+  // #426 画笔态（步 2：固定色宽；步 3 选择器的前置）。
+  /** 画笔模式（互斥于连线模式——两模式共用「工具态」位）。 */
+  private brushMode = false;
+  /** 在笔采样（null = 非绘制中；预览 path 挂笔迹层，提交后由
+   * touched 渲染接管——预览元素即删）。 */
+  private brushLive: { pts: [number, number][]; el: SVGPathElement } | null = null;
 
   // 相机态（#367——视图层临时态，不入模型；同滚动位置语义）。
   // 卸载命题：applyCamera = 恰一次 setAttribute，零 renderObject、
@@ -420,6 +475,7 @@ export class CanvasViewUI {
     };
     const addNodeBtn = mkBtn('canvas-add-node-btn', t('cv.addNode'), t('cv.addNodeTitle'));
     const edgeModeBtn = mkBtn('canvas-edge-mode-btn', t('cv.edgeMode'), t('cv.edgeModeTitle'));
+    const brushBtn = mkBtn('canvas-brush-btn', t('cv.brush'), t('cv.brushTitle'));
     const groupBtn = mkBtn('canvas-group-btn', t('cv.group'), t('cv.groupTitle'));
     const ungroupBtn = mkBtn('canvas-ungroup-btn', t('cv.ungroup'), t('cv.ungroupTitle'));
     const undoBtn = mkBtn('canvas-undo-btn', t('cv.undo'));
@@ -443,7 +499,7 @@ export class CanvasViewUI {
     status.id = 'canvas-status';
 
     toolbar.append(
-      addNodeBtn, edgeModeBtn, groupBtn, ungroupBtn, undoBtn, redoBtn,
+      addNodeBtn, edgeModeBtn, brushBtn, groupBtn, ungroupBtn, undoBtn, redoBtn,
       aiAddBtn, saveBtn, restoreBtn, clearBtn,
       zoomOutBtn, zoomLabel, zoomInBtn, fitBtn, camResetBtn, status,
     );
@@ -472,10 +528,14 @@ export class CanvasViewUI {
     le.id = 'cv-l-edges';
     const ln = document.createElementNS(SVG_NS, 'g');
     ln.id = 'cv-l-nodes';
-    camera.append(lg, le, ln);
+    // #426 笔迹层（墨迹居顶——分组 < 边 < 节点 < 笔迹）。
+    const ls = document.createElementNS(SVG_NS, 'g');
+    ls.id = 'cv-l-strokes';
+    camera.append(lg, le, ln, ls);
     svg.append(camera);
     scroll.appendChild(svg);
     this.cameraEl = camera;
+    this.layerStrokes = ls;
     // #3 UI 批 E：空态引导卡片（对象计数零 = 显示——svg 底盘仍在）。
     this.guideEl = mount_surface_guide(scroll, 'canvas-guide', {
       icon: 'M7.5 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z M13.5 13.5h7v7h-7z M4 21l7.5-7.5',
@@ -514,7 +574,7 @@ export class CanvasViewUI {
     this.layerEdges = le;
     this.layerNodes = ln;
     this.aiSvg = aiSvg;
-    for (const b of [addNodeBtn, edgeModeBtn, groupBtn, ungroupBtn, undoBtn, redoBtn,
+    for (const b of [addNodeBtn, edgeModeBtn, brushBtn, groupBtn, ungroupBtn, undoBtn, redoBtn,
       aiAddBtn, saveBtn, restoreBtn, clearBtn, aiAddBtn2]) {
       this.buttons.set(b.id, b);
       b.disabled = this.ctor === null; // wasm 缺位 = 显示面可用、动作面禁用
@@ -814,20 +874,22 @@ export class CanvasViewUI {
     if (this.layerGroups) this.layerGroups.replaceChildren();
     if (this.layerEdges) this.layerEdges.replaceChildren();
     if (this.layerNodes) this.layerNodes.replaceChildren();
+    if (this.layerStrokes) this.layerStrokes.replaceChildren();
     this.els.clear();
     for (const id of this.objects.keys()) this.renderObject(id);
     this.renderAiMirror();
     this.applySelectionClasses();
   }
 
-  private layerFor(kind: 'node' | 'edge' | 'group'): SVGGElement | null {
+  private layerFor(kind: 'node' | 'edge' | 'group' | 'stroke'): SVGGElement | null {
     if (kind === 'node') return this.layerNodes;
     if (kind === 'edge') return this.layerEdges;
+    if (kind === 'stroke') return this.layerStrokes;
     return this.layerGroups;
   }
 
   /** DOM 池取用（缺则建——保留模式增量面）。 */
-  private ensureEl(id: string, kind: 'node' | 'edge' | 'group'): SVGElement | null {
+  private ensureEl(id: string, kind: 'node' | 'edge' | 'group' | 'stroke'): SVGElement | null {
     const existing = this.els.get(id);
     if (existing && existing.isConnected) return existing;
     const layer = this.layerFor(kind);
@@ -847,6 +909,12 @@ export class CanvasViewUI {
       const l = document.createElementNS(SVG_NS, 'line');
       l.classList.add('edge');
       el = l;
+    } else if (kind === 'stroke') {
+      // #426：填充 path（outline 多边形——perfect-freehand 官方口径，
+      // 非 stroke 折线）。
+      const p = document.createElementNS(SVG_NS, 'path');
+      p.classList.add('stroke');
+      el = p;
     } else {
       const g = document.createElementNS(SVG_NS, 'g');
       g.classList.add('group');
@@ -923,6 +991,18 @@ export class CanvasViewUI {
       line.setAttribute('x2', `${bx}`);
       line.setAttribute('y2', `${by}`);
       line.classList.toggle('dangling', !a || !b);
+    } else if (obj.kind === 'stroke') {
+      // #426：笔迹渲染——原始采样点 + 工具/线宽 → outline 填充 path
+      // （消费侧重算，与预览同源 strokePathD；highlighter = 渲染态
+      // 半透明）。字段缺失防御：null 工具/色宽 → 缺省笔形态。
+      const path = this.ensureEl(id, 'stroke') as SVGPathElement | null;
+      if (!path) return;
+      const tool: 'pen' | 'highlighter' = obj.tool ?? 'pen';
+      const width = obj.width ?? BRUSH_WIDTH;
+      path.setAttribute('d', strokePathD(obj.points, tool, width));
+      path.setAttribute('fill', obj.color ?? BRUSH_COLOR);
+      path.setAttribute('fill-opacity',
+        tool === 'highlighter' ? `${STROKE_HL_OPACITY}` : '1');
     } else {
       const g = this.ensureEl(id, 'group') as SVGGElement | null;
       if (!g) return;
@@ -1041,6 +1121,18 @@ export class CanvasViewUI {
       t.textContent = o.props.label ?? o.id;
       g.append(r, t);
       frag.appendChild(g);
+    }
+    // #426 笔迹（墨迹居顶——与主画布同层次序；全量重建口径）。
+    for (const o of objs) {
+      if (o.kind !== 'stroke') continue;
+      const p = mk('path');
+      p.classList.add('stroke');
+      const tool: 'pen' | 'highlighter' = o.tool ?? 'pen';
+      p.setAttribute('d', strokePathD(o.points, tool, o.width ?? BRUSH_WIDTH));
+      p.setAttribute('fill', o.color ?? BRUSH_COLOR);
+      p.setAttribute('fill-opacity',
+        tool === 'highlighter' ? `${STROKE_HL_OPACITY}` : '1');
+      frag.appendChild(p);
     }
     this.aiSvg.replaceChildren(frag);
   }
@@ -1187,6 +1279,18 @@ export class CanvasViewUI {
       }
       const p = this.toSvgPoint(e);
 
+      // #426 画笔模式：左键落笔即采样（墨迹居顶——不做节点/分组
+      // 命中，覆盖节点上方也可画；中键 pan 已在前置分支收走）。
+      if (this.brushMode && e.button === 0) {
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.classList.add('cv-brush-preview');
+        this.layerStrokes?.appendChild(path);
+        this.brushLive = { pts: [[p.x, p.y]], el: path };
+        svg.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+
       // 连线模式：点两个节点建边（一次性）
       if (this.edgeMode) {
         const node = this.hitNode(p.x, p.y);
@@ -1274,6 +1378,21 @@ export class CanvasViewUI {
     }, { passive: false });
 
     svg.addEventListener('pointermove', (e) => {
+      // #426 在笔采样（优先于 pan/drag——画笔态无 pan 起手[背景左键
+      // 被画笔分支收走]，中键 pan 不进画笔态）。
+      if (this.brushLive) {
+        const p = this.toSvgPoint(e);
+        const pts = this.brushLive.pts;
+        const last = pts[pts.length - 1];
+        const dx = p.x - last[0];
+        const dy = p.y - last[1];
+        if (dx * dx + dy * dy >= BRUSH_SAMPLE_DIST * BRUSH_SAMPLE_DIST) {
+          pts.push([p.x, p.y]);
+          this.brushLive.el.setAttribute('d',
+            strokePathD(pts, 'pen', BRUSH_WIDTH));
+        }
+        return;
+      }
       // #367 平移优先于拖拽（互斥态——pan 起手时无节点命中）。
       if (this.pan) {
         this.panBy(e.clientX - this.pan.lastX, e.clientY - this.pan.lastY);
@@ -1300,6 +1419,13 @@ export class CanvasViewUI {
       if (this.pan) {
         this.pan = null;
         this.svg?.classList.remove('panning');
+        return;
+      }
+      // #426 在笔收尾：pointerup = 提交（取消 = cancelBrushLive——
+      // 在笔态与 pan/drag 互斥，不落后续分支）。
+      if (this.brushLive) {
+        if (commit) this.commitBrushLive();
+        else this.cancelBrushLive();
         return;
       }
       const d = this.drag;
@@ -1345,6 +1471,8 @@ export class CanvasViewUI {
         || t.isContentEditable)) return;
       if (e.key === 'Escape') {
         this.setEdgeMode(false);
+        // #426 ESC：在笔取消（预览撤除零命令）+ 画笔模式退出。
+        if (this.brushMode) this.setBrushMode(false);
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selected.size > 0) {
         e.preventDefault();
         this.deleteSelection();
@@ -1415,10 +1543,55 @@ export class CanvasViewUI {
       this.edgeSource = null;
       this.setEdgeSourceClass(null);
     }
+    // #426 模式互斥：开连线 = 收画笔（在笔取消——不提交）。
+    if (on && this.brushMode) this.setBrushMode(false);
     const btn = this.buttons.get('canvas-edge-mode-btn');
     btn?.classList.toggle('active', on);
     if (on) this.showStatus('edge mode: click the source node (esc to cancel)');
     else this.syncStatus();
+  }
+
+  /** #426 画笔模式切换（互斥于连线模式；off = 在笔取消——预览撤除、
+   * 零命令提交，同 ESC 语义）。 */
+  private setBrushMode(on: boolean): void {
+    this.brushMode = on;
+    if (!on) this.cancelBrushLive();
+    if (on && this.edgeMode) {
+      this.edgeMode = false;
+      this.edgeSource = null;
+      this.setEdgeSourceClass(null);
+      this.buttons.get('canvas-edge-mode-btn')?.classList.remove('active');
+    }
+    const btn = this.buttons.get('canvas-brush-btn');
+    btn?.classList.toggle('active', on);
+    if (on) this.showStatus('brush mode: drag to draw a stroke (esc to cancel)');
+    else this.syncStatus();
+  }
+
+  /** 在笔取消（ESC/模式切换——预览元素撤除，零命令）。 */
+  private cancelBrushLive(): void {
+    if (!this.brushLive) return;
+    this.brushLive.el.remove();
+    this.brushLive = null;
+  }
+
+  /** 在笔收尾提交（pointerup：pts ≥ 2 = 一次 add_stroke——单一撤销
+   * 单元；单击不成笔，引擎域校验同判据）。 */
+  private commitBrushLive(): void {
+    const live = this.brushLive;
+    if (!live) return;
+    this.brushLive = null;
+    live.el.remove();
+    if (live.pts.length < 2 || !this.main) return;
+    const r = this.exec('human', JSON.stringify({
+      t: 'add_stroke', id: null,
+      points: live.pts,
+      color: BRUSH_COLOR,
+      width: BRUSH_WIDTH,
+      tool: 'pen',
+    }));
+    if (r.ok) this.showStatus(`stroke added (${r.receipt.id})`);
+    else this.showStatus(`stroke rejected (${r.code}): ${r.message}`, true);
   }
 
   private deleteSelection(): void {
@@ -1500,6 +1673,7 @@ export class CanvasViewUI {
 
     on('canvas-add-node-btn', () => this.toolbarAddNode());
     on('canvas-edge-mode-btn', () => this.setEdgeMode(!this.edgeMode));
+    on('canvas-brush-btn', () => this.setBrushMode(!this.brushMode));
     on('canvas-group-btn', () => this.toolbarGroup());
     on('canvas-ungroup-btn', () => this.toolbarUngroup());
     // #367 相机按钮：± 步进以视口中心为锚（factor 与滚轮单步同量级；
@@ -1670,7 +1844,7 @@ export class CanvasViewUI {
   // 状态行
   // -----------------------------------------------------------------------
 
-  private countKind(kind: 'node' | 'edge' | 'group'): number {
+  private countKind(kind: 'node' | 'edge' | 'group' | 'stroke'): number {
     let n = 0;
     for (const o of this.objects.values()) if (o.kind === kind) n += 1;
     return n;
@@ -1730,6 +1904,8 @@ export class CanvasViewUI {
       nodes: this.countKind('node'),
       edges: this.countKind('edge'),
       groups: this.countKind('group'),
+      // #426：笔迹计数（画笔 e2e 断言面）。
+      strokes: this.countKind('stroke'),
       undoDepth: this.main ? this.safeDepth('undo') : 0,
       redoDepth: this.main ? this.safeDepth('redo') : 0,
       wasm: this.ctor !== null,

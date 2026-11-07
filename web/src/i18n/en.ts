@@ -285,6 +285,8 @@ export const en = {
   'cv.addNode': 'add node',
   'cv.addNodeTitle': 'add a node at the default spot',
   'cv.edgeMode': 'edge mode',
+  'cv.brush': 'brush',
+  'cv.brushTitle': 'drag to draw a smooth stroke',
   'cv.edgeModeTitle': 'click two nodes to connect',
   'cv.group': 'group',
   'cv.groupTitle': 'group the selected objects (2+)',
