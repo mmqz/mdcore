@@ -22,6 +22,13 @@
 //!   场即拒，含 shared formula 自闭合形）：不做公式重算（#177 边界），
 //!   缓存值与公式结构零接触。公式编辑 = 后续加性扩展（docx 域编辑
 //!   #140 同构路线）。
+//! - **公式缓存更新面**（#283 X-1——[`XlsxEditor::set_formula_cache`]）：
+//!   仅公式格；`<f>` 元素/样式索引/其余属性原文零接触，单点手术
+//!   `<v>` 缓存文本 + 按 [`crate::write::FormulaCache`] 类型调整 `t`
+//!   属性（Number → 移除 / Text → `t="str"` / Boolean → `t="b"`）。
+//!   与值编辑按构造互斥（值编辑拒公式格）；调用方纪律 = 缓存值应
+//!   来自重算引擎（rebuild `prepare_recalc` 面），非自由缓存注入面
+//!   ——「改值后依赖公式缓存陈旧」缺口的闭合是重算结果落缓存。
 //! - **文本恒写 inlineStr**（`t="inlineStr"` + `<is><t>`）：Excel/
 //!   LibreOffice/calamine 全支持；sharedStrings.xml 完全不动（旧
 //!   shared 串可能留置为无引用串——无害垃圾，部件自洽性不变）。
@@ -66,6 +73,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::Read as _;
 
 use crate::io;
+use crate::write::FormulaCache;
 use quick_xml::events::Event;
 
 // ---------------------------------------------------------------------------
@@ -267,6 +275,106 @@ fn emit_cell(ref_str: &str, s: Option<&str>, v: &CellEdit) -> String {
     }
 }
 
+/// `<c>` 开标签 `t` 属性调整（缓存手术面共用件）：保 `r`/`s` 等
+/// 其余属性 token 原文，`t` 属性按缓存类型替换/移除/插尾。
+///
+/// 安全面：`<c>` 属性域固定（r/s/t/cm/vm/ph——ECMA-376 §18.3.1.4），
+/// 属性值无空白（A1 坐标/索引数字/枚举名）→ 空白切 token 安全；
+/// `t=` 前缀在同域无同名尾属性。已同值 → 原文零接触直回。
+fn adjust_c_open_tag(open_raw: &str, new_t: Option<&str>) -> String {
+    let inner = &open_raw[..open_raw.len() - 1]; // 剥 '>'
+    let tokens: Vec<&str> = inner.split_whitespace().collect();
+    let old_t = tokens.iter().find(|t| t.starts_with("t=")).copied();
+    let new_tok = new_t.map(|t| format!("t=\"{t}\""));
+    match (old_t, new_tok.as_deref()) {
+        (None, None) => open_raw.to_string(),
+        (Some(old), Some(new)) if old == new => open_raw.to_string(),
+        _ => {
+            let mut out = String::with_capacity(open_raw.len() + 8);
+            let mut first = true;
+            for tok in &tokens {
+                if tok.starts_with("t=") {
+                    continue;
+                }
+                if !first {
+                    out.push(' ');
+                }
+                out.push_str(tok);
+                first = false;
+            }
+            if let Some(t) = new_tok.as_deref() {
+                if !first {
+                    out.push(' ');
+                }
+                out.push_str(t);
+            }
+            out.push('>');
+            out
+        }
+    }
+}
+
+/// 公式缓存单格手术：开标签 `t` 属性按缓存类型调整（Number → 移除
+/// / Text → `t="str"` / Boolean → `t="b"`），`<f>` 元素与 `s` 样式
+/// 索引原文零接触，`<v>` 元素替换（无 `<v>` → `</f>`/自闭合 `<f/>`
+/// 后插入）。公式格节点必非自闭合（`<f>` 在场——set_formula_cache
+/// 已验）；`<f>` 文本必实体转义 → 裸 `<v` 不可能在 f 文本内。
+fn emit_cache_update(
+    xml: &str,
+    cell: &CellScan,
+    cache: &FormulaCache,
+) -> Result<String, XlsxEditError> {
+    let node = &xml[cell.node.0..cell.node.1];
+    let open_raw = &xml[cell.node.0..cell.content_open];
+    let (v_text, new_t): (String, Option<&'static str>) = match cache {
+        FormulaCache::Number(n) => (fmt_number(*n), None),
+        FormulaCache::Text(t) => (escape_text(t), Some("str")),
+        FormulaCache::Boolean(b) => ((if *b { "1" } else { "0" }).to_string(), Some("b")),
+    };
+    let open_end_rel = cell.content_open - cell.node.0;
+    let mut out = String::with_capacity(node.len() + v_text.len() + 16);
+    out.push_str(&adjust_c_open_tag(open_raw, new_t));
+    if let Some(v_rel) = node.find("<v") {
+        // 既有缓存替换：`<v>` 元素整体换（f 等前缀 + 尾随内容原样）。
+        let v_gt = node[v_rel..]
+            .find('>')
+            .ok_or_else(|| XlsxEditError::InvalidInput("<v> 开标签缺 '>'（畸形）".into()))?
+            + v_rel
+            + 1;
+        let v_close = node[v_gt..]
+            .find("</v>")
+            .ok_or_else(|| XlsxEditError::InvalidInput("缓存 <v> 缺闭合（畸形）".into()))?
+            + v_gt;
+        out.push_str(&node[open_end_rel..v_rel]);
+        out.push_str(&format!("<v>{v_text}</v>"));
+        // 越过 </v>（v_close = 闭合标签起点——尾随内容如 extLst 原样）。
+        out.push_str(&node[v_close + "</v>".len()..]);
+    } else {
+        // 无缓存 <v>：`</f>` 后（或自闭合 `<f .../>` 后）插入。
+        let f_rel = node
+            .find("<f")
+            .ok_or_else(|| XlsxEditError::InvalidInput("公式格缺 <f>（畸形）".into()))?;
+        let f_close_rel = node[f_rel..]
+            .find('>')
+            .ok_or_else(|| XlsxEditError::InvalidInput("<f> 开标签缺 '>'（畸形）".into()))?
+            + f_rel; // '>' 位
+        let self_closed = f_close_rel > 0 && node.as_bytes()[f_close_rel - 1] == b'/';
+        let f_end = if self_closed {
+            f_close_rel + 1
+        } else {
+            node[f_close_rel..]
+                .find("</f>")
+                .ok_or_else(|| XlsxEditError::InvalidInput("<f> 缺闭合（畸形）".into()))?
+                + f_close_rel
+                + "</f>".len()
+        };
+        out.push_str(&node[open_end_rel..f_end]);
+        out.push_str(&format!("<v>{v_text}</v>"));
+        out.push_str(&node[f_end..]);
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // 扫描模型（原文坐标系——open 后不变）
 // ---------------------------------------------------------------------------
@@ -290,6 +398,9 @@ struct CellScan {
     v_text: Option<String>,
     /// inline string `<is><t>` 文本（反转义后）。
     is_text: Option<String>,
+    /// 开标签尾（`>` 后一位 = 内容区起点；缓存手术面的开标签域锚。
+    /// 自闭合格 = `node.1`）。
+    content_open: usize,
 }
 
 /// `<row>` 元素扫描条目。
@@ -593,11 +704,10 @@ fn scan_sheet(part: &str, xml: &str) -> Result<ScannedSheet, XlsxEditError> {
                             formula: None,
                             v_text: None,
                             is_text: None,
+                            content_open,
                         });
                         open_cell = Some((ri, rows[ri].cells.len() - 1));
                         in_is = false;
-                        // content_open = c 开标签尾（text 槽基点）。
-                        let _ = content_open;
                     }
                     "f" => {
                         if let Some((ri, ci)) = open_cell {
@@ -675,6 +785,7 @@ fn scan_sheet(part: &str, xml: &str) -> Result<ScannedSheet, XlsxEditError> {
                             formula: None,
                             v_text: None,
                             is_text: None,
+                            content_open: node_end,
                         });
                     }
                     "f" => {
@@ -853,6 +964,9 @@ pub struct XlsxEditor {
     shared_loaded: bool,
     /// 待落账编辑（与 sheets 等长；(行, 列) BTreeMap = 行列序天然有序）。
     pending: Vec<BTreeMap<(u32, u32), CellEdit>>,
+    /// 待落账公式缓存更新（#283 X-1；与 `pending` 按构造互斥——
+    /// 值编辑拒公式格，缓存更新仅公式格）。
+    pending_cache: Vec<BTreeMap<(u32, u32), FormulaCache>>,
 }
 
 impl XlsxEditor {
@@ -915,6 +1029,7 @@ impl XlsxEditor {
             shared: Vec::new(),
             shared_loaded: false,
             pending: vec![BTreeMap::new(); n],
+            pending_cache: vec![BTreeMap::new(); n],
         })
     }
 
@@ -954,6 +1069,7 @@ impl XlsxEditor {
             shared,
             shared_loaded,
             pending,
+            pending_cache: _,
         } = self;
         let entry = &mut sheets[sheet];
 
@@ -1062,11 +1178,75 @@ impl XlsxEditor {
         Ok(())
     }
 
+    /// 设置公式格缓存值（待落账——`save_to_vec` 时单格手术：`<f>`
+    /// 元素/样式索引原文零接触，仅替换/插入 `<v>` 缓存文本 + 按
+    /// [`FormulaCache`] 类型调整 `t` 属性——模块文档「公式缓存更新面」节）。
+    ///
+    /// 拒改面：非公式格（`<f>` 不在场）/ 缺席格（缓存更新非插入面）/
+    /// 控制字符与 U+FFFE/U+FFFF / NaN/Inf / 非法坐标 / 无 worksheet
+    /// 部件的表 / 与值编辑同格（防御——按构造不相交，双账本同格即
+    /// 调用方违规）。
+    pub fn set_formula_cache(
+        &mut self,
+        sheet: usize,
+        cell_ref: &str,
+        cache: FormulaCache,
+    ) -> Result<(), XlsxEditError> {
+        let (row, col) = parse_cell_ref(cell_ref)
+            .ok_or_else(|| XlsxEditError::InvalidInput(format!("非法单元格坐标: {cell_ref}")))?;
+        if sheet >= self.sheets.len() {
+            return Err(XlsxEditError::InvalidInput(format!(
+                "表下标越界: {sheet}（共 {} 表）",
+                self.sheets.len()
+            )));
+        }
+        match &cache {
+            FormulaCache::Text(t) => validate_text(t)?,
+            FormulaCache::Number(n) => {
+                if !n.is_finite() {
+                    return Err(XlsxEditError::InvalidInput(
+                        "缓存数值 NaN/Inf 拒（XML 数值面不可表达）".into(),
+                    ));
+                }
+            }
+            FormulaCache::Boolean(_) => {}
+        }
+        self.ensure_scanned(sheet)?;
+        let entry = &self.sheets[sheet];
+        if entry.part.is_none() {
+            return Err(XlsxEditError::NotEditable {
+                sheet: entry.name.clone(),
+                detail: "无 worksheets 部件（chartsheet/断链/路径逃逸）".into(),
+            });
+        }
+        let scanned = entry.scanned.as_ref().unwrap();
+        match find_cell(scanned, row, col) {
+            Some(cs) if cs.has_formula => {}
+            Some(_) => {
+                return Err(XlsxEditError::InvalidInput(format!(
+                    "非公式格 {cell_ref}——缓存更新面仅公式格（值编辑走 set_cell）"
+                )));
+            }
+            None => {
+                return Err(XlsxEditError::InvalidInput(format!(
+                    "格 {cell_ref} 不在场——缓存更新非插入面"
+                )));
+            }
+        }
+        if self.pending[sheet].contains_key(&(row, col)) {
+            return Err(XlsxEditError::InvalidInput(format!(
+                "{cell_ref} 值编辑与缓存更新同格（双账本互斥被破坏）——拒"
+            )));
+        }
+        self.pending_cache[sheet].insert((row, col), cache);
+        Ok(())
+    }
+
     /// 保存（待落账手术 + 非目标部件逐字节透传；零编辑 = 恒等重打包）。
     pub fn save_to_vec(&self) -> Result<Vec<u8>, XlsxEditError> {
         let mut replacements: Vec<(String, Vec<u8>)> = Vec::new();
         for (i, entry) in self.sheets.iter().enumerate() {
-            if self.pending[i].is_empty() {
+            if self.pending[i].is_empty() && self.pending_cache[i].is_empty() {
                 continue;
             }
             let part = entry.part.as_ref().unwrap();
@@ -1078,7 +1258,12 @@ impl XlsxEditor {
                 )));
             }
             let scanned = entry.scanned.as_ref().unwrap();
-            let new_xml = apply_cell_edits(&entry.name, scanned, &self.pending[i])?;
+            let new_xml = apply_cell_edits(
+                &entry.name,
+                scanned,
+                &self.pending[i],
+                &self.pending_cache[i],
+            )?;
             replacements.push((part.clone(), new_xml.into_bytes()));
         }
         repack_xlsx(&self.bytes, &replacements)
@@ -1136,9 +1321,18 @@ fn find_cell(scanned: &ScannedSheet, row: u32, col: u32) -> Option<&CellScan> {
 // ---------------------------------------------------------------------------
 
 /// 行内格发射（替换 + 按列序插入；row 编辑集按 col 升序——BTreeMap
-/// 保证）。`cells` = 该行 (col, &CellEdit) 序列。
-fn emit_row_cells(out: &mut String, xml: &str, row: &RowScan, edits: &[(u32, &CellEdit)]) {
+/// 保证）。`cells` = 该行 (col, &CellEdit) 序列；`cache_edits` = 该行
+/// 公式缓存更新 (col, &FormulaCache) 序列（与值编辑按构造互斥——
+/// 缓存格必为既有格，无插入面）。
+fn emit_row_cells(
+    out: &mut String,
+    xml: &str,
+    row: &RowScan,
+    edits: &[(u32, &CellEdit)],
+    cache_edits: &[(u32, &FormulaCache)],
+) -> Result<(), XlsxEditError> {
     let mut it = edits.iter().peekable();
+    let mut cit = cache_edits.iter().peekable();
     for cell in &row.cells {
         // 列序插入：先于本格的编辑格发射。
         while let Some((c, _)) = it.peek() {
@@ -1161,6 +1355,14 @@ fn emit_row_cells(out: &mut String, xml: &str, row: &RowScan, edits: &[(u32, &Ce
                 continue;
             }
         }
+        // 公式缓存手术格（与值编辑互斥——set 时保证；缺格拒防御）。
+        if let Some((c, _)) = cit.peek() {
+            if *c == cell.col {
+                let (_, cache) = *cit.next().unwrap();
+                out.push_str(&emit_cache_update(xml, cell, cache)?);
+                continue;
+            }
+        }
         // 未编辑格：字节透传。
         out.push_str(&xml[cell.node.0..cell.node.1]);
     }
@@ -1172,13 +1374,24 @@ fn emit_row_cells(out: &mut String, xml: &str, row: &RowScan, edits: &[(u32, &Ce
             v,
         ));
     }
+    // 缓存更新列超出该行既有格——不可达防御（set 时已验在场）。
+    if let Some((c, _)) = cit.peek() {
+        return Err(XlsxEditError::InvalidInput(format!(
+            "公式缓存更新列 {c} 超出 r{} 既有格——缺格拒",
+            row.r
+        )));
+    }
+    Ok(())
 }
 
 /// 单趟手术：全部编辑 → 新 sheet.xml（未编辑区域零接触）。
+/// 值编辑与公式缓存更新双账本同趟落账（同表互不相交——
+/// [`XlsxEditor::set_formula_cache`] 验证）。
 fn apply_cell_edits(
     sheet_name: &str,
     scanned: &ScannedSheet,
     edits: &BTreeMap<(u32, u32), CellEdit>,
+    cache_edits: &BTreeMap<(u32, u32), FormulaCache>,
 ) -> Result<String, XlsxEditError> {
     let Some(geom) = scanned.sheetdata.as_ref() else {
         return Err(XlsxEditError::NotEditable {
@@ -1192,10 +1405,20 @@ fn apply_cell_edits(
     for ((r, c), v) in edits {
         edits_by_row.entry(*r).or_default().push((*c, v));
     }
+    let mut cache_by_row: BTreeMap<u32, Vec<(u32, &FormulaCache)>> = BTreeMap::new();
+    for ((r, c), v) in cache_edits {
+        cache_by_row.entry(*r).or_default().push((*c, v));
+    }
 
     let mut out = String::with_capacity(xml.len() + 256);
     out.push_str(&xml[..geom.node.0]);
     if geom.self_closed {
+        // 缓存更新非插入面（空表无格——set 时已拒，防御）。
+        if !cache_by_row.is_empty() {
+            return Err(XlsxEditError::InvalidInput(
+                "公式缓存更新指向空表（<sheetData/>）——拒".into(),
+            ));
+        }
         // 自闭合空表展开：`<sheetData/>` → `<sheetData>…</sheetData>`
         // （全部为行插入）。
         out.push_str("<sheetData>");
@@ -1228,23 +1451,37 @@ fn apply_cell_edits(
             match edits_by_row.remove(&row.r) {
                 Some(edits) => {
                     // 本行手术：开标签原文 + 格序列 + 闭标签原文。
+                    let cache = cache_by_row.remove(&row.r).unwrap_or_default();
                     if row.self_closed {
                         // `<row r="5"/>` → 展开（属性段保留）。
                         let inner = &xml[row.node.0..row.node.1 - 1]; // 除 '>'
                         let attrs = inner.strip_suffix('/').unwrap_or(inner);
                         out.push_str(attrs);
                         out.push('>');
-                        emit_row_cells(&mut out, xml, row, &edits);
+                        emit_row_cells(&mut out, xml, row, &edits, &cache)?;
                         out.push_str("</row>");
                     } else {
                         out.push_str(&xml[row.node.0..row.content_open]);
-                        emit_row_cells(&mut out, xml, row, &edits);
+                        emit_row_cells(&mut out, xml, row, &edits, &cache)?;
                         out.push_str(&xml[row.content_close..row.node.1]);
                     }
                 }
                 None => {
-                    // 未编辑行：字节透传。
-                    out.push_str(&xml[row.node.0..row.node.1]);
+                    // 仅缓存更新的行：同路径手术（值编辑空集）。
+                    if let Some(cache) = cache_by_row.remove(&row.r) {
+                        if row.self_closed {
+                            return Err(XlsxEditError::InvalidInput(format!(
+                                "公式缓存更新指向自闭合空行 r{}——无格拒",
+                                row.r
+                            )));
+                        }
+                        out.push_str(&xml[row.node.0..row.content_open]);
+                        emit_row_cells(&mut out, xml, row, &[], &cache)?;
+                        out.push_str(&xml[row.content_close..row.node.1]);
+                    } else {
+                        // 未编辑行：字节透传。
+                        out.push_str(&xml[row.node.0..row.node.1]);
+                    }
                 }
             }
         }
@@ -1256,6 +1493,13 @@ fn apply_cell_edits(
             }
             row_xml.push_str("</row>");
             out.push_str(&row_xml);
+        }
+        // 缓存更新行不在扫描面——不可达防御（set 时已验在场）。
+        if !cache_by_row.is_empty() {
+            return Err(XlsxEditError::InvalidInput(format!(
+                "公式缓存更新指向缺失行 r{}——拒",
+                cache_by_row.keys().next().unwrap()
+            )));
         }
         out.push_str(&xml[geom.content_close..geom.node.1]);
     }
@@ -1802,5 +2046,174 @@ mod tests {
                 || xml.contains("&lt;b&gt;&amp;amp; \"quote\" &lt;/t&gt;"),
             "实体转义形态：{xml}"
         );
+    }
+
+    // ── 公式缓存更新面（#283 X-1）────────────────────────────────
+
+    /// 公式形态夹具：t="str" 缓存 / t="b" / shared 自闭合无 `<v>` /
+    /// 带 s 样式索引的数值缓存——四形态单趟全覆盖。
+    fn formula_shapes_fixture() -> Vec<u8> {
+        let sheet1 = sheet1_xml(
+            "<row r=\"1\">\
+             <c r=\"A1\" t=\"str\"><f>CONCAT(\"x\",\"&amp;\")</f><v>旧</v></c>\
+             <c r=\"B1\" t=\"b\"><f>A2&gt;1</f><v>1</v></c>\
+             <c r=\"C1\"><f t=\"shared\" si=\"0\"/></c>\
+             <c r=\"D1\" s=\"7\"><f>SUM(A1:A2)</f><v>3</v></c>\
+             </row>",
+        );
+        build_zip(&[
+            ("[Content_Types].xml", CONTENT_TYPES.to_string()),
+            ("_rels/.rels", ROOT_RELS.to_string()),
+            ("xl/workbook.xml", workbook_xml(&[("Data", "rId1")])),
+            (
+                "xl/_rels/workbook.xml.rels",
+                rels_xml(&[("rId1", "worksheets/sheet1.xml")]),
+            ),
+            ("xl/worksheets/sheet1.xml", sheet1),
+        ])
+    }
+
+    #[test]
+    fn formula_cache_update_replaces_v_and_keeps_f() {
+        let bytes = build_fixture();
+        // build_fixture 的 A4 = `<c r="A4"><f>SUM(A1:A2)</f><v>10</v></c>`。
+        let mut ed = XlsxEditor::open(&bytes).unwrap();
+        ed.set_formula_cache(0, "A4", FormulaCache::Number(13.5))
+            .unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = String::from_utf8(part_bytes(&saved, "xl/worksheets/sheet1.xml")).unwrap();
+        assert!(
+            xml.contains("<c r=\"A4\"><f>SUM(A1:A2)</f><v>13.5</v></c>"),
+            "f 原样 + v 替换：{xml}"
+        );
+        // 其余格零接触（A1 shared string 值格原文在位）。
+        assert!(
+            xml.contains("<c r=\"A1\" t=\"s\"><v>0</v></c>"),
+            "未编辑格透传"
+        );
+    }
+
+    #[test]
+    fn formula_cache_t_attr_adjusts_per_kind() {
+        let bytes = formula_shapes_fixture();
+        let mut ed = XlsxEditor::open(&bytes).unwrap();
+        // A1: t="str" + Number 缓存 → t 移除（数值缓存默认形态）。
+        ed.set_formula_cache(0, "A1", FormulaCache::Number(42.0))
+            .unwrap();
+        // B1: t="b" + Boolean 缓存 → t 保持 b，v 0/1。
+        ed.set_formula_cache(0, "B1", FormulaCache::Boolean(false))
+            .unwrap();
+        // C1: shared 自闭合无 <v> → 缓存插到 <f/> 后，开标签无 t。
+        ed.set_formula_cache(0, "C1", FormulaCache::Number(7.0))
+            .unwrap();
+        // D1: 无 t + Text 缓存 → t="str" 插尾；s="7" 原样；实体转义。
+        ed.set_formula_cache(0, "D1", FormulaCache::Text("你<&>".into()))
+            .unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        let xml = String::from_utf8(part_bytes(&saved, "xl/worksheets/sheet1.xml")).unwrap();
+        assert!(
+            xml.contains("<c r=\"A1\"><f>CONCAT(\"x\",\"&amp;\")</f><v>42</v></c>"),
+            "Number 缓存移除 t=\"str\" + f 实体文本原样：{xml}"
+        );
+        assert!(
+            xml.contains("<c r=\"B1\" t=\"b\"><f>A2&gt;1</f><v>0</v></c>"),
+            "Boolean 缓存保持 t=\"b\"：{xml}"
+        );
+        assert!(
+            xml.contains("<c r=\"C1\"><f t=\"shared\" si=\"0\"/><v>7</v></c>"),
+            "shared 自闭合 <f/> 后插缓存：{xml}"
+        );
+        assert!(
+            xml.contains(
+                "<c r=\"D1\" s=\"7\" t=\"str\"><f>SUM(A1:A2)</f><v>你&lt;&amp;&gt;</v></c>"
+            ),
+            "Text 缓存插 t=\"str\" + s 样式原样 + 实体转义：{xml}"
+        );
+    }
+
+    #[test]
+    fn formula_cache_rejects_non_formula_and_invalid() {
+        let bytes = build_fixture();
+        let mut ed = XlsxEditor::open(&bytes).unwrap();
+        // 值格（A1 = t="s" 串）拒。
+        assert!(matches!(
+            ed.set_formula_cache(0, "A1", FormulaCache::Number(1.0)),
+            Err(XlsxEditError::InvalidInput(_))
+        ));
+        // 缺席格拒（非插入面）。
+        assert!(matches!(
+            ed.set_formula_cache(0, "E9", FormulaCache::Number(1.0)),
+            Err(XlsxEditError::InvalidInput(_))
+        ));
+        // NaN/Inf 拒。
+        assert!(matches!(
+            ed.set_formula_cache(0, "A4", FormulaCache::Number(f64::NAN)),
+            Err(XlsxEditError::InvalidInput(_))
+        ));
+        // 控制字符拒。
+        assert!(matches!(
+            ed.set_formula_cache(0, "A4", FormulaCache::Text("a\u{0001}b".into())),
+            Err(XlsxEditError::InvalidInput(_))
+        ));
+        // 非法坐标拒。
+        assert!(matches!(
+            ed.set_formula_cache(0, "A0", FormulaCache::Number(1.0)),
+            Err(XlsxEditError::InvalidInput(_))
+        ));
+        // 表下标越界拒。
+        assert!(matches!(
+            ed.set_formula_cache(5, "A4", FormulaCache::Number(1.0)),
+            Err(XlsxEditError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn formula_cache_and_value_edit_are_disjoint() {
+        let bytes = build_fixture();
+        let mut ed = XlsxEditor::open(&bytes).unwrap();
+        // 值编辑公式格 → FormulaCell 拒（既有边界不变）。
+        assert!(matches!(
+            ed.set_cell(0, "A4", CellEdit::Number(1.0)),
+            Err(XlsxEditError::FormulaCell { .. })
+        ));
+        // 缓存更新可用；值编辑同格 → 互斥防御拒。
+        ed.set_formula_cache(0, "A4", FormulaCache::Number(2.0))
+            .unwrap();
+        assert!(matches!(
+            ed.set_cell(0, "A4", CellEdit::Number(1.0)),
+            Err(XlsxEditError::FormulaCell { .. })
+        ));
+        // 值格反向：值编辑先行，缓存同格拒。
+        let mut ed2 = XlsxEditor::open(&bytes).unwrap();
+        ed2.set_cell(0, "A1", CellEdit::Number(5.0)).unwrap();
+        assert!(matches!(
+            ed2.set_formula_cache(0, "A1", FormulaCache::Number(1.0)),
+            Err(XlsxEditError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn formula_cache_zero_edit_save_keeps_other_parts_identical() {
+        let bytes = formula_shapes_fixture();
+        let mut ed = XlsxEditor::open(&bytes).unwrap();
+        ed.set_formula_cache(0, "A1", FormulaCache::Number(42.0))
+            .unwrap();
+        let saved = ed.save_to_vec().unwrap();
+        // 只有 sheet1 手术；容器层（[Content_Types]/rels/workbook）透传。
+        let parts: [(&str, &str, bool); 4] = [
+            ("[Content_Types].xml", "[Content_Types].xml", true),
+            ("_rels/.rels", "_rels/.rels", true),
+            ("xl/workbook.xml", "xl/workbook.xml", true),
+            (
+                "xl/worksheets/sheet1.xml",
+                "xl/worksheets/sheet1.xml",
+                false,
+            ),
+        ];
+        for (n, _, identical) in parts {
+            let src = part_bytes(&bytes, n);
+            let dst = part_bytes(&saved, n);
+            assert_eq!(src == dst, identical, "部件 {n} 透传预期 = {identical}");
+        }
     }
 }

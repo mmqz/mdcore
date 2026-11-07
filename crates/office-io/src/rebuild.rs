@@ -1,6 +1,18 @@
 //! 读-改-重建（C3 唯一允许口径——`write` 模块文档「修改已有工作簿
 //! 不宣称支持」的产品化替代路径）。
 //!
+//! ## 产品导出编排（#283——消费倒挂修复）
+//!
+//! [`export_edited`] = 本模块面向产品导出的编排入口：**in-place
+//! 优先**（[`crate::xlsx_edit::XlsxEditor`] 原位手术——非目标部件
+//! 逐字节透传，样式/图表/条件格式/数据验证等结构性面保真）+
+//! **rebuild 兜底**（拒改面：empty/formula 编辑、公式格落格、
+//! 容器拒绝、读面表序漂移）。源档公式在场时两路径均经 mdc-formula
+//! 全簿重算回写缓存（X-1——P1-6 缓存陈旧缺口闭合）；rebuild 路径
+//! 另有 [`structural_loss_notes`] 结构性丢失诚实账本（P2-12——
+//! 图表/条件格式/数据验证/样式 xf/隐藏行列/外部链接/图片，
+//! 在场才登记）。机制与分派纪律见 [`export_edited`] 文档。
+//!
 //! ## 定位
 //!
 //! [`rebuild_book`]：读面 [`Book`]（+ 单格编辑账本 [`CellEdit`]）→
@@ -465,6 +477,337 @@ pub fn rebuild_book_with(
 
     let bytes = w.save_to_vec()?;
     Ok((bytes, stats))
+}
+
+// ---------------------------------------------------------------------------
+// 产品导出编排（#283——T8/X-2 消费倒挂修复：XlsxEditor 接产品路径）
+// ---------------------------------------------------------------------------
+
+/// 导出路径（[`export_edited`] 产物标注——宿主警示面/统计口径分岔）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportPath {
+    /// 原位手术（[`crate::xlsx_edit::XlsxEditor`]）：非目标部件逐字节
+    /// 透传——样式/图表/条件格式/数据验证/列宽等结构性面**保真**；
+    /// 编辑面 = v1 值三形态 + 公式缓存更新（重算接线）。
+    InPlace,
+    /// 读-改-重建（[`rebuild_book`]）：全量重放（rust_xlsxwriter 从零
+    /// 构建）——值/公式文本/合并/超链接保真，结构性丢失由 `skipped`
+    /// 诚实账本逐类登记（见 [`structural_loss_notes`]）。
+    Rebuild,
+}
+
+/// 导出统计（两路径统一形状——wasm JSON 面六键恒在，宿主无分岔判断）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportStats {
+    /// 实际路径。
+    pub path: ExportPath,
+    /// 表数（in-place = 源档簿序透传；rebuild = 重放表数）。
+    pub sheets: usize,
+    /// 写格数（in-place = 手术触及格数：值编辑 + 缓存更新；
+    /// rebuild = 全量重放格数——两口径不可比，宿主文案按 path 语义展示）。
+    pub cells_written: u64,
+    /// 合并数（in-place = 源档合并透传计数；rebuild = 重放计数）。
+    pub merges: usize,
+    /// 超链接数（同上）。
+    pub hyperlinks: usize,
+    /// 编辑账本消费数。
+    pub edits_applied: usize,
+    /// 公式缓存更新数（in-place = 手术回写数；rebuild = 重算落盘数）。
+    pub recalc_cells: usize,
+    /// 诚实账本（rebuild = RebuildStats::skipped + 结构性丢失；
+    /// in-place = 重算降级登记）。
+    pub skipped: Vec<String>,
+    /// 未走 in-place 的逐条原因（in-place 成功 = 空数组）。
+    pub fallback_reasons: Vec<String>,
+}
+
+/// 产品导出入口（#283——审计 T8/X-2：激活 XlsxEditor 接产品路径）。
+///
+/// 路径选择（保真优先，拒改面全兜底）：
+/// 1. **in-place 优先**：全部编辑为 text/number/bool 且落格可行 →
+///    [`crate::xlsx_edit::XlsxEditor`] 原位手术（非目标部件逐字节
+///    透传）。源档公式在场时经 `prepare_recalc` 全簿重算，公式缓存
+///    以编辑面回写（X-1 重算接线——「改值后依赖公式缓存陈旧」
+///    P1-6 同源缺口闭合）；重算不可用 → 降级保真直通 + 登记
+///    （与 rebuild 路径同一降级纪律）。
+/// 2. **rebuild 兜底**：in-place v1 拒改面（empty/formula 编辑、
+///    公式格/不可编辑表落格、容器拒绝、读面表序漂移）→ 全量重放
+///    （公式文本 + 重算缓存）；源档结构性面（图表/条件格式/数据
+///    验证/样式 xf/隐藏行列/外部链接/图片）**在场才登记**入
+///    `skipped`（P2-12 诚实账本——宿主须警示）。
+///
+/// 零编辑 = in-place 恒等重打包（与 rebuild 全量重写对照：结构性
+/// 面零损失）。
+pub fn export_edited(
+    book: &Book,
+    bytes: &[u8],
+    edits: &[CellEdit],
+) -> Result<(Vec<u8>, ExportStats), WriteError> {
+    // 编辑账本分组（与 rebuild_book_with 同口径——重算/兜底复用）。
+    let mut by_sheet: Vec<HashMap<(u32, u32), &CellEdit>> = vec![HashMap::new(); book.sheets.len()];
+    for e in edits {
+        if let Some(m) = by_sheet.get_mut(e.sheet) {
+            m.insert((e.row, e.col), e);
+        } else {
+            return Err(WriteError::InvalidInput(format!(
+                "edit references sheet index {} out of range ({})",
+                e.sheet,
+                book.sheets.len()
+            )));
+        }
+    }
+
+    let mut fallback: Vec<String> = Vec::new();
+    // in-place v1 值三形态面：empty/formula 编辑不承载（清格走 rebuild
+    // 空语义、公式走 rebuild 公式文本 + 重算缓存）。
+    let unsupported = edits
+        .iter()
+        .filter(|e| matches!(e.value, EditValue::Empty | EditValue::Formula(_)))
+        .count();
+    if unsupported > 0 {
+        fallback.push(format!(
+            "{unsupported} edit(s) of kind empty/formula outside in-place v1 value surface \
+             (text/number/bool only)"
+        ));
+    }
+
+    if fallback.is_empty() {
+        match try_in_place(book, bytes, edits, &by_sheet) {
+            Ok(out) => return Ok(out),
+            Err(reasons) => fallback.extend(reasons),
+        }
+    }
+
+    // rebuild 兜底 + 结构性丢失诚实账本（P2-12）。
+    let (out, stats) = rebuild_book_with(book, edits, &RebuildOptions::default())?;
+    let mut skipped = stats.skipped;
+    skipped.extend(structural_loss_notes(bytes));
+    Ok((
+        out,
+        ExportStats {
+            path: ExportPath::Rebuild,
+            sheets: stats.sheets,
+            cells_written: stats.cells_written,
+            merges: stats.merges,
+            hyperlinks: stats.hyperlinks,
+            edits_applied: stats.edits_applied,
+            recalc_cells: stats.recalc_cells,
+            skipped,
+            fallback_reasons: fallback,
+        },
+    ))
+}
+
+/// in-place 尝试（Err = 逐条回退原因——调用方转 rebuild，不外泄）。
+fn try_in_place(
+    book: &Book,
+    bytes: &[u8],
+    edits: &[CellEdit],
+    by_sheet: &[HashMap<(u32, u32), &CellEdit>],
+) -> Result<(Vec<u8>, ExportStats), Vec<String>> {
+    use crate::xlsx_edit::{CellEdit as InPlaceValue, XlsxEditor};
+
+    let mut reasons: Vec<String> = Vec::new();
+    let mut ed = match XlsxEditor::open(bytes) {
+        Ok(ed) => ed,
+        Err(e) => {
+            reasons.push(format!("in-place open rejected (editor gates): {e}"));
+            return Err(reasons);
+        }
+    };
+    // 表序守卫：编辑坐标 = 簿序下标，两读面（editor workbook.xml /
+    // calamine）不同名同序即拒——坐标系漂移面宁可回退不冒险。
+    let ed_sheets = ed.sheets();
+    if ed_sheets.len() != book.sheets.len()
+        || ed_sheets
+            .iter()
+            .zip(book.sheets.iter())
+            .any(|(a, b)| a.name != b.name)
+    {
+        reasons.push(
+            "sheet order/name mismatch between editor and reader faces — refusing coordinate transfer"
+                .to_string(),
+        );
+        return Err(reasons);
+    }
+
+    let mut edits_applied = 0usize;
+    for e in edits {
+        let cell_ref = format!("{}{}", crate::xlsx_edit::col_letters(e.col), e.row + 1);
+        let value = match &e.value {
+            EditValue::Text(t) => InPlaceValue::Text(t.clone()),
+            EditValue::Number(v) => InPlaceValue::Number(*v),
+            EditValue::Boolean(b) => InPlaceValue::Boolean(*b),
+            // 调用方预判已排除（empty/formula → 不进本函数）。
+            EditValue::Empty | EditValue::Formula(_) => {
+                unreachable!("export_edited 预判已排除 empty/formula 编辑进 in-place 面")
+            }
+        };
+        if let Err(err) = ed.set_cell(e.sheet, &cell_ref, value) {
+            reasons.push(format!(
+                "edit at sheet {} {} refused by in-place engine: {err}",
+                e.sheet, cell_ref
+            ));
+            return Err(reasons);
+        }
+        edits_applied += 1;
+    }
+
+    // 重算接线（X-1）：源档公式在场 → 全簿重算（编辑即落位）→
+    // 缓存经编辑面回写。P1-6 缓存陈旧缺口在 in-place 路径同口径闭合。
+    let mut recalc_cells = 0usize;
+    let mut notes: Vec<String> = Vec::new();
+    let has_formulas = book.sheets.iter().any(|s| s.formulas.start().is_some());
+    if has_formulas {
+        match prepare_recalc(book, by_sheet) {
+            Ok(outcome) => {
+                for ((si, r, c), cache) in &outcome.table {
+                    let cell_ref = format!("{}{}", crate::xlsx_edit::col_letters(*c), r + 1);
+                    if let Err(err) = ed.set_formula_cache(*si, &cell_ref, cache.clone()) {
+                        reasons.push(format!(
+                            "formula cache update at sheet {si} {cell_ref} refused: {err}"
+                        ));
+                        return Err(reasons);
+                    }
+                    recalc_cells += 1;
+                }
+                notes.extend(outcome.notes);
+            }
+            Err(e) => {
+                // 整簿降级：缓存保真直通（源缓存保留）+ 登记——
+                // 与 rebuild 路径同一降级纪律，非阻断。
+                notes.push(format!(
+                    "recalc unavailable (formula caches passthrough): {e}"
+                ));
+            }
+        }
+    }
+
+    let out = match ed.save_to_vec() {
+        Ok(v) => v,
+        Err(e) => {
+            reasons.push(format!("in-place save failed: {e}"));
+            return Err(reasons);
+        }
+    };
+    let merges: usize = book.sheets.iter().map(|s| s.merges.len()).sum();
+    let hyperlinks: usize = book.sheets.iter().map(|s| s.hyperlinks.len()).sum();
+    Ok((
+        out,
+        ExportStats {
+            path: ExportPath::InPlace,
+            sheets: book.sheets.len(),
+            cells_written: (edits_applied + recalc_cells) as u64,
+            merges,
+            hyperlinks,
+            edits_applied,
+            recalc_cells,
+            skipped: notes,
+            fallback_reasons: Vec::new(),
+        },
+    ))
+}
+
+/// rebuild 路径结构性丢失诚实账本（#283 P2-12——审计建议 3）。
+///
+/// 源档在场的「重放器不重放」面逐类登记（**在场才登记**——裸簿零
+/// 噪音；登记即宿主须警示，web 面按 `skipped` 长度亮警）。检测面
+/// 全容错：zip 缺件/坏件 → 该类跳过，不阻断导出。
+///
+/// 覆盖类（read-modify-rebuild 的 FIDELITY v2 丢失矩阵之外、
+/// issue #283 点名的结构性面）：
+/// - 图表部件（`xl/charts/`）；
+/// - 图片/drawing 部件（`xl/media/` + `xl/drawings/`）；
+/// - 条件格式（worksheet `<conditionalFormatting`）；
+/// - 数据验证（worksheet `<dataValidation`）；
+/// - 单元格样式 xf（`cellXfs` > 1——仅默认 xf 不登记）；
+/// - 隐藏行列 / 外部链接（结构面引擎 [`crate::xlsx_structural`]
+///   复用）。
+fn structural_loss_notes(bytes: &[u8]) -> Vec<String> {
+    use std::io::Read as _;
+
+    let mut notes = Vec::new();
+    let Ok(mut za) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
+        return notes;
+    };
+    let names: Vec<String> = (0..za.len())
+        .filter_map(|i| za.by_index_raw(i).ok().map(|e| e.name().to_string()))
+        .collect();
+
+    let charts = names
+        .iter()
+        .filter(|n| n.starts_with("xl/charts/") && n.ends_with(".xml"))
+        .count();
+    if charts > 0 {
+        notes.push(format!(
+            "charts present in source ({charts} chart part(s)) — rebuild path cannot replay charts"
+        ));
+    }
+    let media = names.iter().filter(|n| n.starts_with("xl/media/")).count();
+    let drawings = names
+        .iter()
+        .filter(|n| n.starts_with("xl/drawings/"))
+        .count();
+    if media + drawings > 0 {
+        notes.push(format!(
+            "images/drawings present in source ({media} media part(s), {drawings} drawing part(s)) — not replayed"
+        ));
+    }
+
+    let mut condfmt_sheets = 0usize;
+    let mut dv_sheets = 0usize;
+    for n in &names {
+        if n.starts_with("xl/worksheets/") && n.ends_with(".xml") {
+            if let Ok(mut zf) = za.by_name(n) {
+                let mut xml = String::new();
+                if zf.read_to_string(&mut xml).is_ok() {
+                    if xml.contains("<conditionalFormatting") {
+                        condfmt_sheets += 1;
+                    }
+                    if xml.contains("<dataValidation") {
+                        dv_sheets += 1;
+                    }
+                }
+            }
+        }
+    }
+    if condfmt_sheets > 0 {
+        notes.push(format!(
+            "conditional formatting present in source ({condfmt_sheets} sheet(s)) — not replayed"
+        ));
+    }
+    if dv_sheets > 0 {
+        notes.push(format!(
+            "data validation present in source ({dv_sheets} sheet(s)) — not replayed"
+        ));
+    }
+
+    // 隐藏行列 / 外部链接 / cellXfs：结构面引擎复用（容错降级——
+    // 单部件坏 → 该面空，不阻断）。
+    if let Ok(report) = crate::xlsx_structural::read_structural_from_bytes(bytes) {
+        let hidden_rows: usize = report.sheets.iter().map(|s| s.hidden_rows.len()).sum();
+        let hidden_cols: usize = report.sheets.iter().map(|s| s.hidden_cols.len()).sum();
+        if hidden_rows + hidden_cols > 0 {
+            notes.push(format!(
+                "hidden rows/cols present in source ({hidden_rows} row(s), {hidden_cols} col(s)) — not replayed"
+            ));
+        }
+        if !report.external_links.is_empty() {
+            notes.push(format!(
+                "external links present in source ({}) — not replayed",
+                report.external_links.len()
+            ));
+        }
+        // cellXfs > 1 = 非默认样式在场（xf0 恒默认——rust_xlsxwriter
+        // 裸簿亦有 1 档；>1 才有「丢失」可言）。
+        if report.styles.cell_xfs.len() > 1 {
+            notes.push(format!(
+                "cell style xfs present in source ({}) — not replayed",
+                report.styles.cell_xfs.len()
+            ));
+        }
+    }
+    notes
 }
 
 fn fmt_pos(r: u32, c: u32) -> String {

@@ -1922,6 +1922,7 @@ dependencies = [
  "mdcore",
  "serde_json",
  "wasm-bindgen",
+ "zip",
 ]
 
 [[package]]

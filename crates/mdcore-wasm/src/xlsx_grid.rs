@@ -21,11 +21,15 @@
 //! 防单窗巨型分配）；sheet 索引越界 = typed 错误。
 //! 纯内核（`*_core`）不触碰 JsValue → 原生 cargo test 可测。
 //!
-//! ## 读-改-重建出口（p5-t2 表格 UI 产品化）
+//! ## 读-改-写出口（p5-t2 表格 UI 产品化；#283 接线升级）
 //! [`WasmBook::export_with_edits`]：编辑账本 JSON（命令形态
-//! `[{sheet,r,c,k,v}]`）→ `mdc_office_io::rebuild` 全量重放 → 新簿
-//! 字节（Uint8Array）；[`WasmBook::last_rebuild_stats_json`] = 最近
-//! 一次导出统计（保真例外显式化——`skipped` 非空时宿主须警示）。
+//! `[{sheet,r,c,k,v}]`）→ `mdc_office_io::rebuild::export_edited`
+//! （#283：XlsxEditor 原位手术优先 + rebuild 兜底）→ 新簿字节
+//! （Uint8Array）；[`WasmBook::last_rebuild_stats_json`] = 最近一次
+//! 导出统计（六键恒在：`path`/`sheets`/`cells_written`/`merges`/
+//! `hyperlinks`/`edits_applied`/`recalc_cells`/`skipped`/
+//! `fallback_reasons`——`skipped` 非空时宿主须警示，`path`
+//! `in_place` = 结构性面保真、`rebuild` = 诚实账本警示面）。
 //! 错误码：`rebuild_edits_json`（账本解析）/ `rebuild_invalid`
 //!（含 FFFE/FFFF 编辑拒）/ `rebuild_limit` / `rebuild_engine`。
 
@@ -34,7 +38,7 @@ use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
 use mdc_office_io::io::{read_book_from_bytes, Book, CellData, ReadError};
-use mdc_office_io::rebuild::{rebuild_book, CellEdit, EditValue, RebuildStats};
+use mdc_office_io::rebuild::{export_edited, CellEdit, EditValue, ExportPath, ExportStats};
 
 /// 单窗切片格数上限（读面总量门同纪律——防巨型窗口分配）。
 pub const MAX_SLICE_CELLS: u32 = 100_000;
@@ -136,26 +140,38 @@ fn cell_json(cd: &CellData) -> String {
 
 // ── 纯内核（JsValue-free，原生 cargo test 面）──────────────────────
 
-/// 重放统计 → JSON（宿主状态行/警示面）。
-pub fn rebuild_stats_json(stats: &RebuildStats) -> String {
+/// 导出统计 → JSON（两路径统一形状——#283：`path` 面板 + 六键恒在
+/// + `recalc_cells` 增量暴露；web 宿主按 `skipped` 长度亮警）。
+pub fn export_stats_json(stats: &ExportStats) -> String {
     let skipped: Vec<String> = stats
         .skipped
         .iter()
         .map(|s| serde_json::to_string(s).unwrap())
         .collect();
+    let fallback: Vec<String> = stats
+        .fallback_reasons
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect();
+    let path = match stats.path {
+        ExportPath::InPlace => "in_place",
+        ExportPath::Rebuild => "rebuild",
+    };
     format!(
-        "{{\"sheets\":{},\"cells_written\":{},\"merges\":{},\"hyperlinks\":{},\"edits_applied\":{},\"skipped\":[{}]}}",
+        "{{\"path\":\"{path}\",\"sheets\":{},\"cells_written\":{},\"merges\":{},\"hyperlinks\":{},\"edits_applied\":{},\"recalc_cells\":{},\"skipped\":[{}],\"fallback_reasons\":[{}]}}",
         stats.sheets,
         stats.cells_written,
         stats.merges,
         stats.hyperlinks,
         stats.edits_applied,
-        skipped.join(",")
+        stats.recalc_cells,
+        skipped.join(","),
+        fallback.join(","),
     )
 }
 
 /// 编辑账本 JSON 解析（`[{sheet,r,c,k,v}]`；k ∈ text/number/bool/
-/// empty——empty 无 v）。同格后写胜由 [`rebuild_book`] 分组承载。
+/// empty——empty 无 v）。同格后写胜由编辑账本分组承载。
 pub fn parse_edits_core(edits_json: &str) -> Result<Vec<CellEdit>, GridError> {
     let v: serde_json::Value =
         serde_json::from_str(edits_json).map_err(|e| GridError::EditsJson(e.to_string()))?;
@@ -224,13 +240,15 @@ pub fn parse_edits_core(edits_json: &str) -> Result<Vec<CellEdit>, GridError> {
     Ok(out)
 }
 
-/// 读-改-重建纯内核（原生测试面）：`(新簿字节, 统计 JSON)`。
+/// 读-改-写纯内核（原生测试面）：`(新簿字节, 统计 JSON)`。
+/// #283：`export_edited` 编排（in-place 优先 + rebuild 兜底）。
 pub fn export_with_edits_core(
     book: &Book,
+    bytes: &[u8],
     edits_json: &str,
 ) -> Result<(Vec<u8>, String), GridError> {
     let edits = parse_edits_core(edits_json)?;
-    let (bytes, stats) = rebuild_book(book, &edits).map_err(|e| GridError::Rebuild {
+    let (bytes, stats) = export_edited(book, bytes, &edits).map_err(|e| GridError::Rebuild {
         code: match &e {
             mdc_office_io::write::WriteError::Limit(_) => "rebuild_limit",
             mdc_office_io::write::WriteError::InvalidInput(_) => "rebuild_invalid",
@@ -238,7 +256,7 @@ pub fn export_with_edits_core(
         },
         message: format!("{e}"),
     })?;
-    Ok((bytes, rebuild_stats_json(&stats)))
+    Ok((bytes, export_stats_json(&stats)))
 }
 
 pub fn sheets_core(book: &Book) -> String {
@@ -309,6 +327,10 @@ pub fn slice_core(
 #[wasm_bindgen]
 pub struct WasmBook {
     book: Book,
+    /// 源档字节（#283——in-place 原位手术原料：导出时编辑面需要
+    /// 原始部件透传，非读面抽象）。内存代价 = 源档一倍，与编辑功能
+    /// 一起在场（只读消费方仍用 book 面）。
+    bytes: Vec<u8>,
     /// 最近一次导出统计（`export_with_edits` 写入 / 宿主
     /// `last_rebuild_stats_json` 读取——`&self` 下的 interior
     /// mutability）。
@@ -323,6 +345,7 @@ impl WasmBook {
         let book = read_book_from_bytes(bytes).map_err(|e| GridError::Read(e).to_js())?;
         Ok(WasmBook {
             book,
+            bytes: bytes.to_vec(),
             last_stats: RefCell::new(String::new()),
         })
     }
@@ -381,11 +404,12 @@ impl WasmBook {
         Ok(kind.to_string())
     }
 
-    /// 读-改-重建导出：编辑账本 JSON → 新簿字节（Uint8Array）。
-    /// 统计面见 [`Self::last_rebuild_stats_json`]。
+    /// 读-改-写导出（#283：in-place 优先 + rebuild 兜底）：编辑账本
+    /// JSON → 新簿字节（Uint8Array）。统计面见
+    /// [`Self::last_rebuild_stats_json`]。
     pub fn export_with_edits(&self, edits_json: &str) -> Result<Vec<u8>, JsValue> {
         let (bytes, stats) =
-            export_with_edits_core(&self.book, edits_json).map_err(|e| e.to_js())?;
+            export_with_edits_core(&self.book, &self.bytes, edits_json).map_err(|e| e.to_js())?;
         *self.last_stats.borrow_mut() = stats;
         Ok(bytes)
     }
