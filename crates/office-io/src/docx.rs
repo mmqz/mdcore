@@ -1508,7 +1508,10 @@ pub enum ParagraphIndentSpecial {
 }
 
 /// 段落：样式 ID 透传 + 标题层级解析 + run 序 + 编号/缩进承载（r4-t3）。
-#[derive(Debug, Clone, PartialEq)]
+///
+/// #316：`Default` 派生（BlockSource::Body 缺省——测试/直构面经
+/// `..Default::default()` 构造，新增字段不再逐处同步）。
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ParagraphData {
     /// 样式 ID（如 `Heading1`/`Normal`）——语义判定归消费方。
     pub style: Option<String>,
@@ -1573,8 +1576,13 @@ impl ParagraphData {
 /// 附属内容面（脚注/尾注/批注——其承载通道独立于正文块序，语义
 /// 上仍是文档内容而非页面装置）；`Header`/`Footer` 仅对应六槽位
 /// 挂接部件（`HeaderFooterData::blocks` 内的块）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// #316：`Default`（Body 缺省）——[`ParagraphData`] 的 `Default`
+/// 派生依赖项（加字段后旧字面量经 `..Default::default()` 免逐个
+/// 跟随——#285② Anchor 加字段连环编译事故的同款预防）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BlockSource {
+    #[default]
     Body,
     Header,
     Footer,

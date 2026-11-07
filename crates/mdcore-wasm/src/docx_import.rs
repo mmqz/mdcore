@@ -895,10 +895,13 @@ mod tests {
             // 语义零变化：该 helper 的既有断言全部面向 style/runs）。
             // #19：footnote_refs 默认空（helper 断言不涉脚注位）。
             // P2-1：source 默认 Body（helper 构造正文形态块）。
+            // #316：未列字段经 `..Default::default()` 承接（新增
+            // resolved_number 等——加字段不再逐处同步）。
             numbering: None,
             indent: None,
             footnote_refs: Vec::new(),
             source: BlockSource::Body,
+            ..Default::default()
         })
     }
 
@@ -943,6 +946,8 @@ mod tests {
             }),
             indent: None,
             footnote_refs: Vec::new(),
+            // #316：未列字段（resolved_number 等）经缺省承接。
+            ..Default::default()
         })
     }
 
@@ -1365,6 +1370,8 @@ mod tests {
                 }),
                 indent: None,
                 footnote_refs: Vec::new(),
+                // #316：未列字段（resolved_number 等）经缺省承接。
+                ..Default::default()
             }),
             numbered_para(
                 2,
