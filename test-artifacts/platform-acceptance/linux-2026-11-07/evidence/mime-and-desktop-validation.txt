@@ -1,0 +1,8 @@
+== xdg-mime query default text/markdown ==
+dev.mdcore.editor.desktop
+== xdg-mime query default x-scheme-handler/mdcore ==
+dev.mdcore.editor.desktop
+== xdg-mime query default application/pdf (control: 未被 mdcore 抢注) ==
+libreoffice-draw.desktop
+== desktop-file-validate ==
+desktop-file-validate: PASS (exit 0)

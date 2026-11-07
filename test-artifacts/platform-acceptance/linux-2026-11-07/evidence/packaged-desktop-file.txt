@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=mdcore
+GenericName=Markdown Editor
+Comment=Modular Markdown editing core with native shell
+Exec=mdcore %F
+TryExec=mdcore
+Icon=mdcore
+Terminal=false
+Categories=TextEditor;Utility;
+MimeType=text/markdown;x-scheme-handler/mdcore;
+StartupWMClass=mdcore
+SingleMainWindow=true
+Actions=new-window;open-settings;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=mdcore --new-window
+
+[Desktop Action open-settings]
+Name=Settings
+Exec=mdcore --settings
