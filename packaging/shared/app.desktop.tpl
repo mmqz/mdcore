@@ -18,11 +18,11 @@ MimeType=text/markdown;x-scheme-handler/mdcore;
 # 单实例语义（R24-b 一窗一档；宿主把新文件参数转交既有实例）
 StartupWMClass={{APP_EXEC}}
 SingleMainWindow=true
-Actions=new-window;open-settings;
-
-[Desktop Action new-window]
-Name=New Window
-Exec={{APP_EXEC}} --new-window
+# #321（2026-11-07）：仅保留真实实现的动作。open-settings =
+# `--settings` CLI 合同（ShellApp::open_settings 同链）；new-window
+# 已移除——单实例一窗一档是 R24-b 既定设计（真开二窗与 RPC 单端点/
+# 退出语义相悖；新档由宿主转交既有实例，非二窗）。
+Actions=open-settings;
 
 [Desktop Action open-settings]
 Name=Settings
