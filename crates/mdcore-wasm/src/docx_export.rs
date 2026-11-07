@@ -506,6 +506,67 @@ fn collect_toc_entries(
     }
 }
 
+/// #365：有序列表实例 numId 表（ListItem 节点 id → 实例 numId）——
+/// [`assign_ordered_num_ids`] 预分配 pass 的产物，[`emit_block`]
+/// ListItem 分支查表（缺项 = bullet/防御回落预设 100）。
+type ListNumMap = std::collections::HashMap<NodeId, usize>;
+
+/// #365：给每个有序列表实例分配独立 numId（修复 D5 往返回退：t20
+/// 导出恒用预设 `ORDERED_NUM_ID=100`，同文档多个有序列表共享计数器
+/// → 第二列表再导入编号连续[2., 3.]而非重启[1., 2.]——#266 读面
+/// resolved_number 直出后往返可见）。
+///
+/// 列表实例 = 容器 children 内**极大连续 ListItem 兄弟 run**（非
+/// ListItem 兄弟打断 = 新列表；嵌套子列表在父项 children 内自成
+/// run——父 run 的 numId 跨嵌套存活，镜像 Word 语义）。含至少一个
+/// ordered 项的 run 才参与分配（bullet 无可见计数器，恒预设 101 不
+/// 分配）；run 内 bullet 项不占实例位（防御混合 run 的确定性语义：
+/// ordered 项用 run numId，bullet 项走预设）。
+///
+/// 分配序 = 先序遍历序（与 [`emit_block`] 发射序一致）→ 第 1 实例
+/// = 100（单列表档字节级零变化），后续 102, 103, …（见
+/// [`DocxWriter::alloc_ordered_num_id`]）。
+fn assign_ordered_num_ids(tree: &BlockTree, w: &mut DocxWriter) -> ListNumMap {
+    let mut map = ListNumMap::new();
+    assign_runs(tree.top_level(), tree, w, &mut map);
+    map
+}
+
+/// [`assign_ordered_num_ids`] 的递归体：扫兄弟序列切极大 ListItem
+/// run，并对每个子（无论块型）递归（嵌套列表 = ListItem children 内
+/// 的独立 run）。
+fn assign_runs(children: &[NodeId], tree: &BlockTree, w: &mut DocxWriter, map: &mut ListNumMap) {
+    let mut i = 0;
+    while i < children.len() {
+        if tree.node(children[i]).kind == BlockKind::ListItem {
+            // 极大连续 run 切分。
+            let start = i;
+            while i < children.len() && tree.node(children[i]).kind == BlockKind::ListItem {
+                i += 1;
+            }
+            let run = &children[start..i];
+            let has_ordered = run
+                .iter()
+                .any(|&id| list_shape(&tree.node(id).attrs).0 == ListKind::Ordered);
+            if has_ordered {
+                let num = w.alloc_ordered_num_id();
+                for &id in run {
+                    if list_shape(&tree.node(id).attrs).0 == ListKind::Ordered {
+                        map.insert(id, num);
+                    }
+                }
+            }
+            // run 内每项的 children（嵌套子列表）递归。
+            for &id in run {
+                assign_runs(&tree.node(id).children, tree, w, map);
+            }
+        } else {
+            assign_runs(&tree.node(children[i]).children, tree, w, map);
+            i += 1;
+        }
+    }
+}
+
 /// 单块发射（先序递归；降级语义见模块文档映射表）。`quote_depth` =
 /// 引用上下文深度（0 = 无引用面；Blockquote 子块递归传 depth+1 嵌套
 /// 步进——仅段落/嵌套引用承载 ind/pBdr，其余子块登记见模块文档）。
@@ -516,6 +577,7 @@ fn emit_block(
     quote_depth: usize,
     images: &ImageTable,
     toc_marks: &TocMarkMap,
+    list_nums: &ListNumMap,
 ) -> Result<(), ExportError> {
     let node = tree.node(id);
     let text = node.text.to_string();
@@ -523,7 +585,7 @@ fn emit_block(
         // 虚根透明递归（top_level 已绕过；op 面禁止 Document 子块——防御）
         BlockKind::Document => {
             for &c in &node.children {
-                emit_block(tree, c, w, quote_depth, images, toc_marks)?;
+                emit_block(tree, c, w, quote_depth, images, toc_marks, list_nums)?;
             }
         }
         BlockKind::Heading => {
@@ -599,7 +661,7 @@ fn emit_block(
                 emit_rich_paragraphs(w, &clean, &marks, d);
             }
             for &c in &node.children {
-                emit_block(tree, c, w, d, images, toc_marks)?;
+                emit_block(tree, c, w, d, images, toc_marks, list_nums)?;
             }
         }
         BlockKind::ListItem => {
@@ -609,6 +671,8 @@ fn emit_block(
             // OOXML 段落（行间 w:br 软换行 + 段落级 hanging ind），
             // 续行与首行文字列对齐（每行 run 序由 rich_lines 平移行内
             // marks）。子块递归（嵌套 item 各自编号段，次序保持）。
+            // #365：ordered 项查实例表（每列表独立 numId → 编号重启）；
+            // bullet/缺项（防御）走预设路径不变。
             let (kind, ilvl) = list_shape(&node.attrs);
             let (clean, eff_marks) = effective_inline(&text, &node.marks);
             let lines = rich_lines(&clean, &eff_marks);
@@ -616,17 +680,36 @@ fn emit_block(
                 .iter()
                 .map(|(line, line_marks)| runs_from(line, line_marks))
                 .collect();
+            let instance_num = (kind == ListKind::Ordered)
+                .then(|| list_nums.get(&id).copied())
+                .flatten();
             if line_runs.len() <= 1 {
                 // 单行：既有 list_item 路径不动（无显式 ind——稳定面）。
                 if let Some(first) = line_runs.first() {
-                    w.list_item(first, kind, ilvl).map_err(|e| map_error(&e))?;
+                    match instance_num {
+                        Some(n) => {
+                            w.ordered_list_item(first, ilvl, n)
+                                .map_err(|e| map_error(&e))?;
+                        }
+                        None => {
+                            w.list_item(first, kind, ilvl).map_err(|e| map_error(&e))?;
+                        }
+                    }
                 }
             } else {
-                w.list_item_lines(&line_runs, kind, ilvl)
-                    .map_err(|e| map_error(&e))?;
+                match instance_num {
+                    Some(n) => {
+                        w.ordered_list_item_lines(&line_runs, ilvl, n)
+                            .map_err(|e| map_error(&e))?;
+                    }
+                    None => {
+                        w.list_item_lines(&line_runs, kind, ilvl)
+                            .map_err(|e| map_error(&e))?;
+                    }
+                }
             }
             for &c in &node.children {
-                emit_block(tree, c, w, quote_depth, images, toc_marks)?;
+                emit_block(tree, c, w, quote_depth, images, toc_marks, list_nums)?;
             }
         }
         BlockKind::ThematicBreak => {
@@ -646,8 +729,11 @@ pub fn export_docx_core(tree: &BlockTree) -> Result<Vec<u8>, ExportError> {
     let empty: ImageTable = ImageTable::new();
     // #196 任务 2：无 options 面无 TOC——空配对表（Heading 裸路径）。
     let no_toc: TocMarkMap = TocMarkMap::new();
+    // #365：有序列表实例预分配（先于发射——分配序 = 发射序，第 1
+    // 实例 = 100 兼容面）。
+    let list_nums = assign_ordered_num_ids(tree, &mut w);
     for &child in tree.top_level() {
-        emit_block(tree, child, &mut w, 0, &empty, &no_toc)?;
+        emit_block(tree, child, &mut w, 0, &empty, &no_toc, &list_nums)?;
     }
     w.save_to_vec().map_err(|e| map_error(&e))
 }
@@ -1367,8 +1453,11 @@ pub fn export_docx_styled_core(
             toc_marks.insert(pos, name);
         }
     }
+    // #365：有序列表实例预分配（先于发射——分配序 = 发射序，第 1
+    // 实例 = 100 兼容面）。
+    let list_nums = assign_ordered_num_ids(tree, &mut w);
     for &child in tree.top_level() {
-        emit_block(tree, child, &mut w, 0, &opts.images, &toc_marks)?;
+        emit_block(tree, child, &mut w, 0, &opts.images, &toc_marks, &list_nums)?;
     }
     let bytes = w.save_to_vec().map_err(|e| map_error(&e))?;
     // W-2：匿名化后处理（暗标 G3/R-11——docProps 元数据清零，正文
@@ -2018,6 +2107,177 @@ mod tests {
         let ps = paras(&roundtrip(&tree));
         let texts: Vec<String> = ps.iter().map(|p| p.text()).collect();
         assert_eq!(texts, vec!["a", "b", "c", "nested"]);
+    }
+
+    /// #365：有序列表实例编号重启——两个独立列表（段落打断）各得
+    /// 独立 numId（首个 100 兼容、第二 102），numbering.xml 零抽象
+    /// 重复（num 桥共享 ordered 抽象），再导入 resolved_number 双双
+    /// 从 1. 重启（修复前共享 100 → 第二列表 2., 3. 连续）。
+    #[test]
+    fn ordered_list_instances_restart_numbering() {
+        let tree = markdown_to_tree("1. first\n2. second\n\npara break\n\n1. top\n2. tail");
+        let bytes = export_docx_core(&tree).expect("export");
+        let xml = zip_stored_part(&bytes, "word/document.xml");
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="100" /><w:ilvl w:val="0" />"#)
+                .count(),
+            2,
+            "第一列表 = 预设 100（单列表档字节级兼容面）"
+        );
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="102" /><w:ilvl w:val="0" />"#)
+                .count(),
+            2,
+            "第二列表 = 实例 102（独立计数器 → 重启）"
+        );
+        // numbering.xml：抽象恒 3（内建 1 + ordered 100 + bullet 101
+        // ——实例零重复定义）+ num 桥 4 座（内建 1 / 预设 100,101 / 实例
+        // 102）。
+        let numbering = zip_stored_part(&bytes, "word/numbering.xml");
+        assert_eq!(
+            numbering.matches("<w:abstractNum ").count(),
+            3,
+            "实例共享同一 ordered 抽象——定义面零重复（内建 1 + 双预设）"
+        );
+        for id in [100, 101, 102] {
+            assert_eq!(
+                numbering
+                    .matches(&format!(r#"<w:num w:numId="{id}">"#))
+                    .count(),
+                1,
+                "num 桥 {id} 恰 1 座"
+            );
+        }
+        // 读面：resolved_number 双列表重启（#266 读面 per-numId 计数）。
+        let doc = read_docx_from_bytes(&bytes).expect("read back");
+        let numbers: Vec<String> = doc
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.resolved_number.clone(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            numbers,
+            vec!["1.", "2.", "1.", "2."],
+            "两列表独立重启（修复前第二列表 2./3.）"
+        );
+    }
+
+    /// #365：D5 回退最小复现——双列表 md 往返精确（import→export→
+    /// import 的 md1==md2，与 health_check 六维 D5 同口径；修复前
+    /// md2 第二列表 2./3. ≠ md1 1./2.）。
+    #[test]
+    fn two_ordered_lists_md_roundtrip_exact() {
+        use crate::docx_import::import_docx_core;
+        let md = "1. first\n2. second\n\nbreak\n\n1. top\n2. tail";
+        let tree = markdown_to_tree(md);
+        let bytes1 = export_docx_core(&tree).expect("export 1");
+        let v1: serde_json::Value =
+            serde_json::from_str(&import_docx_core(&bytes1).expect("reimport 1")).expect("json 1");
+        let md1 = v1["markdown"].as_str().unwrap().to_string();
+        let core = mdcore::Core::from_markdown(&md1);
+        let bytes2 = export_docx_core(&core.tree).expect("export 2");
+        let v2: serde_json::Value =
+            serde_json::from_str(&import_docx_core(&bytes2).expect("reimport 2")).expect("json 2");
+        let md2 = v2["markdown"].as_str().unwrap();
+        assert_eq!(md2, md1, "md 往返精确（编号重启保真——D5 口径）");
+    }
+
+    /// #365：嵌套列表重启——子列表在父项 children 内自成实例（独立
+    /// numId），父列表实例跨嵌套存活（兄弟 run 不被打断——序号形
+    /// 如「父 1. / 子 1. / 子 2. / 父 2.」）。子实例跳级首项的引擎
+    /// 序号为 `0.1.`（无父级上下文的 Word 规范渲染——numbering.rs
+    /// 模块文档登记的跳级行为），md 面经本地计数回退为 `1.`/`2.`
+    /// （markdown 嵌套列表本就独立重启——md 往返精确）。
+    #[test]
+    fn nested_ordered_list_instances() {
+        use crate::docx_import::import_docx_core;
+        let md = "1. parent-a\n  1. child-a\n  2. child-b\n2. parent-b";
+        let tree = markdown_to_tree(md);
+        let bytes = export_docx_core(&tree).expect("export");
+        let xml = zip_stored_part(&bytes, "word/document.xml");
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="100" /><w:ilvl w:val="0" />"#)
+                .count(),
+            2,
+            "父列表共享实例 100（跨嵌套存活）"
+        );
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="102" /><w:ilvl w:val="1" />"#)
+                .count(),
+            2,
+            "子列表独立实例 102（ilvl=1，重启）"
+        );
+        // 引擎读面：父 1./2.；子实例跳级渲染 0.1./0.2.（Word 规范）。
+        let doc = read_docx_from_bytes(&bytes).expect("read back");
+        let numbers: Vec<String> = doc
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => p.resolved_number.clone(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            numbers,
+            vec!["1.", "0.1.", "0.2.", "2."],
+            "父重启语义 + 子实例跳级渲染（Word 规范：父级计数 start−1 = 0）"
+        );
+        // md 面：往返精确（子项序号非 decimal 形 → 本地计数回退 1./2.
+        // ——与 markdown 嵌套列表独立重启语义一致，D5 口径）。
+        let v1: serde_json::Value =
+            serde_json::from_str(&import_docx_core(&bytes).expect("reimport 1")).expect("json 1");
+        let md1 = v1["markdown"].as_str().unwrap().to_string();
+        let core = mdcore::Core::from_markdown(&md1);
+        let bytes2 = export_docx_core(&core.tree).expect("export 2");
+        let v2: serde_json::Value =
+            serde_json::from_str(&import_docx_core(&bytes2).expect("reimport 2")).expect("json 2");
+        assert_eq!(
+            v2["markdown"].as_str().unwrap(),
+            md1,
+            "嵌套列表 md 往返精确（子列表独立重启）"
+        );
+    }
+
+    /// #365：bullet 列表零实例分配（无可见计数器——恒预设 101）+ 单
+    /// 有序列表档形态不变（实例 1 = 100，num 桥恒 3 座 = 既有面）。
+    #[test]
+    fn bullet_and_single_list_allocation_invariants() {
+        let tree = markdown_to_tree("- a\n- b\n\nbreak\n\n- c\n- d");
+        let bytes = export_docx_core(&tree).expect("export");
+        let xml = zip_stored_part(&bytes, "word/document.xml");
+        assert_eq!(
+            xml.matches(r#"<w:numId w:val="101" /><w:ilvl w:val="0" />"#)
+                .count(),
+            4,
+            "bullet 恒预设 101"
+        );
+        assert!(!xml.contains("<w:numId w:val=\"102\""), "bullet 零实例分配");
+        let numbering = zip_stored_part(&bytes, "word/numbering.xml");
+        assert_eq!(
+            numbering.matches("<w:num ").count(),
+            3,
+            "num 桥恒内建 1 + 预设 100/101（无实例增量）"
+        );
+        // 单有序列表档 = 既有面（t20 字节级兼容）。
+        let single_tree = markdown_to_tree("1. a\n2. b");
+        let single_bytes = export_docx_core(&single_tree).expect("export");
+        let single_xml = zip_stored_part(&single_bytes, "word/document.xml");
+        assert_eq!(
+            single_xml
+                .matches(r#"<w:numId w:val="100" /><w:ilvl w:val="0" />"#)
+                .count(),
+            2,
+            "单列表档仍预设 100"
+        );
+        let single_numbering = zip_stored_part(&single_bytes, "word/numbering.xml");
+        assert_eq!(
+            single_numbering.matches("<w:num ").count(),
+            3,
+            "单列表档 num 桥不增（兼容面）"
+        );
     }
 
     /// t20：marker 形态面 + depth 钳位（直构 attrs——`1)` 形 / 深度越界
