@@ -1718,8 +1718,21 @@ pub struct SectionData {
     pub geometry: PageGeometry,
     /// 首页不同（`w:titlePg`——first 槽位的激活位，语义解释归消费方）。
     pub title_page: bool,
-    /// 分栏数（`w:cols/@w:num`；缺省 1）。
+    /// 分栏数（`w:cols/@w:num`；缺省 1）。#268 修正：docx-rs 0.4.22
+    /// 读面**不解析 w:cols**（`SectionProperty::read` 无 cols 分支，
+    /// `columns` 恒缺省 1——#257 遗留静默面）；本字段改由 office-io
+    /// 自有 XML 第二趟（[`parse_columns_specs`]）真源派生。
     pub columns: usize,
+    /// #268：分栏规格全字段（`w:cols`——num/space/equalWidth/sep/
+    /// `w:col` 子表；None = 本节 `w:cols` 元素缺席[单栏缺省形态]。
+    /// docx-rs 0.4.22 只携 num/space 两字段（equalWidth/sep/col 子表
+    /// 缺失）——本面由 office-io 自有 quick-xml 第二趟补齐）。
+    pub columns_spec: Option<ColumnsSpec>,
+    /// #268：显式分栏符块（`w:br w:type="column"`——本节内含该符的
+    /// 段落块全局索引，升序；含符块内符前文本在原栏、符后文本入
+    /// 下栏[块级归属取块起始栏——粗粒度登记]；空 = 无显式分栏
+    /// [栏平衡是排版期行为，静态读面不可预知]）。
+    pub column_break_blocks: Vec<usize>,
     /// 分节符类型（`w:type`；缺省 None = NextPage 语义）。
     pub section_type: Option<SectionKind>,
     /// 起始页码（`w:pgNumType/@w:start`；None = 续前节）。
@@ -1731,6 +1744,58 @@ pub struct SectionData {
     /// 本节覆盖的块区间 `[start, end)`（`DocxDocument::blocks` 索引；
     /// 中段节 end = 承载 sectPr 的段落块之后的边界）。
     pub block_range: (usize, usize),
+}
+
+impl SectionData {
+    /// 块的栏号（0 起，#268 文本流分栏归属）：基于**显式分栏符**的
+    /// 确定性归属——块前显式分栏符计数（含符块自身取其起始栏）；
+    /// 钉制到 `columns-1`（多于栏数的分栏符由排版期流到下页——静态
+    /// 读面钳制登记）。无显式分栏 = 恒 0（自动栏平衡是排版期行为，
+    /// 静态读面不可预知——诚实降级，不猜）。`block_idx` 不在本节
+    /// `block_range` 内 → None。
+    pub fn column_of(&self, block_idx: usize) -> Option<usize> {
+        let (start, end) = self.block_range;
+        if block_idx < start || block_idx >= end {
+            return None;
+        }
+        let num = self.columns.max(1);
+        let prior = self
+            .column_break_blocks
+            .iter()
+            .filter(|&&b| b < block_idx)
+            .count();
+        Some(prior.min(num - 1))
+    }
+}
+
+/// 单栏宽（#268：`w:cols/w:col` 子元素——`@w:w`/`@w:space`，twips；
+/// `equalWidth=0` 形态下承载各栏宽度/间距，缺省属性 → None 不代填）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ColumnWidth {
+    /// 栏宽（`@w:w`，twips）。
+    pub width: Option<u32>,
+    /// 与右邻栏间距（`@w:space`，twips）。
+    pub space: Option<u32>,
+}
+
+/// 分栏规格（#268：`sectPr/w:cols` 全字段）。
+///
+/// 缺省语义（ECMA-376 §17.6.4）：num 缺省 1；space 缺省 720（twips，
+/// 不代填——消费方按需取缺省）；equalWidth 缺省 true；sep 缺省
+/// false。`w:col` 子表仅在 equalWidth=false 形态有意义（等宽形态下
+/// 子表在场也透传——读面不解释）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ColumnsSpec {
+    /// 栏数（`@w:num`）。
+    pub num: Option<u32>,
+    /// 栏间距（`@w:space`，twips）。
+    pub space: Option<u32>,
+    /// 等宽栏（`@w:equalWidth`——缺席 = true 语义，此处 None 区分）。
+    pub equal_width: Option<bool>,
+    /// 栏间分隔线（`@w:sep`——缺席 = false 语义）。
+    pub separator: Option<bool>,
+    /// 各栏宽子表（`w:col` 子元素，文档序）。
+    pub columns: Vec<ColumnWidth>,
 }
 
 /// 整档提取结果：块序 + 页眉页脚 + 媒体清单 + 结构化警告（容器门面，
@@ -1905,7 +1970,7 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
     // #19：脚注引用位扫描（w:footnoteReference——引擎 run 模型不
     // 承载，文档级第二趟；body 块索引 → id 序）。
     let note_refs = scan_note_references(&document_xml);
-    let (blocks, comment_anchors, section_marks) = extract_blocks(
+    let (blocks, comment_anchors, section_marks, column_break_blocks) = extract_blocks(
         &docx,
         &bundle,
         &numbering_index,
@@ -1951,6 +2016,8 @@ fn read_bytes_gated(bytes: &[u8], opts: &ReadOptions) -> Result<DocxDocument, Do
         &mut warnings,
         &headers,
         &footers,
+        &document_xml,
+        &column_break_blocks,
     )?;
     // #19：批注面（模型面 comments + 锚关联——VML 插入后的最终块序
     // lockstep 重 walk 解析数组索引）。
@@ -2964,7 +3031,7 @@ fn extract_blocks(
     strict: bool,
     warnings: &mut Vec<CompatibilityWarning>,
     note_refs: &HashMap<usize, Vec<i64>>,
-) -> Result<(Vec<Block>, CommentAnchors, SectionMarks), io::ReadError> {
+) -> Result<(Vec<Block>, CommentAnchors, SectionMarks, Vec<usize>), io::ReadError> {
     let table = bundle.document.as_ref();
     let mut blocks = Vec::new();
     // #19：批注锚采集（body 块索引, 批注 id）+ body 块计数器
@@ -2972,6 +3039,9 @@ fn extract_blocks(
     let mut comment_anchors: CommentAnchors = Vec::new();
     // #257：中段节标记（文档序）——承载 sectPr 的段落闭合一节。
     let mut section_marks: SectionMarks = Vec::new();
+    // #268：显式分栏符块（含 `w:br w:type="column"` 的段落块索引，
+    // 全局块序——build_sections 按节 block_range 切分归属）。
+    let mut column_break_blocks: Vec<usize> = Vec::new();
     let mut body_idx: usize = 0;
     for child in &docx.document.children {
         match child {
@@ -3000,6 +3070,12 @@ fn extract_blocks(
                     }
                 }
                 blocks.push(Block::Paragraph(pd));
+                // #268：显式分栏符标注（含符段落的自身块索引——符前
+                // 文本在原栏、符后入下栏，块级归属见
+                // `SectionData::column_of`）。
+                if paragraph_has_column_break(p) {
+                    column_break_blocks.push(blocks.len() - 1);
+                }
                 // #18：DrawingML 文本框（w:drawing → wps:txbx——引擎
                 // 读面已承载）宿主段后发射；VML 形态走文档级第二趟
                 // （apply_vml_textboxes——读面不承载，登记）。
@@ -3057,7 +3133,45 @@ fn extract_blocks(
             _ => {}
         }
     }
-    Ok((blocks, comment_anchors, section_marks))
+    Ok((blocks, comment_anchors, section_marks, column_break_blocks))
+}
+
+/// #268：段落含显式分栏符（`w:br w:type="column"`）？——run 直挂 /
+/// 超链接内嵌 / 修订插入三通道；修订删除面不计（非当前生效文本）。
+fn paragraph_has_column_break(p: &docx_rs::Paragraph) -> bool {
+    fn run_has(r: &docx_rs::Run) -> bool {
+        r.children.iter().any(|c| match c {
+            docx_rs::RunChild::Break(b) => break_is_column(b),
+            _ => false,
+        })
+    }
+    p.children.iter().any(|c| match c {
+        docx_rs::ParagraphChild::Run(r) => run_has(r),
+        docx_rs::ParagraphChild::Hyperlink(h) => h
+            .children
+            .iter()
+            .any(|hc| matches!(hc, docx_rs::ParagraphChild::Run(r) if run_has(r))),
+        docx_rs::ParagraphChild::Insert(ins) => ins.children.iter().any(|ic| match ic {
+            docx_rs::InsertChild::Run(r) => run_has(r),
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
+/// #268：`w:br` 是否 column 型？——docx-rs 0.4.22 `Break.break_type`
+/// 私有无 getter（builder 面独占），`Serialize` derive 是模型面唯一
+/// 公开读通道（#22 P2-2 `TableCellProperty` 同族先例；serde_json
+/// 已在产品闭包）。
+fn break_is_column(b: &docx_rs::Break) -> bool {
+    serde_json::to_value(b)
+        .ok()
+        .and_then(|v| {
+            v.get("breakType")
+                .and_then(|t| t.as_str())
+                .map(|s| s == "column")
+        })
+        .unwrap_or(false)
 }
 
 /// numId → 各 ilvl 级 numFmt 解析索引（r4-t3——numbering.xml 链的
@@ -4103,6 +4217,136 @@ fn mid_section_slots(
     Ok((headers, footers))
 }
 
+/// #268：解析 document.xml 全部 `sectPr/w:cols`（文档序）。
+///
+/// docx-rs 0.4.22 `SectionProperty` 只携 num/space（equalWidth/sep/
+/// `w:col` 子表缺失）——本函数为 office-io 自有 quick-xml 第二趟
+/// （与 style.rs styles/theme 自有层同族技术；sectPr 序 = 节序，
+/// 与 build_sections 的 marks+末节序列对齐）。`w:sectPrChange` 内
+/// 嵌套的旧节属性不计（修订面——非当前生效）。
+fn parse_columns_specs(xml: &str) -> Vec<Option<ColumnsSpec>> {
+    use quick_xml::events::Event;
+
+    let mut out: Vec<Option<ColumnsSpec>> = Vec::new();
+    let mut in_sect_pr = false; // sectPr 开（配对形态——自闭形态即时闭）
+    let mut in_sect_pr_change = false; // 修订旧属性区——嵌套 sectPr 不计
+    let mut cur: Option<ColumnsSpec> = None; // 当前 sectPr 的 cols（未遇 = None）
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut buf = Vec::new();
+    // 元素处理（Start/Empty 共用——is_empty 区分自闭 sectPr 即时闭）。
+    let handle = |e: &quick_xml::events::BytesStart<'_>,
+                  is_empty: bool,
+                  out: &mut Vec<Option<ColumnsSpec>>,
+                  in_sect_pr: &mut bool,
+                  in_change: &mut bool,
+                  cur: &mut Option<ColumnsSpec>| {
+        match e.local_name().as_ref() {
+            b"sectPrChange" => *in_change = true,
+            b"sectPr" if !*in_change => {
+                if is_empty {
+                    // 自闭 `<w:sectPr/>`：空属性区——即时闭（无后续
+                    // End 事件）。
+                    out.push(None);
+                } else {
+                    *in_sect_pr = true;
+                    *cur = None;
+                }
+            }
+            b"cols" if *in_sect_pr && !*in_change => {
+                let mut spec = ColumnsSpec::default();
+                for a in e.attributes() {
+                    let Ok(a) = a else { continue };
+                    match attr_local(&a) {
+                        b"num" => spec.num = parse_u32_attr(&a.value),
+                        b"space" => spec.space = parse_u32_attr(&a.value),
+                        b"equalWidth" => spec.equal_width = parse_on_off(&a.value),
+                        b"sep" => spec.separator = parse_on_off(&a.value),
+                        _ => {}
+                    }
+                }
+                // 首个 cols 记，后见覆盖（sectPr 内重复 cols 非法定
+                // 形态——Word 容错同向）。
+                *cur = Some(spec);
+            }
+            b"col" if *in_sect_pr && !*in_change => {
+                let mut cw = ColumnWidth::default();
+                for a in e.attributes() {
+                    let Ok(a) = a else { continue };
+                    match attr_local(&a) {
+                        b"w" => cw.width = parse_u32_attr(&a.value),
+                        b"space" => cw.space = parse_u32_attr(&a.value),
+                        _ => {}
+                    }
+                }
+                if let Some(spec) = cur.as_mut() {
+                    spec.columns.push(cw);
+                }
+            }
+            _ => {}
+        }
+    };
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => handle(
+                &e,
+                false,
+                &mut out,
+                &mut in_sect_pr,
+                &mut in_sect_pr_change,
+                &mut cur,
+            ),
+            Ok(Event::Empty(e)) => handle(
+                &e,
+                true,
+                &mut out,
+                &mut in_sect_pr,
+                &mut in_sect_pr_change,
+                &mut cur,
+            ),
+            Ok(Event::End(e)) => match e.local_name().as_ref() {
+                b"sectPrChange" => in_sect_pr_change = false,
+                b"sectPr" if !in_sect_pr_change => {
+                    in_sect_pr = false;
+                    out.push(cur.take());
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            // XML 流错误：已收集面透传（门 3 良构校验先行——此处不会
+            // 到达，防御姿态）。
+            Err(_) => break,
+            Ok(_) => {}
+        }
+        buf.clear();
+    }
+    out
+}
+
+/// #268：ST_OnOff 属性解析（"true"/"1"/"false"/"0"；其他 → None
+/// 不猜——与主题色系「登记不猜值」同族）。
+fn parse_on_off(v: &[u8]) -> Option<bool> {
+    match v {
+        b"true" | b"1" => Some(true),
+        b"false" | b"0" => Some(false),
+        _ => None,
+    }
+}
+
+/// #268：属性字节 → u32（非数 → None）。
+fn parse_u32_attr(v: &[u8]) -> Option<u32> {
+    std::str::from_utf8(v).ok()?.trim().parse().ok()
+}
+
+/// #268：属性限定名 → local name（剥 `w:` 前缀——style.rs `key_is`
+/// 同构；无前缀原样）。
+fn attr_local<'a>(a: &'a quick_xml::events::attributes::Attribute<'a>) -> &'a [u8] {
+    let k = a.key.as_ref();
+    match k.iter().position(|&b| b == b':') {
+        Some(i) => &k[i + 1..],
+        None => k,
+    }
+}
+
 /// 文档节全量构建（#257 读面收口）：中段节标记（文档序）+ 末节 →
 /// `Vec<SectionData>`（恒 ≥1 条；块区间连续切分 blocks 全序）。
 ///
@@ -4123,6 +4367,8 @@ fn build_sections(
     warnings: &mut Vec<CompatibilityWarning>,
     final_headers: &[HeaderFooterData],
     final_footers: &[HeaderFooterData],
+    document_xml: &str,
+    column_break_blocks: &[usize],
 ) -> Result<Vec<SectionData>, io::ReadError> {
     debug_assert_eq!(
         marks.len(),
@@ -4164,20 +4410,60 @@ fn build_sections(
     }
     let part_xml = load_section_part_xml(bytes, &part_paths);
 
+    // #268：cols 全字段（自有 quick-xml 第二趟——文档序与 marks+末节
+    // 对齐；计数分歧 = 解析面分歧，兼容警告 + 全 None 降级[docx-rs
+    // 的 num 基础面仍有效]，严格模式同降级[非容器损坏是内部一致性
+    // 面向——typed 拒会误伤可读档]）。
+    let cols_specs = parse_columns_specs(document_xml);
+    let section_count = marks.len() + 1;
+    let cols_specs = if cols_specs.len() == section_count {
+        cols_specs
+    } else {
+        warnings.push(crate::io::CompatibilityWarning {
+            part: "word/document.xml".to_string(),
+            kind: WarningKind::MalformedXml,
+            detail: format!(
+                "compat note: sectPr count mismatch (xml walk {} vs model {}); \
+                 columns_spec degraded to None",
+                cols_specs.len(),
+                section_count
+            ),
+        });
+        vec![None; section_count]
+    };
+    let col_spec = |i: usize| cols_specs.get(i).cloned().flatten();
+    // 分栏数：XML 真源（cols/@w:num；0 = 敌意值防御钳 1；元素缺席/
+    // 计数分歧降级 = 缺省 1）。docx-rs `sp.columns` 读面恒 1（
+    // SectionProperty::read 无 cols 分支）——不可用作真源。
+    let col_num = |i: usize| {
+        cols_specs
+            .get(i)
+            .and_then(|s| s.as_ref())
+            .and_then(|s| s.num)
+            .map(|n| n.max(1) as usize)
+            .unwrap_or(1)
+    };
+    let section_breaks = |start: usize, end: usize| {
+        column_break_blocks
+            .iter()
+            .copied()
+            .filter(|&b| b >= start && b < end)
+            .collect()
+    };
+
     let mut sections = Vec::with_capacity(marks.len() + 1);
     let mut start = 0usize;
     for (i, ((_, sp), end)) in marks.iter().zip(boundaries.iter()).enumerate() {
         let (headers, footers) =
             mid_section_slots(sp, &part_xml, bundle, index, styles, strict, warnings)?;
-        // 分栏数（w:cols/@w:num——docx-rs 固定发射 w:cols，读面缺省 1；
-        // 0 为敌意值防御钳 1）。
-        let columns = sp.columns.max(1);
         sections.push(SectionData {
             index: i,
             source: SectionSource::Mid,
             geometry: section_geometry(sp),
             title_page: sp.title_pg,
-            columns,
+            columns: col_num(i),
+            columns_spec: col_spec(i),
+            column_break_blocks: section_breaks(start, *end),
             section_type: section_kind(sp),
             page_number_start: sp.page_num_type.as_ref().and_then(|t| t.start),
             headers,
@@ -4188,17 +4474,21 @@ fn build_sections(
     }
     // 末节（body 级 sectPr——docx-rs 模型恒在）。
     let sp = &docx.document.section_property;
+    let final_index = sections.len();
+    let final_start = start;
     sections.push(SectionData {
-        index: sections.len(),
+        index: final_index,
         source: SectionSource::Final,
         geometry: section_geometry(sp),
         title_page: sp.title_pg,
-        columns: sp.columns.max(1),
+        columns: col_num(final_index),
+        columns_spec: col_spec(final_index),
+        column_break_blocks: section_breaks(final_start, block_count),
         section_type: section_kind(sp),
         page_number_start: sp.page_num_type.as_ref().and_then(|t| t.start),
         headers: final_headers.to_vec(),
         footers: final_footers.to_vec(),
-        block_range: (start, block_count),
+        block_range: (final_start, block_count),
     });
     Ok(sections)
 }

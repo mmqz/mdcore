@@ -377,3 +377,145 @@ fn section_break_geometry_validation() {
         other => panic!("应为 InvalidInput（粘性校验），实际 {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------- #268 分栏
+
+/// #268 手搓最小 OPC 包（门 1-3 全绿形态——style.rs `build_test_docx`
+/// 同族骨架）：document.xml 参数化（分栏节 + 显式分栏符）。
+fn build_columns_docx(document_xml: &str) -> Vec<u8> {
+    use std::io::Write as _;
+    let ct = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
+    let root_rels = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let doc_rels = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+    let styles = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let add = |zw: &mut zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>>,
+                   name: &str,
+                   data: &[u8]|
+         -> zip::result::ZipResult<()> {
+            zw.start_file(name, zip::write::SimpleFileOptions::default())?;
+            zw.write_all(data)?;
+            Ok(())
+        };
+        add(&mut zw, "[Content_Types].xml", ct).unwrap();
+        add(&mut zw, "_rels/.rels", root_rels).unwrap();
+        add(&mut zw, "word/document.xml", document_xml.as_bytes()).unwrap();
+        add(&mut zw, "word/_rels/document.xml.rels", doc_rels).unwrap();
+        add(&mut zw, "word/styles.xml", styles).unwrap();
+        zw.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+/// #268：分栏读面全链——cols 全字段（num/space/equalWidth/sep/w:col
+/// 子表）+ 显式分栏符 + 文本流栏归属 + 越栏钳制 + 越界 None。
+#[test]
+fn columns_spec_breaks_and_attribution() {
+    let doc_xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>P1</w:t></w:r></w:p>
+<w:p><w:r><w:t>before</w:t><w:br w:type="column"/><w:t>after</w:t></w:r></w:p>
+<w:p><w:r><w:t>P3</w:t></w:r></w:p>
+<w:p><w:r><w:t>P4</w:t></w:r><w:r><w:br w:type="column"/></w:r></w:p>
+<w:p><w:r><w:t>P5</w:t></w:r></w:p>
+<w:p><w:pPr><w:sectPr><w:cols w:num="3" w:space="708" w:equalWidth="false" w:sep="1"><w:col w:w="2669" w:space="708"/><w:col w:w="2315" w:space="708"/><w:col w:w="2671"/></w:cols></w:sectPr></w:pPr><w:r><w:t>sec1end</w:t></w:r></w:p>
+<w:p><w:r><w:t>f1</w:t></w:r></w:p>
+<w:p><w:r><w:br w:type="column"/></w:r></w:p>
+<w:p><w:r><w:t>f2</w:t></w:r></w:p>
+<w:p><w:r><w:br w:type="column"/></w:r></w:p>
+<w:p><w:r><w:br w:type="column"/></w:r></w:p>
+<w:p><w:r><w:t>f3</w:t></w:r></w:p>
+<w:sectPr><w:cols w:num="2" w:space="720"/></w:sectPr>
+</w:body></w:document>"#;
+    let bytes = build_columns_docx(std::str::from_utf8(doc_xml).unwrap());
+    let doc = read_docx_from_bytes(&bytes).expect("手搓档可读");
+    assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    assert_eq!(doc.sections.len(), 2, "中段节 + 末节");
+
+    // ---- 节 1：三栏全字段 ----
+    let s1 = &doc.sections[0];
+    assert_eq!(s1.columns, 3);
+    let spec = s1.columns_spec.as_ref().expect("cols 在场");
+    assert_eq!(spec.num, Some(3));
+    assert_eq!(spec.space, Some(708));
+    assert_eq!(spec.equal_width, Some(false));
+    assert_eq!(spec.separator, Some(true));
+    assert_eq!(
+        spec.columns,
+        vec![
+            mdc_office_io::docx::ColumnWidth {
+                width: Some(2669),
+                space: Some(708)
+            },
+            mdc_office_io::docx::ColumnWidth {
+                width: Some(2315),
+                space: Some(708)
+            },
+            mdc_office_io::docx::ColumnWidth {
+                width: Some(2671),
+                space: None
+            },
+        ],
+        "w:col 子表（文档序，缺省属性 None 不代填）"
+    );
+    // 显式分栏符块：b1（before/after 同块）+ b3。
+    assert_eq!(s1.column_break_blocks, vec![1, 3]);
+    // 栏归属（块起始栏口径）。
+    assert_eq!(s1.column_of(0), Some(0), "P1：栏 0");
+    assert_eq!(s1.column_of(1), Some(0), "含符块取起始栏（before 在栏 0）");
+    assert_eq!(s1.column_of(2), Some(1), "P3：b1 符后 → 栏 1");
+    assert_eq!(s1.column_of(3), Some(1), "P4：起始栏 1");
+    assert_eq!(s1.column_of(4), Some(2), "P5：两符后 → 栏 2");
+    assert_eq!(s1.column_of(5), Some(2), "sec1end 段：栏 2");
+    assert_eq!(s1.column_of(6), None, "块不在本节 → None");
+
+    // ---- 节 2（末节）：双栏 + 越栏钳制 ----
+    let s2 = &doc.sections[1];
+    assert_eq!(s2.columns, 2);
+    let spec2 = s2.columns_spec.as_ref().expect("末节 cols 在场");
+    assert_eq!(spec2.num, Some(2));
+    assert_eq!(spec2.space, Some(720));
+    assert_eq!(spec2.equal_width, None, "equalWidth 缺席不代填");
+    assert!(spec2.columns.is_empty());
+    // f2 = b8：一符后 → 栏 1；f3 = b11：三符后 → 钳制到栏 1（num=2）。
+    assert_eq!(s2.column_break_blocks.len(), 3);
+    assert_eq!(s2.column_of(6), Some(0), "f1：栏 0");
+    assert_eq!(s2.column_of(8), Some(1), "f2：栏 1");
+    assert_eq!(s2.column_of(11), Some(1), "f3：三符超栏数 → 钳制栏 1");
+    // 单栏语义：无分栏符的节恒栏 0（显式钳制面在下方单栏测试）。
+
+    // ---- 无 cols 的节：columns_spec None（缺省单栏形态） ----
+    let plain = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:t>only</w:t></w:r></w:p>
+<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+</w:body></w:document>"#;
+    let doc2 = read_docx_from_bytes(&build_columns_docx(std::str::from_utf8(plain).unwrap()))
+        .expect("无 cols 档可读");
+    assert_eq!(doc2.sections.len(), 1);
+    let sp = &doc2.sections[0];
+    assert_eq!(sp.columns, 1, "无 cols = 单栏缺省");
+    assert!(sp.columns_spec.is_none(), "cols 元素缺席 → None");
+    assert!(sp.column_break_blocks.is_empty());
+    assert_eq!(sp.column_of(0), Some(0), "单栏恒栏 0");
+    // 分栏符在单栏节 = 排版期 no-op，归属仍恒 0（钳制到 num-1=0）。
+    let single_break = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:r><w:br w:type="column"/></w:r></w:p>
+<w:p><w:r><w:t>after</w:t></w:r></w:p>
+<w:sectPr><w:cols w:num="1"/></w:sectPr>
+</w:body></w:document>"#;
+    let doc3 = read_docx_from_bytes(&build_columns_docx(
+        std::str::from_utf8(single_break).unwrap(),
+    ))
+    .expect("单栏分栏符档可读");
+    let s0 = &doc3.sections[0];
+    assert_eq!(s0.column_break_blocks, vec![0]);
+    assert_eq!(s0.column_of(1), Some(0), "单栏 + 符 → 钳制栏 0");
+}
