@@ -1155,7 +1155,9 @@ mod tests {
         assert_eq!(state.selected, 0);
         state.move_vertical(&menus, true);
         assert_eq!(state.selected, 1);
-        // 步进到子菜单标题（8）再下一步是 10（跳过 9 分隔线）。
+        // 步进到子菜单标题（8）再下一步是 10（跳过 9 分隔线）。新条目
+        // （导出DOCX6）使得到达「最近打开」需 7 步（1+6——含首步）。
+        state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
         state.move_vertical(&menus, true);
@@ -1300,11 +1302,12 @@ mod tests {
         let menus = build_menus(&full_ctx());
         let entries = &menus[0].entries;
         assert_eq!(row_y_offset(entries, 0), context_menu::MENU_PADDING_Y);
-        // idx 7（最近打开）之前有六项普通条目（0..5）+ 一条分隔线（6）。
+        // idx 8（最近打开）之前有七项普通条目（0..6，含导出PDF5/导出
+        // DOCX6）+ 一条分隔线（7）——#384 菜单项后基线同步。
         let expect = context_menu::MENU_PADDING_Y
-            + context_menu::ITEM_HEIGHT * 6.
+            + context_menu::ITEM_HEIGHT * 7.
             + context_menu::ITEM_HEIGHT * context_menu::SEPARATOR_UNITS;
-        assert_eq!(row_y_offset(entries, 7), expect);
+        assert_eq!(row_y_offset(entries, 8), expect);
     }
 
     /// 锚点估算随菜单序单调递增（下拉往右跟着标题走）。
