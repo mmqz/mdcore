@@ -13,7 +13,18 @@
 # bundle 解析序（mang-shell 全树零引用，见 build-appimage.sh 同段注释）。
 set -euo pipefail
 
-HERE="$(dirname "$(readlink -f "${APPIMAGE:-$0}")")"
+# #355（2026-11-07）：锚点修正。原式 readlink -f "${APPIMAGE:-$0}" 优先取
+# 运行时注入的 APPIMAGE——那是 .AppImage 文件自身的路径（用户下载目录），
+# 不是挂载点（FUSE：/tmp/.mount_*）也不是解包目录（EXTRACT_AND_RUN：
+# /tmp/appimage_extracted_*）→ HERE 指向下载目录 → exec ENOENT，直跑
+# AppImage 全灭（实证见 #355；#270 验收只跑了 usr/bin/mdcore 直执行故
+# 未暴露）。修正：运行时注入的 APPDIR 在位且有效时优先，否则回落
+# $0 实路径（手动 --appimage-extract 后跑 ./AppRun 的既有路径）。
+if [ -n "${APPDIR:-}" ] && [ -x "${APPDIR}/usr/bin/{{APP_EXEC}}" ]; then
+  HERE="$APPDIR"
+else
+  HERE="$(dirname "$(readlink -f "$0")")"
+fi
 
 # 资源路径：AppDir 内 share 优先（图标/desktop 查询）。
 export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
