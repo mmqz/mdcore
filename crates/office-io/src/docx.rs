@@ -4506,19 +4506,20 @@ pub enum FieldSpec {
     Page,
     /// 总页数域（`<w:instrText>NUMPAGES</w:instrText>`）。
     NumPages,
-    /// 目录域（TOC——issue #6 G1）：fldChar begin[dirty=true——
-    /// Word/LO 打开提示更新域] + instrText `TOC \o "lo-hi"` +
-    /// separate + 占位提示文本 + end 五连（比 PAGE/NUMPAGES 三连多
-    /// 域结果占位两 run——无占位的裸域合法但打开即空白，占位 +
-    /// dirty 给出可操作提示）。`heading_range` = `\o` 开关（None =
+    /// 目录域（TOC——issue #6 G1；#309③ 域缓存写入）：fldChar
+    /// begin[dirty=false——#309③ 前为 true：Word/LO 打开弹「是否更新域」
+    /// 提示，但缓存内容本就在场，弹窗纯属打扰；现改打开即显缓存（无
+    /// 弹窗），域结构完整保留（F9 重算生成真目录）] + instrText
+    /// `TOC \o "lo-hi"` + separate + 占位提示文本 + end 五连（比
+    /// PAGE/NUMPAGES 三连多域结果占位两 run——无占位的裸域合法但
+    /// 打开即空白）。`heading_range` = `\o` 开关（None =
     /// 不发射开关——Word 默认收录全部标题层级）。
     TableOfContents { heading_range: Option<(u8, u8)> },
     /// 书签页码引用域（PAGEREF——#196 任务 2）：instrText
     /// `PAGEREF {bookmark} \h` 五连（begin + instr + separate +
     /// 页码占位 "1" + end）；`\h` = 超链接行为（点击跳转书签处）。
-    /// 占位页码 "1" 是保存时快照——Word/LO 打开后 F9 重算（与 TOC
-    /// 域 dirty 同理）；单独发射时 begin 不置 dirty（页码域无
-    /// 「提示更新」必要——嵌入 TOC 静态项时随 TOC 域整块刷新）。
+    /// 占位页码 "1" 是保存时快照——Word/LO 打开后 F9 重算（TOC 域
+    /// #309③ 后同样不置 dirty：全族打开即显缓存零弹窗）。
     /// 引用的书签名：非空粘性校验（V11——count_specs 漏斗）；悬空
     /// 引用（书签不在本文档）合法——与 anchor_link 悬空锚点同语义
     /// （T3 先例：跨文档书签引用是 Word 合法形态，读面 PAGEREF 是
@@ -4929,8 +4930,8 @@ impl RunSpec {
         }
     }
 
-    /// 目录域 run（`TOC`——全标题层级，Word 默认收录；dirty=true
-    /// 打开提示更新域，占位文本提示 F9 操作）。
+    /// 目录域 run（`TOC`——全标题层级，Word 默认收录；#309③ 后
+    /// begin 不置 dirty——打开即显占位缓存无弹窗，F9 生成真目录）。
     pub fn field_toc() -> Self {
         Self {
             field: Some(FieldSpec::TableOfContents {
@@ -5380,8 +5381,9 @@ impl DocxWriter {
         Ok(())
     }
 
-    /// **TOC 静态目录项块**（#196 任务 2——目录项可点击跳转）：跨段域
-    /// 三段式 = 域头段（begin[dirty=true] + instrText `TOC \o "lo-hi"`
+    /// **TOC 静态目录项块**（#196 任务 2——目录项可点击跳转；#309③
+    /// 域缓存写入）：跨段域三段式 = 域头段（begin[dirty=false——#309③：
+    /// 打开即显缓存无弹窗] + instrText `TOC \o "lo-hi"`
     /// 与 separate——与旧 [`RunSpec::field_toc_heading_range`] 域段前三
     /// run 同构）、目录项段 × N、域尾段（end）。目录项段 =
     /// `hyperlink(w:anchor=书签名)`{ 文本 run + tab run + PAGEREF 五连 }
@@ -5426,14 +5428,15 @@ impl DocxWriter {
                     Some(format!("V8: TOC 目录项层级越界（{}——须 1-9）", bad.level));
             }
         }
-        // 空退化：占位五连域段（旧形态逐字节同构）。
+        // 空退化：占位五连域段（#309③：begin 不置 dirty——与非空路径
+        // 同「打开即显缓存」语义，旧形态仅域头 dirty 位差异）。
         if entries.is_empty() {
             let mut toc = docx_rs::InstrToC::new();
             if let Some((lo, hi)) = heading_range {
                 toc = toc.heading_styles_range(lo as usize, hi as usize);
             }
             let p = docx_rs::Paragraph::new()
-                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, true))
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
                 .add_run(docx_rs::Run::new().add_instr_text(docx_rs::InstrText::TOC(toc)))
                 .add_run(
                     docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false),
@@ -5458,13 +5461,14 @@ impl DocxWriter {
             }
             None => 11906 - 1701 - 1701,
         };
-        // 域头段（begin[dirty] + instr + separate）。
+        // 域头段（#309③：begin 不置 dirty——打开即显缓存目录项，
+        // Word/LO 零弹窗；F9 重算精确页码）。
         let mut toc = docx_rs::InstrToC::new();
         if let Some((lo, hi)) = heading_range {
             toc = toc.heading_styles_range(lo as usize, hi as usize);
         }
         let head = docx_rs::Paragraph::new()
-            .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, true))
+            .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
             .add_run(docx_rs::Run::new().add_instr_text(docx_rs::InstrText::TOC(toc)))
             .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false));
         self.docx = std::mem::take(&mut self.docx).add_paragraph(head);
@@ -6411,16 +6415,18 @@ fn add_spec_to_paragraph(p: docx_rs::Paragraph, spec: &RunSpec) -> docx_rs::Para
     // 简单域（begin/instrText/end 三连——引擎 add_tc 同构先例
     // run.rs:202-208）。
     if let Some(field) = &spec.field {
-        // G1 TOC：五连（begin[dirty] + instrText + separate + 占位 + end）
-        // ——域结果占位给打开者可操作提示；dirty=true 让 Word/LO 打开
-        // 即提示更新域生成目录。
+        // G1 TOC：五连（begin[非 dirty——#309③ 域缓存写入] + instrText
+        // + separate + 占位 + end）——域结果占位 = 打开即显的缓存
+        //（无弹窗）；F9 重算生成真目录。#309③ 前为 dirty=true：靠
+        // Word/LO 打开弹「是否更新域」驱动更新，缓存反被弹窗遮蔽
+        // ——语义倒置，改缓存直显。
         if let FieldSpec::TableOfContents { heading_range } = field {
             let mut toc = docx_rs::InstrToC::new();
             if let Some((lo, hi)) = *heading_range {
                 toc = toc.heading_styles_range(lo as usize, hi as usize);
             }
             return p
-                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, true))
+                .add_run(docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Begin, false))
                 .add_run(docx_rs::Run::new().add_instr_text(docx_rs::InstrText::TOC(toc)))
                 .add_run(
                     docx_rs::Run::new().add_field_char(docx_rs::FieldCharType::Separate, false),
@@ -8721,10 +8727,14 @@ mod tests {
             doc.contains("（目录域——打开后全选再按 F9 更新生成）"),
             "占位提示在场"
         );
-        // begin dirty：w:fldChar w:fldCharType="begin" w:dirty="true"
-        assert!(
-            doc.contains(r#"w:dirty="true""#),
-            "begin dirty=true 在场（打开提示更新域）"
+        // #309③ 域缓存写入：begin 不置 dirty——打开即显缓存占位
+        //（无「是否更新域」弹窗）；域结构五连完整保留（F9 重算）。
+        // 注：docx-rs 恒显式写 w:dirty="false"（打开不更新域——正是
+        // #309③ 语义），断言口径 = dirty="true" 零出现。
+        assert_eq!(
+            doc.matches(r#"w:dirty="true""#).count(),
+            0,
+            "dirty=true 须零出现（#309③ 缓存直显——在场即回退）"
         );
         // 可解析往返（读面域结构提取面外为既有登记——这里只证容器完好）
         assert!(read_docx_from_bytes(&bytes).is_ok());
@@ -8856,14 +8866,16 @@ mod tests {
         w.heading_bookmarked(3, "1.1.1 细节", &names[2]).unwrap();
         let bytes = w.save_to_vec().unwrap();
         let doc = String::from_utf8(zip_part_bytes(&bytes, "word/document.xml").unwrap()).unwrap();
-        // 域头：TOC 指令 + dirty（打开提示更新域）恰一次。
+        // 域头：TOC 指令在场 + #309③ 后全文档 dirty 零出现（打开即显
+        // 缓存目录项——entries 文本 + 占位页码 "1"，无弹窗）。
         assert!(
             doc.contains(r#"<w:instrText>TOC \o &quot;1-3&quot;</w:instrText>"#),
             "TOC \\o 指令在场"
         );
-        assert!(
-            doc.matches(r#"w:dirty="true""#).count() == 1,
-            "域头 begin dirty 恰一次（TOC 域独有提示位）"
+        assert_eq!(
+            doc.matches(r#"w:dirty="true""#).count(),
+            0,
+            "#309③ 后 TOC 族全非 dirty=true（缓存直显，无打开弹窗）"
         );
         // 跨段域配平：begin/separate/end 各 = TOC(1) + PAGEREF(3)。
         assert_eq!(
