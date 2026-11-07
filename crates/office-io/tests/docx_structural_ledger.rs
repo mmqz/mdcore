@@ -14,7 +14,7 @@
 //!
 //! | 面 | GT 语义（原始 XML） | 模型面 | 平价公式 |
 //! |---|---|---|---|
-//! | 节 | 有效 `w:sectPr`（排 sectPrChange 内/sdt 内/空串属性） | `sections` | `max(1, GT)` |
+//! | 节 | 有效 `w:sectPr`（排 sectPrChange 内/sdt 内；#348 修复后空串数值属性经读前归一化不再致丢） | `sections` | `max(1, GT)` |
 //! | 表（含嵌套/文本框内） | `w:tbl` 全量 − body 级 sdt 内 + body 级 AC 内 | 递归 `Block::Table` | 相等 |
 //! | 嵌套表 | `w:tc` 祖先的 `w:tbl` − sdt 内 | `TableData::nested` | 相等 |
 //! | 文本框 | 最外层 `w:txbxContent`（排 Fallback）− sdt 内 − tc 内 − 组损失 | 递归 `Block::TextBox` | 相等 |
@@ -49,9 +49,10 @@
 //!    行为防退化（p_in_ac 计入平价），缺陷登记待 MCE 选择面裁决。
 //! 5. **`w:type="odd"` 引用丢**：ECMA-376 合法值 default/first/even，
 //!    Word 容忍旧值 odd；docx-rs 词汇表外丢弃。语料 1 件（60293）。
-//! 6. **空串属性 sectPr 整体丢**：`w:pgMar w:top=""` 等零长度数值
-//!    （cr065 decimals 探针）→ docx-rs typed 解析失败丢弃整个节标记
-//!    （含其引用）。语料 1 件丢 2 节。
+//! 6. **空串属性 sectPr 整体丢**：**#348（#318 D6）已修复**——
+//!    `w:pgMar`/`w:pgSz` 数值属性空串经 docx_panic_guard 读前归一化
+//!    为 `"0"`（Word 零值语义），sectPr 不再静默丢；GT 的
+//!    `sect_pr_dropped_attr` 扣除项已移除（cr065 7 节全量重钉）。
 //! 7. **strict OOXML 页眉页脚引用丢**：purl.oclc.org 命名空间文档的
 //!    sectPr 引用引擎不解析（段落内容不受影响）。语料 1 件
 //!    （strict-sample）。
@@ -126,7 +127,6 @@ fn corpus_files() -> Vec<PathBuf> {
 #[derive(Default, Debug)]
 struct Gt {
     sect_pr: usize,
-    sect_pr_dropped_attr: usize,
     refs_resolved: usize,
     refs_odd: usize,
     refs_strict_dropped: usize,
@@ -173,8 +173,6 @@ struct Ctx {
 struct SectParse {
     /// 计入节序（非 sectPrChange/sdt 内）。
     counted: bool,
-    /// 自身或直子属性含空串 → 引擎整体丢弃（已知损失 #6）。
-    attr_invalid: bool,
     /// 当前打开的子孙深度（0 = 直子层）。
     depth: usize,
     refs: Vec<(bool, String, String)>, // (is_footer, w:type, r:id)
@@ -204,11 +202,6 @@ fn attr_get<'a>(attrs: &'a [(Vec<u8>, String)], name: &[u8]) -> Option<&'a str> 
         .iter()
         .find(|(k, _)| k.as_slice() == name)
         .map(|(_, v)| v.as_str())
-}
-
-fn has_empty_attr(e: &quick_xml::events::BytesStart<'_>) -> bool {
-    e.attributes()
-        .any(|a| a.map(|a| a.value.is_empty()).unwrap_or(false))
 }
 
 /// [Content_Types].xml → 主件路径（Override wordprocessingml.document.
@@ -328,9 +321,6 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                 if let Some(sp) = sects.last_mut() {
                     if sp.depth == 0 {
                         // 直子（pgSz/pgMar/headerReference/…）
-                        if has_empty_attr(&e) {
-                            sp.attr_invalid = true;
-                        }
                         let attrs = attr_map(&e);
                         if name.as_slice() == b"headerReference"
                             || name.as_slice() == b"footerReference"
@@ -406,7 +396,6 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                         // 进入 sectPr（计态在 sects 栈——上下文不变）。
                         sects.push(SectParse {
                             counted: !top.in_change && !top.in_bsdt,
-                            attr_invalid: has_empty_attr(&e),
                             depth: 0,
                             refs: Vec::new(),
                         });
@@ -483,9 +472,6 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                 let top = stack.last().cloned().unwrap_or_default();
                 if let Some(sp) = sects.last_mut() {
                     if sp.depth == 0 {
-                        if has_empty_attr(&e) {
-                            sp.attr_invalid = true;
-                        }
                         let attrs = attr_map(&e);
                         if name.as_slice() == b"headerReference"
                             || name.as_slice() == b"footerReference"
@@ -537,13 +523,10 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                         // vml_textbox_regions 同口径），GT 同样不计。
                     }
                     b"sectPr" => {
-                        // 自闭合 sectPr：无直子——即时结算。
+                        // 自闭合 sectPr：无直子——即时结算（#348 修复
+                        // 后空串属性经读前归一化不再致丢）。
                         if !top.in_change && !top.in_bsdt {
-                            if has_empty_attr(&e) {
-                                gt.sect_pr_dropped_attr += 1;
-                            } else {
-                                gt.sect_pr += 1;
-                            }
+                            gt.sect_pr += 1;
                         }
                     }
                     b"r" => {
@@ -575,11 +558,9 @@ fn scan_document(xml: &str, is_strict: bool) -> Option<Gt> {
                 if name.as_slice() == b"sectPr" {
                     if let Some(sp) = sects.pop() {
                         if sp.counted {
-                            if sp.attr_invalid {
-                                // 已知损失 #6：空串属性 → 整个 sectPr
-                                //（含引用）被引擎丢弃。
-                                gt.sect_pr_dropped_attr += 1;
-                            } else {
+                            // #348 修复后：空串数值属性经读前归一化，
+                            // sectPr 不再静默丢——全部计入节序。
+                            {
                                 gt.sect_pr += 1;
                                 for (is_footer, ty, rid) in &sp.refs {
                                     let _ = is_footer;
@@ -969,7 +950,7 @@ fn full_corpus_structural_parity() {
     // 已知损失可见性聚合（不静默——汇总打印）。
     let (mut sdt_loss, mut txbx_tc_fixed, mut group_txbx_fixed, mut odd_ref_files) =
         (0usize, 0usize, 0usize, 0usize);
-    let (mut ac_flatten_files, mut strict_files, mut attr_drop_files) = (0usize, 0usize, 0usize);
+    let (mut ac_flatten_files, mut strict_files) = (0usize, 0usize);
     let (
         mut nested_files,
         mut txbx_files,
@@ -1056,9 +1037,6 @@ fn full_corpus_structural_parity() {
         if gt.refs_strict_dropped > 0 {
             strict_files += 1;
         }
-        if gt.sect_pr_dropped_attr > 0 {
-            attr_drop_files += 1;
-        }
     }
 
     // ---- 分类锚点（语料冻结态精确锚——漂移 = 显式重钉）----
@@ -1099,7 +1077,7 @@ fn full_corpus_structural_parity() {
     // ---- 可见性汇总（已知损失不静默——#260 账本面）----
     eprintln!("[structural-ledger] 630 件：ok {ok} / 容器拒绝 {reject_container} / 解析拒绝 {reject_parse} / panic 0");
     eprintln!("[structural-ledger] 五类覆盖：嵌套表 {nested_files} / 文本框 {txbx_files} / 修订 {ins_files} / 页眉页脚 {hf_files} / 脚注 {fn_files} / 批注 {cm_files} / 多节 {multi_sect}");
-    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / odd 型引用丢 {odd_ref_files} 件 / strict 引用丢 {strict_files} 件 / 空属性节丢 {attr_drop_files} 件 / AC 扁平重复 {ac_flatten_files} 件；表内文本框已修（#345 D2——第二趟补提取）{txbx_tc_fixed} 件 / 组内文本框已修（#346 D4——第二趟补发射）{group_txbx_fixed} 件");
+    eprintln!("[structural-ledger] 已知损失（登记缺陷，非平价门内）：sdt 内容丢 {sdt_loss} 件 / odd 型引用丢 {odd_ref_files} 件 / strict 引用丢 {strict_files} 件 / AC 扁平重复 {ac_flatten_files} 件；表内文本框已修（#345 D2——第二趟补提取）{txbx_tc_fixed} 件 / 组内文本框已修（#346 D4——第二趟补发射）{group_txbx_fixed} 件");
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,12 +1164,12 @@ fn five_category_pinned_anchors() {
     );
 
     // ---- 结构面补充钉定 ----
-    // 节：cr065（7 sectPr − 2 空属性丢[已知损失 #6] = 5 节）。
+    // 节：cr065（#348 重钉：7 sectPr 全量——历史 5 = 7 − 2 空串属性
+    // 静默丢，读前归一化修复后不再丢；docx_panic_guard 实锚同钉）。
     let m = model_counts(&read_one("docx4j/cr065-decimals-probe.docx"));
-    assert_eq!(m.sections, 5, "cr065 节数");
+    assert_eq!(m.sections, 7, "cr065 节数（空串属性修复后全量）");
     let g = gt_one("docx4j/cr065-decimals-probe.docx");
-    assert_eq!(g.sect_pr, 5, "cr065 GT 有效节");
-    assert_eq!(g.sect_pr_dropped_attr, 2, "cr065 空属性丢节（可见性）");
+    assert_eq!(g.sect_pr, 7, "cr065 GT 有效节");
     // sdt 内容丢（P1-2）：Bug54771a 双表全在 sdt 内 → 模型 0 表。
     let m = model_counts(&read_one("poi-docx/Bug54771a.docx"));
     assert_eq!(m.all_table, 0, "Bug54771a sdt 内表全丢（P1-2 可见性）");
