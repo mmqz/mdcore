@@ -1,5 +1,6 @@
-//! docx-rs 读层 panic 预检防御（#226 R2 —— 审计 P0-2；真实语料 4 处
-//! panic 实锤见 `test-artifacts/health-check/REPORT.md` #E1）。
+//! docx-rs 读层缺陷预检防御（#226 R2 审计 P0-2 panic 面 + #348 静默
+//! 丢面；真实语料实锤见 `test-artifacts/health-check/REPORT.md` #E1
+//! + 结构账本 #260 发现 D6）。
 //!
 //! ## 为什么存在（根因 = 依赖层）
 //!
@@ -10,30 +11,37 @@
 //! | `<w:u/>` 零属性（runprops_word365_props-{b,u}-styles.docx） | `run_property.rs:155` `attributes[0]` | index OOB panic |
 //! | `<w:highlight/>` 零属性（runprops_word365_props-enum-styles.docx） | `run_property.rs:110` | 同上 |
 //! | `w:w="178.05pt"` 通用度量（strict_strict-sample-docx.docx） | `width.rs:18` `f64::…expect` | ParseFloat panic |
+//! | `w:pgMar w:top=""` 等空串数值（cr065-decimals-probe.docx，#348） | `section_property.rs` `value_to_dax("")?` | **整 sectPr 静默丢**（含节边界与页眉页脚引用） |
 //!
 //! `w:u` 的 `w:val` 可省略（ECMA-376 17.3.2.42）；通用度量（pt/pc/in/
-//! cm/mm 后缀）是 ST_MeasurementOrPercent 的合法成员——**不是输入
-//! 畸形，是读层缺陷**。panic 在 wasm 面 = trap、GUI 面 = 进程崩溃
-//!（用户未保存编辑随之丢失——审计 P0-2）。
+//! cm/mm 后缀）是 ST_MeasurementOrPercent 的合法成员；零长度数值属性
+//! Word 取零值语义容忍——**不是输入畸形，是读层缺陷**。panic 在 wasm
+//! 面 = trap、GUI 面 = 进程崩溃（审计 P0-2）；静默丢在消费面 = 节
+//! 边界/页眉页脚槽位丢失（#318 D6）。
 //!
 //! ## 修复策略（scan-and-repair——#E3 vml_textbox 同构先例）
 //!
 //! [`guard_docx_bytes`] 在 `docx_rs::read_docx` **之前**对全部
-//! `.xml`/`.rels` 部件做两趟字符串预检：
+//! `.xml`/`.rels` 部件做三趟字符串预检：
 //!
 //! 1. **裸 run 属性元素**（`w:u`/`w:highlight`/`w:vertAlign`/`w:sz`
 //!    零属性 start tag——run_property.rs 四个 `attributes[0]` 位点）：
 //!    注入规范缺省 `w:val`（结构不变，只加属性）；
 //! 2. **度量属性**（`w:w` 值剥 `%` 后非数值——width.rs 同判定）：通用
 //!    度量换算 twips（pt×20 / pc×240 / in×1440 / cm×566.93 /
-//!    mm×56.69），其余垃圾值归零（read_width 同语义路径）。
+//!    mm×56.69），其余垃圾值归零（read_width 同语义路径）；
+//! 3. **sectPr 数值属性空串**（#348：`w:pgMar`/`w:pgSz` 标签内
+//!    top/right/bottom/left/header/footer/gutter/w/h `=""` →
+//!    `="0"`——Word 零值语义；标签作用域收敛，tcMar 同名属性不
+//!    误伤）。
 //!
 //! 无命中 → 借用直通（`Cow::Borrowed`，零重打包成本）；有命中 →
 //! 重打包（非目标部件 `raw_copy_file` 逐字节透传——docx_edit
-//! repack_parts 同构）。两模式（严格/兼容）恒等启用——panic 防线不
-//! 随模式放松（裸元素是合法 OOXML，非「兼容模式才放宽」的形态）；
-//! 每处修复走既有 Warning 通道（裸元素 = [`WarningKind::SkippedElement`]
-//! / 度量归一化 = [`WarningKind::MalformedXml`]），不静默。
+//! repack_parts 同构）。两模式（严格/兼容）恒等启用——防御线不
+//! 随模式放松（裸元素/空串属性是合法 OOXML，非「兼容模式才放宽」
+//! 的形态）；每处修复走既有 Warning 通道（裸元素 =
+//! [`WarningKind::SkippedElement`] / 度量与空串归一化 =
+//! [`WarningKind::MalformedXml`]），不静默。
 //!
 //! ## 已知边界
 //!
@@ -82,6 +90,9 @@ const MEASURE_TO_TWIPS: &[(&str, f64)] = &[
     ("mm", 1440.0 / 25.4),
 ];
 
+/// #348 单类修复计数（标签名, 属性名, 归一化次数）。
+type SectprEmptyFix = (&'static str, &'static str, usize);
+
 /// 单部件修复清单（Warning 登记原料）。
 #[derive(Default, Debug)]
 struct PartFixes {
@@ -89,6 +100,8 @@ struct PartFixes {
     bare: Vec<(&'static str, usize)>,
     /// (原值, 归一化值)。
     widths: Vec<(String, String)>,
+    /// #348（#318 D6）：sectPr 数值属性空串 → "0"（Word 零值语义）。
+    sectpr_empties: Vec<SectprEmptyFix>,
 }
 
 /// `<w:` 之后是否为「目标裸元素 + 零属性闭合」形态。
@@ -251,7 +264,101 @@ fn repair_width_values(xml: &str) -> Option<(String, Vec<(String, String)>)> {
     }
 }
 
-/// 单部件两趟修复（裸元素 → 度量，顺序串接）。
+/// sectPr 数值属性空串 → `"0"` 归一化目标集（#348 / #318 D6）。
+///
+/// docx-rs `read_page_margin`/`read_page_size`（section_property.rs）对
+/// `value_to_dax("")?` **硬失败** → `SectionProperty::read` Err → 段落
+/// 读层 `if let Ok` 吞错 → **整个 sectPr（含节边界与页眉页脚引用）
+/// 静默丢**（cr065-decimals-probe 实锚：7 sectPr 丢 2）。Word 对零
+/// 长度数值属性取零值语义（容错）。`w:pgSz w:w` 名义上与度量修复面
+/// 重叠（[`repair_width_values`] 已覆盖）——一并声明使本趟自含
+///（顺序串接下两者互不冲突：度量先行，空 `w:w` 已归零，本趟无命中）。
+const SECTPR_MEASURE_ATTRS: &[(&str, &[&str])] = &[
+    (
+        "pgMar",
+        &[
+            "top", "right", "bottom", "left", "header", "footer", "gutter",
+        ],
+    ),
+    ("pgSz", &["w", "h"]),
+];
+
+/// 标签名边界判定：`<w:{tag}` 之后是标签名终界（空白/`/`/`>`）——
+/// 排除 `<w:pgMarXxx>` 前缀近邻误命中。
+fn tag_name_boundary(after: &[u8], name: &str) -> bool {
+    matches!(
+        after.get(name.len()),
+        None | Some(b' ') | Some(b'/') | Some(b'>')
+    )
+}
+
+/// sectPr 数值属性空串归一化（**标签作用域收敛**——只修 `<w:pgMar
+/// ...>`/`<w:pgSz ...>` 标签内部；`w:top` 等同名属性在 tcMar/cellMar
+/// 等其它词汇表不误伤，宁缺毋错）。
+///
+/// 单趟文档序扫描，记账不变量同 [`repair_width_values`]：已扫描区段
+/// 逐字节入 `out` 再前进（无修复标签原样直拷、修复标签只替换属性值，
+/// 标签间区段不丢——`no_repair_tags_between_fixes_preserve_bytes`
+/// 回归锁同构）。
+fn repair_empty_sectpr_attrs(xml: &str) -> Option<(String, Vec<SectprEmptyFix>)> {
+    let mut counts: Vec<SectprEmptyFix> = Vec::new();
+    let mut out = String::with_capacity(xml.len());
+    let mut cursor = 0usize; // [0, cursor) 已入 out
+    let mut scan = 0usize;
+    let mut hit = false;
+    while let Some(rel) = xml[scan..].find("<w:") {
+        let start = scan + rel;
+        let after = &xml[start + 3..];
+        let Some(&(tag, attrs)) = SECTPR_MEASURE_ATTRS
+            .iter()
+            .find(|(t, _)| after.starts_with(t) && tag_name_boundary(after.as_bytes(), t))
+        else {
+            scan = start + 3;
+            continue;
+        };
+        // 标签终点：start 后首个 '>'（属性值含 '>' 的病理形态不在本
+        // 面——与度量修复同边界，代价 = 一处文本值变化不崩溃）。
+        let Some(tag_end_rel) = xml[start..].find('>') else {
+            break;
+        };
+        let tag_end = start + tag_end_rel;
+        let tag_body = &xml[start..=tag_end];
+        let mut new_body = String::with_capacity(tag_body.len());
+        let mut body_cursor = 0usize;
+        for &attr in attrs {
+            let needle = format!("w:{attr}=\"\"");
+            let mut body_scan = 0usize;
+            while let Some(nr) = tag_body[body_scan..].find(&needle) {
+                let ns = body_scan + nr;
+                let ne = ns + needle.len();
+                new_body.push_str(&tag_body[body_cursor..ns]);
+                new_body.push_str("w:");
+                new_body.push_str(attr);
+                new_body.push_str("=\"0\"");
+                body_cursor = ne;
+                body_scan = ne;
+                hit = true;
+                match counts.iter_mut().find(|(t, a, _)| *t == tag && *a == attr) {
+                    Some((_, _, c)) => *c += 1,
+                    None => counts.push((tag, attr, 1)),
+                }
+            }
+        }
+        new_body.push_str(&tag_body[body_cursor..]);
+        if new_body != tag_body {
+            out.push_str(&xml[cursor..start]);
+            out.push_str(&new_body);
+            cursor = tag_end + 1;
+        }
+        scan = tag_end + 1;
+    }
+    if !hit {
+        return None;
+    }
+    out.push_str(&xml[cursor..]);
+    Some((out, counts))
+}
+
 fn repair_xml_part(xml: &str) -> Option<(String, PartFixes)> {
     let mut fixes = PartFixes::default();
     let mut current: Option<String> = None;
@@ -262,6 +369,12 @@ fn repair_xml_part(xml: &str) -> Option<(String, PartFixes)> {
     let src: &str = current.as_deref().unwrap_or(xml);
     if let Some((out, widths)) = repair_width_values(src) {
         fixes.widths = widths;
+        current = Some(out);
+    }
+    // #348：sectPr 数值属性空串 → "0"（第三类修复——顺序串接）。
+    let src: &str = current.as_deref().unwrap_or(xml);
+    if let Some((out, empties)) = repair_empty_sectpr_attrs(src) {
+        fixes.sectpr_empties = empties;
         current = Some(out);
     }
     current.map(|c| (c, fixes))
@@ -368,6 +481,24 @@ pub(crate) fn guard_docx_bytes<'a>(
                 kind: WarningKind::MalformedXml,
                 detail: format!(
                     "docx-rs panic 防御：w:w 通用度量归一化 {}（width.rs:18 f64 expect）",
+                    list.join("、")
+                ),
+            });
+        }
+        // #348（#318 D6）：sectPr 数值属性空串归一化（静默丢防御——
+        // 非 panic 类，同一修复管道登记）。
+        if !fixes.sectpr_empties.is_empty() {
+            let list: Vec<String> = fixes
+                .sectpr_empties
+                .iter()
+                .map(|(t, a, c)| format!("w:{t} w:{a}=\"\"→\"0\" ×{c}"))
+                .collect();
+            warnings.push(CompatibilityWarning {
+                part: name.clone(),
+                kind: WarningKind::MalformedXml,
+                detail: format!(
+                    "docx-rs 静默丢防御：sectPr 数值属性空串归一化 {}（Word 零值语义；
+                     section_property.rs value_to_dax 硬失败→整节丢，#348）",
                     list.join("、")
                 ),
             });
@@ -569,6 +700,96 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
                     && matches!(w.kind, WarningKind::MalformedXml)),
             "度量归一化警告缺席：{:?}",
             doc.warnings
+        );
+    }
+
+    // ── #348（#318 D6）：sectPr 数值属性空串 → 整节静默丢 ──────
+
+    /// 空串归一化：pgMar/pgSz 目标属性 `=""` → `="0"`；非空值、
+    /// 非 sectPr 词汇表同名属性（tcMar w:top）、前缀近邻不误伤。
+    #[test]
+    fn empty_sectpr_attrs_normalized() {
+        let src = r#"<w:sectPr><w:pgSz w:w="11906" w:h=""/><w:pgMar w:top="" w:right="1440" w:header="" w:footer="" w:gutter=""/></w:sectPr><w:tbl><w:tblPr><w:tblCellMar><w:top w:w="" w:type="dxa"/></w:tblCellMar></w:tblPr></w:tbl><w:pgMarXxx w:top=""/>"#;
+        let (out, counts) = repair_empty_sectpr_attrs(src).expect("三处空串命中");
+        assert!(out.contains(r#"<w:pgSz w:w="11906" w:h="0"/>"#), "{out}");
+        assert!(
+            out.contains(r#"w:top="0" w:right="1440" w:header="0" w:footer="0" w:gutter="0""#),
+            "{out}"
+        );
+        // 标签作用域收敛：tcMar 的 w:top 空串不误伤（宁缺毋错——
+        // docx-rs cell_margins 读层为 `if let Ok` 容忍面，非丢节根因）。
+        assert!(out.contains(r#"<w:top w:w="" w:type="dxa"/>"#), "{out}");
+        // 前缀近邻不命中。
+        assert!(out.contains(r#"<w:pgMarXxx w:top=""/>"#), "{out}");
+        // 文档序计数（pgSz 在源序先于 pgMar；gutter 空串同命中）。
+        assert_eq!(
+            counts,
+            vec![
+                ("pgSz", "h", 1),
+                ("pgMar", "top", 1),
+                ("pgMar", "header", 1),
+                ("pgMar", "footer", 1),
+                ("pgMar", "gutter", 1),
+            ][..],
+            "{counts:?}"
+        );
+    }
+
+    /// 非空/无空串部件直通（None——零重打包）。
+    #[test]
+    fn no_empty_sectpr_attrs_passthrough() {
+        assert!(repair_empty_sectpr_attrs("<w:pgMar w:top=\"1440\"/>").is_none());
+        assert!(repair_empty_sectpr_attrs("<w:p><w:r><w:t>plain</w:t></w:r></w:p>").is_none());
+        // 记账不变量：修复标签之间的无修复标签逐字节保留。
+        let src = r#"<w:pgMar w:top=""/><w:keep/><w:pgSz w:h=""/>"#;
+        let (out, _) = repair_empty_sectpr_attrs(src).expect("两标签命中");
+        assert!(out.contains("<w:keep/>"), "标签间区段不丢：{out}");
+    }
+
+    /// 端到端：cr065 实锚形态（两处空串 sectPr）修复后节全量在场
+    /// （历史行为：7 sectPr 静默丢 2 → 5 节）。
+    #[test]
+    fn sectpr_empty_attr_doc_roundtrip() {
+        let bytes = build_docx(
+            r#"<w:p><w:r><w:t>正文一</w:t></w:r></w:p><w:p><w:pPr><w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="" w:footer="" w:gutter=""/></w:sectPr></w:pPr></w:p><w:p><w:r><w:t>正文二</w:t></w:r></w:p><w:p><w:pPr><w:sectPr ><w:type w:val="continuous"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:pPr></w:p>"#,
+        );
+        let doc = crate::docx::read_docx_from_bytes_with_options(
+            &bytes,
+            &crate::io::ReadOptions { compat: true },
+        )
+        .expect("修复后可读");
+        // 中段节两处 + 末节一处 = 3 节（修复前：两处空串节丢 → 1 节）。
+        assert_eq!(doc.sections.len(), 3, "空串 sectPr 修复后全量在场");
+        assert!(
+            doc.warnings.iter().any(|w| w.part == "word/document.xml"
+                && matches!(w.kind, WarningKind::MalformedXml)
+                && w.detail.contains("sectPr 数值属性空串归一化")),
+            "归一化警告在场：{:?}",
+            doc.warnings
+        );
+    }
+
+    /// 真实语料回归锚：cr065-decimals-probe.docx（tracked——缺席即红）。
+    #[test]
+    fn real_corpus_cr065_sectpr_full() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-artifacts/health-check/corpus/docx4j/cr065-decimals-probe.docx");
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("fixture missing: {e}"));
+        let doc = crate::docx::read_docx_from_bytes_with_options(
+            &bytes,
+            &crate::io::ReadOptions { compat: true },
+        )
+        .expect("compat read");
+        assert_eq!(
+            doc.sections.len(),
+            7,
+            "cr065 七节全量（历史 5 = 7−2 空串丢）"
+        );
+        assert!(
+            doc.warnings
+                .iter()
+                .any(|w| w.detail.contains("sectPr 数值属性空串归一化")),
+            "警告可见性"
         );
     }
 
