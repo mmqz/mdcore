@@ -354,6 +354,18 @@ fn main() {
                 // 自动回退服务端装饰并记日志——两种形态外壳均完整。
                 window_decorations: Some(WindowDecorations::Client),
                 window_min_size: Some(size(px(760.), px(480.))),
+                // #332（2026-11-07）：桌面集成身份。不传 app_id 时窗口
+                // 不设 WM_CLASS（ICCCM 违约——GNOME/KDE 无法把窗口映射
+                // 到 desktop entry，任务栏图标/分组/SingleMainWindow 全
+                // 落空，#270 验收 xprop 实证 WM_CLASS: not found）。
+                // 搬运闭包 gpui 的既有链线：open_window 在 map_window
+                // 之前按本字段调 PlatformWindow::set_app_id（X11 路径设
+                // WM_CLASS instance+class；Wayland 路径 xdg_toplevel
+                // set_app_id）。取值与 desktop 模板 StartupWMClass=
+                // {{APP_EXEC}} 渲染值一致（mdcore，自研命名域
+                // TRADEMARK_RULES §1；二进制名/包名同域）——改名需三处
+                // 同步（此处 / app.desktop.tpl / APP_EXEC）。
+                app_id: Some("mdcore".into()),
                 ..Default::default()
             };
             let editor_for_log = editor_entity.clone();
