@@ -541,6 +541,7 @@ fn props_protocol_overrides_defaults() {
         to: None,
         members: vec![],
         props,
+        ..Default::default()
     };
     let (shape, tf) = shape_from_object(&obj, &[]).expect("应能转成图元");
     match shape {
@@ -567,6 +568,7 @@ fn group_object_itself_is_not_drawn() {
         to: None,
         members: vec!["a".into()],
         props: BTreeMap::new(),
+        ..Default::default()
     };
     assert!(shape_from_object(&obj, &[]).is_none(), "分组不直接画");
 }
@@ -585,6 +587,7 @@ fn dangling_edge_is_skipped_not_panicked() {
         to: Some("gone-2".into()),
         members: vec![],
         props: BTreeMap::new(),
+        ..Default::default()
     };
     assert!(shape_from_object(&obj, &[]).is_none(), "悬空边应跳过");
 }
@@ -609,9 +612,118 @@ fn bad_props_fall_back_to_defaults() {
         to: None,
         members: vec![],
         props,
+        ..Default::default()
     };
     let (shape, tf) = shape_from_object(&obj, &[]).expect("非法属性也应回退缺省并出图元");
     assert!(matches!(shape, Shape::Rect { .. }), "未知 shape 值回退矩形");
     assert_eq!(tf.rotate, 0.0, "非法 rotation 回退 0");
     assert!(tf.rotate.is_finite());
+}
+
+// ── 笔迹面（#350——#44 第 1 步：引擎渲染中线真相）─────────────
+
+fn stroke_obj(points: Vec<(f64, f64)>, tool: Option<mdc_canvas::StrokeTool>) -> CanvasObject {
+    CanvasObject {
+        id: "s".into(),
+        kind: ObjectKind::Stroke,
+        points,
+        color: Some("#1a73e8".into()),
+        width: Some(2.5),
+        tool,
+        ..Default::default()
+    }
+}
+
+/// 笔迹 → Path 图元：中线折线（MoveTo + LineTo 链）+ 圆头不透明描边。
+#[test]
+fn stroke_maps_to_centerline_path_pen() {
+    let obj = stroke_obj(
+        vec![(10.0, 20.0), (40.0, 25.0), (80.0, 60.0)],
+        Some(mdc_canvas::StrokeTool::Pen),
+    );
+    let (shape, _) = shape_from_object(&obj, &[]).expect("笔迹应成图元");
+    match shape {
+        Shape::Path { cmds, style } => {
+            assert_eq!(cmds.len(), 3, "3 点 = MoveTo + 2 LineTo");
+            assert!(matches!(cmds[0], PathCmd::MoveTo(p) if p == Point::new(10.0, 20.0)));
+            assert!(matches!(cmds[1], PathCmd::LineTo(p) if p == Point::new(40.0, 25.0)));
+            assert!(matches!(cmds[2], PathCmd::LineTo(p) if p == Point::new(80.0, 60.0)));
+            let st = style.stroke.expect("笔迹恒有描边");
+            assert_eq!(st.color, Color::rgb(0x1a, 0x73, 0xe8), "Pen 不透明");
+            assert_eq!(st.width, 2.5);
+            assert_eq!(st.cap, LineCap::Round, "Pen 圆头");
+            assert!(style.fill.is_none(), "笔迹无填充");
+        }
+        other => panic!("笔迹应映射 Path，实际 {other:?}"),
+    }
+}
+
+/// Highlighter：平头 + 半透明（α×0.35 渲染态——模型颜色恒不透明）。
+#[test]
+fn stroke_highlighter_translucent_butt_cap() {
+    let obj = stroke_obj(
+        vec![(0.0, 0.0), (50.0, 0.0)],
+        Some(mdc_canvas::StrokeTool::Highlighter),
+    );
+    let (shape, _) = shape_from_object(&obj, &[]).expect("荧光笔应成图元");
+    match shape {
+        Shape::Path { style, .. } => {
+            let st = style.stroke.expect("笔迹恒有描边");
+            assert_eq!(st.cap, LineCap::Butt, "Highlighter 平头");
+            assert_eq!(st.color.a, 89, "α = round(255×0.35) = 89");
+            assert_eq!((st.color.r, st.color.g, st.color.b), (0x1a, 0x73, 0xe8));
+        }
+        other => panic!("实际 {other:?}"),
+    }
+}
+
+/// 退化笔迹（<2 点）不成图元、不 panic（敌意/陈旧载体面）。
+#[test]
+fn degenerate_stroke_is_skipped_not_panicked() {
+    let obj = stroke_obj(vec![(0.0, 0.0)], Some(mdc_canvas::StrokeTool::Pen));
+    assert!(shape_from_object(&obj, &[]).is_none());
+    // 无工具/无颜色/无线宽的陈旧载体 → 回退缺省（黑 1pt Pen），不 panic。
+    let mut obj2 = stroke_obj(vec![(0.0, 0.0), (9.0, 9.0)], None);
+    obj2.color = None;
+    obj2.width = None;
+    let (shape, _) = shape_from_object(&obj2, &[]).expect("陈旧载体回退仍成图元");
+    match shape {
+        Shape::Path { style, .. } => {
+            let st = style.stroke.unwrap();
+            assert_eq!(st.color, Color::BLACK, "缺色回退黑");
+            assert_eq!(st.width, 2.0, "缺宽回退 2pt");
+        }
+        other => panic!("实际 {other:?}"),
+    }
+}
+
+/// 会话 → 渲染全链：加笔后 from_session 含 Path 图元，canvas_bounds
+/// 覆盖笔迹几何包围盒（缺映射 = export_svg/PNG 丢笔迹 + 视口裁错）。
+#[test]
+fn session_stroke_renders_and_bounds_cover_it() {
+    use mdc_canvas::StrokeTool;
+    let mut s = CanvasSession::open(SessionOptions {
+        client_id: 1,
+        ..Default::default()
+    })
+    .unwrap();
+    s.execute(
+        Actor::Human,
+        mdc_canvas::CanvasCommand::AddStroke {
+            id: Some("s-1".into()),
+            points: vec![(100.0, 120.0), (200.0, 180.0), (300.0, 120.0)],
+            color: "#ff0000".into(),
+            width: 3.0,
+            tool: StrokeTool::Pen,
+        },
+    )
+    .unwrap();
+    let rendering = CanvasRendering::from_session(&s);
+    assert_eq!(rendering.shapes.len(), 1, "一笔 = 一图元");
+    // 几何包围盒 = 中线点列精确范围（canvas_bounds_geometry 无描边外扩）。
+    let bg = canvas_bounds_geometry(&rendering);
+    assert_eq!((bg.x, bg.y, bg.w, bg.h), (100.0, 120.0, 200.0, 60.0));
+    // 含描边外扩 = 每侧 + width/2（3pt → 1.5——视口裁剪面）。
+    let b = canvas_bounds(&rendering);
+    assert_eq!((b.x, b.y, b.w, b.h), (98.5, 118.5, 203.0, 63.0));
 }

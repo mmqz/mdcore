@@ -31,7 +31,7 @@ use wasm_bindgen::prelude::*;
 
 use mdc_canvas::{
     Actor, CanvasCommand, CanvasError, CanvasObject, CanvasSession, CommandOutcome, ObjectKind,
-    SessionOptions,
+    SessionOptions, StrokeTool,
 };
 
 // ---------------------------------------------------------------------------
@@ -176,6 +176,49 @@ pub fn parse_cmd_core(json: &str) -> Result<CanvasCommand, CvError> {
             _ => Err(bad_json("command", format!("missing/invalid `{field}`"))),
         }
     };
+    // 笔迹点列：[[x,y],…]（perfect-freehand 消费形状）→ (x,y) 对。
+    let points = |field: &str| -> Result<Vec<(f64, f64)>, CvError> {
+        match v.get(field) {
+            Some(serde_json::Value::Array(a)) => a
+                .iter()
+                .map(|x| {
+                    let pair = x.as_array().ok_or_else(|| {
+                        bad_json("command", format!("`{field}` entries must be [x,y] pairs"))
+                    })?;
+                    if pair.len() != 2 {
+                        return Err(bad_json(
+                            "command",
+                            format!("`{field}` entries must be [x,y] pairs, got {x}"),
+                        ));
+                    }
+                    let x = pair[0].as_f64().ok_or_else(|| {
+                        bad_json(
+                            "command",
+                            format!("`{field}` x must be number, got {}", pair[0]),
+                        )
+                    })?;
+                    let y = pair[1].as_f64().ok_or_else(|| {
+                        bad_json(
+                            "command",
+                            format!("`{field}` y must be number, got {}", pair[1]),
+                        )
+                    })?;
+                    Ok((x, y))
+                })
+                .collect(),
+            _ => Err(bad_json("command", format!("missing/invalid `{field}`"))),
+        }
+    };
+    let tool = |field: &str| -> Result<StrokeTool, CvError> {
+        match s(field)?.as_str() {
+            "pen" => Ok(StrokeTool::Pen),
+            "highlighter" => Ok(StrokeTool::Highlighter),
+            other => Err(bad_json(
+                "command",
+                format!("`{field}` must be pen/highlighter, got {other}"),
+            )),
+        }
+    };
     match t {
         "add_node" => Ok(CanvasCommand::AddNode {
             id: opt_id()?,
@@ -213,9 +256,22 @@ pub fn parse_cmd_core(json: &str) -> Result<CanvasCommand, CvError> {
         "ungroup" => Ok(CanvasCommand::Ungroup {
             group_id: s("group_id")?,
         }),
+        "add_stroke" => Ok(CanvasCommand::AddStroke {
+            id: opt_id()?,
+            points: points("points")?,
+            color: s("color")?,
+            width: f("width")?,
+            tool: tool("tool")?,
+        }),
+        "set_stroke_style" => Ok(CanvasCommand::SetStrokeStyle {
+            id: s("id")?,
+            color: s("color")?,
+            width: f("width")?,
+            tool: tool("tool")?,
+        }),
         other => Err(bad_json(
             "command",
-            format!("unknown command `{other}` (8 commands: add_node/move_node/resize_node/add_edge/set_props/remove_object/group_objects/ungroup)"),
+            format!("unknown command `{other}` (10 commands: add_node/move_node/resize_node/add_edge/set_props/remove_object/group_objects/ungroup/add_stroke/set_stroke_style)"),
         )),
     }
 }
@@ -225,10 +281,12 @@ fn kind_wire(k: ObjectKind) -> &'static str {
         ObjectKind::Node => "node",
         ObjectKind::Edge => "edge",
         ObjectKind::Group => "group",
+        ObjectKind::Stroke => "stroke",
     }
 }
 
-/// 读模型对象 → JSON（字段面与公开结构 1:1）。
+/// 读模型对象 → JSON（字段面与公开结构 1:1；笔迹四字段在非 Stroke
+/// 对象上为缺省形状——空点列/null，同 from/to 的 null 纪律）。
 pub fn object_json(o: &CanvasObject) -> String {
     let props: Vec<String> = o
         .props
@@ -246,23 +304,38 @@ pub fn object_json(o: &CanvasObject) -> String {
         .iter()
         .map(|m| serde_json::to_string(m).unwrap())
         .collect();
+    // 笔迹点列 [[x,y],…]（perfect-freehand 消费形状）。
+    let points: Vec<String> = o.points.iter().map(|(x, y)| format!("[{x},{y}]")).collect();
+    let opt_str = |v: &Option<String>| -> String {
+        match v {
+            Some(x) => serde_json::to_string(x).unwrap(),
+            None => "null".into(),
+        }
+    };
+    let width = match o.width {
+        Some(w) => format!("{w}"),
+        None => "null".into(),
+    };
+    let tool = match o.tool {
+        Some(StrokeTool::Pen) => "\"pen\"".to_string(),
+        Some(StrokeTool::Highlighter) => "\"highlighter\"".to_string(),
+        None => "null".to_string(),
+    };
     format!(
-        "{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"from\":{},\"to\":{},\"members\":[{}],\"props\":{{{}}}}}",
+        "{{\"id\":{},\"kind\":\"{}\",\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"from\":{},\"to\":{},\"members\":[{}],\"points\":[{}],\"color\":{},\"width\":{},\"tool\":{},\"props\":{{{}}}}}",
         serde_json::to_string(&o.id).unwrap(),
         kind_wire(o.kind),
         o.x,
         o.y,
         o.w,
         o.h,
-        match &o.from {
-            Some(x) => serde_json::to_string(x).unwrap(),
-            None => "null".into(),
-        },
-        match &o.to {
-            Some(x) => serde_json::to_string(x).unwrap(),
-            None => "null".into(),
-        },
+        opt_str(&o.from),
+        opt_str(&o.to),
         members.join(","),
+        points.join(","),
+        opt_str(&o.color),
+        width,
+        tool,
         props.join(","),
     )
 }
@@ -278,6 +351,8 @@ pub fn receipt_json(outcome: &CommandOutcome, undo_depth: usize, undo_cleared: b
         CommandOutcome::ObjectRemoved { id } => ("object_removed", "id", id.clone()),
         CommandOutcome::Grouped { group_id } => ("grouped", "group_id", group_id.clone()),
         CommandOutcome::Ungrouped { group_id } => ("ungrouped", "group_id", group_id.clone()),
+        CommandOutcome::StrokeAdded { id } => ("stroke_added", "id", id.clone()),
+        CommandOutcome::StrokeStyled { id } => ("stroke_styled", "id", id.clone()),
     };
     format!(
         "{{\"outcome\":\"{kind}\",\"{key}\":{},\"undo_depth\":{undo_depth},\"undo_cleared\":{undo_cleared}}}",

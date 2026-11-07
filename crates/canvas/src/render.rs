@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::{CanvasError, CanvasObject, CanvasSession, ObjectKind};
+use crate::{CanvasError, CanvasObject, CanvasSession, ObjectKind, StrokeTool};
 
 // 常量
 const MAX_CURVE_SEGMENTS: usize = 64;
@@ -1058,10 +1058,55 @@ pub fn shape_from_object(o: &CanvasObject, all: &[CanvasObject]) -> Option<(Shap
             ObjectKind::Node => "rect",
             ObjectKind::Edge => "line",
             ObjectKind::Group => "none",
+            ObjectKind::Stroke => "stroke",
         });
 
     let (shape, pivot) = match (o.kind, kind) {
         (ObjectKind::Group, _) | (_, "none") => return None,
+        (ObjectKind::Stroke, _) => {
+            // 笔迹（#350——#44 第 1 步）：引擎渲染**中线真相**（原始
+            // 采样点直连——MoveTo + LineTo）；perfect-freehand 平滑
+            // outline 是前端职责（#44 第 2 步）。工具语义：Pen = 不透明
+            // 圆头；Highlighter = 半透明（α×0.35）平头——半透明是渲染
+            // 态，模型颜色恒不透明（session.rs StrokeTool 文档）。
+            if o.points.len() < 2 {
+                return None;
+            }
+            let base = o
+                .color
+                .as_deref()
+                .and_then(parse_color)
+                .unwrap_or(Color::BLACK);
+            let (cap, color) = match o.tool {
+                Some(StrokeTool::Highlighter) => (
+                    LineCap::Butt,
+                    Color {
+                        a: scale_alpha(base, 0.35),
+                        ..base
+                    },
+                ),
+                _ => (LineCap::Round, base),
+            };
+            let width = o.width.filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.0);
+            let pts: Vec<Point> = o.points.iter().map(|&(x, y)| Point::new(x, y)).collect();
+            let mut cmds = Vec::with_capacity(pts.len());
+            cmds.push(PathCmd::MoveTo(pts[0]));
+            for p in &pts[1..] {
+                cmds.push(PathCmd::LineTo(*p));
+            }
+            let style = ShapeStyle {
+                fill: None,
+                stroke: Some(StrokeStyle {
+                    color,
+                    width,
+                    cap,
+                    join: LineJoin::Round,
+                    dash: StrokeDash::SOLID,
+                }),
+            };
+            let pivot = centroid(&pts);
+            (Shape::Path { cmds, style }, pivot)
+        }
         (ObjectKind::Edge, _) => {
             let center_of = |id: &str| -> Option<Point> {
                 all.iter()
