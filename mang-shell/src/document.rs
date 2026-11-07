@@ -190,7 +190,15 @@ pub fn open_editor(path: &Path, cx: &mut App) -> OpenOutcome {
     match opened {
         OpenedDocument::EditableText { path, content } => {
             OpenOutcome::Opened(build_ed(since_build, cx, |cx| {
-                Editor::new(Some(path), content, cx)
+                let mut ed = Editor::new(Some(path), content, cx);
+                // #427：折叠持久化**读侧**接线——文档装载完成即恢复已
+                // 落盘折叠（写侧 persist_folds 挂在折叠命令路径，此前
+                // 只写不读，重启即丢）。时机语义 = 装载即恢复（无渲染
+                // 依赖）；「宁缺毋错」（头行漂移自动弃权）在
+                // restore_folds 实现内。F7 只读对照视图不经此通道
+                //（persist 只发生在可编辑命令路径，读写面对称）。
+                ed.restore_folds();
+                ed
             }))
         }
         // #115：可编辑 docx——启动日志一行（属性面 + 编辑面 + 降级原因）。
@@ -390,5 +398,86 @@ mod tests {
             }
             _ => panic!("xlsx 分派应落 ReadOnlyXlsx（实得其他形态——IO 错误/读失败）"),
         }
+    }
+
+    /// #427：折叠持久化端到端——命令路径落盘（run_command(FoldAll) →
+    /// persist_folds → settings::save_folds）→ **同路径重开**（open_editor
+    /// 装载即恢复 restore_folds）→ 折叠集一致；失效头（非标题行/越界）
+    /// 宁缺毋错弃权。
+    ///
+    /// 隔离：XDG_CONFIG_HOME 指向临时目录（`config_dir` 只认绝对路径）。
+    /// 窗口期内并行用例读配置得缺省值（`load_indent_unit` 等——无害）；
+    /// 全局配置写方仅 CMD 全量测试的 persist（load-modify-write，与本
+    /// 用例的理论交错窗口毫秒级——与既有全局配置测试同类风险，如实
+    /// 登记不假装零）。
+    #[gpui::test]
+    fn fold_persistence_roundtrip_on_reopen(cx: &mut gpui::TestAppContext) {
+        let cfg = std::env::temp_dir().join(format!("mang-fold-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cfg);
+        std::fs::create_dir_all(&cfg).expect("建隔离配置目录");
+        let doc = cfg.join("notes.md");
+        // 三小节文档：行 0/2/4 是标题，行 1/3/5 是正文。
+        std::fs::write(&doc, "# A\nbody1\n# B\nbody2\n# C\nbody3").expect("写测试文档");
+        let key = doc.to_string_lossy().into_owned();
+
+        let prev = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &cfg) };
+
+        // 窗口宿主（run_command 的焦点面需要真实 Window——与 editor
+        // 单测同模式：最小宿主开窗）。
+        struct Host(gpui::Entity<Editor>);
+        impl gpui::Render for Host {
+            fn render(
+                &mut self,
+                _: &mut gpui::Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        // ① 首开：隔离配置为空 → 无历史折叠。
+        let a = match cx.update(|cx| open_editor(&doc, cx)) {
+            OpenOutcome::Opened(ed) => ed,
+            other => panic!("首开应成功（实得非 Opened 形态）"),
+        };
+        let fresh = cx.update(|cx| a.read(cx).fold_ranges());
+        assert!(fresh.is_empty(), "隔离配置下首开应无折叠（实得 {fresh:?}）");
+
+        // ② 真实用户链折全部：run_command(FoldAll) → persist_folds 落盘。
+        let a_for_host = a.clone();
+        let window = cx.add_window(move |_, _| Host(a_for_host.clone()));
+        window.update(cx, |_host, window, cx| {
+            a.update(cx, |ed, cx| {
+                ed.run_command(crate::editor::commands::Cmd::FoldAll, window, cx)
+            });
+        });
+        let folded = cx.update(|cx| a.read(cx).fold_ranges());
+        assert_eq!(folded, vec![(0, 2), (2, 4), (4, 6)], "三个小节全折（顶层）");
+
+        // ③ 重开同路径：装载即恢复（#427 修复面——此前 restore_folds
+        //    零调用方，重启即丢）。
+        let b = match cx.update(|cx| open_editor(&doc, cx)) {
+            OpenOutcome::Opened(ed) => ed,
+            other => panic!("重开应成功（实得非 Opened 形态）"),
+        };
+        let restored = cx.update(|cx| b.read(cx).fold_ranges());
+        assert_eq!(restored, folded, "重开后折叠集应与关闭前一致");
+
+        // ④ 宁缺毋错：失效头（行 1 正文非标题 / 行 9 越界）全部弃权。
+        crate::settings::save_folds(&key, &[1, 9]);
+        let c = match cx.update(|cx| open_editor(&doc, cx)) {
+            OpenOutcome::Opened(ed) => ed,
+            other => panic!("三开应成功（实得非 Opened 形态）"),
+        };
+        let dropped = cx.update(|cx| c.read(cx).fold_ranges());
+        assert!(dropped.is_empty(), "失效头应全部弃权（实得 {dropped:?}）");
+
+        // 恢复 env + 清理（失败路径也尽量不残留：先 env 后目录）。
+        match prev {
+            Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&cfg);
     }
 }

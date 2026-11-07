@@ -1747,6 +1747,15 @@ impl Editor {
         self.display_map.unfold_all()
     }
 
+    /// 折叠区间快照（`[start, end)` 行区间，升序）——只读观测面。
+    ///
+    /// #427 端到端断言通道（折 → 落盘 → 重开 → 恢复的折叠集对照）；
+    /// 状态栏/RPC 诊断同类消费可直接复用。与 [`Self::fold_all`] 的
+    /// 返回值不同：这是**任意时刻**的区间查询，不是操作。
+    pub fn fold_ranges(&self) -> Vec<(usize, usize)> {
+        self.display_map.fold_ranges()
+    }
+
     /// 保存（Ctrl+S）：同步写盘 + 清修改标记。未命名文档无路径——
     /// 批 1 无「另存为」对话框，返回 false 登记。
     /// 只读文档（docx）无保存语义——双保险早退（键分发已拒 Ctrl+S，
