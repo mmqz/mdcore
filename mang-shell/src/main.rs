@@ -107,6 +107,12 @@ mod tab_bar;
 mod theme_switch;
 mod title_bar;
 
+// #333：Wayland seat 前置探测（Linux 门控见模块内 cfg；跨平台无操作
+// 占位）——在 application() 之前拦截「无 wl_seat 合成器」场景，把
+// gpui_linux connect_initially 的裸 panic（exit 101）换成 #185 同款
+// 优雅降级（exit 70 + 双语提示）。
+mod wayland_probe;
+
 use document::OpenOutcome;
 
 mod perf;
@@ -272,6 +278,12 @@ fn main() {
     // 逐条 stderr 警告——「记忆是增强不是依赖」）。开窗前完成：任何
     // 查表点（编辑器派发/shell 键钩子/菜单标签）首访即得合并产物。
     keymap::init(&settings::load_keymap_overrides());
+
+    // #333：Wayland seat 前置探测——必须在 application() 之前：
+    // gpui_linux 的 connect_initially()（panic 点 platform.rs:381）在
+    // 用户闭包之前执行，闭包内的 GPU 降级路径够不到它。探测到无
+    // seat 的合成器 → exit 70（见 wayland_probe 模块文档）。
+    wayland_probe::ensure_seat_or_exit();
 
     application()
         .with_assets(assets::Assets)
