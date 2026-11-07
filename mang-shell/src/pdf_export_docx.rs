@@ -88,7 +88,7 @@ impl std::error::Error for PdfToDocxError {
 /// [`PdfImportDoc`]（页序 = 文档序）。零页 PDF 走 [`PdfImportError::
 /// EmptyDocument`] fail-closed 链（不欠拟合引擎页数语义）。
 pub fn pdf_to_docx_bytes(pdf: &[u8]) -> Result<Vec<u8>, PdfToDocxError> {
-    let mut engine = PdfiumEngine::open(pdf.to_vec())
+    let engine = PdfiumEngine::open(pdf.to_vec())
         .map_err(|e| PdfToDocxError::EngineOpen(format!("{e:?}")))?;
     let count = engine.page_count();
     if count == 0 {

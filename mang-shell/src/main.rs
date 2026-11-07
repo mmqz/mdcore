@@ -101,6 +101,9 @@ mod status_info;
 mod native_dialog;
 // #302 阶段 2·④：PDF 标注写会话（pdf_pages 的右键拖框高亮后端）。
 mod pdf_annotate;
+// #307 ②功能独立项：PDF→DOCX 文本版导出桥组合根（与 lib 树同源——
+// lib.rs 侧 `pub mod pdf_export_docx;` 双根声明，bin 侧缺声明会 E0433）。
+mod pdf_export_docx;
 mod pdf_pages;
 // #389 阶段 1：XLSX 网格视图（真网格渲染骨架——office-io 读面 →
 // 网格模型 + 双向虚拟化 + 单元格点选）。
