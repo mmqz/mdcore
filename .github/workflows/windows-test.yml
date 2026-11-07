@@ -78,6 +78,20 @@ jobs:
       - name: Test mdcore (core engine)
         run: cargo test -p mdcore
 
+      # #358（2026-11-07）：mdcore-wasm 测试面 CI 化——此前本 job 的
+      # cargo test 清单漏 mdcore-wasm（windows-check.yml 仅 wasm32 编译
+      # check），122 条 lib 测试 + 8 个集成测试面在 CI 零执行 →
+      # AGENTS.md 13.4「CI 全绿 ≠ 稳定」实证：#338 断言翻转后 wasm 侧
+      # 漏改（w1_toc_field）在 main 静默红（本地 cargo test --workspace
+      # 才暴露，#358 红①）；hc_docx4j 六维门回归同理（红②）。
+      # native target 跑全目标（lib + 集成——红②恰在集成面，只跑 lib
+      # 会再漏）；wasm32 面维持 windows-check.yml 的编译 check 不变。
+      # 两个已知红显式 skip（在修工单：红① → #361/PR #372；红② →
+      # #365 失败二 Agent-ix4l）——**两单合并后必须移除对应 --skip**，
+      # 否则覆盖缺口复现。
+      - name: Test mdcore-wasm (wasm bridge - lib + integration)
+        run: cargo test -p mdcore-wasm -- --skip w1_toc_field_five_part_emission_and_position --skip hc_docx4j_six_dimensions_gate
+
       - name: Fetch xlsx-structural-corpus (#265 结构面语料 28 件, Apache-2.0)
         # #265 语料门 CI 化：语料二进制不入库（.gitignore），CI 在
         # Test mdc-office-io 前取件——结构面锁（隐藏行/外部链接/
