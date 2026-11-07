@@ -9,7 +9,17 @@ Priority: optional
 Architecture: amd64
 # 维护者字段待定名后随三件套登记（packaging/README 变量表）
 Maintainer: mdcore project <noreply@mdcore.invalid>
-Depends: libgtk-3-0 (>= 3.24), libwebkit2gtk-4.1-0, libc6 (>= 2.34)
+# Depends 依据（#330 修复，2026-11-07 验收实测锚定）：
+#   ELF NEEDED（readelf -d /usr/bin/mdcore）：libxcb.so.1 / libxkbcommon.so.0 /
+#     libxkbcommon-x11.so.0（+libc/libm/libgcc_s——libc6 由基础面承载）
+#   运行期 dlopen（缺失即对应功能坏）：
+#     libvulkan.so.1（wgpu 渲染必需——GPUI/blade 面，缺=开窗失败）
+#     libwayland-client.so.0（Wayland 会话；wayland-backend dlopen 态）
+#   已删除：libgtk-3-0 / libwebkit2gtk-4.1-0（旧壳 mdshell-native 遗留——
+#     GPUI 壳零 GTK/WebKit 链接；实测 apt --simulate 旧声明拖 43 包无关
+#     依赖且实际所需 3 库 0 命中，干净系统装完即 cannot open shared
+#     object file。证据链见 packaging/ACCEPTANCE-270-LINUX.md §1① 与 #330）
+Depends: libc6 (>= 2.34), libxcb1, libxkbcommon0, libxkbcommon-x11-0, libvulkan1, libwayland-client0
 Description: Modular Markdown editing core with native shell
  Markdown editor built on a headless editing core (block tree + op log +
  undo history) with a native shell (tao+wry+GTK3). Opens .md files,
