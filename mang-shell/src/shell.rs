@@ -966,6 +966,9 @@ impl ShellApp {
             // #307：「导出为 PDF」门槛（仅 docx 形态提供；md/pdf/xlsx/
             // canvas 标签上灰显）。
             active_is_docx: tab.is_some_and(|t| t.editor.read(cx).doc_kind() == "docx"),
+            // #307 ②：「导出为 DOCX」门槛（仅 pdf 形态提供；文本版导出
+            // 读 PDF 文本层——扫描件零文本在转换内显式拒）。
+            active_is_pdf: tab.is_some_and(|t| t.editor.read(cx).doc_kind() == "pdf"),
             recent_files: self.recent.recent_files().to_vec(),
         }
     }
@@ -1064,6 +1067,9 @@ impl ShellApp {
             Act::SaveAs => self.prompt_save_as(window, cx),
             // #307 阶段①：导出为 PDF（DOCX → LibreOffice headless → PDF）。
             Act::ExportPdf => self.export_active_pdf(window, cx),
+            // #307 ②功能独立项：导出为 DOCX（PDF 文本层 → office-io
+            // 写面——纯 Rust 链路，无外部工具依赖）。
+            Act::ExportDocx => self.export_active_docx(window, cx),
             // 与标题栏 × 钮同一条 cx.quit 既有路径（该路径不经
             // on_should_close 脏确认——× 钮现状同此，行为对齐不超范围
             // 修补；统一走脏确认建议另开 issue）。
@@ -1669,6 +1675,82 @@ impl ShellApp {
                     Ok(()) => shell.show_notice(format!("已导出 PDF：{}", out_path.display()), cx),
                     Err(message) => {
                         shell.show_notice(format!("导出 PDF 失败：{message}"), cx);
+                    }
+                });
+            }
+            Ok(Ok(None)) => {}
+            Ok(Err(err)) => {
+                let message = format!("导出对话框不可用：{err}");
+                let _ = this.update_in(cx, |shell, _window, cx| {
+                    shell.show_notice(message, cx);
+                });
+            }
+            Err(_canceled) => {}
+        })
+        .detach();
+    }
+
+    /// #307 ②功能独立项：导出为 DOCX（文本版）——PDF 标签专用。
+    ///
+    /// 镜像 [`Self::export_active_pdf`] 模式（#339）：磁盘内容为准
+    /// （标注增量 flush 落盘后即磁盘态）→ 后台读盘 → 引擎提取 +
+    /// office-io 写面 → 写盘。**无外部工具依赖**（pdfium 是产品自身
+    /// 引擎——与 PDF 视图同源绑定）；扫描件零文本 / pdfium 缺席 =
+    /// typed 错误显式横幅（不静默）。
+    fn export_active_docx(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        if tab.editor.read(cx).doc_kind() != "pdf" {
+            self.show_notice(
+                "导出为 DOCX 仅支持 PDF 文档（当前标签不是 .pdf）。".to_string(),
+                cx,
+            );
+            return;
+        }
+        let src = tab.path.clone();
+        if !src.exists() {
+            self.show_notice(
+                format!("源文件不在磁盘上：{}（先确保文件已保存）", src.display()),
+                cx,
+            );
+            return;
+        }
+        let directory = src
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let suggested = src
+            .file_stem()
+            .map(|n| format!("{}.docx", n.to_string_lossy()));
+        let rx = cx.prompt_for_new_path(&directory, suggested.as_deref());
+        cx.spawn_in(window, async move |this, cx| match rx.await {
+            Ok(Ok(Some(out_path))) => {
+                // 后台转换：读盘 → 引擎提取 + 写面 → 写盘（pdfium FFI
+                // 全离主线程——与渲染工人同一串行化语义）。
+                let src_clone = src.clone();
+                let out_clone = out_path.clone();
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let pdf = std::fs::read(&src_clone)
+                            .map_err(|e| format!("读取源文件失败：{e}"))?;
+                        let docx = crate::pdf_export_docx::pdf_to_docx_bytes(&pdf)
+                            .map_err(|e| e.to_string())?;
+                        std::fs::write(&out_clone, &docx)
+                            .map_err(|e| format!("写出 DOCX 失败：{e}"))?;
+                        Ok::<(), String>(())
+                    })
+                    .await;
+                let _ = this.update_in(cx, |shell, _window, cx| match result {
+                    Ok(()) => {
+                        shell.show_notice(
+                            format!("已导出 DOCX（文本版）：{}", out_path.display()),
+                            cx,
+                        );
+                    }
+                    Err(message) => {
+                        shell.show_notice(format!("导出 DOCX 失败：{message}"), cx);
                     }
                 });
             }
