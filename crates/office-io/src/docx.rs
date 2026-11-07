@@ -2560,15 +2560,17 @@ fn text_box_blocks(
 /// #18：VML 文本框第二趟扫描（`w:pict → v:shape → v:textbox →
 /// w:txbxContent`——引擎读面不承载该形态，文档级补提取）。
 ///
-/// 返回 (宿主块索引, txbxContent 原始 XML 区段) 序列（文档序）。
+/// 返回 (宿主块索引, 区段字节起点, txbxContent 原始 XML 区段) 序列
+/// （文档序；字节起点 = 与 #318 D4 组区段归并排序的稳定键）。
 /// 宿主块索引 = 区段所在顶层块（w:p/w:tbl 的 body 直接子层序——
 /// 与 extract_blocks 的块序一一对应；捕获态下顶层计数冻结——
 /// txbxContent 内层 w:p 非顶层）。两类区域跳过：
 /// · **`w:drawing` 子树内**（DrawingML `wps:txbx` 形态——模型面
-///   extract_blocks 已发射，第二趟再取 = 双提取）；
+///   extract_blocks 已发射，第二趟再取 = 双提取；组内被丢成员另由
+///   scan_group_textbox_regions 按幸存者规则定向补取）；
 /// · **mc:Fallback 内**（AlternateContent 双写形态：DrawingML 主选
 ///   已由模型面提取，Fallback 的 VML 副本再取 = 双提取）。
-fn scan_vml_textbox_regions(xml: &str) -> Vec<(usize, String)> {
+fn scan_vml_textbox_regions(xml: &str) -> Vec<(usize, usize, String)> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(xml);
     let mut depth: usize = 0;
@@ -2582,7 +2584,7 @@ fn scan_vml_textbox_regions(xml: &str) -> Vec<(usize, String)> {
     // TextBoxContent::read 的段落解析自然展开，边界登记）。
     let mut capture: Option<(usize, usize)> = None; // (host, txbx 嵌套深度)
     let mut span_start = 0usize;
-    let mut out: Vec<(usize, String)> = Vec::new();
+    let mut out: Vec<(usize, usize, String)> = Vec::new();
     loop {
         let pos_before = reader.buffer_position() as usize;
         match reader.read_event() {
@@ -2662,7 +2664,7 @@ fn scan_vml_textbox_regions(xml: &str) -> Vec<(usize, String)> {
                                     }
                                 }
                                 if s < e {
-                                    out.push((host, xml[s..e].to_string()));
+                                    out.push((host, s, xml[s..e].to_string()));
                                 }
                             }
                         }
@@ -2833,6 +2835,158 @@ fn scan_tc_textbox_regions(xml: &str) -> Vec<(usize, String)> {
             Ok(Event::Eof) => break,
             Ok(_) => {}
             Err(_) => break, // 门 2+3 已过结构校验（严格）；兼容面防御终止
+        }
+    }
+    out
+}
+
+/// #318 D4：drawing 扫描态（组内被丢成员定位）。
+/// (宿主块索引, 最外层 txbxContent 区段 (起, 止) 列表, 当前区段捕获态
+/// (区段起点, txbxContent 嵌套深度))。
+type GroupDrawingScan = (usize, Vec<(usize, usize)>, Option<(usize, usize)>);
+
+/// #318 D4：DrawingML 组内文本框第二趟扫描（`w:drawing → wpg:wgp →
+/// 多个 `wps:wsp > wps:txbx → w:txbxContent`——docx-rs 读面每 drawing
+/// 只承载**最后一个** txbx：reader/drawing.rs 对 `wps:txbx` 的匹配
+/// 深度盲 + `drawing.text_box()` 为替换语义 → 前位成员全丢。幸存者
+/// = 末位的实证（本机探针，2026-11-07）：60316 组 2 框幸存
+/// [Address…]（末位）、shapes-with-text 幸存 "Where some contain
+/// text"（末位）。
+///
+/// 返回 (宿主块索引, 区段字节起点, txbxContent 原始 XML 区段) 序列
+/// （文档序）。**每 drawing 取最外层 txbxContent 全体除最后一个**
+/// （幸存者归模型面，再取 = 双提取）。宿主块索引与 VML 扫描器同一
+/// 顶层块计数（w:p/w:tbl 的 body 直接子层序；drawing 恒嵌于段/表内，
+/// 扫描期间顶层计数不被内层事件推进）。三类跳过（账本 GT 分类边界
+/// 对齐——sdt > tc > group 的互斥分类）：
+/// · **`w:tc` / `w:sdtContent` 内的 drawing**（D2 表容器域 #345 /
+///   sdt 全丢域——扣除项不与 D4 重叠）；
+/// · **`mc:Fallback` 内**（双写复制区）；
+/// · **drawing 内层嵌套 txbxContent**（并入外层区段承载——内层
+///   drawing 属外层文本框内容面，单独再取 = 双提取）。
+fn scan_group_textbox_regions(xml: &str) -> Vec<(usize, usize, String)> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut depth: usize = 0;
+    let mut body_child_depth: Option<usize> = None;
+    let mut block_idx: usize = 0;
+    let mut in_fallback: usize = 0;
+    let mut in_tc: usize = 0;
+    let mut in_sdt: usize = 0;
+    // w:drawing 嵌套计数（内层 drawing 只可能出现在外层 txbxContent
+    // 内——其 txbx 并入外层区段，不另开扫描态）。
+    let mut drawing_nest: usize = 0;
+    // 活动扫描态：Some 当且仅当最外层 w:drawing 通过容器守卫。
+    let mut active: Option<GroupDrawingScan> = None;
+    let mut out: Vec<(usize, usize, String)> = Vec::new();
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "body" => body_child_depth = Some(depth + 1),
+                    "Fallback" => in_fallback += 1,
+                    "tc" => in_tc += 1,
+                    "sdtContent" => in_sdt += 1,
+                    "drawing" => {
+                        drawing_nest += 1;
+                        if drawing_nest == 1
+                            && in_fallback == 0
+                            && in_tc == 0
+                            && in_sdt == 0
+                        {
+                            active =
+                                Some((block_idx.saturating_sub(1), Vec::new(), None));
+                        }
+                    }
+                    "txbxContent" => {
+                        // 仅活动 drawing 内的最外层 txbxContent 开区段；
+                        // 已捕获中 = 嵌套（内层 drawing/文本框），并入。
+                        if let Some((_, _, capture)) = active.as_mut() {
+                            match capture.as_mut() {
+                                Some((_, d)) => *d += 1,
+                                None => *capture = Some((pos_before, 1)),
+                            }
+                        }
+                    }
+                    "p" | "tbl"
+                        // 顶层块计数（VML 扫描器同款；drawing 内层
+                        // w:p/w:tbl 恒深于 body 直接子层，不推进）。
+                        if body_child_depth == Some(depth) =>
+                    {
+                        block_idx += 1;
+                    }
+                    _ => {}
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(e)) => {
+                // 自闭合顶层块与 Start+End 等价计一个（VML 扫描器同款）；
+                // 自闭合 txbxContent 无内容不开区段。
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                if (name == "p" || name == "tbl") && body_child_depth == Some(depth) {
+                    block_idx += 1;
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                match name.as_str() {
+                    "Fallback" => in_fallback = in_fallback.saturating_sub(1),
+                    "tc" => in_tc = in_tc.saturating_sub(1),
+                    "sdtContent" => in_sdt = in_sdt.saturating_sub(1),
+                    "txbxContent" => {
+                        if let Some((_, spans, capture)) = active.as_mut() {
+                            if let Some((start, d)) = capture.as_mut() {
+                                *d -= 1;
+                                if *d == 0 {
+                                    let start = *start;
+                                    let span_end = reader.buffer_position() as usize;
+                                    // 双端前向修复（quick-xml 0.41 计量
+                                    // 偏移——VML 扫描器同款注释与逻辑）。
+                                    let bytes = xml.as_bytes();
+                                    let mut s = start.min(xml.len());
+                                    while s < xml.len() && bytes[s] != b'<' {
+                                        s += 1;
+                                    }
+                                    let mut e = span_end.min(xml.len());
+                                    if e == 0 || bytes[e - 1] != b'>' {
+                                        while e < xml.len() && bytes[e] != b'>' {
+                                            e += 1;
+                                        }
+                                        if e < xml.len() {
+                                            e += 1;
+                                        }
+                                    }
+                                    if s < e {
+                                        spans.push((s, e));
+                                    }
+                                    *capture = None;
+                                }
+                            }
+                        }
+                    }
+                    "drawing" => {
+                        drawing_nest = drawing_nest.saturating_sub(1);
+                        if drawing_nest == 0 {
+                            if let Some((host, spans, _)) = active.take() {
+                                // 幸存者 = 末位区段（docx-rs 替换语义实证）
+                                // ——其余按文档序补发射（归属序 = 组内位置）。
+                                if spans.len() >= 2 {
+                                    for (s, e) in &spans[..spans.len() - 1] {
+                                        out.push((host, *s, xml[*s..*e].to_string()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                depth = depth.saturating_sub(1);
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(_) => break, // 门 2+3 已过结构校验；兼容面防御终止
         }
     }
     out
@@ -3268,8 +3422,13 @@ fn apply_vml_textboxes(
         return Ok(blocks); // 快路径零成本
     }
     let table = bundle.document.as_ref();
-    let regions = scan_vml_textbox_regions(document_xml);
-    for (host, region) in regions.iter().rev() {
+    let mut regions = scan_vml_textbox_regions(document_xml);
+    // #318 D4：组内被丢成员并入同一插入趟（单一坐标系——两路区段
+    // 按字节起点归并排序；逆序插入下同宿主终序 = 文档序，节边界
+    // 重映射只做一遍）。
+    regions.extend(scan_group_textbox_regions(document_xml));
+    regions.sort_by_key(|(_, start, _)| *start);
+    for (host, _, region) in regions.iter().rev() {
         let tb_blocks = parse_textbox_region(
             region,
             table,
