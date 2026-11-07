@@ -122,7 +122,7 @@ mang-shell 是编辑器进程。它开一个**本机 unix domain socket**，外�
 | `get_selection` | — | 取选区 + 文本 |
 | `undo` | — | 撤销一步 |
 | `redo` | — | 重做一步 |
-| `save` | — | 保存（未命名/只读拒绝） |
+| `save` | — | 保存（#386 走 Shell 分流：pdf 批注增量落盘/编辑器三态；未命名拒） |
 | `save_as` | `path` | 另存为 |
 | `scroll_to` | `line` | 滚动视口（不动光标） |
 | `subscribe` | — | 订阅 `doc_changed` 事件 |
@@ -262,7 +262,10 @@ mang-shell 是编辑器进程。它开一个**本机 unix domain socket**，外�
 {"cmd":"save_as","path":"/ws/b.md"}
 ```
 
-- `save` 对**未命名文档拒绝**（提示先 `save_as`）；对**只读渲染态拒绝**。
+- `save` 对**未命名文档拒绝**（提示先 `save_as`）。#386 起与 UI
+  （Ctrl+S）同源走 **Shell 保存分流**：pdf 标签的未落盘批注在此
+  增量写盘（`"modified"` 同源含批注脏）；只读且脏（防御不可达）或
+  写盘失败才拒绝。纯只读浏览文档（xlsx 等无改动）是干净 no-op 成功。
 - `save_as` 会做标签身份迁移（path / display_name 更新）。
 - **#275 起 `save_as` 目标受沙箱门禁**（根外拒、无工作区拒——与
   `open_file` 同批收口，见[第 7 节](#7-沙箱与安全边界)）。`save`
@@ -535,7 +538,7 @@ open_find  open_replace  goto_line  save  select_all  undo  redo
 | 无工作区 | `无打开的工作区——FS 命令限定工作区根目录内` |
 | 越界路径 | `路径越出工作区边界…——FS 命令只允许工作区内操作` |
 | 脏标签冲突 | `文档有未保存修改——先保存再关闭` |
-| 只读态 | `只读文档（渲染态）无保存语义` |
+| 只读态拒存（防御不可达——只读且脏） | `只读文档（渲染态）拒绝保存` |
 | 载荷超限 | `单行超过 1048576 字节上限——连接关闭` |
 | JSON 损坏 | serde 的错误字符串，`id` 为 null |
 

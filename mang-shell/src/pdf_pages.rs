@@ -76,6 +76,7 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -90,6 +91,7 @@ use mdc_pdf::engine_pdfium::PdfiumEngine;
 use mdc_pdf::page::PageIndex;
 use mdc_pdf::render::{RenderKey, RenderRequest, RenderedPage};
 use mdc_pdf::worker::{RenderWorker, WorkerReply};
+use mdc_pdf::writer::IncrementalSave;
 use smallvec::SmallVec;
 use ui::prelude::*;
 
@@ -151,6 +153,10 @@ pub struct PdfPagesView {
     /// 工具切换提示（最近一次退化单击——底部横幅明示当前工具与切换
     /// 手势；下一次手势提交时清零——不永久占屏）。
     annotate_hint: Option<String>,
+    /// #386：有未落盘批注（首次 [`Self::commit_annotation`] 成功后
+    /// 置位，[`Self::save_annotations`] 写盘成功清零）。Shell 据此
+    /// 驱动关闭确认与标题栏脏标。
+    dirty: bool,
     /// 回执轮询循环进行中（防重复起循环）。
     polling: bool,
     /// 虚拟列表滚动句柄（scroll_to_page / 可见区间推算共用）。
@@ -222,6 +228,7 @@ impl PdfPagesView {
             annotate_tool: AnnotateTool::Highlight,
             annotate_error: None,
             annotate_hint: None,
+            dirty: false,
             polling: false,
             scroll: UniformListScrollHandle::new(),
             focus_handle,
@@ -248,6 +255,7 @@ impl PdfPagesView {
             annotate_tool: AnnotateTool::Highlight,
             annotate_error: None,
             annotate_hint: None,
+            dirty: false,
             polling: false,
             scroll: UniformListScrollHandle::new(),
             focus_handle,
@@ -491,7 +499,9 @@ impl PdfPagesView {
 
     /// 提交批注（三手势派发）：懒初始化控制器 → #304 坐标变换（屏幕
     /// 拖框→用户空间）→ AnnotateAdd → 增量 flush → [`Self::reload_after_flush`]。
-    fn commit_annotation(
+    /// #386：`pub(crate)`——e2e 测试从手势提交入口驱动（与右键拖框
+    /// 收尾 [`Self::finish_drag_annotation`] 同一调用面）。
+    pub(crate) fn commit_annotation(
         &mut self,
         page: u32,
         x0: f32,
@@ -545,7 +555,50 @@ impl PdfPagesView {
         }
         let (bytes, _stats) = controller.flush()?;
         self.reload_after_flush(bytes);
+        // #386：内存已刷新但盘上未落——脏标记（Shell 据此驱动关闭
+        // 确认与保存分流；save_annotations 清零）。
+        self.dirty = true;
         Ok(())
+    }
+
+    /// #386：是否有未落盘批注（Shell 据此驱动关闭确认与标题栏脏标；
+    /// e2e 断言面）。
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// #386 e2e 断言面：构造期引擎错误（None = 页视图在位可渲染；
+    /// Some = error 态面板文案）。测试据此在无 pdfium 环境 SKIP
+    /// （render_170_pdf 同口径——不伪装通过）。
+    pub(crate) fn engine_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// #386：批注落盘（增量——产物字节以原文件为逐位前缀，签名保持
+    /// #227/#308 语义）。路径由 Shell 传入（单一真源：Shell 的
+    /// `pdf_pages` 槽持有 `PathBuf`，视图不重复存）。**写盘成功才清
+    /// 脏标**（原子语义）；错误透传（调用方必须显式示警，不许静默）。
+    ///
+    /// - `Ok(None)`：无未落盘批注（干净 no-op）；
+    /// - `Ok(Some(stats))`：已增量写盘（`stats` = 追加修订统计）。
+    pub fn save_annotations(
+        &mut self,
+        path: &Path,
+    ) -> Result<Option<IncrementalSave>, crate::pdf_annotate::AnnotateError> {
+        if !self.dirty {
+            return Ok(None);
+        }
+        let Some(controller) = self.annotate.as_mut() else {
+            // 脏标在位而控制器不在（不可达——dirty 只经
+            // commit_annotation 成功路径置位，控制器随之在位）。防御
+            // 态：清标按干净处理，不虚构写盘。
+            self.dirty = false;
+            return Ok(None);
+        };
+        let stats = controller.save(path)?;
+        self.dirty = false;
+        eprintln!("pdf-annot-save: {}（增量落盘）", path.display());
+        Ok(Some(stats))
     }
 
     /// flush 后刷新：换字节快照 + 重建渲染工人（引擎重开见追加修订）
@@ -825,6 +878,7 @@ pub fn quantize_width(w: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn quantize_width_clamps_and_rounds_up() {
@@ -872,5 +926,218 @@ mod tests {
             bgra: vec![1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255],
         };
         assert!(rendered_page_to_image(&good).is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // #386：批注落盘——手势级 e2e（从用户手势开始，不跳过视图层）
+    // -----------------------------------------------------------------------
+    // 与 tests/pdf_annotate_e2e.rs（#336 控制器面）的分工：那批证明
+    // 「控制器**能**存盘」，本组证明「用户操作（右键拖框手势 → 视图
+    // 脏标 → 保存）**最终调到**存盘」——#386 的验收缺口正是「视图 →
+    // 文件」这一环。断言基线与 #336 同源：盘上前缀保持（增量非重写）
+    // + mdc-pdf 读面独立第二意见（与写面无共享实现路径）。
+    //
+    // 环境门控（render_170_pdf 同口径）：`PdfPagesView::new` 的几何
+    // 预读需 pdfium——无库环境 SKIP 横幅（不伪装通过），有则全量
+    // 真跑。批注链本身纯 Rust（lopdf），但本组钉的是页视图在位的
+    // 完整产品面。
+    // -----------------------------------------------------------------------
+
+    /// smoke.pdf 夹具字节（两页——与 #336 控制器测试同源夹具）。
+    fn smoke_pdf_bytes() -> Vec<u8> {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/smoke.pdf");
+        std::fs::read(&p).unwrap_or_else(|e| panic!("夹具不可读（{}）：{e}", p.display()))
+    }
+
+    /// 临时落盘路径守卫（Drop 清理——panic 也清）。
+    struct TempPdf(PathBuf);
+    impl Drop for TempPdf {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// #386 核心闭环：手势 → 脏标 → 落盘 → 独立读回在档 → 脏标清零
+    /// → 干净重存 no-op（验收 1/2/5/6 的视图层全链）。
+    #[gpui::test]
+    fn gesture_marks_dirty_and_save_roundtrips(cx: &mut gpui::TestAppContext) {
+        let original = smoke_pdf_bytes();
+        let entity = cx.update(|cx| cx.new(|cx| PdfPagesView::new(original.clone(), cx)));
+        // 环境门控：构造期引擎失败（无 libpdfium）→ SKIP；其他失败 =
+        // 夹具/真缺陷（panic，不放过）。
+        if let Some(e) = cx.update(|cx| entity.read(cx).error.clone()) {
+            if e.contains("pdfium") {
+                eprintln!(
+                    "\n══════ SKIP（环境缺件，不伪装通过）══════\n  \
+                     本机无 libpdfium——#386 视图级手势 e2e 未真跑。\n  \
+                     有 libpdfium 的环境（MDC_PDFIUM_LIB=<库路径> \
+                     cargo test）全量执行。\n═══════════════════════════\n"
+                );
+                return;
+            }
+            panic!("页视图构造失败（夹具/真缺陷，非环境缺件）：{e}");
+        }
+        // ① 手势（生产入口 = finish_drag_annotation 收尾同款
+        //    commit_annotation；视口未记录 → fit_w=WIDTH_MIN=256，
+        //    屏幕坐标按 256px 宽视图取页 0 上部——同 #336 的 96DPI
+        //    量级意图）。
+        cx.update(|cx| {
+            entity.update(cx, |v, _| {
+                v.commit_annotation(0, 40., 60., 200., 120.)
+                    .expect("#386 起点：用户手势提交");
+            })
+        });
+        // ② 视图脏标（未落盘前必真——Shell 据此驱动关闭确认）。
+        assert!(
+            cx.update(|cx| entity.read(cx).is_dirty()),
+            "#386 验收：手势后视图必脏"
+        );
+        // ③ 保存（Shell 传入路径——单一真源；此处直驱同款调用面）。
+        let file = TempPdf(
+            std::env::temp_dir().join(format!("mang-386-gesture-{}.pdf", std::process::id())),
+        );
+        let stats = cx
+            .update(|cx| entity.update(cx, |v, _| v.save_annotations(&file.0)))
+            .expect("落盘应成功")
+            .expect("脏视图保存 = Ok(Some)");
+        // 手势内 commit_annotation 已 flush（产出修订段）——save 的
+        // flush 零脏幂等（零追加，不产空修订——#336 语义锁同源）。
+        assert_eq!(
+            stats.bytes_appended, 0,
+            "手势已 flush → save 零脏幂等：{stats:?}"
+        );
+        // ④ 盘上字节真变了（≠原文件）且保持原前缀（增量非重写——
+        // 验收 2 机制面，全量重写在此必红）。
+        let on_disk = std::fs::read(&file.0).expect("盘上文件");
+        assert!(
+            on_disk.starts_with(&original),
+            "#386 验收 2：盘上保持原字节前缀（增量）"
+        );
+        assert!(
+            on_disk.len() > original.len(),
+            "批注修订段非空（得 {} → {}）",
+            original.len(),
+            on_disk.len()
+        );
+        // ⑤ 独立第二意见（mdc-pdf 读面）：1 条高亮在档 + 页号往返。
+        let (annots, report) = mdc_pdf::annotate::read_annotations(
+            on_disk.clone(),
+            mdc_pdf::security::Limits::default(),
+        )
+        .expect("独立读回");
+        assert_eq!(report.parsed, 1, "重开应见 1 条批注：{report:?}");
+        assert_eq!(annots.len(), 1);
+        assert_eq!(annots[0].page.0, 0, "页号往返");
+        // ⑥ 脏标清零（写盘成功才清——原子语义）。
+        assert!(
+            !cx.update(|cx| entity.read(cx).is_dirty()),
+            "保存成功后脏标必清"
+        );
+        // ⑦ 干净重存 = no-op（Ok(None)，盘上不动）。
+        let noop = cx
+            .update(|cx| entity.update(cx, |v, _| v.save_annotations(&file.0)))
+            .expect("干净保存不报错");
+        assert!(noop.is_none(), "干净视图保存 = no-op");
+        assert_eq!(
+            std::fs::read(&file.0).unwrap(),
+            on_disk,
+            "no-op 不动盘上字节"
+        );
+    }
+
+    /// #386 连续会话：保存后再画 → 再脏 → 再存 → 修订累积（两次手势
+    /// 两条批注在档——「保存后继续工作」的常见流不丢不重置）。
+    #[gpui::test]
+    fn second_gesture_after_save_accumulates(cx: &mut gpui::TestAppContext) {
+        let original = smoke_pdf_bytes();
+        let entity = cx.update(|cx| cx.new(|cx| PdfPagesView::new(original.clone(), cx)));
+        if let Some(e) = cx.update(|cx| entity.read(cx).error.clone()) {
+            if e.contains("pdfium") {
+                eprintln!(
+                    "\n══════ SKIP（环境缺件，不伪装通过）══════\n  \
+                     本机无 libpdfium——#386 视图级手势 e2e 未真跑。\n═════\
+                     ════════════════════════════\n"
+                );
+                return;
+            }
+            panic!("页视图构造失败（夹具/真缺陷，非环境缺件）：{e}");
+        }
+        let file = TempPdf(
+            std::env::temp_dir().join(format!("mang-386-accum-{}.pdf", std::process::id())),
+        );
+        // 第一笔：手势 → 落盘。
+        cx.update(|cx| {
+            entity.update(cx, |v, _| {
+                v.commit_annotation(0, 40., 60., 200., 120.)
+                    .expect("手势一");
+            })
+        });
+        cx.update(|cx| entity.update(cx, |v, _| v.save_annotations(&file.0)))
+            .expect("落盘一")
+            .expect("脏视图必写");
+        let after_first = std::fs::read(&file.0).unwrap();
+        // 第二笔：再手势（保存后的新改动）→ 再脏 → 再落盘。
+        cx.update(|cx| {
+            entity.update(cx, |v, _| {
+                v.commit_annotation(0, 60., 200., 220., 260.)
+                    .expect("手势二");
+            })
+        });
+        assert!(
+            cx.update(|cx| entity.read(cx).is_dirty()),
+            "保存后再画必再脏"
+        );
+        cx.update(|cx| entity.update(cx, |v, _| v.save_annotations(&file.0)))
+            .expect("落盘二")
+            .expect("脏视图必写");
+        let after_second = std::fs::read(&file.0).unwrap();
+        // 增量链：二跳仍以一跳为前缀（连续修订不重写全文）。
+        assert!(
+            after_second.starts_with(&after_first),
+            "第二跳以第一跳产物为前缀（增量链）"
+        );
+        assert!(after_second.len() > after_first.len());
+        // 独立读回：两条批注都在档（不重置不丢）。
+        let (annots, report) =
+            mdc_pdf::annotate::read_annotations(after_second, mdc_pdf::security::Limits::default())
+                .expect("独立读回");
+        assert_eq!(report.parsed, 2, "两笔手势 = 两条批注：{report:?}");
+        assert_eq!(annots.len(), 2);
+        assert!(
+            !cx.update(|cx| entity.read(cx).is_dirty()),
+            "二次保存后脏标清零"
+        );
+    }
+
+    /// #386 干净视图：从未画过 → 保存是显式 no-op（Ok(None)）且**不
+    /// 创建文件**（干净路径零写盘——「没东西可存」不许产生空动作痕
+    /// 迹）。
+    #[gpui::test]
+    fn clean_view_save_is_explicit_noop(cx: &mut gpui::TestAppContext) {
+        let _original = smoke_pdf_bytes();
+        let entity = cx.update(|cx| cx.new(|cx| PdfPagesView::new(_original.clone(), cx)));
+        if let Some(e) = cx.update(|cx| entity.read(cx).error.clone()) {
+            if e.contains("pdfium") {
+                eprintln!(
+                    "\n══════ SKIP（环境缺件，不伪装通过）══════\n  \
+                     本机无 libpdfium——#386 视图级手势 e2e 未真跑。\n═════\
+                     ════════════════════════════\n"
+                );
+                return;
+            }
+            panic!("页视图构造失败（夹具/真缺陷，非环境缺件）：{e}");
+        }
+        let file =
+            TempPdf(std::env::temp_dir().join(format!("mang-386-noop-{}.pdf", std::process::id())));
+        let outcome = cx.update(|cx| entity.update(cx, |v, _| v.save_annotations(&file.0)));
+        assert!(
+            matches!(&outcome, Ok(None)),
+            "干净视图保存 = Ok(None) no-op（得 {outcome:?}）"
+        );
+        assert!(!file.0.exists(), "no-op 不得创建文件（零写盘）");
+        assert!(
+            !cx.update(|cx| entity.read(cx).is_dirty()),
+            "干净视图恒不脏"
+        );
     }
 }

@@ -500,6 +500,27 @@ impl LockedNotice {
     }
 }
 
+/// #386：保存结果三态（+失败态）——替代旧裸 `bool`（只读态假装
+/// 成功 = PDF 批注静默丢失的根因：调用方无从区分「真存了」与
+/// 「什么都没做」）。
+///
+/// 消费方（Shell `save_tab` 分流）据三态决定 UI 反馈：
+/// `ReadOnlyRejected`/`Failed` 必须显式示警（横幅/toast，不许
+/// 静默）；`Unmodified` 是干净 no-op（无需反馈）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    /// 已写盘（md 文本 / docx 字节 / 批注增量落盘）。
+    Saved,
+    /// 无未保存修改（保存是 no-op——脏标未在）。
+    Unmodified,
+    /// 只读渲染态拒绝（pdf/xlsx/只读 docx 的文本面——改动本就
+    /// 不可能在编辑器内发生；批注等视图层改动由 Shell 分流另路
+    /// 保存，不经此处）。
+    ReadOnlyRejected,
+    /// 写盘失败（已 eprintln；调用方需 UI 示警）。
+    Failed,
+}
+
 impl Editor {
     /// 打开文档：`path` 为 `None` 时是未命名新文档。
     pub fn new(path: Option<PathBuf>, content: String, cx: &mut Context<Self>) -> Self {
@@ -1747,35 +1768,51 @@ impl Editor {
         self.display_map.unfold_all()
     }
 
-    /// 保存（Ctrl+S）：同步写盘 + 清修改标记。未命名文档无路径——
-    /// 批 1 无「另存为」对话框，返回 false 登记。
-    /// 只读文档（docx）无保存语义——双保险早退（键分发已拒 Ctrl+S，
-    /// 此处防止任何其他调用面把行模型文本覆写 docx 二进制）。
-    pub fn save(&mut self) -> bool {
+    /// 保存（Ctrl+S / RPC save / 确认框）：同步写盘 + 清修改标记。
+    /// 未命名文档无路径 → `Failed`（交调用方引导「另存为」）。
+    /// #386：三态化——旧裸 bool 在只读态假装成功，是批注静默丢失
+    /// 的根因。只读态拒绝前先区分脏否：只读文本面无未保存修改 →
+    /// `Unmodified`（干净 no-op，调用方无需示警）；（防御）只读且
+    /// 脏 → `ReadOnlyRejected`（正常路径不可达——只读门禁拦下了
+    /// 一切编辑）。
+    pub fn save(&mut self) -> SaveOutcome {
         if self.read_only {
-            return true;
+            return if self.is_modified() {
+                SaveOutcome::ReadOnlyRejected
+            } else {
+                SaveOutcome::Unmodified
+            };
         }
         // #115：docx 可编辑态——回写桥 → 引擎落账 → **docx 字节**写盘
         //（不是把行模型文本覆写进 .docx！）。
         if self.docx_edit.is_some() {
-            return self.save_docx();
+            return if self.save_docx() {
+                SaveOutcome::Saved
+            } else {
+                SaveOutcome::Failed
+            };
         }
         match &self.file_path {
             Some(path) => {
+                if !self.buffer.is_modified() {
+                    return SaveOutcome::Unmodified;
+                }
                 let content = self.buffer.to_plain_text();
                 match std::fs::write(path, content) {
                     Ok(()) => {
                         self.buffer.mark_saved();
                         eprintln!("saved: {}", path.display());
-                        true
+                        SaveOutcome::Saved
                     }
                     Err(err) => {
                         eprintln!("mang-shell: 保存失败 {}: {err}", path.display());
-                        false
+                        SaveOutcome::Failed
                     }
                 }
             }
-            None => false,
+            // 未命名文档无路径（无未保存面语义上成立但无目的地——
+            // 归入 Failed 交调用方引导「另存为」）。
+            None => SaveOutcome::Failed,
         }
     }
 
@@ -1966,11 +2003,12 @@ impl Editor {
     }
 
     /// F4：另存为（新路径写盘 + 身份迁移——file_path/display_name 更新
-    /// + mark_saved）。只读态拒（返回 false 不写盘）。
-    pub fn save_as(&mut self, path: PathBuf) -> bool {
+    /// + mark_saved）。只读态拒（`SaveOutcome::ReadOnlyRejected` 不写盘
+    /// ——#386 三态化，同 [`Self::save`] 口径）。
+    pub fn save_as(&mut self, path: PathBuf) -> SaveOutcome {
         if self.read_only {
             eprintln!("mang-shell: 只读文档不可另存（{}）", path.display());
-            return false;
+            return SaveOutcome::ReadOnlyRejected;
         }
         // #115：docx 可编辑态——另存为也写 **docx 字节**（不是行模型文本）。
         if self.docx_edit.is_some() {
@@ -1988,11 +2026,11 @@ impl Editor {
                     "mang-shell: docx 另存失败（引擎落账拒绝）{}",
                     path.display()
                 );
-                return false;
+                return SaveOutcome::Failed;
             };
             if let Err(err) = std::fs::write(&path, bytes) {
                 eprintln!("mang-shell: docx 另存失败 {}: {err}", path.display());
-                return false;
+                return SaveOutcome::Failed;
             }
             self.display_name = SharedString::from(
                 path.file_name()
@@ -2002,7 +2040,7 @@ impl Editor {
             self.file_path = Some(path.clone());
             self.buffer.mark_saved();
             eprintln!("saved-as: {}（docx 字节）", path.display());
-            return true;
+            return SaveOutcome::Saved;
         }
         let content = self.buffer.to_plain_text();
         match std::fs::write(&path, content) {
@@ -2015,11 +2053,11 @@ impl Editor {
                 self.file_path = Some(path.clone());
                 self.buffer.mark_saved();
                 eprintln!("saved-as: {}", path.display());
-                true
+                SaveOutcome::Saved
             }
             Err(err) => {
                 eprintln!("mang-shell: 另存失败 {}: {err}", path.display());
-                false
+                SaveOutcome::Failed
             }
         }
     }
@@ -5523,6 +5561,113 @@ mod tests {
                 );
             });
         });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #386：保存三态诚实化——旧裸 bool 在只读态 `return true` 假装成功
+//（PDF 批注静默丢失的根因）。运行时锁：只读干净 = Unmodified（不再
+// 谎报「成功」）；可编辑文档三态各归其位（未命名 Failed / 干净
+// Unmodified / 脏 Saved+落盘）。Shell 分流与批注链另见 shell.rs /
+// pdf_pages.rs 的 #386 测试模块（三层互证，不重复钉定）。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod save_outcome_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// 临时夹具目录（进程号隔离；首尾各清一次）。
+    fn fixture_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mdc-386-ed-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// #386：只读态保存不再假装成功——干净只读 = `Unmodified`（no-op
+    /// 的诚实口径），且文本面恒不脏（pdf 的「脏」来自页视图批注，
+    /// 归 Shell 分流——语义分层各管各的）。
+    #[gpui::test]
+    fn readonly_save_is_unmodified_not_fake_success(cx: &mut gpui::TestAppContext) {
+        let dir = fixture_dir("ro");
+        let path = dir.join("doc.pdf");
+        std::fs::write(&path, b"%PDF-fixture").unwrap();
+        let ed = cx.update(|cx| {
+            cx.new(|cx| Editor::new_readonly(Some(path.clone()), "渲染态文本".into(), cx))
+        });
+        // 前置：只读 + 不脏（正常路径——只读门禁拦下一切编辑）。
+        assert!(cx.update(|cx| ed.read(cx).is_read_only()));
+        assert!(!cx.update(|cx| ed.read(cx).is_modified()));
+        // 旧实现在此 `return true`（保存「成功」的谎——调用方无从区分
+        // 「真存了」与「什么都没做」，PDF 批注静默丢失的根因）。
+        let outcome = cx.update(|cx| ed.update(cx, |ed, _| ed.save()));
+        assert_eq!(
+            outcome,
+            SaveOutcome::Unmodified,
+            "#386：只读干净 = Unmodified（no-op），不是 Saved"
+        );
+        // 盘上不动（只读文本面无写盘语义——「另存为」才迁移内容）。
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"%PDF-fixture",
+            "只读保存零写盘"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #386：可编辑文档三态——未命名 `Failed`（交调用方引导另存）/
+    /// 有名干净 `Unmodified`（零写盘）/ 有名脏 `Saved`（落盘 + 脏标清）。
+    #[gpui::test]
+    fn editable_save_three_states(cx: &mut gpui::TestAppContext) {
+        let dir = fixture_dir("rw");
+        let named = dir.join("a.md");
+        std::fs::write(&named, "L0\n").unwrap();
+
+        // ① 未命名（新文档无路径）→ Failed（不是静默 false——调用方
+        //    引导「另存为」）。
+        let unnamed = cx.update(|cx| cx.new(|cx| Editor::new(None, "新文档".into(), cx)));
+        assert_eq!(
+            cx.update(|cx| unnamed.update(cx, |ed, _| ed.save())),
+            SaveOutcome::Failed,
+            "未命名保存 = Failed（无路径可写）"
+        );
+
+        // ② 有名干净 → Unmodified（零写盘——盘上不动）。
+        let clean =
+            cx.update(|cx| cx.new(|cx| Editor::new(Some(named.clone()), "L0\n".into(), cx)));
+        assert_eq!(
+            cx.update(|cx| clean.update(cx, |ed, _| ed.save())),
+            SaveOutcome::Unmodified,
+            "干净保存 = no-op"
+        );
+        assert_eq!(std::fs::read_to_string(&named).unwrap(), "L0\n");
+
+        // ③ 有名脏 → Saved：盘上 = 行模型文本 + is_modified 清零。
+        cx.update(|cx| {
+            clean.update(cx, |ed, cx| {
+                ed.insert_text_at(0, 2, "X", cx);
+            })
+        });
+        assert!(
+            cx.update(|cx| clean.read(cx).is_modified()),
+            "前置：插入后脏"
+        );
+        assert_eq!(
+            cx.update(|cx| clean.update(cx, |ed, _| ed.save())),
+            SaveOutcome::Saved,
+            "脏保存 = Saved"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&named).unwrap(),
+            "L0X\n",
+            "Saved = 行模型文本落盘"
+        );
+        assert!(
+            !cx.update(|cx| clean.read(cx).is_modified()),
+            "保存成功后脏标清零"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

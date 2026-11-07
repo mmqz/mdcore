@@ -37,7 +37,7 @@ use crate::activity_bar;
 use crate::context_menu::{self, ContextMenu, MenuItem, Rect as MenuRect};
 use crate::context_menu_view;
 use crate::document::{self, OpenOutcome};
-use crate::editor::Editor;
+use crate::editor::{Editor, SaveOutcome};
 // #182：设置面板的缩进单位状态（editor::buffer 的纯枚举——面板/标签共用）。
 use crate::editor::buffer::IndentUnit;
 use crate::file_tree::FileTree;
@@ -339,7 +339,12 @@ impl ShellApp {
                     .tabs
                     .iter()
                     .enumerate()
-                    .filter(|(_, tab)| tab.editor.read(cx).is_modified())
+                    .filter(|(i, tab)| {
+                        // #386：pdf 批注脏计入退出前确认（tab_is_modified
+                        // 同源——含页视图未落盘批注）。
+                        tab.editor.read(cx).is_modified()
+                            || shell.read(cx).pdf_view_dirty(cx, &tab.path)
+                    })
                     .map(|(i, _)| i)
                     .collect();
                 if dirty.is_empty() {
@@ -444,11 +449,82 @@ impl ShellApp {
         self.tabs.get(idx).map(|tab| tab.path.clone())
     }
 
-    /// 指定标签是否有未保存修改（越界 `None`）。
+    /// 指定标签是否有未保存修改（越界 `None`）。#386：pdf 标签的
+    /// 批注脏（页视图未落盘）计入——标题栏脏标/关闭确认/RPC 拦截
+    /// 同源。
     pub fn tab_is_modified(&self, idx: usize, cx: &App) -> Option<bool> {
         self.tabs
             .get(idx)
-            .map(|tab| tab.editor.read(cx).is_modified())
+            .map(|tab| tab.editor.read(cx).is_modified() || self.pdf_view_dirty(cx, &tab.path))
+    }
+
+    /// #386：指定路径的 pdf 页视图是否有未落盘批注（Shell 持有的
+    /// `pdf_pages` 槽按路径匹配——无页视图/路径不匹配 = 不脏）。
+    fn pdf_view_dirty(&self, cx: &App, path: &Path) -> bool {
+        self.pdf_pages
+            .as_ref()
+            .is_some_and(|(owned, entity)| *owned == path && entity.read(cx).is_dirty())
+    }
+
+    /// #386：标签级保存分流（「谁负责保存」的决策点——按 issue 铁律
+    /// 放 Shell，Editor 不知 PDF 存在）：
+    ///
+    /// - pdf 标签且页视图脏 → [`PdfPagesView::save_annotations`] 增量
+    ///   落盘（路径 = Shell 槽持有的 `PathBuf`，单一真源）；失败
+    ///   toast 显式示警（不静默）。
+    /// - 其余（含 pdf 无页视图/页视图干净）→ [`Editor::save`] 三态；
+    ///   `ReadOnlyRejected`/`Failed` toast 示警。
+    ///
+    /// 返回三态供调用方（Ctrl+S 反馈 / 确认框决策：`Saved`/
+    /// `Unmodified` 才可关标签）。
+    pub fn save_tab(&mut self, idx: usize, cx: &mut Context<Self>) -> SaveOutcome {
+        let is_pdf = self
+            .tabs
+            .get(idx)
+            .is_some_and(|tab| tab.editor.read(cx).doc_kind() == "pdf");
+        if is_pdf {
+            let tab_path = self.tabs.get(idx).map(|tab| tab.path.clone());
+            if let Some(path) = tab_path {
+                if let Some((owned, entity)) = self.pdf_pages.clone() {
+                    if owned == path {
+                        return match entity.update(cx, |v, _| v.save_annotations(&owned)) {
+                            Ok(Some(_)) => SaveOutcome::Saved,
+                            // 页视图干净 → 文本面只读态（编辑器三态给
+                            // Unmodified——只读文本面无未存修改）。
+                            Ok(None) => self.editor_save_outcome(idx, cx),
+                            Err(e) => {
+                                self.show_notice(
+                                    format!("PDF 批注保存失败（{}）：{e}", path.display()),
+                                    cx,
+                                );
+                                SaveOutcome::Failed
+                            }
+                        };
+                    }
+                }
+            }
+        }
+        self.editor_save_outcome(idx, cx)
+    }
+
+    /// [`Self::save_tab`] 的编辑器分支（三态消费 + 拒绝/失败示警）。
+    fn editor_save_outcome(&mut self, idx: usize, cx: &mut Context<Self>) -> SaveOutcome {
+        let Some(tab) = self.tabs.get(idx) else {
+            return SaveOutcome::Failed;
+        };
+        let editor = tab.editor.clone();
+        let outcome = editor.update(cx, |ed, _| ed.save());
+        match outcome {
+            SaveOutcome::ReadOnlyRejected => {
+                self.show_notice("此文档为只读，改动无法保存".into(), cx);
+            }
+            SaveOutcome::Failed => {
+                let name = editor.read(cx).display_name().to_string();
+                self.show_notice(format!("保存失败（{name}）——详见应用日志"), cx);
+            }
+            SaveOutcome::Saved | SaveOutcome::Unmodified => {}
+        }
+        outcome
     }
 
     /// 指定标签是否只读渲染态（越界 `None`）。
@@ -921,7 +997,10 @@ impl ShellApp {
     /// 输入域，需要 Window）。旧 exec_menu_command 无窗路径已删：
     /// 其「菜单点击拿不到窗口」的前提不成立——on_click 的 listener
     /// 本就携带 window，只是当时被 `_window` 忽略了。
-    fn dispatch_editor_cmd(
+    /// #386：`pub(crate)`——rpc `run_command` 同链接入（此前直调
+    /// `Editor::run_command` 绕过 Shell 分流，`run_command("save")
+    /// 会跳过批注落盘）。
+    pub(crate) fn dispatch_editor_cmd(
         &mut self,
         cmd: crate::editor::commands::Cmd,
         window: &mut Window,
@@ -930,6 +1009,14 @@ impl ShellApp {
         let Some(editor) = self.editor().cloned() else {
             return;
         };
+        // #386：保存是「谁负责保存」的决策——归 Shell（pdf 批注分流
+        // 在此，不进 Editor）。Cmd 面（命令面板/菜单）与键位面
+        // （ShellAction::Save）同源走 save_tab。
+        if matches!(cmd, crate::editor::commands::Cmd::Save) {
+            self.save_tab(self.active, cx);
+            cx.notify();
+            return;
+        }
         // #289-④：页视图下 Ctrl+F → 先切回文本视图（查找是文本面能力
         // ——明示而非无响应；后续轮做跨视图高亮）。
         if matches!(cmd, crate::editor::commands::Cmd::OpenFind)
@@ -1195,17 +1282,14 @@ impl ShellApp {
     }
 
     /// F3/F4：关闭当前标签（Ctrl+W）——脏标签先弹确认框（保存/不保存/
-    /// 取消）；干净标签直接关。
+    /// 取消）；干净标签直接关。#386：pdf 批注脏（页视图未落盘）计入
+    /// 脏判定（`tab_is_modified` 同源）。
     pub fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.is_empty() {
             return;
         }
         // F4：脏标签 → 确认框拦截。
-        if self
-            .tabs
-            .get(self.active)
-            .is_some_and(|tab| tab.editor.read(cx).is_modified())
-        {
+        if self.tab_is_modified(self.active, cx).unwrap_or(false) {
             let name = self.tabs[self.active]
                 .editor
                 .read(cx)
@@ -1277,12 +1361,11 @@ impl ShellApp {
         match confirm.action {
             ConfirmAction::CloseTab { idx } => match choice {
                 0 => {
-                    // 保存后关（保存失败不关——不静默丢内容）。
-                    let saved = self
-                        .tabs
-                        .get(idx)
-                        .is_some_and(|tab| tab.editor.update(cx, |ed, _| ed.save()));
-                    if saved {
+                    // 保存后关（保存失败不关——不静默丢内容）。#386：
+                    // 走 Shell 分流（pdf 批注增量落盘在此发生）；
+                    // 只 Saved/Unmodified 才关。
+                    let outcome = self.save_tab(idx, cx);
+                    if matches!(outcome, SaveOutcome::Saved | SaveOutcome::Unmodified) {
                         self.close_tab_at(idx, window, cx);
                     }
                 }
@@ -1291,10 +1374,11 @@ impl ShellApp {
             },
             ConfirmAction::Quit => match choice {
                 0 => {
-                    for tab in &self.tabs {
-                        tab.editor.update(cx, |ed, _| {
-                            ed.save();
-                        });
+                    // #386：逐标签走 Shell 分流（pdf 批注一并落盘；
+                    // 失败已 toast 示警——与旧编辑器路径同语义：
+                    // 尽力保存后退出）。
+                    for i in 0..self.tabs.len() {
+                        self.save_tab(i, cx);
                     }
                     cx.quit();
                 }
@@ -1330,8 +1414,17 @@ impl ShellApp {
         let Some(tab) = self.tabs.get_mut(self.active) else {
             return;
         };
-        let ok = tab.editor.update(cx, |ed, _| ed.save_as(path.clone()));
-        if !ok {
+        // #386：三态消费——只读态拒绝/写盘失败显式示警（旧裸 bool
+        // 的 false 静默返回 = 用户以为存上了）。
+        let outcome = tab.editor.update(cx, |ed, _| ed.save_as(path.clone()));
+        if !matches!(outcome, SaveOutcome::Saved | SaveOutcome::Unmodified) {
+            self.show_notice(
+                format!(
+                    "另存失败（{}）——只读态拒绝或写盘错误，详见应用日志",
+                    path.display()
+                ),
+                cx,
+            );
             return;
         }
         self.tabs[self.active].path = path.clone();
@@ -2059,6 +2152,14 @@ impl Render for ShellApp {
                         // F3：Ctrl+W 关闭当前标签（F4：脏标签经确认框）。
                         ShellAction::CloseTab => {
                             this.close_active_tab(window, cx);
+                            return;
+                        }
+                        // #386：Ctrl+S 保存（编辑器 E30 移除后冒泡至此
+                        // ——保存分流在 Shell：pdf 批注增量落盘/编辑器
+                        // 三态；失败 toast 示警不静默）。
+                        ShellAction::Save => {
+                            this.save_tab(this.active, cx);
+                            cx.notify();
                             return;
                         }
                         // F4：Ctrl+Shift+S 另存为（编辑器 s 臂带 !shift 守卫
@@ -3025,6 +3126,257 @@ mod tab_workflow_tests {
                 assert_eq!(shell.active, 0);
                 shell.activate_tab(2, window, cx);
                 assert_eq!(shell.active, 0, "越界激活不改 active（再证）");
+            });
+        });
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #386：pdf 批注落盘——Shell 分流运行时面（手势 → 脏标签 → 关闭确认
+// → 保存选择 → 盘上在档）。
+//
+// 三层互证分工（不重复钉定）：
+// - pdf_pages.rs 测试模块：视图级闭环（commit_annotation/save_annotations
+//   的手势 → 脏标 → 落盘 → 独立读回）；
+// - editor/mod.rs 测试模块：Editor::save 三态诚实化（只读态不再
+//   假装成功）；
+// - 本模块：**Shell 决策面**——批注脏计入 tab_is_modified（标题栏
+//   脏标/关闭确认/RPC 同源）、关闭确认拦截（不静默丢）、确认框
+//   「保存」选择真的把批注写进用户文件（save_tab 分流）。
+//
+// 环境门控（render_170_pdf 同口径）：页视图构造需 pdfium——无库
+// 环境 SKIP 横幅（不伪装通过），有则全量真跑。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod pdf_annot_save_tests {
+    use super::*;
+
+    /// 测试宿主（与 tab_workflow_tests 同款——ShellApp 不作根视图，
+    /// 空 div 宿主开窗只取真实 `Window`）。
+    struct ShellHost(Entity<ShellApp>);
+
+    impl gpui::Render for ShellHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+            gpui::div()
+        }
+    }
+
+    /// smoke.pdf 夹具字节（两页——与 #336/#386 视图级测试同源夹具）。
+    fn smoke_pdf_bytes() -> Vec<u8> {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/smoke.pdf");
+        std::fs::read(&p).unwrap_or_else(|e| panic!("夹具不可读（{}）：{e}", p.display()))
+    }
+
+    /// #386 全链：手势脏 → 关闭确认 → 「保存」→ 标签关 + 盘上批注
+    /// 在档（增量前缀 + 独立读回 1 条——验收 1/3/5 的 Shell 面）。
+    #[gpui::test]
+    fn pdf_gesture_dirty_close_confirm_save_persists(cx: &mut gpui::TestAppContext) {
+        let dir = std::env::temp_dir().join(format!("mdc-386-shell-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = smoke_pdf_bytes();
+        let pdf = dir.join("x.pdf");
+        std::fs::write(&pdf, &original).unwrap();
+
+        cx.update(|app| theme::init(theme::LoadThemes::JustBase, app));
+        let mut slot: Option<Entity<ShellApp>> = None;
+        let window = cx.add_window(|window, cx| {
+            let shell = cx.new(|cx| ShellApp::new(None, None, window, cx));
+            slot = Some(shell.clone());
+            ShellHost(shell)
+        });
+        let shell = slot.expect("宿主构造即置");
+
+        // 开 pdf 标签（缺省页视图模式）+ 构建页视图（生产路径 = 渲染
+        // 期 ensure_pdf_pages；测试直调同一函数——同一调用面）。
+        window.update(cx, |_host, _window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.open_document_tab(pdf.clone(), cx);
+                shell.ensure_pdf_pages(cx);
+            });
+        });
+        // 环境门控：无 libpdfium → 页视图 error 态（SKIP 横幅）；其他
+        // 失败 = 夹具/真缺陷（panic，不放过）。
+        let view_err = window
+            .update(cx, |_host, _window, cx| {
+                shell.update(cx, |shell, cx| {
+                    shell
+                        .pdf_pages
+                        .as_ref()
+                        .map(|(_, e)| e.read(cx).engine_error().map(str::to_owned))
+                })
+            })
+            .expect("窗口更新");
+        match view_err {
+            Some(Some(e)) if e.contains("pdfium") => {
+                eprintln!(
+                    "\n══════ SKIP（环境缺件，不伪装通过）══════\n  \
+                     本机无 libpdfium——#386 Shell 分流 e2e 未真跑。\n  \
+                     有 libpdfium 的环境（MDC_PDFIUM_LIB=<库路径> \
+                     cargo test）全量执行。\n═══════════════════════════\n"
+                );
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+            Some(Some(e)) => {
+                panic!("页视图构造失败（夹具/真缺陷，非环境缺件）：{e}")
+            }
+            Some(None) => {} // 页视图在位——全量真跑。
+            None => panic!("pdf 标签开后页视图槽应在位"),
+        }
+
+        // ① 手势驱动页视图（生产入口 = finish_drag_annotation 收尾同款
+        //    commit_annotation——不跳过视图层；缺省工具 = 高亮）。
+        window.update(cx, |_host, _window, cx| {
+            shell.update(cx, |shell, cx| {
+                let (_, entity) = shell.pdf_pages.clone().expect("槽在位");
+                entity.update(cx, |v, _| {
+                    v.commit_annotation(0, 40., 60., 200., 120.)
+                        .expect("手势提交");
+                });
+            });
+        });
+        // ② 批注脏计入标签脏判定（tab_is_modified 同源——标题栏脏标/
+        //    关闭确认/RPC 同一函数）；文本面自身不脏（只读编辑器）。
+        window.update(cx, |_host, _window, cx| {
+            shell.update(cx, |shell, cx| {
+                assert!(
+                    shell.tab_is_modified(0, cx).unwrap(),
+                    "#386：批注脏计入标签脏判定"
+                );
+                let ed = shell.tab_editor(0).unwrap();
+                assert!(
+                    !ed.read(cx).is_modified(),
+                    "只读文本面无未存修改（脏来自页视图批注——语义分层）"
+                );
+            });
+        });
+        // ③ 关脏标签 → 确认框拦截（不静默丢——验收 3）。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.close_active_tab(window, cx);
+                let confirm = shell.confirm.as_ref().expect("批注脏关闭必弹确认");
+                assert!(
+                    confirm.message.contains("x.pdf"),
+                    "文案含文件名（得 {:?}）",
+                    confirm.message
+                );
+                assert_eq!(confirm.buttons, CONFIRM_BUTTONS, "保存/不保存/取消三选");
+            });
+        });
+        // ④ 确认框选「保存」→ 标签关 + 批注增量落盘（save_tab 分流）。
+        window.update(cx, |_host, window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.resolve_confirm(0, window, cx);
+                assert_eq!(shell.tab_count(), 0, "保存后关标签");
+                assert!(shell.pdf_pages.is_none(), "标签关 → 页视图槽随之清空");
+            });
+        });
+        // ⑤ 盘上：原前缀保持（增量非重写——验收 2）+ 独立读回 1 条
+        //    （mdc-pdf 读面第二意见——验收 1 的落盘形态）。
+        let after = std::fs::read(&pdf).expect("盘上文件");
+        assert!(
+            after.starts_with(&original),
+            "#386 验收 2：盘上保持原字节前缀（增量）"
+        );
+        assert!(after.len() > original.len(), "批注修订段非空");
+        let (annots, report) =
+            mdc_pdf::annotate::read_annotations(after, mdc_pdf::security::Limits::default())
+                .expect("独立读回");
+        assert_eq!(report.parsed, 1, "重开应见 1 条批注：{report:?}");
+        assert_eq!(annots.len(), 1);
+        assert_eq!(annots[0].page.0, 0, "页号往返");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #386 退出面：批注脏标签计入退出前确认（on_window_should_close
+    /// 的 dirty 收集同源——含页视图未落盘批注）。仅钉「计入 + 拦截」
+    /// 这一环（保存分流本体已由上一条钉定；不重复）。
+    #[gpui::test]
+    fn pdf_annotate_dirty_blocks_quit_confirm(cx: &mut gpui::TestAppContext) {
+        let dir = std::env::temp_dir().join(format!("mdc-386-quit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = smoke_pdf_bytes();
+        let pdf = dir.join("q.pdf");
+        std::fs::write(&pdf, &original).unwrap();
+
+        cx.update(|app| theme::init(theme::LoadThemes::JustBase, app));
+        let mut slot: Option<Entity<ShellApp>> = None;
+        let window = cx.add_window(|window, cx| {
+            let shell = cx.new(|cx| ShellApp::new(None, None, window, cx));
+            slot = Some(shell.clone());
+            ShellHost(shell)
+        });
+        let shell = slot.expect("宿主构造即置");
+
+        window.update(cx, |_host, _window, cx| {
+            shell.update(cx, |shell, cx| {
+                shell.open_document_tab(pdf.clone(), cx);
+                shell.ensure_pdf_pages(cx);
+            });
+        });
+        let view_err = window
+            .update(cx, |_host, _window, cx| {
+                shell.update(cx, |shell, cx| {
+                    shell
+                        .pdf_pages
+                        .as_ref()
+                        .map(|(_, e)| e.read(cx).engine_error().map(str::to_owned))
+                })
+            })
+            .expect("窗口更新");
+        match view_err {
+            Some(Some(e)) if e.contains("pdfium") => {
+                eprintln!(
+                    "\n══════ SKIP（环境缺件，不伪装通过）══════\n  \
+                     本机无 libpdfium——#386 退出面 e2e 未真跑。\n═════\
+                     ════════════════════════════\n"
+                );
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+            Some(Some(e)) => {
+                panic!("页视图构造失败（夹具/真缺陷，非环境缺件）：{e}")
+            }
+            Some(None) => {}
+            None => panic!("pdf 标签开后页视图槽应在位"),
+        }
+
+        // 手势置脏 → 模拟用户点窗口关闭钮（真实 should-close 回调链）
+        //——确认框弹出 + 关闭被拦（批注未落盘不许静默退出）。
+        let mut vcx = gpui::VisualTestContext::from_window(window.into(), cx);
+        vcx.update(|_window, cx| {
+            shell.update(cx, |shell, cx| {
+                let (_, entity) = shell.pdf_pages.clone().expect("槽在位");
+                entity.update(cx, |v, _| {
+                    v.commit_annotation(0, 40., 60., 200., 120.)
+                        .expect("手势提交");
+                });
+            });
+        });
+        let closed = vcx.simulate_close();
+        assert!(
+            !closed,
+            "#386：批注脏 → should-close 返回 false（窗口关闭被拦）"
+        );
+        vcx.update(|_window, cx| {
+            shell.update(cx, |shell, cx| {
+                let confirm = shell.confirm.as_ref().expect("退出前确认弹出");
+                assert!(
+                    matches!(confirm.action, ConfirmAction::Quit),
+                    "确认动作 = Quit（得 {:?}）",
+                    confirm.action
+                );
+                assert!(
+                    confirm.message.contains("1"),
+                    "文案含未保存计数（得 {:?}）",
+                    confirm.message
+                );
+                assert_eq!(shell.tab_count(), 1, "被拦 = 标签还在（批注未静默丢）");
             });
         });
 

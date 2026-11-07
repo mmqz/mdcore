@@ -165,6 +165,7 @@ use serde::{Deserialize, Serialize};
 
 use gpui::{App, AppContext, AsyncApp, Context, Task, Window, WindowHandle};
 
+use crate::editor::SaveOutcome;
 use crate::editor::buffer::Point;
 use crate::shell::ShellApp;
 
@@ -1204,28 +1205,33 @@ fn cmd_save(shell: &mut ShellApp, cx: &mut Context<ShellApp>) -> Result<serde_js
     let Some(editor) = shell.editor().cloned() else {
         return Err("无活动文档（空态——先 open_file）".into());
     };
-    let ed = editor.read(cx);
-    if ed.is_read_only() {
-        return Err("只读文档（渲染态）无保存语义".into());
-    }
-    let Some(path) = ed.file_path().map(|p| p.to_path_buf()) else {
+    let Some(path) = editor.read(cx).file_path().map(|p| p.to_path_buf()) else {
         return Err("未命名文档无路径——先 save_as 指定目标".into());
     };
-    // ed（只读借用）在此自然结束——file_path 已拷出，update 可变借用无冲突。
-    if !editor.update(cx, |ed, cx| {
-        let ok = ed.save();
-        cx.notify();
-        ok
-    }) {
-        return Err(format!(
-            "保存失败（{}）——写盘错误（详见应用日志）",
-            path.display()
-        ));
+    // #386：RPC 保存与 UI（Ctrl+S/关闭确认/退出）同源走 Shell 分流
+    //（`save_tab`——pdf 批注增量落盘在此发生）。旧「只读一律拒绝」
+    // 是批注落盘的调用方缺口之一（rpc 保存 pdf = 批注丢失同形态）。
+    // 三态消费：Saved/Unmodified 成功；ReadOnlyRejected/Failed 显式
+    // Err 回给调用方（不静默）。
+    let idx = shell.active_index();
+    match shell.save_tab(idx, cx) {
+        SaveOutcome::Saved | SaveOutcome::Unmodified => {}
+        SaveOutcome::ReadOnlyRejected => {
+            return Err("只读文档（渲染态）拒绝保存".into());
+        }
+        SaveOutcome::Failed => {
+            return Err(format!(
+                "保存失败（{}）——写盘错误（详见应用日志）",
+                path.display()
+            ));
+        }
     }
     Ok(serde_json::json!({
         "saved": true,
         "path": path.display().to_string(),
-        "modified": editor.read(cx).is_modified(),
+        // #386：与 UI 同源（tab_is_modified——pdf 批注脏计入；保存
+        // 成功后恒 false）。
+        "modified": shell.tab_is_modified(idx, cx).unwrap_or(false),
     }))
 }
 
@@ -1706,12 +1712,15 @@ fn cmd_run_command(
     let Some(cmd) = crate::editor::commands::Cmd::from_id(name) else {
         return Err(format!("未知命令（{name}）——list_commands 查看可用清单"));
     };
-    let Some(editor) = shell.editor().cloned() else {
+    if shell.editor().is_none() {
         return Err("无活动文档（空态——先 open_file）".into());
-    };
-    // 与命令面板/键位同一分派路径（只读门禁/折叠/查找全同语义——
-    // exec_command 内部各命令自带门）。
-    editor.update(cx, |ed, cx| ed.run_command(cmd, window, cx));
+    }
+    // 与命令面板/键位**真同一条**分派路径（ShellApp::dispatch_editor_cmd
+    // → Editor::run_command）。#386 前 rpc 在此直调 `Editor::run_command`
+    // ——`run_command("save")` 绕过 Shell 保存分流（批注落盘被跳过，
+    // 与面板/键位不同语义）；现经 Shell 派发与 UI 处处同源（只读门
+    // 禁/折叠/查找全同语义——exec_command 内部各命令自带门）。
+    shell.dispatch_editor_cmd(cmd, window, cx);
     Ok(serde_json::json!({
         "ran": true,
         "command": name,

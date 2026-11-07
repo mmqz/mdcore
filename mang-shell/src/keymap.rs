@@ -100,8 +100,7 @@
 //! | E27 | ](ctrl+shift) | [`EditorAction::UnfoldCurrent`] | `"]" if ctrl && shift` |
 //! | E28 | f(ctrl) | [`EditorAction::OpenFind`] | `"f" if ctrl` |
 //! | E29 | h(ctrl) | [`EditorAction::OpenReplace`] | `"h" if ctrl` |
-//! | E30 | s(ctrl+!shift) | [`EditorAction::Save`] | `"s" if ctrl && !shift` |
-//! | E31 | s(ctrl，shift Any) | [`EditorAction::Pass`] | `"s" if ctrl => {}`（空臂——编辑器不消费，冒泡 shell 另存为） |
+//! | E30 | s(ctrl，shift Any) | [`EditorAction::Pass`] | `"s" if ctrl => {}`（空臂——编辑器不消费，冒泡 shell；#386 起 Ctrl+S 亦冒泡至 ShellAction::Save，Ctrl+Shift+S 至另存为） |
 //! | E32 | chord 首键 ctrl+k(!shift) | 挂起（引擎 [`EditorOutcome::Pending`]） | `"k" if ctrl && !shift`（提前 return 不落尾部） |
 //!
 //! ## shell 域（on_key_down 模态守卫后，表序 = 分支序）
@@ -112,7 +111,8 @@
 //! | S2 | tab(ctrl，!alt，!shift) | [`ShellAction::NextTab`] | Ctrl+Tab |
 //! | S3 | tab(ctrl，!alt，shift) | [`ShellAction::PrevTab`] | Ctrl+Shift+Tab |
 //! | S4 | w(plain) | [`ShellAction::CloseTab`] | Ctrl+W |
-//! | S5 | s(ctrl+shift，!alt) | [`ShellAction::PromptSaveAs`] | Ctrl+Shift+S（编辑器 E31 放行冒泡至此） |
+//! | S5 | s(ctrl+shift，!alt) | [`ShellAction::PromptSaveAs`] | Ctrl+Shift+S（编辑器 E30 放行冒泡至此） |
+//! | S12 | s(ctrl，!shift，!alt) | [`ShellAction::Save`] | #386 Ctrl+S 保存分流（pdf 批注增量落盘/编辑器三态；编辑器 E30 旧默认键位移除冒泡至此） |
 //! | S6 | =(ctrl，!alt，shift Any) | [`ShellAction::FontBigger`] | Ctrl+= |
 //! | S7 | +(ctrl，!alt，shift Any) | [`ShellAction::FontBigger`] | Ctrl++（同分支双键位） |
 //! | S8 | -(ctrl，!alt，shift Any) | [`ShellAction::FontSmaller`] | Ctrl+- |
@@ -423,6 +423,9 @@ pub enum ShellAction {
     PrevTab,
     /// Ctrl+W 关闭当前标签（`close_active_tab`）。
     CloseTab,
+    /// #386 Ctrl+S 保存（Shell `save_tab` 分流——pdf 批注增量落盘/
+    /// 编辑器三态；编辑器层 E30 已移除冒泡至此）。
+    Save,
     /// Ctrl+Shift+S 另存为（`prompt_save_as`）。
     PromptSaveAs,
     /// Ctrl+= / Ctrl++ 字号增大（`apply_font_size(+1)`）。
@@ -498,7 +501,7 @@ impl EditorAction {
             EditorAction::UnfoldAll => "unfold_all",
             EditorAction::OpenFind => "open_find",
             EditorAction::OpenReplace => "open_replace",
-            EditorAction::Save => "save",
+            EditorAction::Save => "editor_save",
             EditorAction::Pass => "editor_pass",
         }
     }
@@ -566,6 +569,7 @@ impl ShellAction {
             ShellAction::NextTab => "next_tab",
             ShellAction::PrevTab => "prev_tab",
             ShellAction::CloseTab => "close_tab",
+            ShellAction::Save => "save",
             ShellAction::PromptSaveAs => "prompt_save_as",
             ShellAction::FontBigger => "font_bigger",
             ShellAction::FontSmaller => "font_smaller",
@@ -618,6 +622,7 @@ const SHELL_ACTION_IDS: &[ShellAction] = &[
     ShellAction::NextTab,
     ShellAction::PrevTab,
     ShellAction::CloseTab,
+    ShellAction::Save,
     ShellAction::PromptSaveAs,
     ShellAction::FontBigger,
     ShellAction::FontSmaller,
@@ -772,12 +777,11 @@ fn default_editor_main() -> Vec<Entry> {
             Binding::Single(KeyPattern::key("h").with(Yes, Any, Any)),
             A::OpenReplace,
         ),
-        // 保存（E30：!shift 守卫——Ctrl+Shift+S 由 E31 放行冒泡）。
-        e(
-            Binding::Single(KeyPattern::key("s").with(Yes, No, Any)),
-            A::Save,
-        ),
-        // E31：Ctrl+Shift+S 空臂（编辑器不消费，冒泡 shell 另存为）。
+        // 保存（#386：E30 旧默认键位（ctrl+!shift → Save）已移除
+        // ——Ctrl+S 不再由编辑器自处理，整键放行冒泡至 shell 域
+        // ShellAction::Save[保存分流在 Shell：pdf 批注增量落盘/编辑器
+        // 三态；Ctrl+Shift+S 冒泡至另存为]。EditorAction::Save 变体
+        // 仍在（用户可重绑到其它键 + id 反查面），仅无默认键位）。
         e(
             Binding::Single(KeyPattern::key("s").with(Yes, Any, Any)),
             A::Pass,
@@ -828,7 +832,11 @@ fn default_shell() -> Vec<Entry> {
         ),
         // S4：Ctrl+W 关标签。
         e(Binding::Single(plain("w")), A::CloseTab),
-        // S5：Ctrl+Shift+S 另存为（编辑器 E31 放行冒泡至此）。
+        // #386 S12：Ctrl+S 保存（编辑器 E30 已移除整键放行冒泡至此
+        // ——「谁负责保存」归 Shell：pdf 标签走批注增量落盘，其余走
+        // Editor 三态；失败 toast 示警不静默）。
+        e(Binding::Single(plain("s")), A::Save),
+        // S5：Ctrl+Shift+S 另存为（编辑器 s 空臂放行冒泡至此）。
         e(
             Binding::Single(KeyPattern::key("s").with(Yes, Yes, No)),
             A::PromptSaveAs,
@@ -1895,13 +1903,16 @@ mod tests {
         editor_miss("[", true, false, false); // 无 shift 不命中
     }
 
-    /// E29-E31：替换 / 保存（!shift 守卫）/ Ctrl+Shift+S 空臂放行。
+    /// E29-E30：替换 / Ctrl+S·Ctrl+Shift+S 空臂放行（#386：保存分流
+    /// 归 shell 域——两键位全冒泡）。
     #[test]
     fn editor_replace_save_pass() {
         editor_hit("h", true, false, false, EditorAction::OpenReplace);
         editor_hit("h", true, true, true, EditorAction::OpenReplace);
-        editor_hit("s", true, false, false, EditorAction::Save);
-        editor_hit("s", true, false, true, EditorAction::Save); // alt Any
+        // #386：Ctrl+S 不再由编辑器自处理（保存分流归 Shell）——
+        // 整键空臂放行冒泡（shell 域 ShellAction::Save 接管）。
+        editor_hit("s", true, false, false, EditorAction::Pass);
+        editor_hit("s", true, false, true, EditorAction::Pass);
         editor_hit("s", true, true, false, EditorAction::Pass); // 冒泡 shell
         editor_hit("s", true, true, true, EditorAction::Pass);
         editor_miss("s", false, false, false);
@@ -2020,9 +2031,12 @@ mod tests {
         shell_hit("w", true, false, false, ShellAction::CloseTab);
         shell_miss("w", true, true, false); // plain_ctrl
         shell_miss("w", true, false, true);
+        // #386 S12：Ctrl+S 保存分流（编辑器 E30 旧键位移除后冒泡至此）。
+        shell_hit("s", true, false, false, ShellAction::Save);
+        shell_miss("s", true, false, true); // plain（!alt）守卫
+        shell_miss("s", false, false, false); // 无 ctrl → 可打印字符
         shell_hit("s", true, true, false, ShellAction::PromptSaveAs);
         shell_miss("s", true, true, true); // alt 守卫（S5 带 !alt）
-        shell_miss("s", true, false, false); // 编辑器 Save 域
         shell_hit("=", true, false, false, ShellAction::FontBigger);
         shell_hit("=", true, true, false, ShellAction::FontBigger); // shift Any
         shell_miss("=", true, true, true); // alt 守卫（S6/S7/S8 带 !alt）
@@ -2232,11 +2246,12 @@ mod tests {
             "unbind 拒绝文案应指明修饰词：{}",
             warnings[1]
         );
-        // Save 默认绑定完好（若 bind 落地则会移除 ctrl+s——Save 失效）。
+        // #386：ctrl+s 默认形态 = 空臂放行冒泡（保存分流归 shell 域
+        // ——E30 旧键位已移除；meta+k 被拒不得影响 s 键族默认形态）。
         assert_eq!(
             store.resolve_editor_main(&q("s", true, false, false), None),
-            EditorOutcome::Matched(EditorAction::Save),
-            "meta+k 被拒不得影响 ctrl+s 默认绑定"
+            EditorOutcome::Matched(EditorAction::Pass),
+            "meta+k 被拒不得影响 ctrl+s 默认（空臂放行）"
         );
         // 全表零移除：默认 chord 完好（unbind 幻影键零副作用）。
         let pending = q("k", true, false, false);
@@ -2325,7 +2340,9 @@ mod tests {
         let mut store = KeymapStore::default_tables();
         let warnings = store.apply_user(&[UserOverride::Bind {
             bind: "ctrl+f".into(),
-            action: "save".into(),
+            // #386：编辑器保存动作改名 editor_save（"save" 归 shell
+            // 保存分流——本测试钉定编辑器动作仍可同键替换）。
+            action: "editor_save".into(),
         }]);
         assert!(warnings.is_empty(), "同键替换应放行：{warnings:?}");
         // ctrl+f → save（替换了 open_find）。
@@ -2345,13 +2362,21 @@ mod tests {
 
     /// 冲突拒绝：同域相交且不更精确（新条目永不触发）——拒绝时动作
     /// **保持既有绑定**（先检测后改）。
+    ///
+    /// #386 后冲突对换型：旧例（ctrl+alt+s × 编辑器 Save ctrl+!shift+s）
+    /// 随 E30 移除失效（编辑器表再无 No-约束 2 约束条目，同精度不相
+    /// 容相交在编辑器域不可构造）。现用 shell 域同构例：S8 `-`(ctrl,!alt)
+    /// × 新 ctrl+shift+-（同为 2 约束、互不覆盖——canonical 双命中，
+    /// 表序早者 S8 赢）→ 拒绝。
     #[test]
     fn bind_conflicting_key_rejected() {
         let mut store = KeymapStore::default_tables();
-        // ctrl+alt+s 与 Save（ctrl+!shift+s）相交、约束数同为 2 → 拒绝。
+        // font_reset 换绑到 ctrl+shift+-（2 约束）：S8 FontSmaller
+        // -（ctrl,!alt）同为 2 约束、互不覆盖，canonical 双命中 →
+        // 表序早者 S8 赢 → 新条目永不触发 → 拒绝。
         let warnings = store.apply_user(&[UserOverride::Bind {
-            bind: "ctrl+alt+s".into(),
-            action: "open_find".into(),
+            bind: "ctrl+shift+-".into(),
+            action: "font_reset".into(),
         }]);
         assert_eq!(warnings.len(), 1, "应恰好一条警告：{warnings:?}");
         assert!(
@@ -2359,15 +2384,25 @@ mod tests {
             "警告应说明冲突：{}",
             warnings[0]
         );
-        // 拒绝 = 该条完全不生效：open_find 保持 ctrl+f。
+        // 拒绝 = 该条完全不生效：font_reset 保持 ctrl+0 原绑、S8
+        // FontSmaller 原样（断言直查本 store，不用 shell_hit——它自
+        // 建默认表，验不到拒绑后状态）。
         assert_eq!(
-            store.resolve_editor_main(&q("f", true, false, false), None),
-            EditorOutcome::Matched(EditorAction::OpenFind)
+            store.resolve_shell(&q("0", true, false, false), None, Instant::now()),
+            ShellOutcome::Matched(ShellAction::FontReset),
+            "拒绑后 font_reset 原绑不动"
         );
-        // save 不受影响。
         assert_eq!(
-            store.resolve_editor_main(&q("s", true, false, false), None),
-            EditorOutcome::Matched(EditorAction::Save)
+            store.resolve_shell(&q("-", true, true, false), None, Instant::now()),
+            ShellOutcome::Matched(ShellAction::FontSmaller),
+            "拒绑后 S8 原样（ctrl+shift+- 仍 FontSmaller——S8 的 shift Any）"
+        );
+        // save 不受影响（#386：shell 域 S12 ctrl+s 保存分流——与拒绑
+        // 前同形态）。
+        assert_eq!(
+            store.resolve_shell(&q("s", true, false, false), None, Instant::now()),
+            ShellOutcome::Matched(ShellAction::Save),
+            "S12 保存分流不受拒绑影响"
         );
     }
 
@@ -2376,10 +2411,10 @@ mod tests {
     fn bind_cross_domain_conflict_rejected() {
         let mut store = KeymapStore::default_tables();
         // ctrl+o 已被 shell prompt_open_file 占用——编辑器动作 bind 上去
-        // 会被拒绝。
+        // 会被拒绝（#386：编辑器保存动作改名 editor_save）。
         let warnings = store.apply_user(&[UserOverride::Bind {
             bind: "ctrl+o".into(),
-            action: "save".into(),
+            action: "editor_save".into(),
         }]);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(
@@ -2387,11 +2422,12 @@ mod tests {
             "警告应指明跨域：{}",
             warnings[0]
         );
-        // shell 的 ctrl+o 不受影响；save 保持 ctrl+s。
+        // shell 的 ctrl+o 不受影响；#386：save 默认无键位（ctrl+s
+        // 空臂放行——保存分流归 shell 域）。
         shell_hit("o", true, false, false, ShellAction::PromptOpenFile);
         assert_eq!(
             store.resolve_editor_main(&q("s", true, false, false), None),
-            EditorOutcome::Matched(EditorAction::Save)
+            EditorOutcome::Matched(EditorAction::Pass)
         );
     }
 
@@ -2426,11 +2462,11 @@ mod tests {
     #[test]
     fn bind_chord_cross_domain_rejected() {
         let mut store = KeymapStore::default_tables();
-        // 编辑器 bind [ctrl+k ctrl+o]→save：与 shell S1 [ctrl+k ctrl+o]
-        // 首键相交且续接键相交 → 跨域拒绝。
+        // 编辑器 bind [ctrl+k ctrl+o]→editor_save：与 shell S1 [ctrl+k
+        // ctrl+o] 首键相交且续接键相交 → 跨域拒绝。
         let warnings = store.apply_user(&[UserOverride::Bind {
             bind: "ctrl+k ctrl+o".into(),
-            action: "save".into(),
+            action: "editor_save".into(),
         }]);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("叠加执行"), "{}", warnings[0]);
