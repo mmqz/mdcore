@@ -149,9 +149,10 @@ fn parity_form_fill_save_reopen() {
 
 // ---------------------------------------------------------------- 4. 签名
 
-/// 高频面④签名：读签名（签名人/结构有效）+ 已签名探针（表单保存保护面
-/// 的判定原语，#227）。密码学验签不在 v1 范围（pdfi_signature 头注登记
-/// ——自签证书夹具，结构面与真实签名一致）。
+/// 高频面④签名：读签名（签名人/结构有效/摘要一致）+ 已签名探针（表单保存
+/// 保护面的判定原语，#227）。证书链验签不在 v1 范围（pdfi_signature 头注
+/// 登记——自签证书夹具，结构面与真实签名一致）；#308 起补摘要一致性层
+/// （digest_matches——「签完后有没有被改过」，无需信任根）。
 #[cfg(feature = "engine-lopdf")]
 #[test]
 fn parity_signature_read_and_signed_probe() {
@@ -168,6 +169,13 @@ fn parity_signature_read_and_signed_probe() {
     assert!(
         sigs[0].signer_name.is_some(),
         "签名人应可读（/Name 缺省回退证书 CN）"
+    );
+    // #308 摘要一致性（Acrobat 验签的最小差距层）：签名字节未被改过。
+    // 注意这不验证证书链（三层验签的③层不在范围）。
+    assert_eq!(
+        sigs[0].digest_matches,
+        Some(true),
+        "未改动档摘要应一致（#308）"
     );
 
     let signed_form = PdfForm::read(&fixture_bytes("signed_sample.pdf")).unwrap();

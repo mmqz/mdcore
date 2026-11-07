@@ -1,12 +1,37 @@
 //! S2-7（issue #116 任务 2）· 数字签名**读取/结构验证**面。
 //!
-//! # 范围（第一版）
+//! # 范围
 //!
 //! - 读 PDF 的 `/Sig` 域（`/V` → 签名字典）；
 //! - `/Contents` 是**十六进制编码的 DER**，解出 PKCS#7/CMS `SignedData`；
 //! - 遍历 CMS 结构，报出签名人/时间/原因/位置/子过滤器/字节范围/证书；
 //! - 判定「结构是否完整」（**不验证证书链、不验时间戳**——那需要信任根，
-//!   且第一版范围明确不含）。
+//!   且第一版范围明确不含）；
+//! - **#308 起补「摘要一致性」层**：CMS `signedAttrs` 的 `messageDigest`
+//!   属性与 `/ByteRange` 覆盖段实际字节的摘要比对（`digest_matches`）。
+//!   这回答用户最关心的问题：「这份文件签了之后有没有被改过？」
+//!
+//! # 验签的三层模型（#308 口径）
+//!
+//! ```text
+//! ① 结构完整（ByteRange 合法 + CMS 可解析）   ← structurally_valid（既有）
+//! ② 摘要一致（签的是这些字节吗）              ← digest_matches（本次新增）
+//! ③ 信任链（证书可信吗）                      ← 需要信任根，明确不做
+//! ```
+//!
+//! ② 不需要信任根——只是「把 ByteRange 各段字节算摘要，和 CMS
+//! `SignedData` 里 signerInfo.signedAttrs 的 `messageDigest` 比对」。
+//! 这是与 Acrobat 验签的最小差距层（研究仓 §6 定性）。
+//!
+//! **digest_matches 的语义边界（必须说清）**：
+//!
+//! - `Some(true)`：签名字节未被改动（摘要一致）。**不等于证书可信**——
+//!   签名人身份、证书链、时间戳均不在验证范围；
+//! - `Some(false)`：覆盖段被改动，签名已失效——「签完后被改过」的密码学证据；
+//! - `None`：无法验证，诚实报告不猜——成因：无 `signedAttrs`（旧式直签
+//!   形态，明文摘要不在 CMS 里）、摘要算法不支持（本版仅 sha256/384/512，
+//!   sha1/md5 出于弱算法与零新增依赖纪律不背书）、`ByteRange` 越界或
+//!   非偶数元、CMS 解析失败（此时 `structurally_valid` 也为假）。
 //!
 //! # 为什么手写 DER（零依赖）
 //!
@@ -72,6 +97,19 @@ pub struct SignatureInfo {
     pub digest_algorithm: Option<String>,
     /// 签名算法名（`rsassa_pkcs1v15` / `sha256_rsa` 等，取 CMS 里的 OID 名）。
     pub signature_algorithm: Option<String>,
+    /// **摘要一致性**（#308）：CMS `signedAttrs` 的 `messageDigest` 与
+    /// `/ByteRange` 覆盖段实际字节算出的摘要是否一致。
+    ///
+    /// - `Some(true)`：签名字节未被改动（摘要一致）——**不等于证书可信**，
+    ///   证书链/时间戳验证不在本版范围（见模块文档「三层模型」）；
+    /// - `Some(false)`：覆盖段被改动——「这份文件签完后被改过」的密码学证据；
+    /// - `None`：无法验证（无 `signedAttrs`/`messageDigest`、算法不支持
+    ///   （本版仅 sha256/384/512）、`ByteRange` 越界或非偶数元、CMS 解析
+    ///   失败）——诚实报告，不猜。
+    ///
+    /// 多签名人档只验第一个 signerInfo（与字段提取口径一致）。
+    #[serde(default)]
+    pub digest_matches: Option<bool>,
 }
 
 /// 签名读取错误。
@@ -411,6 +449,15 @@ fn der_time(t: &Tlv<'_>) -> String {
 pub(crate) struct CmsSummary {
     pub digest_algorithm: Option<String>,
     pub signature_algorithm: Option<String>,
+    /// signerInfo 级摘要算法名（messageDigest 用的就是它；与
+    /// SignedData.digestAlgorithms 集合级不同——验证以 signer 级为准，
+    /// 缺失时回退集合级）。
+    pub signer_digest_algorithm: Option<String>,
+    /// `signedAttrs` 里 `messageDigest` 属性的值（OID
+    /// 1.2.840.113549.1.9.4）——签名时对内容（ByteRange 覆盖段）算的摘要。
+    /// 无 `signedAttrs` 或缺该属性时为 None（旧式直签形态——明文摘要
+    /// 不在 CMS 里，本层无法验证）。
+    pub message_digest: Option<Vec<u8>>,
     pub certificates: Vec<CertInfo>,
     pub signer_cn: Option<String>,
     /// 结构问题（None = 结构完整）。
@@ -535,11 +582,44 @@ pub(crate) fn parse_signed_data(der: &[u8]) -> Result<CmsSummary, SignatureError
     let mut s = si.children();
     s.next(); // version
     let sid = s.next().and_then(|r| r.ok());
-    s.next(); // digestAlgorithm
+    // signerInfo 级 digestAlgorithm（messageDigest 实际用的算法——#308
+    // 验证以此为准，与 SignedData.digestAlgorithms 集合级可能有差）
+    let signer_digest_alg = s.next().and_then(|r| r.ok());
+    if let Some(alg) = &signer_digest_alg {
+        if let Some(Ok(oid)) = alg.children().next() {
+            if oid.tag == tags::OID {
+                out.signer_digest_algorithm = Some(algorithm_name(&oid_to_string(oid.value)));
+            }
+        }
+    }
     let mut next = s.next().and_then(|r| r.ok());
+    let mut signed_attrs: Option<Tlv<'_>> = None;
     if let Some(n) = next {
         if n.tag == 0xA0 {
+            // signedAttrs [0] IMPLICIT SET OF Attribute——#308：不再跳过，
+            // 提取 messageDigest（OID 1.2.840.113549.1.9.4）。
+            signed_attrs = Some(n);
             next = s.next().and_then(|r| r.ok()); // signatureAlgorithm
+        }
+    }
+    if let Some(attrs) = signed_attrs {
+        // Attribute ::= SEQUENCE { attrType OID, attrValues SET OF ANY }
+        const OID_MESSAGE_DIGEST: &str = "1.2.840.113549.1.9.4";
+        for attr in attrs.children().flatten() {
+            let mut a = attr.children();
+            let (Some(Ok(oid)), Some(Ok(values))) = (a.next(), a.next()) else {
+                continue;
+            };
+            if oid.tag != tags::OID || oid_to_string(oid.value) != OID_MESSAGE_DIGEST {
+                continue;
+            }
+            // attrValues SET 里第一个元素是 OCTET STRING（摘要本身）
+            if let Some(Ok(octet)) = values.children().next() {
+                if octet.tag == 0x04 {
+                    out.message_digest = Some(octet.value.to_vec());
+                }
+            }
+            break; // 只取第一个 messageDigest（重复属非合规形态，不背书）
         }
     }
     if let Some(alg) = next {
@@ -586,6 +666,12 @@ pub(crate) fn parse_signed_data(der: &[u8]) -> Result<CmsSummary, SignatureError
 /// 读 PDF 里的全部签名（按域树出现序）。
 ///
 /// 找不到任何 /Sig 域 → 返回空 vec（不是错误：多数文档本来就没有签名）。
+///
+/// # 摘要一致性（#308）
+///
+/// 本函数同时计算每个签名的 [`SignatureInfo::digest_matches`]（对
+/// ByteRange 覆盖段算摘要与 CMS messageDigest 比对）——需要传入**完整
+/// 原始字节**（不是装载后的重建形态：ByteRange 偏移只对原始字节有意义）。
 pub fn read_signatures(bytes: &[u8]) -> Result<Vec<SignatureInfo>, SignatureError> {
     let doc = lopdf::Document::load_mem(bytes)
         .map_err(|e| SignatureError::Open(format!("lopdf 装载失败：{e}")))?;
@@ -595,7 +681,7 @@ pub fn read_signatures(bytes: &[u8]) -> Result<Vec<SignatureInfo>, SignatureErro
 
     let mut out = Vec::new();
     for (name, dict) in collect_sig_fields(&doc) {
-        out.push(build_signature_info(&doc, &name, dict));
+        out.push(build_signature_info(&doc, &name, dict, bytes));
     }
     Ok(out)
 }
@@ -706,11 +792,13 @@ fn visit_sig_field(
         }
     }
 }
-/// 由签名域字典组装 [`SignatureInfo`]。
+/// 由签名域字典组装 [`SignatureInfo`]。`bytes` 是完整原始字节
+/// （ByteRange 偏移的参照系——#308 摘要一致性用）。
 fn build_signature_info(
     doc: &lopdf::Document,
     field_name: &str,
     dict: lopdf::Dictionary,
+    bytes: &[u8],
 ) -> SignatureInfo {
     use lopdf::Object;
 
@@ -734,6 +822,7 @@ fn build_signature_info(
         certificates: Vec::new(),
         digest_algorithm: None,
         signature_algorithm: None,
+        digest_matches: None,
     };
 
     let Some(sd) = sig_dict else {
@@ -771,6 +860,14 @@ fn build_signature_info(
 
     match parse_signed_data(&der) {
         Ok(summary) => {
+            // #308 摘要一致性：先于字段搬移计算（summary 后续会被部分 move）。
+            // 结构完整才有比对的基础（CMS 解析失败时 messageDigest 本就
+            // 拿不到，这里只是把语义钉死）。
+            let digest_matches = if summary.issue.is_none() {
+                verify_digest_matches(bytes, &info.byte_range, &summary)
+            } else {
+                None
+            };
             info.digest_algorithm = summary.digest_algorithm;
             info.signature_algorithm = summary.signature_algorithm;
             info.certificates = summary.certificates;
@@ -778,7 +875,10 @@ fn build_signature_info(
                 info.signer_name = summary.signer_cn;
             }
             match summary.issue {
-                None => info.structurally_valid = true,
+                None => {
+                    info.structurally_valid = true;
+                    info.digest_matches = digest_matches;
+                }
                 Some(issue) => info.structural_issue = Some(issue),
             }
         }
@@ -797,6 +897,77 @@ pub(crate) fn strip_trailing_zeros(raw: &[u8]) -> Vec<u8> {
         .map(|p| p + 1)
         .unwrap_or(0);
     raw[..end].to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// #308 摘要一致性：ByteRange 覆盖段 × CMS messageDigest
+// ---------------------------------------------------------------------------
+
+/// 对 `/ByteRange` 覆盖段字节算摘要。
+///
+/// `byte_range = [start₁, len₁, start₂, len₂, …]`（spec 12.8.1）：签名覆盖
+/// 的是这些段拼接后的字节流（`/Contents` 槽位被跳过——这就是为什么通常
+/// 是两段）。增量追加不改变覆盖段字节 → 摘要不斐（合法形态）。
+///
+/// 返回 `None`（无法计算，诚实不猜）：
+/// - 元数为奇数 / 空数组（非合规 ByteRange）；
+/// - 起始+长度溢出 usize 或越出文件边界（重建/裁剪过的形态——偏移已
+///   失去对原始字节的参照意义）；
+/// - 算法不支持（本版 sha256/sha384/sha512；sha1/md5 弱算法不背书，
+///   且零新增依赖纪律不引入额外 crate）。
+pub(crate) fn byte_range_digest(bytes: &[u8], byte_range: &[usize], algo: &str) -> Option<Vec<u8>> {
+    use sha2::Digest;
+
+    if byte_range.is_empty() || !byte_range.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut spans: Vec<(usize, usize)> = Vec::with_capacity(byte_range.len() / 2);
+    for c in byte_range.chunks(2) {
+        let end = c[0].checked_add(c[1])?;
+        if end > bytes.len() {
+            return None;
+        }
+        spans.push((c[0], end));
+    }
+    match algo {
+        "sha256" => {
+            let mut h = sha2::Sha256::new();
+            for (s, e) in &spans {
+                Digest::update(&mut h, &bytes[*s..*e]);
+            }
+            Some(h.finalize().to_vec())
+        }
+        "sha384" => {
+            let mut h = sha2::Sha384::new();
+            for (s, e) in &spans {
+                Digest::update(&mut h, &bytes[*s..*e]);
+            }
+            Some(h.finalize().to_vec())
+        }
+        "sha512" => {
+            let mut h = sha2::Sha512::new();
+            for (s, e) in &spans {
+                Digest::update(&mut h, &bytes[*s..*e]);
+            }
+            Some(h.finalize().to_vec())
+        }
+        _ => None,
+    }
+}
+
+/// 比对 CMS `messageDigest` 与覆盖段实际摘要（三层验签的②层，#308）。
+///
+/// - `Some(true)`：一致——签名字节未被改动（**不等于证书可信**）；
+/// - `Some(false)`：不一致——签完后被改过；
+/// - `None`：无法验证（缺 `messageDigest`/算法不支持/范围不可信）。
+fn verify_digest_matches(bytes: &[u8], byte_range: &[usize], summary: &CmsSummary) -> Option<bool> {
+    let algo = summary
+        .signer_digest_algorithm
+        .as_deref()
+        .or(summary.digest_algorithm.as_deref())?;
+    let expected = summary.message_digest.as_ref()?;
+    let actual = byte_range_digest(bytes, byte_range, algo)?;
+    Some(actual == *expected)
 }
 
 // ---------------------------------------------------------------------------
@@ -861,5 +1032,77 @@ mod tests {
             total_len: 15,
         };
         assert_eq!(der_time(&t), "2026-01-01 12:00:00");
+    }
+
+    // ------------------------------------------------------------ #308 摘要一致性
+
+    #[test]
+    fn byte_range_digest_two_span_concat() {
+        // 覆盖段 = bytes[0..2]("AX") + bytes[3..5]("YC")（两段拼接——
+        // /Contents 槽位 bytes[2]("B") 被跳过）。期望值与 Python
+        // hashlib.sha256(b"AXYC") 对照过。
+        let bytes = b"AXBYCZD";
+        let br = [0usize, 2, 3, 2];
+        let got = byte_range_digest(bytes, &br, "sha256").unwrap();
+        let expect: [u8; 32] = {
+            use sha2::Digest;
+            let mut h = sha2::Sha256::new();
+            h.update(b"AX");
+            h.update(b"YC");
+            h.finalize().into()
+        };
+        assert_eq!(got, expect.to_vec());
+    }
+
+    #[test]
+    fn byte_range_digest_rejects_bad_ranges() {
+        let bytes = b"0123456789";
+        // 奇数元
+        assert!(byte_range_digest(bytes, &[0, 5, 6], "sha256").is_none());
+        // 空
+        assert!(byte_range_digest(bytes, &[], "sha256").is_none());
+        // 越界
+        assert!(byte_range_digest(bytes, &[0, 20], "sha256").is_none());
+        // 溢出（usize 上界附近：start + len 回绕）
+        let huge = usize::MAX;
+        assert!(byte_range_digest(bytes, &[huge, 2], "sha256").is_none());
+        // 算法不支持（sha1/md5 弱算法不背书——诚实 None）
+        assert!(byte_range_digest(bytes, &[0, 10], "sha1").is_none());
+        assert!(byte_range_digest(bytes, &[0, 10], "md5").is_none());
+        // 支持的三种都应能算
+        for algo in ["sha256", "sha384", "sha512"] {
+            assert!(
+                byte_range_digest(bytes, &[0, 10], algo).is_some(),
+                "{algo} 应支持"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_digest_matches_none_paths() {
+        let mut summary = CmsSummary::default();
+        // 无算法、无 messageDigest → None
+        assert!(verify_digest_matches(b"xy", &[0, 2], &summary).is_none());
+        // 有算法无摘要 → None
+        summary.signer_digest_algorithm = Some("sha256".into());
+        assert!(verify_digest_matches(b"xy", &[0, 2], &summary).is_none());
+        // 算法不支持 → None（有摘要也验不了）
+        summary.signer_digest_algorithm = Some("sha1".into());
+        summary.message_digest = Some(vec![0u8; 20]);
+        assert!(verify_digest_matches(b"xy", &[0, 2], &summary).is_none());
+        // 算法支持 + 摘要在场 → Some(比对结果)
+        summary.signer_digest_algorithm = Some("sha256".into());
+        let wrong = vec![0u8; 32];
+        summary.message_digest = Some(wrong);
+        assert_eq!(verify_digest_matches(b"xy", &[0, 2], &summary), Some(false));
+        // 正确摘要 → Some(true)
+        let right: Vec<u8> = {
+            use sha2::Digest;
+            let mut h = sha2::Sha256::new();
+            h.update(b"xy");
+            h.finalize().to_vec()
+        };
+        summary.message_digest = Some(right);
+        assert_eq!(verify_digest_matches(b"xy", &[0, 2], &summary), Some(true));
     }
 }
