@@ -32,6 +32,13 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/i
 
 install -m 0755 "$BIN" "$APPDIR/usr/bin/mdcore"
 
+# #331（2026-11-07）：出包 strip——staged 副本剥 debug section 与符号表
+# （mang-shell [profile.release] debug="limited" → 裸产物 306MB+）。
+# --strip-all（非 --strip-debug：符号表 +13MB 会冲破 50MB 验收门，且
+# 无符号化基础设施时保留函数名收益有限）；构建产物原件不动。
+# 与 build-deb.sh 同段同款（#331 验收门：deb/AppImage 安装面 < 50MB）。
+strip --strip-all "$APPDIR/usr/bin/mdcore"
+
 # #320（2026-11-07）：pdfium 引擎库捆绑（与 Windows NSIS 的 pdfium.dll
 # 傍 exe 对称；与 deb 同取件位/同定位序层——见 build-deb.sh 注释）。
 # 安装位 = $APPDIR/usr/bin/libpdfium.so：AppRun.wrapped exec 的是
@@ -44,17 +51,13 @@ if [ ! -f "$PDFIUM_LIB" ]; then
 fi
 install -m 0755 "$PDFIUM_LIB" "$APPDIR/usr/bin/libpdfium.so"
 
-# s5a-env 工作台 bundle（Q3-3 实测缺陷修复——原脚本完全不装 dist，壳的
-# 三候选路径（--dist / MDCORE_DIST / /usr/share/mdcore/dist / ./web/dist）
-# 在 AppImage 布局下全落空，启动即 exit 2；镜像 deb 布局 + AppRun 导出
-# MDCORE_DIST 指向 AppDir 内路径）。
-DIST_SRC="$ROOT/web/dist"
-if [ ! -f "$DIST_SRC/index.html" ]; then
-  echo "[appimage] FATAL: web/dist/index.html 不存在（先构建 wasm 与 web dist）" >&2
-  exit 1
-fi
-mkdir -p "$APPDIR/usr/share/mdcore"
-cp -a "$DIST_SRC" "$APPDIR/usr/share/mdcore/dist"
+# #331（2026-11-07）：web/dist bundle 移除。s5a-env 时代的该段是旧壳
+# mdshell-native（tao+wry+webview）的 UI 载荷面（三候选解析序
+# --dist / MDCORE_DIST / /usr/share/mdcore/dist / ./web/dist 的消费方
+# 是旧壳）——现主线壳 mang-shell（wgpu 自绘链，#228 换代）全树零引用
+# web/dist / MDCORE_DIST / mdapp://（mang-shell/src 全量 grep 无命中，
+# #331 在档）。出包不再前置 wasm×2 + npm 构建，AppDir 亦不再携带死重
+# （AppRun 的 MDCORE_DIST 导出同步移除）。
 
 # 桌面入口 + 图标（{{}} 占位符在此注入；APP_NAME 待定名后启用，
 # 当前以 mdcore 工作名出 CI 内测包——checklist A4 未勾选不出正式包）

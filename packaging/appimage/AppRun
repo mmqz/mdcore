@@ -7,20 +7,27 @@
 #
 # #319（2026-11-07）：移除旧壳（mdshell-native，tao+wry+GTK3）时代的
 # GTK/WebKit 环境面——GIO_MODULE_DIR / WEBKIT_DISABLE_COMPOSITING_MODE
-# 对 GPUI 壳为零消费死代码；XDG_DATA_DIRS 保留（工作台 bundle 与图标
-# 解析仍需 AppDir 内路径优先）。
+# 对 GPUI 壳为零消费死代码；XDG_DATA_DIRS 保留（图标/desktop 查询
+# 仍需 AppDir 内路径优先）。
+# #331（2026-11-07）：MDCORE_DIST 导出移除——消费方是旧壳的 web/dist
+# bundle 解析序（mang-shell 全树零引用，见 build-appimage.sh 同段注释）。
 set -euo pipefail
 
-HERE="$(dirname "$(readlink -f "${APPIMAGE:-$0}")")"
+# #355（2026-11-07）：锚点修正。原式 readlink -f "${APPIMAGE:-$0}" 优先取
+# 运行时注入的 APPIMAGE——那是 .AppImage 文件自身的路径（用户下载目录），
+# 不是挂载点（FUSE：/tmp/.mount_*）也不是解包目录（EXTRACT_AND_RUN：
+# /tmp/appimage_extracted_*）→ HERE 指向下载目录 → exec ENOENT，直跑
+# AppImage 全灭（实证见 #355；#270 验收只跑了 usr/bin/mdcore 直执行故
+# 未暴露）。修正：运行时注入的 APPDIR 在位且有效时优先，否则回落
+# $0 实路径（手动 --appimage-extract 后跑 ./AppRun 的既有路径）。
+if [ -n "${APPDIR:-}" ] && [ -x "${APPDIR}/usr/bin/{{APP_EXEC}}" ]; then
+  HERE="$APPDIR"
+else
+  HERE="$(dirname "$(readlink -f "$0")")"
+fi
 
-# 资源路径：AppDir 内 share 优先（图标/desktop 查询、工作台 bundle）。
+# 资源路径：AppDir 内 share 优先（图标/desktop 查询）。
 export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-
-# 工作台 bundle 路径（Q3-3 实测缺陷修复——壳的三候选解析序
-# --dist / MDCORE_DIST / /usr/share/mdcore/dist / ./web/dist 中，绝对
-# 系统路径与 CWD 相对路径在 AppImage 挂载布局下均不可达；AppDir 内
-# 镜像 deb 布局的 usr/share/mdcore/dist 经此变量投递）。
-export MDCORE_DIST="${HERE}/usr/share/mdcore/dist"
 
 # AppImage 单实例：--appimage-extract-and-run 场景下 %F 参数直传
 exec "${HERE}/usr/bin/{{APP_EXEC}}" "$@"

@@ -133,11 +133,16 @@ fn packaging_artifacts_present_and_naming_scoped() {
         "APPID 必须用 mdcore 命名域"
     );
 
-    // deb：webkit2gtk-4.1 运行时依赖（ADR-H1 GTK3 架构的声明面锚）。
+    // deb：GPUI 壳直链集依赖声明面锚（#319 切 mang-shell：readelf
+    // DT_NEEDED 实测 libxcb1/libxkbcommon0/libxkbcommon-x11-0/libgcc-s1/
+    // libc6；旧 GTK3/WebKit2GTK 行是旧壳 mdshell-native 残留已随换代
+    // 移除——本断言原锁 libwebkit2gtk-4.1-0，#319 改 control.tpl 未同步
+    // 本门致 main 红（cargo test -p mdshell 可复现；CI 分 crate 面不跑
+    // shell，故漏网）。锚取直链集中平台特征最强的 libxkbcommon-x11-0。
     let control = read("packaging/deb/control.tpl");
     assert!(
-        control.contains("libwebkit2gtk-4.1-0"),
-        "deb 依赖必须声明 webkit2gtk-4.1"
+        control.contains("libxkbcommon-x11-0"),
+        "deb 依赖必须声明 GPUI 壳直链集（libxkbcommon-x11-0）"
     );
 }
 

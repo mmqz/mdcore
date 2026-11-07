@@ -21,6 +21,16 @@ mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin" \
 
 install -m 0755 "$BIN" "$STAGE/usr/bin/mdcore"
 
+# #331（2026-11-07）：出包 strip——staged 副本剥 debug section 与符号表
+# （mang-shell [profile.release] debug="limited" → 裸产物实测 306-430MB，
+# #270 验收 deb Installed-Size 314MB 即此；本机实测 LTO=thin 口径 306MB
+# / 无 LTO 430MB，strip 后 41-54MB 量级）。--strip-all 而非
+# --strip-debug：后者保留的符号表 +13MB，deb 安装面会冲破 50MB 验收门
+# 且本项目无符号化/崩溃上报基础设施，保留函数名收益有限；构建产物
+# 原件不动（开发调试能力不受影响）。Installed-Size 在 strip 后由下方
+# du 实测注入，非手抄。
+strip --strip-all "$STAGE/usr/bin/mdcore"
+
 # #320（2026-11-07）：pdfium 引擎库捆绑（与 Windows NSIS 的 pdfium.dll
 # 傍 exe 对称）。取件位 = 仓根 bin/lib/libpdfium.so（#224 定位序第 3 层
 # 「产品仓 bin/lib 开发取件位」——nsis build-installer.py --pdfium /
@@ -40,16 +50,11 @@ if [ ! -f "$PDFIUM_LIB" ]; then
 fi
 install -m 0755 "$PDFIUM_LIB" "$STAGE/usr/bin/libpdfium.so"
 
-# s5a-env：工作台 bundle 捆绑（壳的 mdapp:// 服务根 = usr/share/mdcore/dist，
-# bin 的 dist 解析序第三位消费）。无 bundle = 坏包，硬失败（先
-# build-wasm.sh + build-pdf-wasm.sh + npm run build）。
-DIST_SRC="$ROOT/web/dist"
-if [ ! -f "$DIST_SRC/index.html" ]; then
-  echo "[deb] FATAL: web/dist/index.html 不存在（先构建 wasm 与 web dist）" >&2
-  exit 1
-fi
-mkdir -p "$STAGE/usr/share/mdcore"
-cp -a "$DIST_SRC" "$STAGE/usr/share/mdcore/dist"
+# #331（2026-11-07）：web/dist bundle 移除。s5a-env 时代的该段是旧壳
+# mdshell-native（tao+wry+webview）的 UI 载荷面——现主线壳 mang-shell
+# （wgpu 自绘链，#228 换代）全树零引用 web/dist / MDCORE_DIST / mdapp://
+# （mang-shell/src 全量 grep 无命中，#331 在档），NSIS 侧本就不捆
+# web/dist。出包不再前置 wasm×2 + npm 构建，deb 亦不再携带死重载荷。
 
 sed -e 's/mang/mdcore/g' \
     -e 's/{{APP_EXEC}}/mdcore/g' \

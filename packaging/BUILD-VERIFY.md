@@ -10,6 +10,19 @@
 > 「阻塞登记」更新为「链路就位」（本节内含三断链处置与实机复核清单）；
 > macOS 构建路径由后续分支收口（issue #228 任务 4）。
 
+> **2026-11-07 更新（#331）**：deb / AppImage 出包链两处变更——
+> ① **web/dist 硬依赖移除**（`build-deb.sh` / `build-appimage.sh` / `AppRun`
+> 的 `MDCORE_DIST` 导出）：该 bundle 是旧壳（tao+wry+webview）的 UI 载荷，
+> 现主线壳 mang-shell（wgpu 自绘链）全树零引用（`mang-shell/src` grep
+> `web/dist|MDCORE_DIST|mdapp` 无命中）——出包不再前置
+> `build-wasm.sh + build-pdf-wasm.sh + npm run build`，包体不再携带
+> `/usr/share/mdcore/dist` 死重（NSIS 侧本就不捆，两侧产品定义归一）；
+> ② **出包 strip**：staged 二进制副本 `strip --strip-all`（构建产物原件
+> 不动）——#270 验收实测未 strip 的 `debug = "limited"` 产物 ~306MB、
+> deb Installed-Size 314MB；本机实测 strip 后二进制 41-54MB 量级、
+> deb 安装面 <50MB（实测见 #331 PR）。§1/§2 历史命令行中的
+> wasm/web dist 前置步骤自此不再需要。
+
 > **2026-11-07 更新（#320）**：deb / AppImage 构建新增**前置取件步骤**
 > （与 Windows §3 同纪律）：`bin/lib/libpdfium.so` 必须在位，缺件硬失败
 > （脚本打印取件命令）。安装位 = exe 同目录（`usr/bin/libpdfium.so`，
